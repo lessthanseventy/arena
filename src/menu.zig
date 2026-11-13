@@ -10,6 +10,7 @@ pub const Action = enum {
     split_right,
     split_below,
     close_pane,
+    search,
     new_session,
     rename_session,
     jump,
@@ -40,6 +41,7 @@ pub const main = [_]Item{
     .{ .icon = "◫", .label = "Split pane right", .key = 'v', .action = .split_right, .group = true },
     .{ .icon = "⊟", .label = "Split pane below", .key = 's', .action = .split_below },
     .{ .icon = "×", .label = "Close pane", .key = 'c', .action = .close_pane },
+    .{ .icon = "/", .label = "Search history", .key = '/', .action = .search },
     .{ .icon = "◇", .label = "New session", .key = 'S', .action = .new_session, .group = true },
     .{ .icon = "✎", .label = "Rename session", .key = 'R', .action = .rename_session },
     .{ .icon = "→", .label = "Jump to window", .key = 'p', .action = .jump },
@@ -108,8 +110,10 @@ pub const Prompt = struct {
     len: usize = 0,
     /// Which of the windows listed under a jump prompt Enter goes to.
     selected: usize = 0,
+    /// The last search found nothing.
+    missed: bool = false,
 
-    pub const What = enum { window, session, jump };
+    pub const What = enum { window, session, jump, search };
     pub const Result = enum { none, cancel, commit, up, down };
 
     /// Rows the box takes; the first of a jump prompt's windows is on row `list_row`.

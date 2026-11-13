@@ -175,7 +175,11 @@ pub const App = struct {
         none,
         divider: struct { pane: u32, upright: bool, asked: i32 = -1 },
         title: u32,
+        /// Text being selected in a pane, from the cell of it the button went down on.
+        select: struct { pane: u32, x: u16, y: u16 },
     } = .none,
+    /// Bytes for the terminal arena runs in, written out after the next frame.
+    out: std.ArrayList(u8) = .empty,
     /// The name last clicked, a window's or a session's, and when.
     clicked: ?Name = null,
     clicked_at: i64 = 0,
@@ -190,6 +194,7 @@ pub const App = struct {
         app.sessions.deinit(app.gpa);
         app.pending.deinit(app.gpa);
         app.block.deinit(app.gpa);
+        app.out.deinit(app.gpa);
     }
 
     fn destroySession(app: *App, s: *Session) void {
@@ -563,7 +568,76 @@ pub const App = struct {
         app.dirty = true;
     }
 
-    const Name = union(enum) { window: u32, session: u32 };
+    const Name = union(enum) { window: u32, session: u32, pane: u32 };
+
+    /// What ends a word picked by two clicks.
+    const word_ends = [_]u21{ ' ', '\t', '\'', '"', '`', '|', '│', ':', ';', ',', '(', ')', '[', ']', '{', '}', '<', '>', '$' };
+
+    /// Puts the pane's selected text on the system clipboard, through the terminal.
+    fn copy(app: *App, pane: *Pane) !void {
+        const screen = pane.term.screens.active;
+        const sel = screen.selection orelse return;
+        const text = try screen.selectionString(app.gpa, .{ .sel = sel, .trim = true });
+        defer app.gpa.free(text);
+        if (text.len == 0) return;
+        const encoder = std.base64.standard.Encoder;
+        try app.out.appendSlice(app.gpa, "\x1b]52;c;");
+        _ = encoder.encode(try app.out.addManyAsSlice(app.gpa, encoder.calcSize(text.len)), text);
+        try app.out.append(app.gpa, 0x07);
+    }
+
+    /// Opens the search prompt. Anything selected is let go, so the search starts from the newest.
+    fn openSearch(app: *App) void {
+        if (app.cur()) |s| if (s.focused()) |win| if (win.activePane()) |pane| {
+            pane.term.screens.active.clearSelection();
+        };
+        app.prompt = .{ .what = .search };
+        app.dirty = true;
+    }
+
+    /// Finds the prompt's text in the active pane's history, the match before the one last
+    /// found, selects it and brings it into view. Past the oldest it starts again from the newest.
+    fn searchNext(app: *App) !void {
+        const prompt = &app.prompt.?;
+        const s = app.cur() orelse return;
+        const win = s.focused() orelse return;
+        const pane = win.activePane() orelse return;
+        const query = prompt.text();
+        if (query.len == 0) return;
+        const screen = pane.term.screens.active;
+        const bottom = screen.pages.pin(.{ .active = .{ .x = 0, .y = pane.term.rows - 1 } }) orelse return;
+        var passes: u2 = if (screen.selection == null) 1 else 2;
+        var at: ?vt.Pin = if (screen.selection) |sel| sel.start().up(1) else bottom;
+        var buf: [1024]u8 = undefined;
+        while (passes > 0) : ({
+            passes -= 1;
+            at = bottom;
+        }) {
+            while (at) |pin| : (at = pin.up(1)) {
+                var row: Writer = .fixed(&buf);
+                var whole = pin;
+                whole.x = 0;
+                const last = pane.term.cols - 1;
+                var row_end = whole;
+                row_end.x = last;
+                screen.dumpString(&row, .{ .tl = whole, .br = row_end, .unwrap = false }) catch {};
+                const text = row.buffered();
+                const found = std.ascii.findIgnoreCase(text, query) orelse continue;
+                var start = whole;
+                start.x = @intCast(@min(last, std.unicode.utf8CountCodepoints(text[0..found]) catch found));
+                var end = whole;
+                end.x = @intCast(@min(last, start.x + (std.unicode.utf8CountCodepoints(query) catch query.len) - 1));
+                try screen.select(vt.Selection.init(start, end, false));
+                if (screen.pages.pointFromPin(.screen, whole)) |point| {
+                    // near the top, clear of the prompt in the middle
+                    pane.term.scrollViewport(.{ .row = point.coord().y -| 2 });
+                }
+                prompt.missed = false;
+                return;
+            }
+        }
+        prompt.missed = true;
+    }
 
     /// A window by where it is: which session of the list, which window of the session.
     pub const Spot = struct { session: usize, win: usize };
@@ -695,6 +769,7 @@ pub const App = struct {
     /// The held button moved to `m`, or let go.
     fn dragTo(app: *App, s: *Session, m: keys.Mouse) !void {
         if (m.release or !m.motion()) {
+            if (app.drag == .select) if (app.paneById(app.drag.select.pane)) |pane| try app.copy(pane);
             app.drag = .none;
             return;
         }
@@ -702,6 +777,23 @@ pub const App = struct {
         const ox: i32 = app.term_w - app.view_w;
         switch (app.drag) {
             .none => {},
+            // Past the pane's top or bottom the history scrolls under the pointer.
+            .select => |from| {
+                const pane = app.paneById(from.pane) orelse return;
+                const screen = pane.term.screens.active;
+                const left = ox + layout.colX(col_w, s.focus) - s.scroll + 1 + pane.x;
+                const x = std.math.clamp(m.x - left, 0, pane.term.cols - 1);
+                var y = @as(i32, m.y) - 1 - pane.y;
+                if (y < 0 or y >= pane.term.rows) pane.term.scrollViewport(.{ .delta = if (y < 0) -1 else 1 });
+                y = std.math.clamp(y, 0, pane.term.rows - 1);
+                const end = screen.pages.pin(.{ .viewport = .{ .x = @intCast(x), .y = @intCast(y) } }) orelse return;
+                const start = if (screen.selection) |sel|
+                    sel.start()
+                else
+                    screen.pages.pin(.{ .viewport = .{ .x = from.x, .y = from.y } }) orelse return;
+                try screen.select(vt.Selection.init(start, end, false));
+                app.dirty = true;
+            },
             .divider => |*line| {
                 const win = s.focused() orelse return;
                 const pane = for (win.panes.items) |pane| {
@@ -791,7 +883,7 @@ pub const App = struct {
         }
         const s = app.cur() orelse return false;
         if (app.yoff != 0) return false;
-        if (app.drag != .none) {
+        if (app.drag != .none and !m.wheel()) {
             try app.dragTo(s, m);
             return true;
         }
@@ -851,7 +943,24 @@ pub const App = struct {
                 try app.send(.ignore, "select-pane -t %{d}", .{pane.id});
                 app.dirty = true;
             }
-            if (try app.mouseToPane(pane, m, cx - 1 - pane.x, m.y - 1 - pane.y)) return true;
+            const px: u16 = @intCast(cx - 1 - pane.x);
+            const py: u16 = @intCast(m.y - 1 - pane.y);
+            if (try app.mouseToPane(pane, m, px, py)) return true;
+            // The program takes no mouse: the button selects text, which is copied when it is
+            // let go, and two clicks pick a word.
+            if (m.leftPress()) {
+                const screen = pane.term.screens.active;
+                screen.clearSelection();
+                app.dirty = true;
+                if (!app.doubleClick(.{ .pane = pane.id })) {
+                    app.drag = .{ .select = .{ .pane = pane.id, .x = px, .y = py } };
+                    return true;
+                }
+                const pin = screen.pages.pin(.{ .viewport = .{ .x = px, .y = py } }) orelse return true;
+                try screen.select(screen.selectWord(pin, &word_ends) orelse return true);
+                try app.copy(pane);
+                return true;
+            }
         }
         if (!m.wheel()) return false;
         const up = m.code & 1 == 0;
@@ -942,6 +1051,7 @@ pub const App = struct {
     /// session the name typed, an empty one changing nothing.
     fn commit(app: *App) !void {
         const prompt = app.prompt orelse return;
+        if (prompt.what == .search) return app.searchNext();
         app.prompt = null;
         const s = app.cur() orelse return;
         var cmd: Writer.Allocating = .init(app.gpa);
@@ -953,6 +1063,7 @@ pub const App = struct {
                 if (prompt.selected < n) try app.jumpTo(hits[prompt.selected].session, hits[prompt.selected].index);
                 return;
             },
+            .search => return,
             .window => try cmd.writer.print("rename-window -t @{d} -- '", .{(s.focused() orelse return).id}),
             .session => try cmd.writer.print("rename-session -t '${d}' -- '", .{s.id}),
         }
@@ -992,6 +1103,7 @@ pub const App = struct {
                     .split_right => try app.send(.ignore, "split-window -h -c '#{{pane_current_path}}'", .{}),
                     .split_below => try app.send(.ignore, "split-window -v -c '#{{pane_current_path}}'", .{}),
                     .close_pane => try app.closePane(),
+                    .search => app.openSearch(),
                     .close_window => app.openMenu(&menu.confirm),
                     .confirm_close => try app.closeWindow(),
                     .new_session => try app.send(.ignore, "new-session", .{}),
@@ -1051,6 +1163,7 @@ pub const App = struct {
             'q' => app.quit = true,
             'z' => app.toggleFull(),
             'o' => app.openOverview(),
+            '/' => app.openSearch(),
             'p' => {
                 app.prompt = .{ .what = .jump };
                 app.dirty = true;
@@ -1064,8 +1177,8 @@ pub const App = struct {
 
     /// With Alt: h and l move along the strip, j and k between sessions, 1 to 9 go to a window,
     /// H and L move the window, Enter opens one, x closes it, z gives it the whole width, p asks
-    /// for a window to jump to, o shows every session's windows at once, m opens the menu and q
-    /// leaves.
+    /// for a window to jump to, o shows every session's windows at once, / searches the pane's
+    /// history, m opens the menu and q leaves.
     /// Everything else is the focused pane's, or the menu's while it is open. Alt is ESC and the
     /// letter together, which a typed Escape then a letter rarely is.
     ///
@@ -1093,6 +1206,7 @@ pub const App = struct {
         const win = s.focused() orelse return;
         const pane = win.activePane() orelse return;
         if (bytes.len == 0) return;
+        pane.term.screens.active.clearSelection();
         pane.term.scrollViewport(.bottom);
         app.dirty = true;
         try app.sendKeys(pane, bytes);

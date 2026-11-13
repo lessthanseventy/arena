@@ -336,7 +336,7 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
     const was: []const u8 = switch (prompt.what) {
         .window => if (session) |s| (if (s.focused()) |win| win.name else "") else "",
         .session => if (session) |s| s.name else "",
-        .jump => "",
+        .jump, .search => "",
     };
 
     try b.edge("╭", "╮");
@@ -347,6 +347,7 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
             .window => "  ✎ Rename window",
             .session => "  ✎ Rename session",
             .jump => "  → Jump to window",
+            .search => "  / Search history",
         },
         dim,
         std.fmt.bufPrint(&buf, "{s}  ", .{clip(was, 12)}) catch "",
@@ -374,6 +375,8 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
         }
         try b.blank();
         try b.line(dim, "  ↑↓ move   ⏎ go   esc close", dim, "");
+    } else if (prompt.what == .search) {
+        try b.line(dim, if (prompt.missed) "  no match" else "  ⏎ older match   esc close", dim, "");
     } else try b.line(dim, "  ⏎ rename   esc cancel", dim, "");
     try b.edge("╰", "╯");
     return .{ .x = at.x + 6 + @as(i32, @intCast(cellCount(shown))), .y = at.y + 4 };
@@ -413,6 +416,9 @@ fn cell(app: *const App, pen: *Pen, w: *Writer, win: *const Window, tx: usize, t
         .bg_color_palette => style.bg_color = .palette(raw.content.color_palette.data),
         .bg_color_rgb => style.bg_color = .rgb(.{ .r = raw.content.color_rgb.r, .g = raw.content.color_rgb.g, .b = raw.content.color_rgb.b }),
         else => {},
+    }
+    if (pane.render.row_data.items(.selection)[pane.render.viewportStart() + py]) |range| {
+        if (px >= range[0] and px <= range[1]) style.flags.inverse = !style.flags.inverse;
     }
     try pen.set(w, style, dim);
     // Half of a wide character at a clipped edge is drawn as a space.
