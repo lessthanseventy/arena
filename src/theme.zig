@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const RGB = struct { r: u8, g: u8, b: u8 };
+pub const RGB = @import("color.zig").RGB;
 
 pub const Theme = struct {
     amber: RGB,
@@ -38,15 +38,6 @@ pub const Theme = struct {
     }
 };
 
-fn mix(a: RGB, b: RGB, t: f32) RGB {
-    return .{ .r = lerp(a.r, b.r, t), .g = lerp(a.g, b.g, t), .b = lerp(a.b, b.b, t) };
-}
-
-fn lerp(a: u8, b: u8, t: f32) u8 {
-    const af: f32 = @floatFromInt(a);
-    const bf: f32 = @floatFromInt(b);
-    return @intFromFloat(@round(af + (bf - af) * t));
-}
 
 /// How far clockwise round a `w` by `h` border the cell at (`x`, `y`) sits, from 0 to 1. A row
 /// counts double a column, as a cell is about twice as tall as it is wide.
@@ -62,7 +53,7 @@ pub fn around(w: u16, h: u16, x: usize, y: usize) f32 {
 /// The border colour at `pos` round the border: `a` fading to `b` and back, turned by `phase`.
 pub fn gradient(a: RGB, b: RGB, pos: f32, phase: f32) RGB {
     const t = @mod(pos - phase, 1.0);
-    return mix(a, b, 1.0 - @abs(2.0 * t - 1.0));
+    return a.mix(b, 1.0 - @abs(2.0 * t - 1.0));
 }
 
 test "parse needs every colour" {

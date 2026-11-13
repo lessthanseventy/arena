@@ -5,6 +5,7 @@ const layout = @import("layout.zig");
 const theme = @import("theme.zig");
 const keys = @import("keys.zig");
 const menu = @import("menu.zig");
+const color = @import("color.zig");
 const posix = std.posix;
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
@@ -68,6 +69,7 @@ const App = struct {
     /// Rows the strip still has to travel to its place after a session change.
     yoff: i32 = 0,
     menu: ?menu.Menu = null,
+    palette: color.Palette = .{},
     /// Set when arena asks tmux for a new window, so focus goes to it when it is listed.
     follow_active: bool = false,
     term_w: u16 = 80,
@@ -494,17 +496,23 @@ const App = struct {
     /// H and L move the window, Enter opens one, x closes it, m opens the menu and q leaves. Everything else is
     /// the focused window's, or the menu's while it is open. Alt is ESC and the letter together,
     /// which a typed Escape then a letter rarely is.
-    fn onInput(app: *App, bytes: []const u8) !void {
+    /// Returns how many bytes at the end of `bytes` to pass again in front of the next read.
+    fn onInput(app: *App, bytes: []const u8) !usize {
         var rest = bytes;
         while (rest.len > 0 and !app.quit) {
             const part = keys.next(rest);
             rest = part.rest;
             if (app.menu != null) try app.menuKeys(part.text) else try app.forward(part.text);
-            switch (part.event orelse continue) {
+            switch (part.event orelse return part.held.len) {
                 .mouse => |m| try app.onMouse(m),
                 .chord => |letter| try app.onChord(letter),
+                .osc => |body| {
+                    app.palette.answer(body);
+                    app.dirty = true;
+                },
             }
         }
+        return 0;
     }
 
     fn forward(app: *App, bytes: []const u8) !void {
@@ -521,26 +529,51 @@ const App = struct {
 
 const Pen = struct {
     style: vt.Style = .{},
-    faint: bool = false,
+    dimmed: bool = false,
     fresh: bool = true,
 
-    fn set(pen: *Pen, w: *Writer, style: vt.Style, faint: bool) !void {
-        if (!pen.fresh and pen.faint == faint and @as(u128, @bitCast(pen.style)) == @as(u128, @bitCast(style))) return;
-        pen.* = .{ .style = style, .faint = faint, .fresh = false };
+    /// `dim` is the palette to dim against, for an unfocused window's cells. The terminal's own
+    /// faint is not used for that: one keeping a minimum contrast repaints faint colours white.
+    fn set(pen: *Pen, w: *Writer, given: vt.Style, dim: ?*const color.Palette) !void {
+        if (!pen.fresh and pen.dimmed == (dim != null) and @as(u128, @bitCast(pen.style)) == @as(u128, @bitCast(given))) return;
+        pen.* = .{ .style = given, .dimmed = dim != null, .fresh = false };
+        var style = given;
+        if (dim) |palette| {
+            var fg = resolve(palette, style.fg_color) orelse palette.fg;
+            var bg = resolve(palette, style.bg_color);
+            if (style.flags.inverse) {
+                const was = fg;
+                fg = bg orelse palette.bg;
+                bg = was;
+                style.flags.inverse = false;
+            }
+            if (bg) |c| bg = color.dimBg(c, palette.bg);
+            fg = color.dimFg(fg, bg orelse palette.bg);
+            style.fg_color = .rgb(.{ .r = fg.r, .g = fg.g, .b = fg.b });
+            style.bg_color = if (bg) |c| .rgb(.{ .r = c.r, .g = c.g, .b = c.b }) else .none;
+        }
         try w.writeAll("\x1b[0");
         if (style.flags.bold) try w.writeAll(";1");
-        if (style.flags.faint or faint) try w.writeAll(";2");
+        if (style.flags.faint) try w.writeAll(";2");
         if (style.flags.italic) try w.writeAll(";3");
         if (style.flags.underline != .none) try w.writeAll(";4");
         if (style.flags.inverse) try w.writeAll(";7");
         if (style.flags.strikethrough) try w.writeAll(";9");
-        try color(w, 38, style.fg_color);
-        try color(w, 48, style.bg_color);
+        try sgrColor(w, 38, style.fg_color);
+        try sgrColor(w, 48, style.bg_color);
         try w.writeAll("m");
     }
 
+    fn resolve(palette: *const color.Palette, c: vt.Style.Color) ?color.RGB {
+        return switch (c.value()) {
+            .none => null,
+            .palette => |idx| palette.colors[idx],
+            .rgb => |rgb| .{ .r = rgb.r, .g = rgb.g, .b = rgb.b },
+        };
+    }
+
     /// Palette colours stay palette indices, so the outer terminal's theme shows through.
-    fn color(w: *Writer, base: u8, c: vt.Style.Color) !void {
+    fn sgrColor(w: *Writer, base: u8, c: vt.Style.Color) !void {
         switch (c.value()) {
             .none => {},
             .palette => |idx| try w.print(";{d};5;{d}", .{ base, idx }),
@@ -585,7 +618,7 @@ const Column = struct {
                     style.flags.inverse = true;
                 }
             }
-            try pen.set(w, style, false);
+            try pen.set(w, style, null);
             return put(w, col.title[cx - 2]);
         }
 
@@ -593,7 +626,7 @@ const Column = struct {
         if (bottom and col.focused and layout.inDots(col.w, count, cx)) {
             const dot = layout.dotAt(col.w, count, cx);
             const here = dot == app.focus;
-            try pen.set(w, if (app.theme) |t| rgbStyle(if (here) t.amber else t.dim) else .{ .fg_color = .palette(if (here) 4 else 8) }, false);
+            try pen.set(w, if (app.theme) |t| rgbStyle(if (here) t.amber else t.dim) else .{ .fg_color = .palette(if (here) 4 else 8) }, null);
             return put(w, if (dot == null) ' ' else if (here) '●' else '○');
         }
 
@@ -603,7 +636,7 @@ const Column = struct {
             theme.around(col.w, h, cx, y),
             if (col.focused) app.phase else 0,
         )) else .{ .fg_color = .palette(if (col.focused) 4 else 8) };
-        try pen.set(w, style, false);
+        try pen.set(w, style, null);
         const left = cx == 0;
         const right = cx == col.w - 1;
         try put(w, if (top) (if (left) '╭' else if (right) '╮' else '─') else if (bottom) (if (left) '╰' else if (right) '╯' else '─') else '│');
@@ -618,7 +651,7 @@ fn drawRail(app: *const App, w: *Writer) !void {
     if (rail == 0) return;
     var pen: Pen = .{};
     try w.writeAll("\x1b[1;1H");
-    try pen.set(w, if (app.theme) |t| rgbStyle(t.dim) else .{ .fg_color = .palette(8) }, false);
+    try pen.set(w, if (app.theme) |t| rgbStyle(t.dim) else .{ .fg_color = .palette(8) }, null);
     try w.writeAll(" " ++ rail_button);
     for (app.sessions.items, 0..) |s, i| {
         if (i + 2 >= app.view_h) break;
@@ -634,7 +667,7 @@ fn drawRail(app: *const App, w: *Writer) !void {
             }
         }
         try w.print("\x1b[{d};1H", .{i + 2});
-        try pen.set(w, style, false);
+        try pen.set(w, style, null);
         try w.writeAll(" ");
         var cells: usize = 1;
         var name = std.unicode.Utf8View.initUnchecked(s.name).iterator();
@@ -673,20 +706,20 @@ fn drawMenu(app: *const App, w: *Writer, open: menu.Menu) !void {
     var pen: Pen = .{};
 
     try w.print("\x1b[{d};{d}H", .{ box.y + 1, box.x + 1 });
-    try pen.set(w, edge, false);
+    try pen.set(w, edge, null);
     try w.writeAll("╭─");
     try w.writeAll(title);
     for (0..menu.width -| (3 + title_cells)) |_| try w.writeAll("─");
     try w.writeAll("╮");
     for (open.items, 0..) |item, i| {
         try w.print("\x1b[{d};{d}H", .{ box.y + 2 + i, box.x + 1 });
-        try pen.set(w, edge, false);
+        try pen.set(w, edge, null);
         try w.writeAll("│");
-        try pen.set(w, if (i == open.selected) chip(app) else .{}, false);
+        try pen.set(w, if (i == open.selected) chip(app) else .{}, null);
         try w.print(" {s}", .{item.label});
         for (0..menu.width - 5 - item.label.len) |_| try w.writeAll(" ");
         try w.print("{c} ", .{item.key});
-        try pen.set(w, edge, false);
+        try pen.set(w, edge, null);
         try w.writeAll("│");
     }
     try w.print("\x1b[{d};{d}H", .{ box.y + 2 + open.items.len, box.x + 1 });
@@ -761,7 +794,7 @@ fn draw(app: *App, w: *Writer, what: Draw) !void {
                     .bg_color_rgb => style.bg_color = .rgb(.{ .r = raw.content.color_rgb.r, .g = raw.content.color_rgb.g, .b = raw.content.color_rgb.b }),
                     else => {},
                 }
-                try pen.set(w, style, !focused);
+                try pen.set(w, style, if (focused) null else &app.palette);
                 // Half of a wide character at a clipped edge is drawn as a space.
                 const whole = switch (raw.wide) {
                     .wide => sx + 1 < in_hi,
@@ -887,7 +920,9 @@ fn run(init: std.process.Init) !bool {
     try posix.tcsetattr(posix.STDIN_FILENO, .FLUSH, raw);
     defer posix.tcsetattr(posix.STDIN_FILENO, .FLUSH, saved) catch {};
     // 1002: presses, releases and drags; 1006: the SGR report format, which has no column limit
-    try tty.writeStreamingAll(io, "\x1b[?1049h\x1b[?1002h\x1b[?1006h");
+    try tty.writeStreamingAll(io, "\x1b[?1049h\x1b[?1002h\x1b[?1006h" ++ color.Palette.query);
+    var typed: std.ArrayList(u8) = .empty;
+    defer typed.deinit(gpa);
     defer tty.writeStreamingAll(io, "\x1b[?1006l\x1b[?1002l\x1b[0m\x1b[?25h\x1b[?1049l") catch {};
 
     posix.sigaction(.WINCH, &.{ .handler = .{ .handler = onWinch }, .mask = posix.sigemptyset(), .flags = 0 }, null);
@@ -944,7 +979,10 @@ fn run(init: std.process.Init) !bool {
         if (fds[0].revents & posix.POLL.IN != 0) {
             const n = try posix.read(posix.STDIN_FILENO, &buf);
             if (n == 0) break;
-            try app.onInput(buf[0..n]);
+            try typed.appendSlice(gpa, buf[0..n]);
+            const held = try app.onInput(typed.items);
+            std.mem.copyForwards(u8, typed.items[0..held], typed.items[typed.items.len - held ..]);
+            typed.items.len = held;
         }
         if (fds[1].revents & (posix.POLL.IN | posix.POLL.HUP) != 0) {
             const n = try posix.read(fds[1].fd, &buf);
@@ -970,5 +1008,6 @@ test {
     _ = theme;
     _ = keys;
     _ = menu;
+    _ = color;
     _ = layout;
 }

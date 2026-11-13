@@ -28,6 +28,8 @@ pub const Event = union(enum) {
     /// The letter of an Alt chord arena acts on.
     chord: u8,
     mouse: Mouse,
+    /// A terminal's reply to a query, the text between `ESC ]` and its terminator.
+    osc: []const u8,
 };
 
 pub const Part = struct {
@@ -35,13 +37,16 @@ pub const Part = struct {
     text: []const u8,
     event: ?Event,
     rest: []const u8,
+    /// The start of a mouse report or reply whose end has not been read yet: the caller keeps it
+    /// and passes it again in front of what it reads next.
+    held: []const u8 = &.{},
 };
 
 /// The keys arena takes with Alt; `\r` is Enter.
 pub const chords = "hjklHLxmq123456789\r";
 
-/// Splits input at the first thing arena reads itself: an Alt chord (ESC then one of `chords`)
-/// or an SGR mouse report.
+/// Splits input at the first thing arena reads itself: an Alt chord (ESC then one of `chords`),
+/// an SGR mouse report, or the terminal's reply to a query.
 pub fn next(bytes: []const u8) Part {
     var i: usize = 0;
     while (std.mem.indexOfScalarPos(u8, bytes, i, 0x1b)) |esc| : (i = esc + 1) {
@@ -52,6 +57,20 @@ pub fn next(bytes: []const u8) Part {
         }
         if (mouse(after)) |found| {
             return .{ .text = bytes[0..esc], .event = .{ .mouse = found.mouse }, .rest = after[found.len..] };
+        }
+        if (std.mem.startsWith(u8, after, "]") and after.len > 1) {
+            if (std.mem.indexOfAny(u8, after, "\x07\x1b")) |end| {
+                const st = after[end] == 0x1b;
+                if (!st or (end + 1 < after.len and after[end + 1] == '\\')) {
+                    const len = end + if (st) @as(usize, 2) else 1;
+                    return .{ .text = bytes[0..esc], .event = .{ .osc = after[1..end] }, .rest = after[len..] };
+                }
+            }
+        }
+        const unfinished = (std.mem.startsWith(u8, after, "]") and after.len > 1) or
+            (std.mem.startsWith(u8, after, "[<") and std.mem.indexOfAny(u8, after, "Mm") == null);
+        if (unfinished and after.len < 64 and std.mem.indexOfScalar(u8, after, 0x1b) == null) {
+            return .{ .text = bytes[0..esc], .event = null, .rest = &.{}, .held = bytes[esc..] };
         }
     }
     return .{ .text = bytes, .event = null, .rest = &.{} };
@@ -81,11 +100,30 @@ test "Alt+Enter is a chord" {
 }
 
 test "other escape sequences and a trailing escape are the window's" {
-    for ([_][]const u8{ "\x1b[A", "\x1bOP", "\x1bz", "abc\x1b", "\x1b[<0;1", "\x1b[<0;0;1M", "" }) |bytes| {
+    for ([_][]const u8{ "\x1b[A", "\x1bOP", "\x1bz", "abc\x1b", "\x1b[<0;0;1M", "" }) |bytes| {
         const part = next(bytes);
         try std.testing.expectEqualStrings(bytes, part.text);
         try std.testing.expectEqual(@as(?Event, null), part.event);
     }
+}
+
+test "a terminal's reply is an event, ended by ST or BEL" {
+    const st = next("a\x1b]4;5;rgb:ff/00/00\x1b\\b");
+    try std.testing.expectEqualStrings("a", st.text);
+    try std.testing.expectEqualStrings("4;5;rgb:ff/00/00", st.event.?.osc);
+    try std.testing.expectEqualStrings("b", st.rest);
+    try std.testing.expectEqualStrings("11;rgb:00/00/00", next("\x1b]11;rgb:00/00/00\x07").event.?.osc);
+}
+
+test "a report or reply cut off by the read is held, not typed" {
+    for ([_][]const u8{ "\x1b[<0;1", "\x1b]4;5;rgb:ff" }) |cut| {
+        const part = next(cut);
+        try std.testing.expectEqualStrings("", part.text);
+        try std.testing.expectEqual(@as(?Event, null), part.event);
+        try std.testing.expectEqualStrings(cut, part.held);
+    }
+    try std.testing.expectEqualStrings("x", next("x\x1b[<0;1").text);
+    try std.testing.expectEqualStrings("\x1b]", next("\x1b]").text);
 }
 
 test "a mouse report gives its cell from zero and what happened" {
