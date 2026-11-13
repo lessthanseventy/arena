@@ -137,27 +137,69 @@ const Column = struct {
     }
 };
 
-/// The sessions, one to a row down the left edge under the menu button, the current one a chip.
+const rail_title = " sessions ";
+
+/// The session rail, a bordered panel down the left edge: a session a row with how many windows
+/// it has, the current one a chip, and the menu button on its last row.
 fn rail(app: *const App, w: *Writer) !void {
     const width = app.railW();
     if (width == 0) return;
+    const h = app.view_h;
+    const inner = width - 2;
+    const dim = ink(app, "dim", 8);
     var pen: Pen = .{};
-    try w.writeAll("\x1b[1;1H");
-    try pen.set(w, ink(app, "dim", 8), null);
-    try w.writeAll(" " ++ app_mod.rail_button);
-    for (app.sessions.items, 0..) |s, i| {
-        if (i + 2 >= app.view_h) break;
-        try w.print("\x1b[{d};1H", .{i + 2});
-        try pen.set(w, if (s.id == app.current) chip(app) else ink(app, "dim", 8), null);
-        try w.writeAll(" ");
-        var cells: usize = 1;
-        var name = std.unicode.Utf8View.initUnchecked(s.name).iterator();
-        while (name.nextCodepoint()) |cp| : (cells += 1) {
-            if (cells + 1 >= width) break;
-            try put(w, cp);
+    var y: u16 = 0;
+    while (y < h) : (y += 1) {
+        try w.print("\x1b[{d};1H", .{y + 1});
+        const top = y == 0;
+        const bottom = y == h - 1;
+        var x: u16 = 0;
+        while (x < width) : (x += 1) {
+            if (!top and !bottom and x == 1) {
+                try railRow(app, w, &pen, y, inner);
+                x = width - 2;
+                continue;
+            }
+            if (top and x >= 2 and x - 2 < rail_title.len) {
+                try pen.set(w, dim, null);
+                try w.writeByte(rail_title[x - 2]);
+                continue;
+            }
+            const edge: vt.Style = if (app.theme) |t|
+                rgbStyle(theme.gradient(t.amberdim, t.emberdim, theme.around(width, h, x, y), 0))
+            else
+                .{ .fg_color = .palette(8) };
+            try pen.set(w, edge, null);
+            const left = x == 0;
+            const right = x == width - 1;
+            try put(w, if (top) (if (left) '╭' else if (right) '╮' else '─') else if (bottom) (if (left) '╰' else if (right) '╯' else '─') else '│');
         }
-        while (cells < width) : (cells += 1) try w.writeAll(" ");
     }
+}
+
+/// The `inner` cells of the rail's row `y` between its borders.
+fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16) !void {
+    const dim = ink(app, "dim", 8);
+    var filled: usize = 0;
+    if (y + 2 == app.view_h) {
+        try pen.set(w, dim, null);
+        try w.writeAll(" " ++ app_mod.rail_button);
+        filled = 1 + cellCount(app_mod.rail_button);
+    } else if (y + 3 < app.view_h and y - 1 < app.sessions.items.len) {
+        const s = app.sessions.items[y - 1];
+        const here = s.id == app.current;
+        const cut = cellCount(s.name) > inner - 5;
+        const name = clip(s.name, inner - 5 - @intFromBool(cut));
+        try pen.set(w, if (here) chip(app) else .{}, null);
+        try w.writeAll(" ");
+        try w.writeAll(name);
+        if (cut) try w.writeAll("…");
+        for (0..inner - 5 - cellCount(name) - @intFromBool(cut)) |_| try w.writeAll(" ");
+        try pen.set(w, if (here) chip(app) else dim, null);
+        try w.print(" {d:>2} ", .{@min(s.wins.items.len, 99)});
+        filled = inner;
+    } else try pen.set(w, .{}, null);
+    for (filled..inner) |_| try w.writeAll(" ");
 }
 
 fn cellCount(text: []const u8) usize {

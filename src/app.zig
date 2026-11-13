@@ -203,13 +203,13 @@ pub const App = struct {
         return layout.scrollTarget(app.view_w, app.colW(s), s.focus);
     }
 
-    /// The session rail's width: the longest name, to 14 cells, and a space either side. A
-    /// terminal too narrow for it has none.
+    /// The session rail's width: its border, the longest name, to 14 cells, and each session's
+    /// count of windows. A terminal too narrow for it has none.
     pub fn railW(app: *const App) u16 {
-        if (app.term_w < 40 or app.sessions.items.len == 0) return 0;
+        if (app.term_w < 48 or app.sessions.items.len == 0) return 0;
         var longest: usize = 1;
         for (app.sessions.items) |s| longest = @max(longest, std.unicode.utf8CountCodepoints(s.name) catch s.name.len);
-        return @as(u16, @max(rail_button.len, @min(longest, 14))) + 2;
+        return @as(u16, @max(7, @min(longest, 14))) + 7;
     }
 
     pub fn fit(app: *App) void {
@@ -523,8 +523,8 @@ pub const App = struct {
                 return true;
             }
             if (!m.leftPress()) return false;
-            if (m.y == 0) app.openMenu(&menu.main);
-            if (m.y >= 1 and m.y - 1 < app.sessions.items.len) try app.sessionTo(m.y - 1);
+            if (m.y + 2 == app.view_h) app.openMenu(&menu.main);
+            if (m.y >= 1 and m.y + 3 < app.view_h and m.y - 1 < app.sessions.items.len) try app.sessionTo(m.y - 1);
             return true;
         }
         const s = app.cur() orelse return false;
