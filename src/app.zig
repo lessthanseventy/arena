@@ -144,6 +144,8 @@ pub const App = struct {
     menu: ?menu.Menu = null,
     /// A name being typed, over everything else.
     prompt: ?menu.Prompt = null,
+    /// The window picked in the overview, while it is open in place of the strip.
+    overview: ?Spot = null,
     /// Set when the session's current window changed in tmux, so focus goes to it when listed.
     follow_active: bool = false,
     palette: color.Palette = .{},
@@ -563,6 +565,99 @@ pub const App = struct {
 
     const Name = union(enum) { window: u32, session: u32 };
 
+    /// A window by where it is: which session of the list, which window of the session.
+    pub const Spot = struct { session: usize, win: usize };
+
+    /// The outer size of a window's picture in the overview.
+    pub const thumb_w = 26;
+    pub const thumb_h = 7;
+
+    /// The row a session's name is on in the overview, its windows' pictures in the rows under
+    /// it; null when it is off the screen. As many sessions show as fit, the picked one among them.
+    pub fn overviewRow(app: *const App, session: usize) ?u16 {
+        const spot = app.overview orelse return null;
+        const block = thumb_h + 1;
+        const shown: usize = @max(1, app.view_h / block);
+        const first = if (spot.session >= shown) spot.session - shown + 1 else 0;
+        if (session < first or session >= first + shown) return null;
+        return @intCast((session - first) * block);
+    }
+
+    /// The top left corner of a window's picture in the overview; null when it is off the screen.
+    pub fn thumbAt(app: *const App, at: Spot) ?struct { x: u16, y: u16 } {
+        const spot = app.overview orelse return null;
+        const row = app.overviewRow(at.session) orelse return null;
+        const stride = thumb_w + 1;
+        const across: usize = @max(1, (app.view_w + 1) / stride);
+        const first = if (at.session == spot.session and spot.win >= across) spot.win - across + 1 else 0;
+        if (at.win < first or at.win >= first + across) return null;
+        return .{ .x = @intCast(app.term_w - app.view_w + (at.win - first) * stride), .y = row + 1 };
+    }
+
+    /// Opens the overview on the window in view. The other sessions' panes are captured again,
+    /// so their pictures are of now and not of when arena was last there.
+    fn openOverview(app: *App) void {
+        const at = app.sessionIndex(app.current) orelse return;
+        app.overview = .{ .session = at, .win = app.sessions.items[at].focus };
+        for (app.sessions.items) |s| {
+            if (s.id == app.current) continue;
+            for (s.wins.items) |win| for (win.panes.items) |pane| {
+                if (pane.seed == .done) pane.seed = .wanted;
+            };
+        }
+        app.want_list = true;
+        app.dirty = true;
+    }
+
+    /// A key in the overview: h, j, k, l and the arrows move, Enter goes to the window picked,
+    /// Escape and q close.
+    fn overviewKey(app: *App, key: []const u8) !void {
+        app.dirty = true;
+        const count = app.sessions.items.len;
+        if (count == 0) {
+            app.overview = null;
+            return;
+        }
+        const spot = &app.overview.?;
+        spot.session = @min(spot.session, count - 1);
+        const is = struct {
+            fn any(pressed: []const u8, names: []const []const u8) bool {
+                for (names) |name| if (std.mem.eql(u8, pressed, name)) return true;
+                return false;
+            }
+        }.any;
+        if (is(key, &.{ "h", "\x1b[D", "\x1bOD" })) spot.win -|= 1;
+        if (is(key, &.{ "l", "\x1b[C", "\x1bOC" })) spot.win += 1;
+        if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) spot.session -|= 1;
+        if (is(key, &.{ "j", "\x1b[B", "\x1bOB" }) and spot.session + 1 < count) spot.session += 1;
+        const s = app.sessions.items[spot.session];
+        spot.win = @min(spot.win, s.wins.items.len -| 1);
+        if (is(key, &.{ "\x1b", "q" })) app.overview = null;
+        if (is(key, &.{"\r"}) and s.wins.items.len > 0) {
+            const win = spot.win;
+            app.overview = null;
+            try app.jumpTo(s, win);
+        }
+    }
+
+    /// The mouse in the overview: a click on a picture goes to its window, one anywhere else
+    /// closes the overview, and the wheel moves between sessions.
+    fn overviewMouse(app: *App, m: keys.Mouse) !void {
+        if (m.wheel()) {
+            if (app.navStep()) try app.overviewKey(if (m.code & 1 == 0) "k" else "j");
+            return;
+        }
+        if (!m.leftPress() and !m.rightPress()) return;
+        app.dirty = true;
+        if (m.leftPress()) for (app.sessions.items, 0..) |s, si| for (s.wins.items, 0..) |_, wi| {
+            const at = app.thumbAt(.{ .session = si, .win = wi }) orelse continue;
+            if (m.x < at.x or m.x >= at.x + thumb_w or m.y < at.y or m.y >= at.y + thumb_h) continue;
+            app.overview = null;
+            return app.jumpTo(s, wi);
+        };
+        app.overview = null;
+    }
+
     pub const Hit = struct { session: *Session, index: usize };
 
     /// The windows of every session whose "session window" answers `query`, the closest first,
@@ -645,6 +740,7 @@ pub const App = struct {
     /// A right click nothing else took opens the menu; with the menu open, a click picks from it
     /// or, outside it, closes it.
     fn onMouse(app: *App, m: keys.Mouse) !void {
+        if (app.overview != null) return app.overviewMouse(m);
         if (app.prompt) |*prompt| {
             if (!m.leftPress() and !m.rightPress()) return;
             app.dirty = true;
@@ -804,9 +900,9 @@ pub const App = struct {
         app.dirty = true;
     }
 
-    /// Whether the menu or a prompt is open over the strip.
+    /// Whether the menu, a prompt or the overview has the keys and lies over the strip.
     pub fn overlay(app: *const App) bool {
-        return app.menu != null or app.prompt != null;
+        return app.menu != null or app.prompt != null or app.overview != null;
     }
 
     /// Where the top left corner of a menu or prompt `height` rows tall is: centred over the strip.
@@ -824,7 +920,9 @@ pub const App = struct {
             const len: usize = if (text[i] == 0x1b and text.len - i >= 3) 3 else 1;
             const key = text[i..][0..len];
             i += len;
-            if (app.prompt) |*prompt| {
+            if (app.overview != null) {
+                try app.overviewKey(key);
+            } else if (app.prompt) |*prompt| {
                 app.dirty = true;
                 switch (prompt.press(key)) {
                     .none => {},
@@ -890,6 +988,7 @@ pub const App = struct {
                     .move_right => try app.swapBy(1),
                     .full_width => app.toggleFull(),
                     .jump => app.prompt = .{ .what = .jump },
+                    .overview => app.openOverview(),
                     .split_right => try app.send(.ignore, "split-window -h -c '#{{pane_current_path}}'", .{}),
                     .split_below => try app.send(.ignore, "split-window -v -c '#{{pane_current_path}}'", .{}),
                     .close_pane => try app.closePane(),
@@ -936,6 +1035,7 @@ pub const App = struct {
         if (app.overlay()) {
             app.menu = null;
             app.prompt = null;
+            app.overview = null;
             app.dirty = true;
             return;
         }
@@ -950,6 +1050,7 @@ pub const App = struct {
             'm' => app.openMenu(&menu.main),
             'q' => app.quit = true,
             'z' => app.toggleFull(),
+            'o' => app.openOverview(),
             'p' => {
                 app.prompt = .{ .what = .jump };
                 app.dirty = true;
@@ -963,7 +1064,8 @@ pub const App = struct {
 
     /// With Alt: h and l move along the strip, j and k between sessions, 1 to 9 go to a window,
     /// H and L move the window, Enter opens one, x closes it, z gives it the whole width, p asks
-    /// for a window to jump to, m opens the menu and q leaves.
+    /// for a window to jump to, o shows every session's windows at once, m opens the menu and q
+    /// leaves.
     /// Everything else is the focused pane's, or the menu's while it is open. Alt is ESC and the
     /// letter together, which a typed Escape then a letter rarely is.
     ///

@@ -13,6 +13,7 @@ pub const Action = enum {
     new_session,
     rename_session,
     jump,
+    overview,
     detach,
     confirm_close,
     cancel,
@@ -42,6 +43,7 @@ pub const main = [_]Item{
     .{ .icon = "◇", .label = "New session", .key = 'S', .action = .new_session, .group = true },
     .{ .icon = "✎", .label = "Rename session", .key = 'R', .action = .rename_session },
     .{ .icon = "→", .label = "Jump to window", .key = 'p', .action = .jump },
+    .{ .icon = "▦", .label = "Overview", .key = 'o', .action = .overview },
     .{ .icon = "⎋", .label = "Detach", .key = 'q', .action = .detach },
 };
 

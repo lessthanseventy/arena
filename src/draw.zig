@@ -509,19 +509,95 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
     return cursor;
 }
 
-/// One frame: the rail, the current session's strip (and, mid-slide, the one being left), the
-/// menu when open, and the cursor.
+/// A window's picture in the overview, its top left corner at (`x`, `y`): a small frame with its
+/// number and name, and inside it the top left of the window, from far enough down to show the
+/// row its cursor is on.
+fn thumb(app: *App, w: *Writer, s: *const Session, win: *const Window, number: usize, x: u16, y: u16, picked: bool) !void {
+    for (win.panes.items) |pane| try pane.render.update(app.gpa, &pane.term);
+    const tw = App.thumb_w;
+    const th = App.thumb_h;
+    const edge = if (picked) ink(app, "amber", 4) else ink(app, "amberdim", 8);
+    const mark = app.mark(s, win);
+    var buf: [64]u8 = undefined;
+    const title = std.fmt.bufPrint(&buf, " {d} {s} ", .{ number + 1, clip(win.name, tw - 10) }) catch "";
+
+    var off: usize = win.h -| (th - 2);
+    if (win.activePane()) |pane| {
+        if (pane.term.screens.active_key == .alternate) {
+            off = 0;
+        } else if (pane.render.cursor.viewport) |at| {
+            off = @min(off, (pane.y + at.y + 1) -| (th - 2));
+        }
+    }
+
+    var pen: Pen = .{};
+    for (0..th) |row| {
+        if (y + row >= app.view_h) break;
+        try w.print("\x1b[{d};{d}H", .{ y + row + 1, x + 1 });
+        try pen.set(w, edge, null);
+        if (row == 0 or row == th - 1) {
+            try w.writeAll(if (row == 0) "╭─" else "╰─");
+            var used: usize = 2;
+            if (row == 0) {
+                try pen.set(w, if (picked) chip(app) else ink(app, "dim", 8), null);
+                try w.writeAll(title);
+                used += cellCount(title);
+                if (mark != .none) {
+                    try pen.set(w, ink(app, "amber", 4), null);
+                    try put(w, glyph(mark));
+                    used += 1;
+                }
+                try pen.set(w, edge, null);
+            }
+            for (used..tw - 1) |_| try w.writeAll("─");
+            try w.writeAll(if (row == 0) "╮" else "╯");
+            continue;
+        }
+        try w.writeAll("│");
+        for (0..tw - 2) |tx| try cell(app, &pen, w, win, tx, row - 1 + off, picked, false, tx + 3 == tw);
+        try pen.set(w, edge, null);
+        try w.writeAll("│");
+    }
+}
+
+/// Every session a row: its name, then a picture of each of its windows.
+fn overview(app: *App, w: *Writer, spot: App.Spot) !void {
+    const ox = app.term_w - app.view_w;
+    var pen: Pen = .{};
+    for (app.sessions.items, 0..) |s, si| {
+        const row = app.overviewRow(si) orelse continue;
+        if (row >= app.view_h) continue;
+        try w.print("\x1b[{d};{d}H", .{ row + 1, ox + 1 });
+        try pen.set(w, if (si == spot.session) chip(app) else if (s.id == app.current) heading(app) else .{}, null);
+        try w.print(" {s} ", .{clip(s.name, 24)});
+        try pen.set(w, ink(app, "amber", 4), null);
+        try w.writeAll(" ");
+        try put(w, glyph(app.sessionMark(s)));
+        for (s.wins.items, 0..) |win, wi| {
+            const at = app.thumbAt(.{ .session = si, .win = wi }) orelse continue;
+            try thumb(app, w, s, win, wi, at.x, at.y, si == spot.session and wi == spot.win);
+        }
+    }
+}
+
+/// One frame: the rail, the current session's strip (and, mid-slide, the one being left) or the
+/// overview in its place, the menu or prompt when open, and the cursor.
 pub fn frame(app: *App, w: *Writer, what: What) !void {
     try w.writeAll("\x1b[?2026h\x1b[?25l\x1b[0m");
     if (what == .all) {
         try w.writeAll("\x1b[2J");
         try rail(app, w);
     }
-    if (app.yoff != 0) if (app.sessionById(app.prev)) |leaving| {
-        const way: i32 = if (app.yoff > 0) 1 else -1;
-        _ = try strip(app, w, leaving, app.yoff - way * @as(i32, app.view_h), .all);
-    };
-    var cursor: ?Cursor = if (app.cur()) |s| try strip(app, w, s, app.yoff, what) else null;
+    var cursor: ?Cursor = null;
+    if (app.overview) |spot| {
+        try overview(app, w, spot);
+    } else {
+        if (app.yoff != 0) if (app.sessionById(app.prev)) |leaving| {
+            const way: i32 = if (app.yoff > 0) 1 else -1;
+            _ = try strip(app, w, leaving, app.yoff - way * @as(i32, app.view_h), .all);
+        };
+        if (app.cur()) |s| cursor = try strip(app, w, s, app.yoff, what);
+    }
     if (app.prompt) |*prompt| {
         cursor = try promptBox(app, w, prompt);
     } else if (app.menu) |open| {
