@@ -14,6 +14,8 @@ const history_lines = 5000;
 /// Wheel and swipe steps that move between windows or sessions are taken this far apart.
 const nav_gap_ms = 150;
 
+/// Two clicks on a name this close together ask to rename it.
+const double_click_ms = 400;
 /// A window with output this recent is still at it.
 const busy_ms = 3000;
 
@@ -165,6 +167,16 @@ pub const App = struct {
     ended: bool = false,
     /// Milliseconds on a clock that only goes forward, set each turn of the loop.
     now: i64 = 0,
+    /// What the held left button is moving: the line after a pane, to resize it, or a window by
+    /// its title, along the strip.
+    drag: union(enum) {
+        none,
+        divider: struct { pane: u32, upright: bool, asked: i32 = -1 },
+        title: u32,
+    } = .none,
+    /// The name last clicked, a window's or a session's, and when.
+    clicked: ?Name = null,
+    clicked_at: i64 = 0,
     /// Seconds of the wall clock, as tmux stamps a window's activity.
     wall: i64 = 0,
     nav_at: i64 = 0,
@@ -549,6 +561,53 @@ pub const App = struct {
         app.dirty = true;
     }
 
+    const Name = union(enum) { window: u32, session: u32 };
+
+    /// Whether this click on a name is the second of a pair.
+    fn doubleClick(app: *App, name: Name) bool {
+        const again = std.meta.eql(app.clicked, @as(?Name, name)) and app.now - app.clicked_at < double_click_ms;
+        app.clicked = if (again) null else name;
+        app.clicked_at = app.now;
+        return again;
+    }
+
+    /// The held button moved to `m`, or let go.
+    fn dragTo(app: *App, s: *Session, m: keys.Mouse) !void {
+        if (m.release or !m.motion()) {
+            app.drag = .none;
+            return;
+        }
+        const col_w = app.colW(s);
+        const ox: i32 = app.term_w - app.view_w;
+        switch (app.drag) {
+            .none => {},
+            .divider => |*line| {
+                const win = s.focused() orelse return;
+                const pane = for (win.panes.items) |pane| {
+                    if (pane.id == line.pane) break pane;
+                } else {
+                    app.drag = .none;
+                    return;
+                };
+                const inside = ox + layout.colX(col_w, s.focus) - s.scroll + 1;
+                const want: i32 = if (line.upright) m.x - inside - pane.x else @as(i32, m.y) - 1 - pane.y;
+                if (want < 1 or want == line.asked) return;
+                line.asked = want;
+                const axis: u8 = if (line.upright) 'x' else 'y';
+                try app.send(.ignore, "resize-pane -t %{d} -{c} {d}", .{ pane.id, axis, want });
+            },
+            // One place at a time, and not before the last move has been listed and the strip
+            // has come to rest: the pointer is read against where the columns are.
+            .title => |id| {
+                if (app.listing or app.want_list or s.scroll != app.target(s)) return;
+                if (s.wins.items.len == 0 or s.wins.items[s.focus].id != id) return;
+                const at = @max(0, m.x - ox + s.scroll);
+                const over: usize = @min(s.wins.items.len - 1, @as(usize, @intCast(@divTrunc(at, @as(i32, col_w) + layout.gap))));
+                if (over != s.focus) try app.swapBy(if (over > s.focus) 1 else -1);
+            },
+        }
+    }
+
     /// True when a wheel or swipe step may move between windows or sessions: they come in
     /// bursts, and each burst is one step.
     fn navStep(app: *App) bool {
@@ -576,9 +635,11 @@ pub const App = struct {
     }
 
     /// Whether the mouse event was for something. On the rail: a click picks a session or the
-    /// menu, the wheel steps through sessions. On the strip: a click goes to that window, dot or
-    /// pane, a middle click on a title closes that window, a sideways wheel steps through
-    /// windows, and anything inside a pane is its program's or scrolls it.
+    /// menu, a second one on the current session renames it, the wheel steps through sessions.
+    /// On the strip: a click goes to that window, dot or pane; a title is dragged to move its
+    /// window, clicked twice to rename it, middle clicked to close it; the line between panes
+    /// is dragged to resize them; a sideways wheel steps through windows; and anything inside a
+    /// pane is its program's or scrolls it.
     fn mouseHit(app: *App, m: keys.Mouse) !bool {
         const ox = app.term_w - app.view_w;
         if (m.x < ox) {
@@ -588,11 +649,21 @@ pub const App = struct {
             }
             if (!m.leftPress()) return false;
             if (m.y + 2 == app.view_h) app.openMenu(&menu.main);
-            if (m.y >= 1 and m.y + 3 < app.view_h and m.y - 1 < app.sessions.items.len) try app.sessionTo(m.y - 1);
+            if (m.y >= 1 and m.y + 3 < app.view_h and m.y - 1 < app.sessions.items.len) {
+                const id = app.sessions.items[m.y - 1].id;
+                if (app.doubleClick(.{ .session = id }) and id == app.current) {
+                    app.prompt = .{ .what = .session };
+                    app.dirty = true;
+                } else try app.sessionTo(m.y - 1);
+            }
             return true;
         }
         const s = app.cur() orelse return false;
         if (app.yoff != 0) return false;
+        if (app.drag != .none) {
+            try app.dragTo(s, m);
+            return true;
+        }
         if (m.sideways()) {
             if (app.navStep()) try app.focusBy(if (m.code & 1 == 0) -1 else 1);
             return true;
@@ -611,6 +682,14 @@ pub const App = struct {
             app.openMenu(&menu.confirm);
             return true;
         }
+        if (m.y == 0 and m.leftPress()) {
+            if (!focused) try app.focusTo(index);
+            if (app.doubleClick(.{ .window = win.id })) {
+                app.prompt = .{ .what = .window };
+                app.dirty = true;
+            } else app.drag = .{ .title = win.id };
+            return true;
+        }
         if (!focused and !m.wheel()) {
             if (m.leftPress()) try app.focusTo(index);
             return m.leftPress();
@@ -621,7 +700,20 @@ pub const App = struct {
             return focused and m.leftPress();
         }
         if (cx == 0 or cx == col_w - 1 or m.y == 0) return false;
-        const pane = win.paneAt(cx - 1, m.y - 1) orelse return false;
+        const pane = win.paneAt(cx - 1, m.y - 1) orelse {
+            if (!focused or !m.leftPress()) return false;
+            const tx = cx - 1;
+            const ty = m.y - 1;
+            if (tx > 0) if (win.paneAt(tx - 1, ty)) |before| {
+                app.drag = .{ .divider = .{ .pane = before.id, .upright = true } };
+                return true;
+            };
+            if (ty > 0) if (win.paneAt(tx, ty - 1)) |above| {
+                app.drag = .{ .divider = .{ .pane = above.id, .upright = false } };
+                return true;
+            };
+            return false;
+        };
         if (focused) {
             if (m.leftPress() and pane != win.activePane()) {
                 win.active = std.mem.indexOfScalar(*Pane, win.panes.items, pane).?;

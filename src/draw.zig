@@ -216,7 +216,7 @@ fn glyph(mark: app_mod.Mark) u21 {
     return switch (mark) {
         .none => ' ',
         .busy => '◌',
-        .unseen => '●',
+        .unseen => '◉',
         .bell => '▲',
     };
 }
