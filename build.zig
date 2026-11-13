@@ -2,7 +2,9 @@ const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
+    // Optimized unless asked otherwise: a debug libghostty-vt checks every page on every write,
+    // and a window pouring out text falls minutes behind.
+    const optimize = b.option(std.builtin.OptimizeMode, "optimize", "debug, safe (the default), fast or small") orelse .safe;
 
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),

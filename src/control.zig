@@ -7,12 +7,20 @@ pub const Event = union(enum) {
     body: []const u8,
     /// Pane output, still in tmux's octal escaping; see `unescape`.
     output: struct { pane: u32, data: []const u8 },
-    windows_changed,
-    sessions_changed,
+    /// Sessions, windows or panes were added, closed, renamed or laid out anew: list them again.
+    changed,
+    /// The session with this id has a new current window.
+    window_selected: u32,
     /// This client is now on the session with this id.
     session_changed: u32,
     exit,
     other,
+};
+
+const changes = [_][]const u8{
+    "%sessions-changed",    "%session-renamed ",    "%window-add ",
+    "%window-close ",       "%window-renamed ",     "%unlinked-window-",
+    "%layout-change ",      "%window-pane-changed ",
 };
 
 /// Classifies one line of `tmux -C` output. `in_block` is whether a `%begin` is open.
@@ -29,17 +37,18 @@ pub fn parse(line: []const u8, in_block: bool) Event {
         return .{ .output = .{ .pane = pane, .data = rest[space + 1 ..] } };
     }
     if (std.mem.startsWith(u8, line, "%exit")) return .exit;
-    if (std.mem.startsWith(u8, line, "%session-changed $")) {
-        var it = std.mem.tokenizeScalar(u8, line["%session-changed $".len..], ' ');
-        return .{ .session_changed = std.fmt.parseInt(u32, it.next() orelse return .other, 10) catch return .other };
-    }
-    for ([_][]const u8{ "%sessions-changed", "%session-renamed " }) |prefix| {
-        if (std.mem.startsWith(u8, line, prefix)) return .sessions_changed;
-    }
-    for ([_][]const u8{ "%window-add ", "%window-close ", "%window-renamed ", "%unlinked-window-" }) |prefix| {
-        if (std.mem.startsWith(u8, line, prefix)) return .windows_changed;
+    if (sessionId(line, "%session-changed $")) |id| return .{ .session_changed = id };
+    if (sessionId(line, "%session-window-changed $")) |id| return .{ .window_selected = id };
+    for (changes) |prefix| {
+        if (std.mem.startsWith(u8, line, prefix)) return .changed;
     }
     return .other;
+}
+
+fn sessionId(line: []const u8, prefix: []const u8) ?u32 {
+    if (!std.mem.startsWith(u8, line, prefix)) return null;
+    var it = std.mem.tokenizeScalar(u8, line[prefix.len..], ' ');
+    return std.fmt.parseInt(u32, it.next() orelse return null, 10) catch null;
 }
 
 /// Decodes `%output` data in place: tmux writes bytes below space and backslash as `\ooo`.
@@ -76,15 +85,17 @@ test "a block's lines are body until end or error" {
     try std.testing.expectEqual(Event.end, parse("%error 1 2 0", true));
 }
 
-test "window notifications ask for a relist" {
-    try std.testing.expectEqual(Event.windows_changed, parse("%window-add @3", false));
-    try std.testing.expectEqual(Event.windows_changed, parse("%window-renamed @3 vim", false));
-    try std.testing.expectEqual(Event.other, parse("%session-window-changed $0 @1", false));
+test "anything that changes the tree asks for a relist" {
+    for ([_][]const u8{
+        "%window-add @3",          "%window-renamed @3 vim",      "%unlinked-window-close @9",
+        "%sessions-changed",       "%session-renamed $7 notes",   "%layout-change @0 cf3a,80x24,0,0,0 cf3a,80x24,0,0,0 *",
+        "%window-pane-changed @2 %4",
+    }) |line| try std.testing.expectEqual(Event.changed, parse(line, false));
+    try std.testing.expectEqual(Event.other, parse("%client-session-changed /dev/pts/3 $1 a", false));
     try std.testing.expectEqual(Event.exit, parse("%exit", false));
 }
 
-test "session notifications say which session, or ask for a relist" {
+test "session notifications say which session" {
     try std.testing.expectEqual(@as(u32, 7), parse("%session-changed $7 notes", false).session_changed);
-    try std.testing.expectEqual(Event.sessions_changed, parse("%sessions-changed", false));
-    try std.testing.expectEqual(Event.sessions_changed, parse("%session-renamed $7 notes", false));
+    try std.testing.expectEqual(@as(u32, 0), parse("%session-window-changed $0 @1", false).window_selected);
 }

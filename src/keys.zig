@@ -22,6 +22,15 @@ pub const Mouse = struct {
     pub fn rightPress(m: Mouse) bool {
         return !m.release and m.code & (3 | 32 | 64) == 2;
     }
+
+    pub fn middlePress(m: Mouse) bool {
+        return !m.release and m.code & (3 | 32 | 64) == 1;
+    }
+
+    /// The wheel turned left or right, as a touchpad's sideways swipe is reported.
+    pub fn sideways(m: Mouse) bool {
+        return m.wheel() and m.code & 2 != 0;
+    }
 };
 
 pub const Event = union(enum) {
@@ -139,4 +148,7 @@ test "a mouse report gives its cell from zero and what happened" {
     try std.testing.expect(!next("\x1b[<2;1;1M").event.?.mouse.leftPress());
     try std.testing.expect(next("\x1b[<65;1;1M").event.?.mouse.wheel());
     try std.testing.expect(next("\x1b[<32;1;1M").event.?.mouse.motion());
+    try std.testing.expect(next("\x1b[<1;1;1M").event.?.mouse.middlePress());
+    try std.testing.expect(next("\x1b[<66;1;1M").event.?.mouse.sideways());
+    try std.testing.expect(!next("\x1b[<65;1;1M").event.?.mouse.sideways());
 }
