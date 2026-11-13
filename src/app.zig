@@ -230,6 +230,8 @@ pub const App = struct {
         /// pointer took hold and the width the column had then.
         edge: struct { win: u32, right: bool, x: u16, w: u16 },
         title: u32,
+        /// A window by its picture in the overview.
+        thumb: u32,
         session: u32,
         /// Text being selected in a pane, from the cell of it the button went down on.
         select: struct { pane: u32, x: u16, y: u16 },
@@ -842,22 +844,73 @@ pub const App = struct {
         }
     }
 
-    /// The mouse in the overview: a click on a picture goes to its window, one anywhere else
-    /// closes the overview, and the wheel moves between sessions.
+    /// The mouse in the overview: a click on a picture goes to its window; a picture dragged
+    /// onto another takes its place, in whichever session, and onto the rest of a session's
+    /// row goes to that session's end; a click anywhere else closes the overview; and the
+    /// wheel moves between sessions.
     fn overviewMouse(app: *App, m: keys.Mouse) !void {
         if (m.wheel()) {
             if (app.navStep()) try app.overviewKey(if (m.code & 1 == 0) "k" else "j");
             return;
         }
+        if (app.drag == .thumb) {
+            app.dirty = true;
+            if (m.motion() and !m.hover()) return;
+            const id = app.drag.thumb;
+            const drop = app.overviewDrop();
+            app.drag = .none;
+            if (m.release) try app.dropThumb(id, drop orelse return);
+            return;
+        }
         if (!m.leftPress() and !m.rightPress()) return;
         app.dirty = true;
-        if (m.leftPress()) for (app.sessions.items, 0..) |s, si| for (s.wins.items, 0..) |_, wi| {
-            const at = app.thumbAt(.{ .session = si, .win = wi }) orelse continue;
-            if (m.x < at.x or m.x >= at.x + thumb_w or m.y < at.y or m.y >= at.y + thumb_h) continue;
-            app.overview = null;
-            return app.jumpTo(s, wi);
+        if (m.leftPress()) if (app.thumbUnder(m.x, m.y)) |spot| {
+            app.drag = .{ .thumb = app.sessions.items[spot.session].wins.items[spot.win].id };
+            return;
         };
         app.overview = null;
+    }
+
+    /// The window whose picture in the overview is at (`x`, `y`) of the terminal.
+    fn thumbUnder(app: *const App, x: u16, y: u16) ?Spot {
+        for (app.sessions.items, 0..) |s, si| for (s.wins.items, 0..) |_, wi| {
+            const at = app.thumbAt(.{ .session = si, .win = wi }) orelse continue;
+            if (x >= at.x and x < at.x + thumb_w and y >= at.y and y < at.y + thumb_h) return .{ .session = si, .win = wi };
+        };
+        return null;
+    }
+
+    /// Where a window held by its picture would go, let go now: the place of the window whose
+    /// picture is under the pointer, or with no `win` the end of the session whose row it is.
+    pub const ThumbDrop = struct { session: usize, win: ?usize };
+
+    pub fn overviewDrop(app: *const App) ?ThumbDrop {
+        if (app.drag != .thumb) return null;
+        const at = app.pointer;
+        if (app.thumbUnder(at.x, at.y)) |spot| return .{ .session = spot.session, .win = spot.win };
+        if (at.x < app.term_w - app.view_w) return null;
+        for (app.sessions.items, 0..) |_, si| {
+            const row = app.overviewRow(si) orelse continue;
+            if (at.y >= row and at.y <= row + thumb_h) return .{ .session = si, .win = null };
+        }
+        return null;
+    }
+
+    /// The window `id`, held by its picture, was let go on `drop`: on its own picture that
+    /// was a click, and goes to it.
+    fn dropThumb(app: *App, id: u32, drop: ThumbDrop) !void {
+        const to = app.sessions.items[drop.session];
+        for (app.sessions.items) |s| for (s.wins.items, 0..) |win, from| {
+            if (win.id != id) continue;
+            const onto = drop.win orelse {
+                if (s != to) try app.sendWin(s, from, to, null);
+                return;
+            };
+            if (s != to) return app.sendWin(s, from, to, to.wins.items[onto].id);
+            if (onto != from) return app.moveWin(s, from, onto);
+            app.overview = null;
+            return app.jumpTo(s, from);
+        };
     }
 
     pub const Hit = struct { session: *Session, index: usize };
@@ -914,7 +967,7 @@ pub const App = struct {
         }
         const ox: i32 = app.term_w - app.view_w;
         switch (app.drag) {
-            .none => {},
+            .none, .thumb => {},
             // Past the pane's top or bottom the history scrolls under the pointer.
             .select => |from| {
                 const pane = app.paneById(from.pane) orelse return;
@@ -994,7 +1047,7 @@ pub const App = struct {
         switch (drop) {
             .none => {},
             .column => |to| try app.moveWin(s, from, to),
-            .session => |to| try app.sendWin(s, from, app.sessions.items[to]),
+            .session => |to| try app.sendWin(s, from, app.sessions.items[to], null),
         }
     }
 
@@ -1010,14 +1063,17 @@ pub const App = struct {
         app.want_list = true;
     }
 
-    /// Moves a window of `s` to the end of another session. A session's last window takes the
-    /// session with it, and tmux would detach arena from a session that ends, so arena goes
-    /// with the window.
-    fn sendWin(app: *App, s: *const Session, from: usize, to: *const Session) !void {
+    /// Moves a window of `s` to another session: in front of its window `before`, or to its
+    /// end. A session's last window takes the session with it, and tmux would detach arena
+    /// from a session that ends, so arena goes with the window.
+    fn sendWin(app: *App, s: *const Session, from: usize, to: *const Session, before: ?u32) !void {
         if (s.id == app.current and s.wins.items.len == 1) {
             try app.sessionTo(app.sessionIndex(to.id) orelse return);
         }
-        try app.send(.ignore, "move-window -s @{d} -t '${d}:'", .{ s.wins.items[from].id, to.id });
+        const id = s.wins.items[from].id;
+        if (before) |next| {
+            try app.send(.ignore, "move-window -b -s @{d} -t @{d}", .{ id, next });
+        } else try app.send(.ignore, "move-window -s @{d} -t '${d}:'", .{ id, to.id });
         app.want_list = true;
     }
 

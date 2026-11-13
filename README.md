@@ -76,6 +76,8 @@ Everything is on Alt, so it stays out of the way of your shell and your window m
 With the mouse:
 
 - Click a column, a dot under the focused column, or a session in the rail to go there.
+- In the overview, drag a window's picture onto another to take its place, in its own session or
+  any other, or onto the rest of a session's row to put it at that session's end.
 - Click a pane to select it; drag the line between panes to resize them, or a column's side to
   make its window narrower or wider. Over either, the pointer shows which way it goes. A width
   is kept in the tmux server, with its window.

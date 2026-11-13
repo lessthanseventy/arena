@@ -582,19 +582,23 @@ fn thumb(app: *App, w: *Writer, s: *const Session, win: *const Window, number: u
 /// Every session a row: its name, then a picture of each of its windows.
 fn overview(app: *App, w: *Writer, spot: App.Spot) !void {
     const ox = app.term_w - app.view_w;
+    // While a picture is held, what is lit is where it would go, not the one picked.
+    const drop = app.overviewDrop();
     var pen: Pen = .{};
     for (app.sessions.items, 0..) |s, si| {
         const row = app.overviewRow(si) orelse continue;
         if (row >= app.view_h) continue;
         try w.print("\x1b[{d};{d}H", .{ row + 1, ox + 1 });
-        try pen.set(w, if (si == spot.session) chip(app) else if (s.id == app.current) heading(app) else .{}, null);
+        const lit = if (drop) |to| to.session == si and to.win == null else si == spot.session;
+        try pen.set(w, if (lit) chip(app) else if (s.id == app.current) heading(app) else .{}, null);
         try w.print(" {s} ", .{clip(s.name, 24)});
         try pen.set(w, ink(app, "amber", 4), null);
         try w.writeAll(" ");
         try put(w, glyph(app.sessionMark(s)));
         for (s.wins.items, 0..) |win, wi| {
             const at = app.thumbAt(.{ .session = si, .win = wi }) orelse continue;
-            try thumb(app, w, s, win, wi, at.x, at.y, si == spot.session and wi == spot.win);
+            const picked = if (drop) |to| to.session == si and to.win == wi else si == spot.session and wi == spot.win;
+            try thumb(app, w, s, win, wi, at.x, at.y, picked);
         }
     }
 }

@@ -161,6 +161,26 @@ check "Alt+p jumps to a window of another session" see '╭─ 1 solo '
 
 key M-o
 check "Alt+o shows every session's windows" see '╭─ 1 one ─+╮ ╭─ 2 renamed '
+mouse 0 80 4 M
+mouse 32 20 4 M
+mouse 0 20 4 m
+check "a picture dropped on another takes its place" await windows alpha 'three one renamed'
+see '╭─ 1 three ─+╮ ╭─ 2 one '
+mouse 0 20 4 M
+mouse 32 80 4 M
+mouse 0 80 4 m
+check "and back" await windows alpha 'one renamed three'
+see '╭─ 1 one ─+╮ ╭─ 2 renamed '
+mouse 0 80 4 M
+mouse 32 20 12 M
+mouse 0 20 12 m
+check "on one of another session, it goes there in front of it" await windows beta 'three solo'
+see '╭─ 1 three ─+╮ ╭─ 2 solo '
+mouse 0 20 12 M
+mouse 32 90 4 M
+mouse 0 90 4 m
+check "and on the rest of a session's row, to that session's end" await windows alpha 'one renamed three'
+see '╭─ 3 three '
 key Escape
 check "Escape leaves the overview" see '╭─ 1 solo ─{40}'
 
@@ -195,7 +215,8 @@ check "Alt+/ finds text in the history" await highlit
 key Escape
 
 key 'exit' Enter
-check "a session ending moves arena to one that is left" see '╭─ 2 renamed '
+# three was the last window dropped on alpha, which makes it the one alpha shows
+check "a session ending moves arena to one that is left" see '╭─ 3 three '
 check "and takes it off the rail" gone '│ beta '
 
 key M-q
