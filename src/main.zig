@@ -118,9 +118,10 @@ fn run(init: std.process.Init) !bool {
     raw.cc[@intFromEnum(posix.V.TIME)] = 0;
     try posix.tcsetattr(posix.STDIN_FILENO, .FLUSH, raw);
     defer posix.tcsetattr(posix.STDIN_FILENO, .FLUSH, saved) catch {};
-    // 1002: presses, releases and drags; 1006: the SGR report format, which has no column limit
-    try tty.writeStreamingAll(io, "\x1b[?1049h\x1b[?1002h\x1b[?1006h");
-    defer tty.writeStreamingAll(io, "\x1b[?1006l\x1b[?1002l\x1b[0m\x1b[?25h\x1b[?1049l") catch {};
+    // 1003: presses, releases and every move of the pointer, for its shape over what it can
+    // take hold of; 1006: the SGR report format, which has no column limit
+    try tty.writeStreamingAll(io, "\x1b[?1049h\x1b[?1003h\x1b[?1006h");
+    defer tty.writeStreamingAll(io, "\x1b[?1006l\x1b[?1003l\x1b]22;default\x1b\\\x1b[0m\x1b[?25h\x1b[?1049l") catch {};
 
     posix.sigaction(.WINCH, &.{ .handler = .{ .handler = onWinch }, .mask = posix.sigemptyset(), .flags = 0 }, null);
 

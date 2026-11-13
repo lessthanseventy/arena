@@ -9,16 +9,16 @@ pub fn colWidth(view_w: u16, count: usize) u16 {
     return @max(4, view_w * 4 / 5);
 }
 
-/// Left edge of column `i` on the strip.
-pub fn colX(col_w: u16, i: usize) i32 {
-    return @as(i32, @intCast(i)) * (@as(i32, col_w) + gap);
+/// Outer width of a column given `share` hundredths of the view, to the nearest cell.
+pub fn shareWidth(view_w: u16, share: u8) u16 {
+    return @intCast(@max(4, (@as(u32, view_w) * share + 50) / 100));
 }
 
-/// The strip offset that centres column `focus` of `count` in the view, short of showing empty
-/// space past either end of the strip: the first column sits flush left and the last flush right.
-pub fn scrollTarget(view_w: u16, col_w: u16, focus: usize, count: usize) i32 {
-    const centred = colX(col_w, focus) - @divTrunc(@as(i32, view_w) - col_w, 2);
-    const strip = colX(col_w, count) - gap;
+/// The strip offset that centres the column `col_w` wide at `x` of a strip `strip` wide, short
+/// of showing empty space past either end of it: the first column sits flush left and the last
+/// flush right.
+pub fn scrollTarget(view_w: u16, x: i32, col_w: u16, strip: i32) i32 {
+    const centred = x - @divTrunc(@as(i32, view_w) - col_w, 2);
     return std.math.clamp(centred, 0, @max(0, strip - view_w));
 }
 
@@ -32,15 +32,20 @@ pub fn step(scroll: i32, target: i32) i32 {
 
 test "a lone column fills the view and sits at its origin" {
     try std.testing.expectEqual(@as(u16, 100), colWidth(100, 1));
-    try std.testing.expectEqual(@as(i32, 0), scrollTarget(100, 100, 0, 1));
+    try std.testing.expectEqual(@as(i32, 0), scrollTarget(100, 0, 100, 100));
 }
 
 test "a middle column is centred with a peek either side; the end ones sit flush" {
     const w = colWidth(100, 3);
     try std.testing.expectEqual(@as(u16, 80), w);
-    try std.testing.expectEqual(@as(i32, 0), scrollTarget(100, w, 0, 3));
-    try std.testing.expectEqual(@as(i32, 71), scrollTarget(100, w, 1, 3));
-    try std.testing.expectEqual(@as(i32, 142), scrollTarget(100, w, 2, 3));
+    try std.testing.expectEqual(@as(i32, 0), scrollTarget(100, 0, w, 242));
+    try std.testing.expectEqual(@as(i32, 71), scrollTarget(100, 81, w, 242));
+    try std.testing.expectEqual(@as(i32, 142), scrollTarget(100, 162, w, 242));
+}
+
+test "a share is hundredths of the view, and never too thin to draw" {
+    try std.testing.expectEqual(@as(u16, 60), shareWidth(85, 70));
+    try std.testing.expectEqual(@as(u16, 4), shareWidth(10, 20));
 }
 
 test "step always arrives" {

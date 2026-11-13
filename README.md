@@ -62,6 +62,7 @@ Everything is on Alt, so it stays out of the way of your shell and your window m
 | `Alt+j` `Alt+k` | the next session, the one before |
 | `Alt+1` … `Alt+9` | that window |
 | `Alt+H` `Alt+L` | move the window left, right |
+| `Alt+;` `Alt+'` | make the window narrower, wider |
 | `Alt+Enter` | a new window |
 | `Alt+x` | close the window, after asking |
 | `Alt+z` | give the session's columns the whole width, and back |
@@ -74,7 +75,9 @@ Everything is on Alt, so it stays out of the way of your shell and your window m
 With the mouse:
 
 - Click a column, a dot under the focused column, or a session in the rail to go there.
-- Click a pane to select it; drag the line between panes to resize them.
+- Click a pane to select it; drag the line between panes to resize them, or a column's side to
+  make its window narrower or wider. Over either, the pointer shows which way it goes. A width
+  is kept in the tmux server, with its window.
 - Drag a column's title to move the window; click it twice to rename; middle-click it to close.
 - Drag a session up or down the rail to move it. The order is kept in the tmux server.
 - Drag in a pane to select text, which is copied when you let go. Two clicks copy a word.

@@ -439,13 +439,13 @@ fn cell(app: *const App, pen: *Pen, w: *Writer, win: *const Window, tx: usize, t
 /// focused pane's cursor is, when it shows.
 fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Cursor {
     const ox = app.term_w - app.view_w;
-    const col_w = app.colW(s);
     var cursor: ?Cursor = null;
 
     for (s.wins.items, 0..) |win, i| {
         const focused = i == s.focus;
         if (what == .focused_border and !focused) continue;
-        const x0 = layout.colX(col_w, i) - s.scroll;
+        const col_w = app.colW(s, win);
+        const x0 = app.colX(s, i) - s.scroll;
         const x1 = x0 + col_w - 1;
         const lo: i32 = @max(x0, 0);
         const hi: i32 = @min(x1 + 1, app.view_w);

@@ -63,8 +63,31 @@ inner select-window -t alpha:one
 outer new-session -d -s o -x 100 -y 24 \
   "env -u TMUX HOME=$tmp ARENA_REDUCED_MOTION=1 $bin -L $in alpha 2>$tmp/err; echo EXIT \$?; cat"
 outer set -s set-clipboard on
+# what arena writes, for what a picture of the screen does not show
+outer pipe-pane -t o "cat >$tmp/raw"
 
 check "the strip shows, the first column flush against the rail" see '^╭─ sessions ─+╮ ╭─ 1 one '
+
+wide() { [[ $(inner display -p -t alpha:one '#{window_width} #{@arena_width}') == $1 ]] }
+# a ; that ends an argument ends the command for tmux, unless escaped
+key -l $'\e\\;'
+check "Alt+; makes the window narrower" see '╭─ 1 one ─{50}╮'
+check "and tmux has it that wide, and keeps the width" await wide '58 70'
+key "M-'"
+check "Alt+' makes it wider" see '╭─ 1 one ─{58}╮'
+
+wrote() { grep -q -- "$1" $tmp/raw }
+mouse 35 83 5 M
+check "over a column's side the pointer is the one for resizing" await wrote $'\e]22;ew-resize'
+mouse 0 83 5 M
+mouse 32 66 5 M
+mouse 0 66 5 m
+check "dragging a column's side resizes its window" see '╭─ 1 one ─{41}╮'
+mouse 0 66 5 M
+mouse 32 83 5 M
+mouse 0 83 5 m
+check "and back" await wide '66 80'
+
 key M-l
 check "Alt+l focuses the next window, its neighbour peeking" see '─╮ ╭─ 2 two ─'
 key 'echo e2e-$((6*7))' Enter

@@ -15,6 +15,11 @@ pub const Mouse = struct {
         return m.code & 32 != 0;
     }
 
+    /// The pointer moved with no button held.
+    pub fn hover(m: Mouse) bool {
+        return m.motion() and !m.wheel() and m.code & 3 == 3;
+    }
+
     pub fn leftPress(m: Mouse) bool {
         return !m.release and m.code & (3 | 32 | 64) == 0;
     }
@@ -52,7 +57,7 @@ pub const Part = struct {
 };
 
 /// The keys arena takes with Alt; `\r` is Enter.
-pub const chords = "hjklHLxmqzpo/123456789\r";
+pub const chords = "hjklHLxmqzpo/;'123456789\r";
 
 /// Splits input at the first thing arena reads itself: an Alt chord (ESC then one of `chords`),
 /// an SGR mouse report, or the terminal's reply to a query.
@@ -148,6 +153,8 @@ test "a mouse report gives its cell from zero and what happened" {
     try std.testing.expect(!next("\x1b[<2;1;1M").event.?.mouse.leftPress());
     try std.testing.expect(next("\x1b[<65;1;1M").event.?.mouse.wheel());
     try std.testing.expect(next("\x1b[<32;1;1M").event.?.mouse.motion());
+    try std.testing.expect(next("\x1b[<35;1;1M").event.?.mouse.hover());
+    try std.testing.expect(!next("\x1b[<32;1;1M").event.?.mouse.hover());
     try std.testing.expect(next("\x1b[<1;1;1M").event.?.mouse.middlePress());
     try std.testing.expect(next("\x1b[<66;1;1M").event.?.mouse.sideways());
     try std.testing.expect(!next("\x1b[<65;1;1M").event.?.mouse.sideways());

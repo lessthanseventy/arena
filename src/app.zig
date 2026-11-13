@@ -21,9 +21,15 @@ const busy_ms = 3000;
 
 /// tmux has no order of sessions to change, so arena keeps each one's place in an option on it.
 const session_format = "#{{session_id}} #{{?@arena_order,#{{@arena_order}},-}} #{{session_name}}";
-const pane_format ="#{{session_id}} #{{window_id}} #{{pane_id}} #{{window_width}} #{{window_height}} " ++
+const pane_format = "#{{session_id}} #{{window_id}} #{{pane_id}} #{{window_width}} #{{window_height}} " ++
     "#{{pane_left}} #{{pane_top}} #{{pane_width}} #{{pane_height}} #{{pane_active}} #{{window_active}} " ++
-    "#{{window_activity}} #{{window_bell_flag}} #{{window_name}}";
+    "#{{window_activity}} #{{window_bell_flag}} #{{?@arena_width,#{{@arena_width}},0}} #{{window_name}}";
+
+/// The least and the most of the view a window's column is given, in hundredths, and how much
+/// one press of narrower or wider changes it.
+const min_share = 20;
+const max_share = 100;
+const share_step = 10;
 
 /// What a window not being looked at has to say: it is putting out text, it has put some out
 /// and stopped, or it rang the bell. In rising order of how much it wants looking at.
@@ -119,6 +125,9 @@ pub const Window = struct {
     /// The size arena last asked tmux for, so one tmux will not give is asked for once.
     asked_w: u16 = 0,
     asked_h: u16 = 0,
+    /// The hundredths of the view its column is given, kept in tmux as @arena_width; 0 until
+    /// it is made narrower or wider, when the column has the width every such one has.
+    share: u8 = 0,
     /// When tmux last saw output in the window, and when arena last had it in view, both in
     /// seconds of the wall clock.
     activity: i64 = 0,
@@ -216,11 +225,16 @@ pub const App = struct {
     drag: union(enum) {
         none,
         divider: struct { pane: u32, upright: bool, asked: i32 = -1 },
+        /// A column by one of its sides, to make its window narrower or wider, from where the
+        /// pointer took hold and the width the column had then.
+        edge: struct { win: u32, right: bool, x: u16, w: u16 },
         title: u32,
         session: u32,
         /// Text being selected in a pane, from the cell of it the button went down on.
         select: struct { pane: u32, x: u16, y: u16 },
     } = .none,
+    /// The pointer's shape, as the terminal was last told.
+    shape: []const u8 = "default",
     /// Bytes for the terminal arena runs in, written out after the next frame.
     out: std.ArrayList(u8) = .empty,
     /// The name last clicked, a window's or a session's, and when.
@@ -279,12 +293,62 @@ pub const App = struct {
         return null;
     }
 
-    pub fn colW(app: *const App, s: *const Session) u16 {
-        return if (s.full) app.view_w else layout.colWidth(app.view_w, s.wins.items.len);
+    pub fn colW(app: *const App, s: *const Session, win: *const Window) u16 {
+        if (s.full) return app.view_w;
+        if (win.share == 0) return layout.colWidth(app.view_w, s.wins.items.len);
+        return layout.shareWidth(app.view_w, win.share);
+    }
+
+    /// The left edge of column `index` on the strip; of one past the last, where another would go.
+    pub fn colX(app: *const App, s: *const Session, index: usize) i32 {
+        var x: i32 = 0;
+        for (s.wins.items[0..index]) |win| x += @as(i32, app.colW(s, win)) + layout.gap;
+        return x;
+    }
+
+    pub const ColHit = struct { index: usize, cx: usize };
+
+    /// The column at cell `at` of the strip, and which cell of it; none between two or past the end.
+    pub fn colAt(app: *const App, s: *const Session, at: i32) ?ColHit {
+        var x: i32 = 0;
+        for (s.wins.items, 0..) |win, index| {
+            const w = app.colW(s, win);
+            if (at >= x and at < x + w) return .{ .index = index, .cx = @intCast(at - x) };
+            x += @as(i32, w) + layout.gap;
+        }
+        return null;
     }
 
     pub fn target(app: *const App, s: *const Session) i32 {
-        return layout.scrollTarget(app.view_w, app.colW(s), s.focus, s.wins.items.len);
+        const win = s.focused() orelse return 0;
+        const strip = app.colX(s, s.wins.items.len) - layout.gap;
+        return layout.scrollTarget(app.view_w, app.colX(s, s.focus), app.colW(s, win), strip);
+    }
+
+    /// Gives a window's column `share` hundredths of the view, within what is worth having,
+    /// and has tmux keep it.
+    fn setShare(app: *App, s: *Session, win: *Window, share: i32) !void {
+        const to: u8 = @intCast(std.math.clamp(share, min_share, max_share));
+        if (to == win.share and !s.full) return;
+        s.full = false;
+        win.share = to;
+        try app.send(.ignore, "set-option -w -t @{d} @arena_width {d}", .{ win.id, to });
+        app.hush_until = app.now + busy_ms;
+        app.want_list = true;
+        app.dirty = true;
+    }
+
+    /// The hundredths of the view a column `w` cells wide takes, to the nearest.
+    fn shareOf(app: *const App, w: i32) i32 {
+        return @divTrunc(w * 100 + app.view_w / 2, @max(1, app.view_w));
+    }
+
+    /// Makes the focused window's column narrower or wider by `delta` hundredths of the view.
+    fn widenBy(app: *App, delta: i32) !void {
+        const s = app.cur() orelse return;
+        const win = s.focused() orelse return;
+        const from = if (win.share != 0 and !s.full) win.share else app.shareOf(app.colW(s, win));
+        try app.setShare(s, win, from + delta);
     }
 
     /// What `win` of `s` has to say; nothing when it is the window in view.
@@ -504,7 +568,7 @@ pub const App = struct {
         var lines = std.mem.tokenizeScalar(u8, body, '\n');
         while (lines.next()) |line| {
             var it = std.mem.tokenizeScalar(u8, line, ' ');
-            var n: [13]u32 = undefined;
+            var n: [14]u32 = undefined;
             for (&n, 0..) |*field, i| {
                 const token = it.next() orelse break;
                 field.* = std.fmt.parseInt(u32, token[@intFromBool(i < 3)..], 10) catch break;
@@ -527,6 +591,9 @@ pub const App = struct {
                     win.activity = n[11];
                     if (!win.listed or app.now < app.hush_until) win.seen = win.activity;
                     win.bell = n[12] == 1;
+                    // Read once: after that arena's own is the newer, and a list asked for
+                    // before a change would put the old one back.
+                    if (!win.listed) win.share = @intCast(@min(n[13], max_share));
                     win.listed = true;
                     if (n[10] == 1) s.focus = s.wins.items.len;
                     try s.wins.append(app.gpa, win);
@@ -570,9 +637,9 @@ pub const App = struct {
     /// reports the new layout, at the size it will be drawn.
     fn settle(app: *App) !void {
         for (app.sessions.items) |s| {
-            const cols = @max(1, app.colW(s) -| 2);
             const rows = @max(1, app.view_h -| 2);
             for (s.wins.items) |win| {
+                const cols = @max(1, app.colW(s, win) -| 2);
                 const fits = win.w == cols and win.h == rows;
                 const asked = win.asked_w == cols and win.asked_h == rows;
                 if (s.id == app.current and !fits and !asked) {
@@ -823,12 +890,11 @@ pub const App = struct {
 
     /// The held button moved to `m`, or let go.
     fn dragTo(app: *App, s: *Session, m: keys.Mouse) !void {
-        if (m.release or !m.motion()) {
+        if (m.release or !m.motion() or m.hover()) {
             if (app.drag == .select) if (app.paneById(app.drag.select.pane)) |pane| try app.copy(pane);
             app.drag = .none;
             return;
         }
-        const col_w = app.colW(s);
         const ox: i32 = app.term_w - app.view_w;
         switch (app.drag) {
             .none, .session => {},
@@ -836,7 +902,7 @@ pub const App = struct {
             .select => |from| {
                 const pane = app.paneById(from.pane) orelse return;
                 const screen = pane.term.screens.active;
-                const left = ox + layout.colX(col_w, s.focus) - s.scroll + 1 + pane.x;
+                const left = ox + app.colX(s, s.focus) - s.scroll + 1 + pane.x;
                 const x = std.math.clamp(m.x - left, 0, pane.term.cols - 1);
                 var y = @as(i32, m.y) - 1 - pane.y;
                 if (y < 0 or y >= pane.term.rows) pane.term.scrollViewport(.{ .delta = if (y < 0) -1 else 1 });
@@ -857,21 +923,30 @@ pub const App = struct {
                     app.drag = .none;
                     return;
                 };
-                const inside = ox + layout.colX(col_w, s.focus) - s.scroll + 1;
+                const inside = ox + app.colX(s, s.focus) - s.scroll + 1;
                 const want: i32 = if (line.upright) m.x - inside - pane.x else @as(i32, m.y) - 1 - pane.y;
                 if (want < 1 or want == line.asked) return;
                 line.asked = want;
                 const axis: u8 = if (line.upright) 'x' else 'y';
                 try app.send(.ignore, "resize-pane -t %{d} -{c} {d}", .{ pane.id, axis, want });
             },
+            // The width is what it was when taken hold of and how far the pointer has gone
+            // since: the strip moves under the pointer as the column grows, so where the edge
+            // is now says nothing.
+            .edge => |held| {
+                const win = for (s.wins.items) |win| {
+                    if (win.id == held.win) break win;
+                } else return;
+                const moved = @as(i32, m.x) - held.x;
+                try app.setShare(s, win, app.shareOf(held.w + if (held.right) moved else -moved));
+            },
             // One place at a time, and not before the last move has been listed and the strip
             // has come to rest: the pointer is read against where the columns are.
             .title => |id| {
                 if (app.listing or app.want_list or s.scroll != app.target(s)) return;
                 if (s.wins.items.len == 0 or s.wins.items[s.focus].id != id) return;
-                const at = @max(0, m.x - ox + s.scroll);
-                const over: usize = @min(s.wins.items.len - 1, @as(usize, @intCast(@divTrunc(at, @as(i32, col_w) + layout.gap))));
-                if (over != s.focus) try app.swapBy(if (over > s.focus) 1 else -1);
+                const over = app.colAt(s, m.x - ox + s.scroll) orelse return;
+                if (over.index != s.focus) try app.swapBy(if (over.index > s.focus) 1 else -1);
             },
         }
     }
@@ -879,7 +954,7 @@ pub const App = struct {
     /// The held button moved to `m` with a session, or let go. The session goes to the row under
     /// the pointer, and every session is told its place; the next move waits for that to be listed.
     fn dragSession(app: *App, id: u32, m: keys.Mouse) !void {
-        if (m.release or !m.motion()) {
+        if (m.release or !m.motion() or m.hover()) {
             app.drag = .none;
             return;
         }
@@ -896,6 +971,49 @@ pub const App = struct {
         app.dirty = true;
     }
 
+    /// What can be taken hold of to resize: a column by one of its sides, or the line after a
+    /// pane of the focused window.
+    pub const Grip = union(enum) {
+        edge: struct { index: usize, right: bool },
+        divider: struct { pane: u32, upright: bool },
+    };
+
+    pub fn gripAt(app: *const App, x: u16, y: u16) ?Grip {
+        const s = app.cur() orelse return null;
+        const ox = app.term_w - app.view_w;
+        if (x < ox or y == 0 or y + 1 >= app.view_h or app.yoff != 0) return null;
+        const hit = app.colAt(s, @as(i32, x) - ox + s.scroll) orelse return null;
+        const win = s.wins.items[hit.index];
+        const last = app.colW(s, win) - 1;
+        if (hit.cx == 0 or hit.cx == last) return .{ .edge = .{ .index = hit.index, .right = hit.cx == last } };
+        if (hit.index != s.focus) return null;
+        const tx = hit.cx - 1;
+        const ty = y - 1;
+        if (win.paneAt(tx, ty) != null) return null;
+        if (tx > 0) if (win.paneAt(tx - 1, ty)) |before| return .{ .divider = .{ .pane = before.id, .upright = true } };
+        if (ty > 0) if (win.paneAt(tx, ty - 1)) |above| return .{ .divider = .{ .pane = above.id, .upright = false } };
+        return null;
+    }
+
+    /// Has the terminal show the pointer as what it is over, or holds, can be dragged: by
+    /// name, as OSC 22 takes them.
+    fn pointAs(app: *App, m: keys.Mouse) !void {
+        const sideways = "ew-resize";
+        const upright = "ns-resize";
+        const shape: []const u8 = switch (app.drag) {
+            .edge => sideways,
+            .divider => |line| if (line.upright) sideways else upright,
+            .none => if (app.overlay()) "default" else if (app.gripAt(m.x, m.y)) |grip| switch (grip) {
+                .edge => sideways,
+                .divider => |line| if (line.upright) sideways else upright,
+            } else "default",
+            else => "default",
+        };
+        if (shape.ptr == app.shape.ptr) return;
+        app.shape = shape;
+        try app.out.print(app.gpa, "\x1b]22;{s}\x1b\\", .{shape});
+    }
+
     /// True when a wheel or swipe step may move between windows or sessions: they come in
     /// bursts, and each burst is one step.
     fn navStep(app: *App) bool {
@@ -907,6 +1025,7 @@ pub const App = struct {
     /// A right click nothing else took opens the menu; with the menu open, a click picks from it
     /// or, outside it, closes it.
     fn onMouse(app: *App, m: keys.Mouse) !void {
+        try app.pointAs(m);
         if (app.overview != null) return app.overviewMouse(m);
         if (app.prompt) |*prompt| {
             if (!m.leftPress() and !m.rightPress()) return;
@@ -974,14 +1093,18 @@ pub const App = struct {
             if (app.navStep()) try app.focusBy(if (m.code & 1 == 0) -1 else 1);
             return true;
         }
-        const col_w = app.colW(s);
-        const at = @as(i32, m.x) - ox + s.scroll;
-        if (at < 0) return false;
-        const stride = @as(i32, col_w) + layout.gap;
-        const index: usize = @intCast(@divTrunc(at, stride));
-        const cx: usize = @intCast(@mod(at, stride));
-        if (index >= s.wins.items.len or cx >= col_w) return false;
+        if (m.leftPress()) if (app.gripAt(m.x, m.y)) |grip| {
+            app.drag = switch (grip) {
+                .edge => |edge| .{ .edge = .{ .win = s.wins.items[edge.index].id, .right = edge.right, .x = m.x, .w = app.colW(s, s.wins.items[edge.index]) } },
+                .divider => |line| .{ .divider = .{ .pane = line.pane, .upright = line.upright } },
+            };
+            return true;
+        };
+        const hit = app.colAt(s, @as(i32, m.x) - ox + s.scroll) orelse return false;
+        const index = hit.index;
+        const cx = hit.cx;
         const win = s.wins.items[index];
+        const col_w = app.colW(s, win);
         const focused = index == s.focus;
         if (m.y == 0 and m.middlePress()) {
             try app.focusTo(index);
@@ -1006,20 +1129,7 @@ pub const App = struct {
             return focused and m.leftPress();
         }
         if (cx == 0 or cx == col_w - 1 or m.y == 0) return false;
-        const pane = win.paneAt(cx - 1, m.y - 1) orelse {
-            if (!focused or !m.leftPress()) return false;
-            const tx = cx - 1;
-            const ty = m.y - 1;
-            if (tx > 0) if (win.paneAt(tx - 1, ty)) |before| {
-                app.drag = .{ .divider = .{ .pane = before.id, .upright = true } };
-                return true;
-            };
-            if (ty > 0) if (win.paneAt(tx, ty - 1)) |above| {
-                app.drag = .{ .divider = .{ .pane = above.id, .upright = false } };
-                return true;
-            };
-            return false;
-        };
+        const pane = win.paneAt(cx - 1, m.y - 1) orelse return false;
         if (focused) {
             if (m.leftPress() and pane != win.activePane()) {
                 win.active = std.mem.indexOfScalar(*Pane, win.panes.items, pane).?;
@@ -1066,6 +1176,7 @@ pub const App = struct {
         const mode = pane.term.flags.mouse_event;
         if (mode == .none) return false;
         if (m.motion() and mode != .button and mode != .any) return true;
+        if (m.hover() and mode != .any) return true;
         if (m.release and mode == .x10) return true;
         var buf: [32]u8 = undefined;
         switch (pane.term.flags.mouse_format) {
@@ -1245,6 +1356,8 @@ pub const App = struct {
             'm' => app.openMenu(&menu.main),
             'q' => app.quit = true,
             'z' => app.toggleFull(),
+            ';' => try app.widenBy(-share_step),
+            '\'' => try app.widenBy(share_step),
             'o' => app.openOverview(),
             '/' => app.openSearch(),
             'p' => {
@@ -1259,7 +1372,8 @@ pub const App = struct {
     }
 
     /// With Alt: h and l move along the strip, j and k between sessions, 1 to 9 go to a window,
-    /// H and L move the window, Enter opens one, x closes it, z gives it the whole width, p asks
+    /// H and L move the window, ; and ' make it narrower and wider, Enter opens one, x closes
+    /// it, z gives it the whole width, p asks
     /// for a window to jump to, o shows every session's windows at once, / searches the pane's
     /// history, m opens the menu and q leaves.
     /// Everything else is the focused pane's, or the menu's while it is open. Alt is ESC and the
