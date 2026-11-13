@@ -527,6 +527,7 @@ pub const App = struct {
                 if (s.id == app.current and !fits and !asked) {
                     win.asked_w = cols;
                     win.asked_h = rows;
+                    app.hush_until = app.now + busy_ms;
                     try app.send(.ignore, "refresh-client -C @{d}:{d}x{d}", .{ win.id, cols, rows });
                     continue;
                 }

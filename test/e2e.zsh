@@ -97,6 +97,9 @@ check "Alt+o shows every session's windows" see '╭─ 1 one ─+╮ ╭─ 2 r
 key Escape
 check "Escape leaves the overview" see '╭─ 1 solo ─{40}'
 
+# Output in the three seconds after arena resizes windows is taken for theirs redrawing, and marks
+# nothing; tmux stamps activity to the second. The news has to come clear of both.
+zselect -t 400
 inner send-keys -t alpha:one 'echo news' Enter
 check "a window with news marks its session in the rail" see '│ alpha +[◌◉] +3 │'
 
