@@ -402,10 +402,7 @@ const App = struct {
             .act => |action| {
                 app.menu = null;
                 switch (action) {
-                    .new_window => {
-                        app.follow_active = true;
-                        try app.send(.ignore, "new-window -a -c '#{{pane_current_path}}'", .{});
-                    },
+                    .new_window => try app.newWindow(),
                     .close_window => app.openMenu(&menu.confirm),
                     .confirm_close => try app.closeWindow(),
                     .new_session => try app.send(.ignore, "new-session", .{}),
@@ -414,6 +411,12 @@ const App = struct {
                 }
             },
         }
+    }
+
+    /// A window after the focused one, in its directory, and focus on it.
+    fn newWindow(app: *App) !void {
+        app.follow_active = true;
+        try app.send(.ignore, "new-window -a -c '#{{pane_current_path}}'", .{});
     }
 
     /// Closes the focused window. A session's last window takes the session with it, and tmux
@@ -455,6 +458,7 @@ const App = struct {
             'x' => app.openMenu(&menu.confirm),
             'm' => app.openMenu(&menu.main),
             'q' => app.quit = true,
+            '\r' => try app.newWindow(),
             else => if (letter - '1' < app.wins.items.len) try app.focusTo(letter - '1'),
         }
     }
@@ -487,7 +491,7 @@ const App = struct {
     }
 
     /// With Alt: h and l move along the strip, j and k between sessions, 1 to 9 go to a window,
-    /// H and L move the window, x closes it, m opens the menu and q leaves. Everything else is
+    /// H and L move the window, Enter opens one, x closes it, m opens the menu and q leaves. Everything else is
     /// the focused window's, or the menu's while it is open. Alt is ESC and the letter together,
     /// which a typed Escape then a letter rarely is.
     fn onInput(app: *App, bytes: []const u8) !void {

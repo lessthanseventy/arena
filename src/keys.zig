@@ -37,8 +37,8 @@ pub const Part = struct {
     rest: []const u8,
 };
 
-/// The letters arena takes with Alt.
-pub const chords = "hjklHLxmq123456789";
+/// The keys arena takes with Alt; `\r` is Enter.
+pub const chords = "hjklHLxmq123456789\r";
 
 /// Splits input at the first thing arena reads itself: an Alt chord (ESC then one of `chords`)
 /// or an SGR mouse report.
@@ -74,6 +74,10 @@ test "a chord is found among other typing" {
     try std.testing.expectEqualStrings("echo hi\r", part.text);
     try std.testing.expectEqual(@as(u8, 'j'), part.event.?.chord);
     try std.testing.expectEqualStrings("more", part.rest);
+}
+
+test "Alt+Enter is a chord" {
+    try std.testing.expectEqual(@as(u8, '\r'), next("\x1b\r").event.?.chord);
 }
 
 test "other escape sequences and a trailing escape are the window's" {
