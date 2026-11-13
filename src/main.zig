@@ -555,6 +555,13 @@ fn winsize(app: *App) void {
 }
 
 pub fn main(init: std.process.Init) !void {
+    if (try run(init)) return;
+    try std.Io.File.stderr().writeStreamingAll(init.io, "arena: tmux gave no session to show\n");
+    std.process.exit(1);
+}
+
+/// Runs until the user leaves or tmux does; false when no session was ever shown.
+fn run(init: std.process.Init) !bool {
     const gpa = init.gpa;
     const io = init.io;
 
@@ -570,8 +577,18 @@ pub fn main(init: std.process.Init) !void {
             i += 1;
         } else session = args[i];
     }
-    try argv.appendSlice(gpa, &.{ "-C", "attach" });
-    if (session) |name| try argv.appendSlice(gpa, &.{ "-t", name });
+    // A named session is attached or made. With no name, the most recent one, or a first one
+    // when there is none: starting the server is what lets tmux's own restore bring sessions back.
+    if (session) |name| {
+        try argv.appendSlice(gpa, &.{ "-C", "new-session", "-A", "-s", name });
+    } else {
+        try argv.append(gpa, "has-session");
+        const has = try std.process.run(gpa, io, .{ .argv = argv.items });
+        gpa.free(has.stdout);
+        gpa.free(has.stderr);
+        argv.items.len -= 1;
+        try argv.appendSlice(gpa, &.{ "-C", if (has.term.success()) "attach" else "new-session" });
+    }
 
     var child = try std.process.spawn(io, .{ .argv = argv.items, .stdin = .pipe, .stdout = .pipe });
     defer _ = child.wait(io) catch {};
@@ -679,6 +696,7 @@ pub fn main(init: std.process.Init) !void {
 
     child.stdin.?.close(io);
     child.stdin = null;
+    return app.listed;
 }
 
 test {
