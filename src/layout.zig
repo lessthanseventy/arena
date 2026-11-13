@@ -14,9 +14,12 @@ pub fn colX(col_w: u16, i: usize) i32 {
     return @as(i32, @intCast(i)) * (@as(i32, col_w) + gap);
 }
 
-/// The strip offset that centres column `focus` in the view.
-pub fn scrollTarget(view_w: u16, col_w: u16, focus: usize) i32 {
-    return colX(col_w, focus) - @divTrunc(@as(i32, view_w) - col_w, 2);
+/// The strip offset that centres column `focus` of `count` in the view, short of showing empty
+/// space past either end of the strip: the first column sits flush left and the last flush right.
+pub fn scrollTarget(view_w: u16, col_w: u16, focus: usize, count: usize) i32 {
+    const centred = colX(col_w, focus) - @divTrunc(@as(i32, view_w) - col_w, 2);
+    const strip = colX(col_w, count) - gap;
+    return std.math.clamp(centred, 0, @max(0, strip - view_w));
 }
 
 /// One animation frame from `scroll` toward `target`: two fifths of the way, at least one cell.
@@ -29,14 +32,15 @@ pub fn step(scroll: i32, target: i32) i32 {
 
 test "a lone column fills the view and sits at its origin" {
     try std.testing.expectEqual(@as(u16, 100), colWidth(100, 1));
-    try std.testing.expectEqual(@as(i32, 0), scrollTarget(100, 100, 0));
+    try std.testing.expectEqual(@as(i32, 0), scrollTarget(100, 100, 0, 1));
 }
 
-test "the focused column is centred with a peek either side" {
+test "a middle column is centred with a peek either side; the end ones sit flush" {
     const w = colWidth(100, 3);
     try std.testing.expectEqual(@as(u16, 80), w);
-    try std.testing.expectEqual(@as(i32, -10), scrollTarget(100, w, 0));
-    try std.testing.expectEqual(@as(i32, 71), scrollTarget(100, w, 1));
+    try std.testing.expectEqual(@as(i32, 0), scrollTarget(100, w, 0, 3));
+    try std.testing.expectEqual(@as(i32, 71), scrollTarget(100, w, 1, 3));
+    try std.testing.expectEqual(@as(i32, 142), scrollTarget(100, w, 2, 3));
 }
 
 test "step always arrives" {

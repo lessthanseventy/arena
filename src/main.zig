@@ -13,6 +13,8 @@ const spin_turn_ms = 6000;
 /// not once for every read of it.
 const frame_ms = 8;
 const theme_check_ms = 1000;
+/// How often tmux is asked what its windows are up to, for their marks.
+const list_ms = 2000;
 /// The longest the loop sleeps. A resize sets a flag from its signal, and is seen at the next
 /// wake: poll, unlike ppoll, is on every system arena builds for, and is not cut short by one.
 const idle_ms = 100;
@@ -177,10 +179,16 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) 
     var last_spin: i64 = 0;
     var last_frame: i64 = 0;
     var theme_checked: i64 = -theme_check_ms;
+    var listed_at: i64 = 0;
 
     while (!app.quit) {
         const now = std.Io.Timestamp.now(io, .awake).toMilliseconds();
         app.now = now;
+        app.wall = std.Io.Timestamp.now(io, .real).toSeconds();
+        if (now - listed_at >= list_ms) {
+            listed_at = now;
+            app.want_list = true;
+        }
         if (winch.swap(false, .acq_rel)) if (winsize()) |ws| try app.resized(ws.col, ws.row);
         if (now - theme_checked >= theme_check_ms) {
             theme_checked = now;

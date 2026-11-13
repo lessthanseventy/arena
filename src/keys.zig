@@ -52,7 +52,7 @@ pub const Part = struct {
 };
 
 /// The keys arena takes with Alt; `\r` is Enter.
-pub const chords = "hjklHLxmq123456789\r";
+pub const chords = "hjklHLxmqz123456789\r";
 
 /// Splits input at the first thing arena reads itself: an Alt chord (ESC then one of `chords`),
 /// an SGR mouse report, or the terminal's reply to a query.
@@ -109,7 +109,7 @@ test "Alt+Enter is a chord" {
 }
 
 test "other escape sequences and a trailing escape are the window's" {
-    for ([_][]const u8{ "\x1b[A", "\x1bOP", "\x1bz", "abc\x1b", "\x1b[<0;0;1M", "" }) |bytes| {
+    for ([_][]const u8{ "\x1b[A", "\x1bOP", "\x1b~", "abc\x1b", "\x1b[<0;0;1M", "" }) |bytes| {
         const part = next(bytes);
         try std.testing.expectEqualStrings(bytes, part.text);
         try std.testing.expectEqual(@as(?Event, null), part.event);

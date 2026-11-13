@@ -102,9 +102,12 @@ const Column = struct {
     w: u16,
     focused: bool,
     title: []const u21,
+    /// The cell of the title that is the window's mark, drawn in amber.
+    mark_at: ?usize = null,
 
     /// The border cell at (`cx`, `y`) of the column: the frame, the title in its top edge, and
-    /// in the focused column's bottom edge a dot per window, the filled one being this one.
+    /// in the focused column's bottom edge a dot per window, the filled one being this one and
+    /// any other with something to say showing its mark.
     fn border(col: Column, pen: *Pen, w: *Writer, cx: usize, y: u16) !void {
         const app = col.app;
         const h = app.view_h;
@@ -112,16 +115,21 @@ const Column = struct {
         const bottom = y == h - 1;
 
         if (top and cx >= 2 and cx - 2 < col.title.len) {
-            try pen.set(w, if (col.focused) chip(app) else ink(app, "dim", 8), null);
+            const marked = col.mark_at == cx - 2;
+            try pen.set(w, if (col.focused) chip(app) else if (marked) ink(app, "amber", 4) else ink(app, "dim", 8), null);
             return put(w, col.title[cx - 2]);
         }
 
         const count = col.session.wins.items.len;
         if (bottom and col.focused and layout.inDots(col.w, count, cx)) {
-            const dot = layout.dotAt(col.w, count, cx);
+            const dot = layout.dotAt(col.w, count, cx) orelse {
+                try pen.set(w, .{}, null);
+                return put(w, ' ');
+            };
             const here = dot == col.session.focus;
-            try pen.set(w, if (here) ink(app, "amber", 4) else ink(app, "dim", 8), null);
-            return put(w, if (dot == null) ' ' else if (here) '●' else '○');
+            const mark = app.mark(col.session, col.session.wins.items[dot]);
+            try pen.set(w, if (here or mark != .none) ink(app, "amber", 4) else ink(app, "dim", 8), null);
+            return put(w, if (here) '●' else if (mark != .none) glyph(mark) else '○');
         }
 
         const style: vt.Style = if (app.theme) |t| rgbStyle(theme.gradient(
@@ -195,11 +203,22 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16) !void {
         try w.writeAll(name);
         if (cut) try w.writeAll("…");
         for (0..inner - 5 - cellCount(name) - @intFromBool(cut)) |_| try w.writeAll(" ");
+        try pen.set(w, if (here) chip(app) else ink(app, "amber", 4), null);
+        try put(w, glyph(app.sessionMark(s)));
         try pen.set(w, if (here) chip(app) else dim, null);
-        try w.print(" {d:>2} ", .{@min(s.wins.items.len, 99)});
+        try w.print("{d:>2} ", .{@min(s.wins.items.len, 99)});
         filled = inner;
     } else try pen.set(w, .{}, null);
     for (filled..inner) |_| try w.writeAll(" ");
+}
+
+fn glyph(mark: app_mod.Mark) u21 {
+    return switch (mark) {
+        .none => ' ',
+        .busy => '◌',
+        .unseen => '●',
+        .bell => '▲',
+    };
 }
 
 fn cellCount(text: []const u8) usize {
@@ -408,8 +427,21 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
         var title_len: usize = 0;
         var view = std.unicode.Utf8View.initUnchecked(title).iterator();
         while (view.nextCodepoint()) |cp| : (title_len += 1) title_cps[title_len] = cp;
+        const mark = app.mark(s, win);
+        if (mark != .none and title_len + 2 <= title_cps.len) {
+            title_cps[title_len] = glyph(mark);
+            title_cps[title_len + 1] = ' ';
+            title_len += 2;
+        }
         if (title_len + 4 > col_w) title_len = 0;
-        const col: Column = .{ .app = app, .session = s, .w = col_w, .focused = focused, .title = title_cps[0..title_len] };
+        const col: Column = .{
+            .app = app,
+            .session = s,
+            .w = col_w,
+            .focused = focused,
+            .title = title_cps[0..title_len],
+            .mark_at = if (mark != .none and title_len > 0) title_len - 2 else null,
+        };
 
         var pen: Pen = .{};
         var y: u16 = 0;

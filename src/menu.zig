@@ -5,6 +5,7 @@ pub const Action = enum {
     rename_window,
     move_left,
     move_right,
+    full_width,
     close_window,
     split_right,
     split_below,
@@ -32,6 +33,7 @@ pub const main = [_]Item{
     .{ .icon = "✎", .label = "Rename window", .key = 'r', .action = .rename_window },
     .{ .icon = "←", .label = "Move window left", .key = 'H', .action = .move_left },
     .{ .icon = "→", .label = "Move window right", .key = 'L', .action = .move_right },
+    .{ .icon = "↔", .label = "Full width", .key = 'z', .action = .full_width },
     .{ .icon = "×", .label = "Close window", .key = 'x', .action = .close_window },
     .{ .icon = "◫", .label = "Split pane right", .key = 'v', .action = .split_right, .group = true },
     .{ .icon = "⊟", .label = "Split pane below", .key = 's', .action = .split_below },
@@ -139,7 +141,7 @@ test "keys move with wrapping, pick, and close" {
     try std.testing.expectEqual(Action.rename_window, m.press("\r").act);
     try std.testing.expectEqual(Action.new_session, m.press("S").act);
     try std.testing.expectEqual(Menu.Result.close, m.press("\x1b"));
-    try std.testing.expectEqual(Menu.Result.none, m.press("z"));
+    try std.testing.expectEqual(Menu.Result.none, m.press("?"));
 }
 
 test "a click picks the item on its row; rules, padding and border pick nothing" {
@@ -153,9 +155,9 @@ test "a click picks the item on its row; rules, padding and border pick nothing"
     try std.testing.expectEqual(@as(u16, 9), c.height());
 
     const m: Menu = .{ .items = &main };
-    try std.testing.expectEqual(Action.close_window, m.click(5, 8).act);
-    try std.testing.expectEqual(Menu.Result.none, m.click(5, 9));
-    try std.testing.expectEqual(Action.split_right, m.click(5, 10).act);
+    try std.testing.expectEqual(Action.close_window, m.click(5, 9).act);
+    try std.testing.expectEqual(Menu.Result.none, m.click(5, 10));
+    try std.testing.expectEqual(Action.split_right, m.click(5, 11).act);
 }
 
 test "a prompt takes text, whole characters back, and no more than fits" {

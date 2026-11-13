@@ -14,8 +14,16 @@ const history_lines = 5000;
 /// Wheel and swipe steps that move between windows or sessions are taken this far apart.
 const nav_gap_ms = 150;
 
+/// A window with output this recent is still at it.
+const busy_ms = 3000;
+
 const pane_format = "#{{session_id}} #{{window_id}} #{{pane_id}} #{{window_width}} #{{window_height}} " ++
-    "#{{pane_left}} #{{pane_top}} #{{pane_width}} #{{pane_height}} #{{pane_active}} #{{window_active}} #{{window_name}}";
+    "#{{pane_left}} #{{pane_top}} #{{pane_width}} #{{pane_height}} #{{pane_active}} #{{window_active}} " ++
+    "#{{window_activity}} #{{window_bell_flag}} #{{window_name}}";
+
+/// What a window not being looked at has to say: it is putting out text, it has put some out
+/// and stopped, or it rang the bell. In rising order of how much it wants looking at.
+pub const Mark = enum { none, busy, unseen, bell };
 const mode_flags = "#{{alternate_on}} #{{?cursor_flag,0,1}} #{{mouse_standard_flag}} #{{mouse_button_flag}} #{{mouse_all_flag}} #{{mouse_sgr_flag}}";
 /// What to feed a pane's terminal for each of `mode_flags` that is 1, in the same order.
 const mode_sets = [_][]const u8{ "\x1b[?1049h", "\x1b[?25l", "\x1b[?1000h", "\x1b[?1002h", "\x1b[?1003h", "\x1b[?1006h" };
@@ -69,6 +77,14 @@ pub const Window = struct {
     /// The size arena last asked tmux for, so one tmux will not give is asked for once.
     asked_w: u16 = 0,
     asked_h: u16 = 0,
+    /// When tmux last saw output in the window, and when arena last had it in view, both in
+    /// seconds of the wall clock.
+    activity: i64 = 0,
+    seen: i64 = 0,
+    /// When, on arena's clock, `activity` was last found to have moved.
+    changed_at: i64 = 0,
+    bell: bool = false,
+    listed: bool = false,
 
     pub fn activePane(win: *const Window) ?*Pane {
         return if (win.active < win.panes.items.len) win.panes.items[win.active] else null;
@@ -94,6 +110,8 @@ pub const Session = struct {
     scroll: i32 = 0,
     /// False until its strip has been put in place once, and again after a resize.
     placed: bool = false,
+    /// Columns take the whole view, with no neighbour peeking.
+    full: bool = false,
 
     pub fn focused(s: *const Session) ?*Window {
         return if (s.focus < s.wins.items.len) s.wins.items[s.focus] else null;
@@ -147,7 +165,11 @@ pub const App = struct {
     ended: bool = false,
     /// Milliseconds on a clock that only goes forward, set each turn of the loop.
     now: i64 = 0,
+    /// Seconds of the wall clock, as tmux stamps a window's activity.
+    wall: i64 = 0,
     nav_at: i64 = 0,
+    /// Until then output is arena's own doing, windows redrawing at a new size, and marks nothing.
+    hush_until: i64 = 0,
 
     pub fn deinit(app: *App) void {
         for (app.sessions.items) |s| app.destroySession(s);
@@ -196,11 +218,44 @@ pub const App = struct {
     }
 
     pub fn colW(app: *const App, s: *const Session) u16 {
-        return layout.colWidth(app.view_w, s.wins.items.len);
+        return if (s.full) app.view_w else layout.colWidth(app.view_w, s.wins.items.len);
     }
 
     pub fn target(app: *const App, s: *const Session) i32 {
-        return layout.scrollTarget(app.view_w, app.colW(s), s.focus);
+        return layout.scrollTarget(app.view_w, app.colW(s), s.focus, s.wins.items.len);
+    }
+
+    /// What `win` of `s` has to say; nothing when it is the window in view.
+    pub fn mark(app: *const App, s: *const Session, win: *const Window) Mark {
+        if (s.id == app.current and s.focused() == win) return .none;
+        if (win.bell) return .bell;
+        if (win.activity <= win.seen) return .none;
+        return if (app.now - win.changed_at < busy_ms) .busy else .unseen;
+    }
+
+    /// The most pressing mark among a session's windows.
+    pub fn sessionMark(app: *const App, s: *const Session) Mark {
+        var most: Mark = .none;
+        for (s.wins.items) |win| {
+            const found = app.mark(s, win);
+            if (@intFromEnum(found) > @intFromEnum(most)) most = found;
+        }
+        return most;
+    }
+
+    /// The window in view has been seen up to now.
+    fn see(app: *App) void {
+        if (app.cur()) |s| if (s.focused()) |win| {
+            win.seen = app.wall;
+        };
+    }
+
+    fn toggleFull(app: *App) void {
+        const s = app.cur() orelse return;
+        s.full = !s.full;
+        app.hush_until = app.now + busy_ms;
+        app.want_list = true;
+        app.dirty = true;
     }
 
     /// The session rail's width: its border, the longest name, to 14 cells, and each session's
@@ -224,6 +279,7 @@ pub const App = struct {
         app.fit();
         try app.send(.ignore, "refresh-client -C {d}x{d}", .{ cols, rows });
         for (app.sessions.items) |s| s.placed = false;
+        app.hush_until = app.now + busy_ms;
         app.want_list = true;
     }
 
@@ -378,7 +434,7 @@ pub const App = struct {
         var lines = std.mem.tokenizeScalar(u8, body, '\n');
         while (lines.next()) |line| {
             var it = std.mem.tokenizeScalar(u8, line, ' ');
-            var n: [11]u32 = undefined;
+            var n: [13]u32 = undefined;
             for (&n, 0..) |*field, i| {
                 const token = it.next() orelse break;
                 field.* = std.fmt.parseInt(u32, token[@intFromBool(i < 3)..], 10) catch break;
@@ -397,6 +453,11 @@ pub const App = struct {
                     win.name = try app.gpa.dupe(u8, it.rest());
                     win.w = @intCast(n[3]);
                     win.h = @intCast(n[4]);
+                    if (win.listed and n[11] != win.activity) win.changed_at = app.now;
+                    win.activity = n[11];
+                    if (!win.listed or app.now < app.hush_until) win.seen = win.activity;
+                    win.bell = n[12] == 1;
+                    win.listed = true;
                     if (n[10] == 1) s.focus = s.wins.items.len;
                     try s.wins.append(app.gpa, win);
                     break :blk win;
@@ -425,6 +486,7 @@ pub const App = struct {
             s.placed = true;
         }
         app.follow_active = false;
+        app.see();
         try app.settle();
         if (app.cur()) |s| app.listed = app.listed or s.wins.items.len > 0;
         app.dirty = true;
@@ -467,6 +529,7 @@ pub const App = struct {
     fn sessionTo(app: *App, index: usize) !void {
         const to = app.sessions.items[index];
         if (to.id == app.current) return;
+        app.see();
         app.slide = if (index > app.sessionIndex(app.current) orelse index) 1 else -1;
         try app.send(.ignore, "switch-client -t '${d}'", .{to.id});
     }
@@ -480,6 +543,7 @@ pub const App = struct {
 
     fn focusTo(app: *App, index: usize) !void {
         const s = app.cur() orelse return;
+        app.see();
         s.focus = index;
         try app.send(.ignore, "select-window -t @{d}", .{s.wins.items[index].id});
         app.dirty = true;
@@ -685,6 +749,7 @@ pub const App = struct {
                     .rename_session => app.prompt = .{ .what = .session },
                     .move_left => try app.swapBy(-1),
                     .move_right => try app.swapBy(1),
+                    .full_width => app.toggleFull(),
                     .split_right => try app.send(.ignore, "split-window -h -c '#{{pane_current_path}}'", .{}),
                     .split_below => try app.send(.ignore, "split-window -v -c '#{{pane_current_path}}'", .{}),
                     .close_pane => try app.closePane(),
@@ -744,6 +809,7 @@ pub const App = struct {
             'x' => app.openMenu(&menu.confirm),
             'm' => app.openMenu(&menu.main),
             'q' => app.quit = true,
+            'z' => app.toggleFull(),
             '\r' => try app.newWindow(),
             else => if (app.cur()) |s| {
                 if (letter - '1' < s.wins.items.len) try app.focusTo(letter - '1');
@@ -752,7 +818,8 @@ pub const App = struct {
     }
 
     /// With Alt: h and l move along the strip, j and k between sessions, 1 to 9 go to a window,
-    /// H and L move the window, Enter opens one, x closes it, m opens the menu and q leaves.
+    /// H and L move the window, Enter opens one, x closes it, z gives it the whole width, m opens
+    /// the menu and q leaves.
     /// Everything else is the focused pane's, or the menu's while it is open. Alt is ESC and the
     /// letter together, which a typed Escape then a letter rarely is.
     ///
