@@ -486,8 +486,11 @@ pub const App = struct {
                 } else try Pane.create(app, n[2], @intCast(n[7]), @intCast(n[8]));
                 pane.x = @intCast(n[5]);
                 pane.y = @intCast(n[6]);
+                // tmux wraps a pane's history again at its new width; the copy here, fed in as
+                // rows, cannot, so it is taken afresh.
                 if (pane.term.cols != n[7] or pane.term.rows != n[8]) {
                     try pane.term.resize(app.gpa, .{ .cols = @intCast(@max(1, n[7])), .rows = @intCast(@max(1, n[8])) });
+                    pane.seed = .wanted;
                 }
                 if (n[9] == 1) win.active = win.panes.items.len;
                 try win.panes.append(app.gpa, pane);

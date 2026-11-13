@@ -1,2 +1,17 @@
 [tools]
 zig = "0.17.1"
+
+[tasks.build]
+run = "zig build"
+
+[tasks.test]
+run = "zig build test --summary all"
+
+[tasks.e2e]
+description = "arena driven in a private tmux, against another"
+depends = ["build"]
+run = "zsh test/e2e.zsh"
+
+[tasks.check]
+description = "the unit tests, then end to end"
+depends = ["test", "e2e"]
