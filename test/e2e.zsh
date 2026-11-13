@@ -88,6 +88,27 @@ mouse 32 83 5 M
 mouse 0 83 5 m
 check "and back" await wide '66 80'
 
+windows() { [[ $(inner list-windows -t $1 -F '#{window_name}' | tr '\n' ' ') == "$2 " ]] }
+mouse 0 20 1 M
+mouse 32 90 1 M
+mouse 32 92 1 M
+mouse 32 95 1 M
+mouse 0 95 1 m
+check "a title dropped on another column takes its place, and goes no further" await windows alpha 'two one three'
+see '─╮ ╭─ 2 one '
+mouse 0 28 1 M
+mouse 32 18 1 M
+mouse 0 18 1 m
+check "and back" await windows alpha 'one two three'
+see '^╭─ sessions ─+╮ ╭─ 1 one '
+mouse 0 20 1 M
+mouse 32 5 3 M
+mouse 0 5 3 m
+check "a title dropped on a session of the rail sends its window there" await windows beta 'solo one'
+inner move-window -s beta:one -t alpha:0
+inner select-window -t alpha:one
+see '^╭─ sessions ─+╮ ╭─ 1 one '
+
 key M-l
 check "Alt+l focuses the next window, its neighbour peeking" see '─╮ ╭─ 2 two ─'
 key 'echo e2e-$((6*7))' Enter

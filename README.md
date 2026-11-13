@@ -78,7 +78,8 @@ With the mouse:
 - Click a pane to select it; drag the line between panes to resize them, or a column's side to
   make its window narrower or wider. Over either, the pointer shows which way it goes. A width
   is kept in the tmux server, with its window.
-- Drag a column's title to move the window; click it twice to rename; middle-click it to close.
+- Drag a column's title onto another column and its window takes that place; onto a session in
+  the rail and it goes there. Click a title twice to rename; middle-click it to close.
 - Drag a session up or down the rail to move it. The order is kept in the tmux server.
 - Drag in a pane to select text, which is copied when you let go. Two clicks copy a word.
   Where the program in the pane uses the mouse itself, it gets the mouse instead.

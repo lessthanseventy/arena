@@ -235,6 +235,8 @@ pub const App = struct {
     } = .none,
     /// The pointer's shape, as the terminal was last told.
     shape: []const u8 = "default",
+    /// Where the mouse last was.
+    pointer: struct { x: u16 = 0, y: u16 = 0 } = .{},
     /// Bytes for the terminal arena runs in, written out after the next frame.
     out: std.ArrayList(u8) = .empty,
     /// The name last clicked, a window's or a session's, and when.
@@ -888,16 +890,27 @@ pub const App = struct {
         return again;
     }
 
-    /// The held button moved to `m`, or let go.
-    fn dragTo(app: *App, s: *Session, m: keys.Mouse) !void {
-        if (m.release or !m.motion() or m.hover()) {
-            if (app.drag == .select) if (app.paneById(app.drag.select.pane)) |pane| try app.copy(pane);
+    /// The held button moved to `m`, or let go, wherever the pointer is by then.
+    fn dragTo(app: *App, m: keys.Mouse) !void {
+        const s = app.cur() orelse {
             app.drag = .none;
+            return;
+        };
+        if (m.release or !m.motion() or m.hover()) {
+            const held = app.drag;
+            const drop = app.dropAt();
+            app.drag = .none;
+            app.dirty = true;
+            switch (held) {
+                .select => |from| if (app.paneById(from.pane)) |pane| try app.copy(pane),
+                .title => |id| if (m.release) try app.dropWindow(s, id, drop),
+                else => {},
+            }
             return;
         }
         const ox: i32 = app.term_w - app.view_w;
         switch (app.drag) {
-            .none, .session => {},
+            .none => {},
             // Past the pane's top or bottom the history scrolls under the pointer.
             .select => |from| {
                 const pane = app.paneById(from.pane) orelse return;
@@ -940,24 +953,73 @@ pub const App = struct {
                 const moved = @as(i32, m.x) - held.x;
                 try app.setShare(s, win, app.shareOf(held.w + if (held.right) moved else -moved));
             },
-            // One place at a time, and not before the last move has been listed and the strip
-            // has come to rest: the pointer is read against where the columns are.
-            .title => |id| {
-                if (app.listing or app.want_list or s.scroll != app.target(s)) return;
-                if (s.wins.items.len == 0 or s.wins.items[s.focus].id != id) return;
-                const over = app.colAt(s, m.x - ox + s.scroll) orelse return;
-                if (over.index != s.focus) try app.swapBy(if (over.index > s.focus) 1 else -1);
-            },
+            // Nothing moves until it is let go: where it would go is drawn.
+            .title => app.dirty = true,
+            .session => |id| try app.dragSession(id, m),
         }
     }
 
-    /// The held button moved to `m` with a session, or let go. The session goes to the row under
-    /// the pointer, and every session is told its place; the next move waits for that to be listed.
-    fn dragSession(app: *App, id: u32, m: keys.Mouse) !void {
-        if (m.release or !m.motion() or m.hover()) {
-            app.drag = .none;
-            return;
+    /// Where a window held by its title would go, let go now: the place of the column under
+    /// the pointer, or a session on the rail.
+    pub const Drop = union(enum) { none, column: usize, session: usize };
+
+    pub fn dropAt(app: *const App) Drop {
+        if (app.drag != .title) return .none;
+        const s = app.cur() orelse return .none;
+        const ox = app.term_w - app.view_w;
+        if (app.pointer.x < ox) {
+            const row = app.railSession(app.pointer.y) orelse return .none;
+            return if (app.sessions.items[row].id == s.id) .none else .{ .session = row };
         }
+        const hit = app.colAt(s, @as(i32, app.pointer.x) - ox + s.scroll) orelse return .none;
+        return if (s.wins.items[hit.index].id == app.drag.title) .none else .{ .column = hit.index };
+    }
+
+    /// Which session is on row `y` of the rail.
+    fn railSession(app: *const App, y: u16) ?usize {
+        if (y < 1 or y + 3 >= app.view_h or y - 1 >= app.sessions.items.len) return null;
+        return y - 1;
+    }
+
+    fn dropWindow(app: *App, s: *Session, id: u32, drop: Drop) !void {
+        const from = for (s.wins.items, 0..) |win, index| {
+            if (win.id == id) break index;
+        } else return;
+        // a press that moved a window was not the first of two on its name
+        if (drop != .none) app.clicked = null;
+        switch (drop) {
+            .none => {},
+            .column => |to| try app.moveWin(s, from, to),
+            .session => |to| try app.sendWin(s, from, app.sessions.items[to]),
+        }
+    }
+
+    /// Moves a window of `s` to another's place, the ones between shifting along: tmux swaps
+    /// two at a time.
+    fn moveWin(app: *App, s: *const Session, from: usize, to: usize) !void {
+        const id = s.wins.items[from].id;
+        var at = from;
+        while (at != to) {
+            at = if (to > at) at + 1 else at - 1;
+            try app.send(.ignore, "swap-window -d -s @{d} -t @{d}", .{ id, s.wins.items[at].id });
+        }
+        app.want_list = true;
+    }
+
+    /// Moves a window of `s` to the end of another session. A session's last window takes the
+    /// session with it, and tmux would detach arena from a session that ends, so arena goes
+    /// with the window.
+    fn sendWin(app: *App, s: *const Session, from: usize, to: *const Session) !void {
+        if (s.id == app.current and s.wins.items.len == 1) {
+            try app.sessionTo(app.sessionIndex(to.id) orelse return);
+        }
+        try app.send(.ignore, "move-window -s @{d} -t '${d}:'", .{ s.wins.items[from].id, to.id });
+        app.want_list = true;
+    }
+
+    /// The held button moved to `m` with a session. The session goes to the row under the
+    /// pointer, and every session is told its place; the next move waits for that to be listed.
+    fn dragSession(app: *App, id: u32, m: keys.Mouse) !void {
         if (app.listing or app.want_list) return;
         const at = app.sessionIndex(id) orelse return;
         const shown = @min(app.sessions.items.len, app.view_h -| 4);
@@ -1025,6 +1087,7 @@ pub const App = struct {
     /// A right click nothing else took opens the menu; with the menu open, a click picks from it
     /// or, outside it, closes it.
     fn onMouse(app: *App, m: keys.Mouse) !void {
+        app.pointer = .{ .x = m.x, .y = m.y };
         try app.pointAs(m);
         if (app.overview != null) return app.overviewMouse(m);
         if (app.prompt) |*prompt| {
@@ -1054,14 +1117,15 @@ pub const App = struct {
     /// Whether the mouse event was for something. On the rail: a click picks a session or the
     /// menu, a second one on the current session renames it, a session is dragged to move it,
     /// the wheel steps through sessions.
-    /// On the strip: a click goes to that window, dot or pane; a title is dragged to move its
-    /// window, clicked twice to rename it, middle clicked to close it; the line between panes
-    /// is dragged to resize them; a sideways wheel steps through windows; and anything inside a
-    /// pane is its program's or scrolls it.
+    /// On the strip: a click goes to that window, dot or pane; a title is dragged onto another
+    /// column, to take its place, or onto a session of the rail, to go there, clicked twice to
+    /// rename its window, middle clicked to close it; the line between panes is dragged to
+    /// resize them, and a column's side to resize its window; a sideways wheel steps through
+    /// windows; and anything inside a pane is its program's or scrolls it.
     fn mouseHit(app: *App, m: keys.Mouse) !bool {
         const ox = app.term_w - app.view_w;
-        if (app.drag == .session and !m.wheel()) {
-            try app.dragSession(app.drag.session, m);
+        if (app.drag != .none and !m.wheel()) {
+            try app.dragTo(m);
             return true;
         }
         if (m.x < ox) {
@@ -1071,13 +1135,13 @@ pub const App = struct {
             }
             if (!m.leftPress()) return false;
             if (m.y + 2 == app.view_h) app.openMenu(&menu.main);
-            if (m.y >= 1 and m.y + 3 < app.view_h and m.y - 1 < app.sessions.items.len) {
-                const id = app.sessions.items[m.y - 1].id;
+            if (app.railSession(m.y)) |row| {
+                const id = app.sessions.items[row].id;
                 if (app.doubleClick(.{ .session = id }) and id == app.current) {
                     app.prompt = .{ .what = .session };
                     app.dirty = true;
                 } else {
-                    try app.sessionTo(m.y - 1);
+                    try app.sessionTo(row);
                     app.drag = .{ .session = id };
                 }
             }
@@ -1085,10 +1149,6 @@ pub const App = struct {
         }
         const s = app.cur() orelse return false;
         if (app.yoff != 0) return false;
-        if (app.drag != .none and !m.wheel()) {
-            try app.dragTo(s, m);
-            return true;
-        }
         if (m.sideways()) {
             if (app.navStep()) try app.focusBy(if (m.code & 1 == 0) -1 else 1);
             return true;
@@ -1331,10 +1391,7 @@ pub const App = struct {
         const s = app.cur() orelse return;
         const next = @as(i32, @intCast(s.focus)) + delta;
         if (next < 0 or next >= s.wins.items.len) return;
-        const from = s.wins.items[s.focus].id;
-        const to = s.wins.items[@intCast(next)].id;
-        try app.send(.ignore, "swap-window -d -s @{d} -t @{d}", .{ from, to });
-        app.want_list = true;
+        try app.moveWin(s, s.focus, @intCast(next));
     }
 
     fn onChord(app: *App, letter: u8) !void {

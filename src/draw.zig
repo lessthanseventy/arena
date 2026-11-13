@@ -101,6 +101,8 @@ const Column = struct {
     session: *const Session,
     w: u16,
     focused: bool,
+    /// A window held by its title would take this one's place.
+    drop: bool = false,
     title: []const u21,
     /// The cell of the title that is the window's mark, drawn in amber.
     mark_at: ?usize = null,
@@ -116,7 +118,7 @@ const Column = struct {
 
         if (top and cx >= 2 and cx - 2 < col.title.len) {
             const marked = col.mark_at == cx - 2;
-            try pen.set(w, if (col.focused) chip(app) else if (marked) ink(app, "amber", 4) else ink(app, "dim", 8), null);
+            try pen.set(w, if (col.focused or col.drop) chip(app) else if (marked) ink(app, "amber", 4) else ink(app, "dim", 8), null);
             return put(w, col.title[cx - 2]);
         }
 
@@ -195,7 +197,9 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16) !void {
         filled = 1 + cellCount(app_mod.rail_button);
     } else if (y + 3 < app.view_h and y - 1 < app.sessions.items.len) {
         const s = app.sessions.items[y - 1];
-        const here = s.id == app.current;
+        const drop = app.dropAt();
+        // lit as the current one is: a window held by its title would go to it
+        const here = s.id == app.current or (drop == .session and drop.session == y - 1);
         const cut = cellCount(s.name) > inner - 5;
         const name = clip(s.name, inner - 5 - @intFromBool(cut));
         try pen.set(w, if (here) chip(app) else .{}, null);
@@ -440,6 +444,7 @@ fn cell(app: *const App, pen: *Pen, w: *Writer, win: *const Window, tx: usize, t
 fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Cursor {
     const ox = app.term_w - app.view_w;
     var cursor: ?Cursor = null;
+    const drop = app.dropAt();
 
     for (s.wins.items, 0..) |win, i| {
         const focused = i == s.focus;
@@ -470,6 +475,7 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
             .session = s,
             .w = col_w,
             .focused = focused,
+            .drop = drop == .column and drop.column == i,
             .title = title_cps[0..title_len],
             .mark_at = if (mark != .none and title_len > 0) title_len - 2 else null,
         };
