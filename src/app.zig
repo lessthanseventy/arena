@@ -19,7 +19,9 @@ const double_click_ms = 400;
 /// A window with output this recent is still at it.
 const busy_ms = 3000;
 
-const pane_format = "#{{session_id}} #{{window_id}} #{{pane_id}} #{{window_width}} #{{window_height}} " ++
+/// tmux has no order of sessions to change, so arena keeps each one's place in an option on it.
+const session_format = "#{{session_id}} #{{?@arena_order,#{{@arena_order}},-}} #{{session_name}}";
+const pane_format ="#{{session_id}} #{{window_id}} #{{pane_id}} #{{window_width}} #{{window_height}} " ++
     "#{{pane_left}} #{{pane_top}} #{{pane_width}} #{{pane_height}} #{{pane_active}} #{{window_active}} " ++
     "#{{window_activity}} #{{window_bell_flag}} #{{window_name}}";
 
@@ -145,6 +147,8 @@ pub const Window = struct {
 pub const Session = struct {
     id: u32,
     name: []u8 = &.{},
+    /// Its place on the rail, as arena last left it in tmux; none for a session not yet moved.
+    order: u32 = std.math.maxInt(u32),
     wins: std.ArrayList(*Window) = .empty,
     focus: usize = 0,
     scroll: i32 = 0,
@@ -207,12 +211,13 @@ pub const App = struct {
     ended: bool = false,
     /// Milliseconds on a clock that only goes forward, set each turn of the loop.
     now: i64 = 0,
-    /// What the held left button is moving: the line after a pane, to resize it, or a window by
-    /// its title, along the strip.
+    /// What the held left button is moving: the line after a pane, to resize it, a window by
+    /// its title, along the strip, or a session by its name, along the rail.
     drag: union(enum) {
         none,
         divider: struct { pane: u32, upright: bool, asked: i32 = -1 },
         title: u32,
+        session: u32,
         /// Text being selected in a pane, from the cell of it the button went down on.
         select: struct { pane: u32, x: u16, y: u16 },
     } = .none,
@@ -343,7 +348,7 @@ pub const App = struct {
     pub fn requestList(app: *App) !void {
         app.want_list = false;
         app.listing = true;
-        try app.send(.sessions, "list-sessions -F '#{{session_id}} #{{session_name}}'", .{});
+        try app.send(.sessions, "list-sessions -F '" ++ session_format ++ "'", .{});
         try app.send(.panes, "list-panes -a -F '" ++ pane_format ++ "'", .{});
     }
 
@@ -459,11 +464,19 @@ pub const App = struct {
                 made.* = .{ .id = id };
                 break :blk made;
             };
+            const rest = line[space + 1 ..];
+            const name = std.mem.indexOfScalar(u8, rest, ' ') orelse continue;
+            s.order = std.fmt.parseInt(u32, rest[0..name], 10) catch std.math.maxInt(u32);
             app.gpa.free(s.name);
-            s.name = try app.gpa.dupe(u8, line[space + 1 ..]);
+            s.name = try app.gpa.dupe(u8, rest[name + 1 ..]);
             try app.sessions.append(app.gpa, s);
         }
         for (old.items) |s| app.destroySession(s);
+        std.sort.insertion(*Session, app.sessions.items, {}, struct {
+            fn before(_: void, a: *Session, b: *Session) bool {
+                return a.order < b.order;
+            }
+        }.before);
         app.fit();
     }
 
@@ -818,7 +831,7 @@ pub const App = struct {
         const col_w = app.colW(s);
         const ox: i32 = app.term_w - app.view_w;
         switch (app.drag) {
-            .none => {},
+            .none, .session => {},
             // Past the pane's top or bottom the history scrolls under the pointer.
             .select => |from| {
                 const pane = app.paneById(from.pane) orelse return;
@@ -863,6 +876,26 @@ pub const App = struct {
         }
     }
 
+    /// The held button moved to `m` with a session, or let go. The session goes to the row under
+    /// the pointer, and every session is told its place; the next move waits for that to be listed.
+    fn dragSession(app: *App, id: u32, m: keys.Mouse) !void {
+        if (m.release or !m.motion()) {
+            app.drag = .none;
+            return;
+        }
+        if (app.listing or app.want_list) return;
+        const at = app.sessionIndex(id) orelse return;
+        const shown = @min(app.sessions.items.len, app.view_h -| 4);
+        const over = @min(shown -| 1, m.y -| 1);
+        if (over == at) return;
+        app.sessions.insertAssumeCapacity(over, app.sessions.orderedRemove(at));
+        for (app.sessions.items, 1..) |s, place| {
+            try app.send(.ignore, "set-option -t '${d}' @arena_order {d}", .{ s.id, place });
+        }
+        app.want_list = true;
+        app.dirty = true;
+    }
+
     /// True when a wheel or swipe step may move between windows or sessions: they come in
     /// bursts, and each burst is one step.
     fn navStep(app: *App) bool {
@@ -900,13 +933,18 @@ pub const App = struct {
     }
 
     /// Whether the mouse event was for something. On the rail: a click picks a session or the
-    /// menu, a second one on the current session renames it, the wheel steps through sessions.
+    /// menu, a second one on the current session renames it, a session is dragged to move it,
+    /// the wheel steps through sessions.
     /// On the strip: a click goes to that window, dot or pane; a title is dragged to move its
     /// window, clicked twice to rename it, middle clicked to close it; the line between panes
     /// is dragged to resize them; a sideways wheel steps through windows; and anything inside a
     /// pane is its program's or scrolls it.
     fn mouseHit(app: *App, m: keys.Mouse) !bool {
         const ox = app.term_w - app.view_w;
+        if (app.drag == .session and !m.wheel()) {
+            try app.dragSession(app.drag.session, m);
+            return true;
+        }
         if (m.x < ox) {
             if (m.wheel()) {
                 if (app.navStep()) try app.sessionBy(if (m.code & 1 == 0) -1 else 1);
@@ -919,7 +957,10 @@ pub const App = struct {
                 if (app.doubleClick(.{ .session = id }) and id == app.current) {
                     app.prompt = .{ .what = .session };
                     app.dirty = true;
-                } else try app.sessionTo(m.y - 1);
+                } else {
+                    try app.sessionTo(m.y - 1);
+                    app.drag = .{ .session = id };
+                }
             }
             return true;
         }

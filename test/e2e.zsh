@@ -108,6 +108,14 @@ check "a step back from the last column lands where tmux puts it" see ' Y│$'
 inner send-keys -t alpha:one 'echo news' Enter
 check "a window with news marks its session in the rail" see '│ alpha +[◌◉] +3 │'
 
+mouse 0 3 3 M
+mouse 32 3 2 M
+mouse 0 3 2 m
+rail() { [[ $(screen | grep -oE '^│ (alpha|beta) ' | tr -d '│ \n') == $1 ]] }
+check "dragging a session moves it up the rail" await rail betaalpha
+order() { [[ $(inner list-sessions -F '#{@arena_order}#{session_name}' | sort | tr -d '\n') == $1 ]] }
+check "and its place is kept in tmux" await order 1beta2alpha
+
 key 'echo hello brave world' Enter
 see '│hello brave world'
 row=$(screen | grep -n '│hello brave world' | cut -d: -f1)
