@@ -63,6 +63,44 @@ pub const Pane = struct {
         gpa.destroy(pane);
     }
 
+    /// Feeds the pane's program's output to its terminal, as tmux would take it. Where a
+    /// character has just filled the last column, tmux holds the cursor one past it, so a step
+    /// back lands on the last column; this terminal, like xterm, steps to the one before.
+    /// Programs under tmux draw by tmux's rule.
+    fn feed(pane: *Pane, bytes: []const u8) void {
+        var rest = bytes;
+        while (std.mem.indexOfAny(u8, rest, "\x08\x1b")) |at| {
+            pane.stream.nextSlice(rest[0..at]);
+            rest = rest[at..];
+            const cursor = &pane.term.screens.active.cursor;
+            const back = backBy(rest);
+            if (!cursor.pending_wrap or back.len == 0) {
+                pane.stream.nextSlice(rest[0..1]);
+                rest = rest[1..];
+                continue;
+            }
+            cursor.pending_wrap = false;
+            if (back.cells > 1) {
+                var buf: [16]u8 = undefined;
+                pane.stream.nextSlice(std.fmt.bufPrint(&buf, "\x1b[{d}D", .{back.cells - 1}) catch unreachable);
+            }
+            rest = rest[back.len..];
+        }
+        pane.stream.nextSlice(rest);
+    }
+
+    /// The step back `bytes` starts with, a backspace or `CSI n D`: its length, 0 when it is
+    /// neither, and how many cells it goes.
+    fn backBy(bytes: []const u8) struct { len: usize, cells: u16 } {
+        if (bytes[0] == 0x08) return .{ .len = 1, .cells = 1 };
+        if (!std.mem.startsWith(u8, bytes, "\x1b[")) return .{ .len = 0, .cells = 0 };
+        var end: usize = 2;
+        while (end < bytes.len and std.ascii.isDigit(bytes[end])) end += 1;
+        if (end == bytes.len or bytes[end] != 'D') return .{ .len = 0, .cells = 0 };
+        const cells = if (end == 2) 1 else std.fmt.parseInt(u16, bytes[2..end], 10) catch return .{ .len = 0, .cells = 0 };
+        return .{ .len = end + 1, .cells = @max(1, cells) };
+    }
+
     fn contains(pane: *const Pane, x: usize, y: usize) bool {
         return x >= pane.x and x < pane.x + pane.term.cols and y >= pane.y and y < pane.y + pane.term.rows;
     }
@@ -327,7 +365,7 @@ pub const App = struct {
             .output => |out| {
                 const pane = app.paneById(out.pane) orelse return;
                 if (pane.seed != .done) return;
-                pane.stream.nextSlice(control.unescape(@constCast(out.data)));
+                pane.feed(control.unescape(@constCast(out.data)));
                 app.dirty = true;
             },
             .changed => app.want_list = true,

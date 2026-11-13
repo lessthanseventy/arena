@@ -50,6 +50,8 @@ check() {
   fi
 }
 
+# the checks read sh's own prompt, not one handed down
+unset PS1
 inner new-session -d -s alpha -n one -x 100 -y 30 sh
 inner set -g default-command sh
 inner new-window -t alpha -n two sh
@@ -100,6 +102,9 @@ check "Escape leaves the overview" see '╭─ 1 solo ─{40}'
 # Output in the three seconds after arena resizes windows is taken for theirs redrawing, and marks
 # nothing; tmux stamps activity to the second. The news has to come clear of both.
 zselect -t 400
+key 'printf "\033[%dGX\bY\n" $(tput cols)' Enter
+check "a step back from the last column lands where tmux puts it" see ' Y│$'
+
 inner send-keys -t alpha:one 'echo news' Enter
 check "a window with news marks its session in the rail" see '│ alpha +[◌◉] +3 │'
 
