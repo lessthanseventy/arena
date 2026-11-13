@@ -64,7 +64,18 @@ pub fn main(init: std.process.Init) !void {
     std.process.exit(1);
 }
 
-/// Runs until the user leaves or tmux does; false when no session was ever shown.
+fn hasSession(init: std.process.Init, tmux: []const []const u8) !bool {
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(init.gpa);
+    try argv.appendSlice(init.gpa, tmux);
+    try argv.append(init.gpa, "has-session");
+    const has = try std.process.run(init.gpa, init.io, .{ .argv = argv.items });
+    init.gpa.free(has.stdout);
+    init.gpa.free(has.stderr);
+    return has.term.success();
+}
+
+/// Runs until the user leaves or tmux has no session left; false when none was ever shown.
 fn run(init: std.process.Init) !bool {
     const gpa = init.gpa;
     const io = init.io;
@@ -83,29 +94,13 @@ fn run(init: std.process.Init) !bool {
     }
     // A named session is attached or made. With no name, the most recent one, or a first one
     // when there is none: starting the server is what lets tmux's own restore bring sessions back.
+    const tmux = try gpa.dupe([]const u8, argv.items);
+    defer gpa.free(tmux);
     if (session) |name| {
         try argv.appendSlice(gpa, &.{ "-C", "new-session", "-A", "-s", name });
     } else {
-        try argv.append(gpa, "has-session");
-        const has = try std.process.run(gpa, io, .{ .argv = argv.items });
-        gpa.free(has.stdout);
-        gpa.free(has.stderr);
-        argv.items.len -= 1;
-        try argv.appendSlice(gpa, &.{ "-C", if (has.term.success()) "attach" else "new-session" });
+        try argv.appendSlice(gpa, &.{ "-C", if (try hasSession(init, tmux)) "attach" else "new-session" });
     }
-
-    var child = try std.process.spawn(io, .{ .argv = argv.items, .stdin = .pipe, .stdout = .pipe });
-    defer _ = child.wait(io) catch {};
-
-    // The attach itself answers with one block before anything we send.
-    var app: App = .{ .gpa = gpa, .io = io, .tmux_in = child.stdin.? };
-    defer app.deinit();
-    try app.pending.append(gpa, .ignore);
-    app.motion = init.environ_map.get("ARENA_REDUCED_MOTION") == null;
-    var theme_file: ThemeFile = .{
-        .path = if (init.environ_map.get("HOME")) |home| try std.fs.path.join(gpa, &.{ home, ".config/ficciones/theme/palette.sh" }) else null,
-    };
-    defer theme_file.deinit(&app);
 
     const tty = std.Io.File.stdout();
     const saved = try posix.tcgetattr(posix.STDIN_FILENO);
@@ -122,10 +117,51 @@ fn run(init: std.process.Init) !bool {
     try posix.tcsetattr(posix.STDIN_FILENO, .FLUSH, raw);
     defer posix.tcsetattr(posix.STDIN_FILENO, .FLUSH, saved) catch {};
     // 1002: presses, releases and drags; 1006: the SGR report format, which has no column limit
-    try tty.writeStreamingAll(io, "\x1b[?1049h\x1b[?1002h\x1b[?1006h" ++ color.Palette.query);
+    try tty.writeStreamingAll(io, "\x1b[?1049h\x1b[?1002h\x1b[?1006h");
     defer tty.writeStreamingAll(io, "\x1b[?1006l\x1b[?1002l\x1b[0m\x1b[?25h\x1b[?1049l") catch {};
 
     posix.sigaction(.WINCH, &.{ .handler = .{ .handler = onWinch }, .mask = posix.sigemptyset(), .flags = 0 }, null);
+
+    // tmux ends a client whose session ends, as when the last shell in it exits. While there
+    // are other sessions that is no reason to leave: arena attaches again, to the most recent.
+    var shown = false;
+    while (true) {
+        switch (try attached(init, argv.items, tty)) {
+            .left => return true,
+            .never => return shown,
+            .lost => shown = true,
+        }
+        if (!try hasSession(init, tmux)) return true;
+        argv.items.len = tmux.len;
+        try argv.appendSlice(gpa, &.{ "-C", "attach" });
+    }
+}
+
+const Outcome = enum { left, lost, never };
+
+/// One tmux client's life: until the user leaves (`left`) or tmux ends it, after showing a
+/// session (`lost`) or before (`never`).
+fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) !Outcome {
+    const gpa = init.gpa;
+    const io = init.io;
+    var child = try std.process.spawn(io, .{ .argv = argv, .stdin = .pipe, .stdout = .pipe });
+    defer _ = child.wait(io) catch {};
+    defer if (child.stdin) |stdin| {
+        stdin.close(io);
+        child.stdin = null;
+    };
+
+    // The attach itself answers with one block before anything we send.
+    var app: App = .{ .gpa = gpa, .io = io, .tmux_in = child.stdin.? };
+    defer app.deinit();
+    try app.pending.append(gpa, .ignore);
+    app.motion = init.environ_map.get("ARENA_REDUCED_MOTION") == null;
+    var theme_file: ThemeFile = .{
+        .path = if (init.environ_map.get("HOME")) |home| try std.fs.path.join(gpa, &.{ home, ".config/ficciones/theme/palette.sh" }) else null,
+    };
+    defer theme_file.deinit(&app);
+    winch.store(true, .release);
+    try tty.writeStreamingAll(io, color.Palette.query);
 
     var fds = [_]posix.pollfd{
         .{ .fd = posix.STDIN_FILENO, .events = posix.POLL.IN, .revents = 0 },
@@ -192,7 +228,7 @@ fn run(init: std.process.Init) !bool {
 
         if (fds[0].revents & posix.POLL.IN != 0) {
             const n = try posix.read(posix.STDIN_FILENO, &buf);
-            if (n == 0) break;
+            if (n == 0) return .left;
             try typed.appendSlice(gpa, buf[0..n]);
             const held = try app.onInput(typed.items);
             std.mem.copyForwards(u8, typed.items[0..held], typed.items[typed.items.len - held ..]);
@@ -200,7 +236,10 @@ fn run(init: std.process.Init) !bool {
         }
         if (fds[1].revents & (posix.POLL.IN | posix.POLL.HUP) != 0) {
             const n = try posix.read(fds[1].fd, &buf);
-            if (n == 0) break;
+            if (n == 0) {
+                app.ended = true;
+                break;
+            }
             var rest: []const u8 = buf[0..n];
             while (std.mem.indexOfScalar(u8, rest, '\n')) |nl| {
                 try line.appendSlice(gpa, rest[0..nl]);
@@ -212,9 +251,8 @@ fn run(init: std.process.Init) !bool {
         }
     }
 
-    child.stdin.?.close(io);
-    child.stdin = null;
-    return app.listed;
+    if (!app.ended) return .left;
+    return if (app.listed) .lost else .never;
 }
 
 test {

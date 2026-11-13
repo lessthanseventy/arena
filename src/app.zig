@@ -141,6 +141,8 @@ pub const App = struct {
     listed: bool = false,
     dirty: bool = true,
     quit: bool = false,
+    /// tmux ended the client, as it does when the session it was on ends.
+    ended: bool = false,
     /// Milliseconds on a clock that only goes forward, set each turn of the loop.
     now: i64 = 0,
     nav_at: i64 = 0,
@@ -257,7 +259,10 @@ pub const App = struct {
                 app.want_list = true;
             },
             .session_changed => |id| app.onSessionChanged(id),
-            .exit => app.quit = true,
+            .exit => {
+                app.ended = true;
+                app.quit = true;
+            },
             .other => {},
         }
     }
