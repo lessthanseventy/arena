@@ -12,6 +12,7 @@ pub const Action = enum {
     close_pane,
     new_session,
     rename_session,
+    jump,
     detach,
     confirm_close,
     cancel,
@@ -40,6 +41,7 @@ pub const main = [_]Item{
     .{ .icon = "×", .label = "Close pane", .key = 'c', .action = .close_pane },
     .{ .icon = "◇", .label = "New session", .key = 'S', .action = .new_session, .group = true },
     .{ .icon = "✎", .label = "Rename session", .key = 'R', .action = .rename_session },
+    .{ .icon = "→", .label = "Jump to window", .key = 'p', .action = .jump },
     .{ .icon = "⎋", .label = "Detach", .key = 'q', .action = .detach },
 };
 
@@ -94,32 +96,48 @@ pub const Menu = struct {
     }
 };
 
-/// A line of text being typed, for a new name.
+/// The windows a jump prompt lists under its text.
+pub const jump_rows = 8;
+
+/// A line of text being typed: a new name, or part of the name of a window to jump to.
 pub const Prompt = struct {
     what: What,
     buf: [48]u8 = undefined,
     len: usize = 0,
+    /// Which of the windows listed under a jump prompt Enter goes to.
+    selected: usize = 0,
 
-    pub const What = enum { window, session };
-    pub const Result = enum { none, cancel, commit };
-    pub const height = 8;
+    pub const What = enum { window, session, jump };
+    pub const Result = enum { none, cancel, commit, up, down };
+
+    /// Rows the box takes; the first of a jump prompt's windows is on row `list_row`.
+    pub fn height(p: *const Prompt) u16 {
+        return if (p.what == .jump) 9 + jump_rows else 8;
+    }
+
+    pub const list_row = 6;
 
     pub fn text(p: *const Prompt) []const u8 {
         return p.buf[0..p.len];
     }
 
-    /// One key press: Enter commits, Escape cancels, Backspace takes a character back.
+    /// One key press: Enter commits, Escape cancels, Backspace takes a character back, and the
+    /// arrows, Tab, Ctrl+N and Ctrl+P are `up` and `down`, for a list under the text.
     pub fn press(p: *Prompt, key: []const u8) Result {
         if (std.mem.eql(u8, key, "\r")) return .commit;
         if (std.mem.eql(u8, key, "\x1b")) return .cancel;
+        for ([_][]const u8{ "\x1b[A", "\x1bOA", "\x10" }) |up| if (std.mem.eql(u8, key, up)) return .up;
+        for ([_][]const u8{ "\x1b[B", "\x1bOB", "\x0e", "\t" }) |down| if (std.mem.eql(u8, key, down)) return .down;
         if (key.len != 1) return .none;
         const byte = key[0];
         if (byte == 0x7f or byte == 0x08) {
+            p.selected = 0;
             while (p.len > 0) {
                 p.len -= 1;
                 if (p.buf[p.len] & 0xC0 != 0x80) break;
             }
         } else if (byte >= 0x20) {
+            p.selected = 0;
             // room is kept for the rest of a character begun before the end
             const continues = byte & 0xC0 == 0x80;
             if (p.len < if (continues) p.buf.len else p.buf.len - 4) {
@@ -130,6 +148,24 @@ pub const Prompt = struct {
         return .none;
     }
 };
+
+/// How well `text` answers `query`, letter case aside: 0 when it holds it whole, 1 when it holds
+/// its letters in order, null when it does neither.
+pub fn fuzzy(query: []const u8, text: []const u8) ?u1 {
+    if (std.ascii.findIgnoreCase(text, query) != null) return 0;
+    var matched: usize = 0;
+    for (text) |c| {
+        if (matched < query.len and std.ascii.toLower(c) == std.ascii.toLower(query[matched])) matched += 1;
+    }
+    return if (matched == query.len) 1 else null;
+}
+
+test "a query matches whole, then as letters in order, whatever the case" {
+    try std.testing.expectEqual(@as(?u1, 0), fuzzy("", "work claude"));
+    try std.testing.expectEqual(@as(?u1, 0), fuzzy("CLAU", "work claude"));
+    try std.testing.expectEqual(@as(?u1, 1), fuzzy("wkcl", "work claude"));
+    try std.testing.expectEqual(@as(?u1, null), fuzzy("clw", "work claude"));
+}
 
 test "keys move with wrapping, pick, and close" {
     var m: Menu = .{ .items = &main };
@@ -166,7 +202,9 @@ test "a prompt takes text, whole characters back, and no more than fits" {
     try std.testing.expectEqualStrings("né", p.text());
     _ = p.press("\x7f");
     try std.testing.expectEqualStrings("n", p.text());
-    try std.testing.expectEqual(Prompt.Result.none, p.press("\x1b[A"));
+    try std.testing.expectEqual(Prompt.Result.up, p.press("\x1b[A"));
+    try std.testing.expectEqual(Prompt.Result.down, p.press("\t"));
+    try std.testing.expectEqual(Prompt.Result.none, p.press("\x1b[C"));
     for (0..100) |_| _ = p.press("a");
     try std.testing.expectEqual(@as(usize, 44), p.len);
     try std.testing.expectEqual(Prompt.Result.commit, p.press("\r"));

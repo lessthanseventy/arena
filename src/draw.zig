@@ -325,9 +325,10 @@ fn menuBox(app: *const App, w: *Writer, open: menu.Menu) !void {
     try b.edge("╰", "╯");
 }
 
-/// The box a new name is typed into. Returns where its cursor goes.
+/// The box a line is typed into: a new name, or part of a window's to jump to, with the windows
+/// it matches listed under it. Returns where its cursor goes.
 fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
-    const at = app.box(menu.Prompt.height);
+    const at = app.box(prompt.height());
     var b: Box = .{ .app = app, .w = w, .x = at.x, .y = at.y };
     const dim = ink(app, "dim", 8);
     var buf: [96]u8 = undefined;
@@ -335,13 +336,18 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
     const was: []const u8 = switch (prompt.what) {
         .window => if (session) |s| (if (s.focused()) |win| win.name else "") else "",
         .session => if (session) |s| s.name else "",
+        .jump => "",
     };
 
     try b.edge("╭", "╮");
     try b.blank();
     try b.line(
         heading(app),
-        if (prompt.what == .window) "  ✎ Rename window" else "  ✎ Rename session",
+        switch (prompt.what) {
+            .window => "  ✎ Rename window",
+            .session => "  ✎ Rename session",
+            .jump => "  → Jump to window",
+        },
         dim,
         std.fmt.bufPrint(&buf, "{s}  ", .{clip(was, 12)}) catch "",
     );
@@ -349,7 +355,26 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
     const shown = clip(prompt.text(), menu.width - 10);
     try b.line(.{}, std.fmt.bufPrint(&buf, "  › {s}", .{shown}) catch "", .{}, "");
     try b.blank();
-    try b.line(dim, "  ⏎ rename   esc cancel", dim, "");
+    if (prompt.what == .jump) {
+        var hits: [menu.jump_rows]App.Hit = undefined;
+        const n = app.jumpHits(prompt.text(), &hits);
+        for (0..menu.jump_rows) |i| {
+            if (i >= n) {
+                try b.blank();
+                continue;
+            }
+            const s = hits[i].session;
+            const win = s.wins.items[hits[i].index];
+            const style: vt.Style = if (i == prompt.selected) chip(app) else .{};
+            const left = std.fmt.bufPrint(&buf, "  {s} › {s}", .{ clip(s.name, 12), clip(win.name, 14) }) catch "";
+            var mark: [8]u8 = undefined;
+            const mark_len = std.unicode.utf8Encode(glyph(app.mark(s, win)), &mark) catch 0;
+            @memcpy(mark[mark_len..][0..2], "  ");
+            try b.line(style, left, if (i == prompt.selected) style else ink(app, "amber", 4), mark[0 .. mark_len + 2]);
+        }
+        try b.blank();
+        try b.line(dim, "  ↑↓ move   ⏎ go   esc close", dim, "");
+    } else try b.line(dim, "  ⏎ rename   esc cancel", dim, "");
     try b.edge("╰", "╯");
     return .{ .x = at.x + 6 + @as(i32, @intCast(cellCount(shown))), .y = at.y + 4 };
 }

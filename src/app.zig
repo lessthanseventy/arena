@@ -563,6 +563,32 @@ pub const App = struct {
 
     const Name = union(enum) { window: u32, session: u32 };
 
+    pub const Hit = struct { session: *Session, index: usize };
+
+    /// The windows of every session whose "session window" answers `query`, the closest first,
+    /// into `out`. Returns how many.
+    pub fn jumpHits(app: *const App, query: []const u8, out: []Hit) usize {
+        var n: usize = 0;
+        for ([_]u1{ 0, 1 }) |rank| for (app.sessions.items) |s| for (s.wins.items, 0..) |win, i| {
+            if (n == out.len) return n;
+            var buf: [160]u8 = undefined;
+            const text = std.fmt.bufPrint(&buf, "{s} {s}", .{ s.name, win.name }) catch continue;
+            if (menu.fuzzy(query, text) == rank) {
+                out[n] = .{ .session = s, .index = i };
+                n += 1;
+            }
+        };
+        return n;
+    }
+
+    /// Goes to a window of any session.
+    fn jumpTo(app: *App, s: *Session, index: usize) !void {
+        if (s.id == app.current) return app.focusTo(index);
+        s.focus = index;
+        try app.send(.ignore, "select-window -t @{d}", .{s.wins.items[index].id});
+        try app.sessionTo(app.sessionIndex(s.id) orelse return);
+    }
+
     /// Whether this click on a name is the second of a pair.
     fn doubleClick(app: *App, name: Name) bool {
         const again = std.meta.eql(app.clicked, @as(?Name, name)) and app.now - app.clicked_at < double_click_ms;
@@ -619,10 +645,19 @@ pub const App = struct {
     /// A right click nothing else took opens the menu; with the menu open, a click picks from it
     /// or, outside it, closes it.
     fn onMouse(app: *App, m: keys.Mouse) !void {
-        if (app.prompt != null) {
-            if (m.leftPress() or m.rightPress()) app.prompt = null;
+        if (app.prompt) |*prompt| {
+            if (!m.leftPress() and !m.rightPress()) return;
             app.dirty = true;
-            return;
+            const at = app.box(prompt.height());
+            const first = at.y + menu.Prompt.list_row;
+            const listed = prompt.what == .jump and m.leftPress() and m.x > at.x and m.x + 1 < at.x + menu.width and
+                m.y >= first and m.y < first + menu.jump_rows;
+            if (!listed) {
+                app.prompt = null;
+                return;
+            }
+            prompt.selected = m.y - first;
+            return app.commit();
         }
         if (app.menu) |open| {
             if (!m.leftPress() and !m.rightPress()) return;
@@ -794,24 +829,36 @@ pub const App = struct {
                 switch (prompt.press(key)) {
                     .none => {},
                     .cancel => app.prompt = null,
-                    .commit => try app.rename(),
+                    .commit => try app.commit(),
+                    .up => prompt.selected -|= 1,
+                    .down => {
+                        var hits: [menu.jump_rows]Hit = undefined;
+                        if (prompt.selected + 1 < app.jumpHits(prompt.text(), &hits)) prompt.selected += 1;
+                    },
                 }
             } else if (app.menu) |*open| try app.menuResult(open.press(key)) else return;
         }
     }
 
-    /// Gives the focused window or the session the name typed; an empty one changes nothing.
-    fn rename(app: *App) !void {
+    /// Enter in the prompt: goes to the window picked, or gives the focused window or the
+    /// session the name typed, an empty one changing nothing.
+    fn commit(app: *App) !void {
         const prompt = app.prompt orelse return;
         app.prompt = null;
         const s = app.cur() orelse return;
-        if (prompt.len == 0) return;
         var cmd: Writer.Allocating = .init(app.gpa);
         defer cmd.deinit();
         switch (prompt.what) {
+            .jump => {
+                var hits: [menu.jump_rows]Hit = undefined;
+                const n = app.jumpHits(prompt.text(), &hits);
+                if (prompt.selected < n) try app.jumpTo(hits[prompt.selected].session, hits[prompt.selected].index);
+                return;
+            },
             .window => try cmd.writer.print("rename-window -t @{d} -- '", .{(s.focused() orelse return).id}),
             .session => try cmd.writer.print("rename-session -t '${d}' -- '", .{s.id}),
         }
+        if (prompt.len == 0) return;
         for (prompt.text()) |byte| {
             if (byte == '\'') try cmd.writer.writeAll("'\\''") else try cmd.writer.writeByte(byte);
         }
@@ -842,6 +889,7 @@ pub const App = struct {
                     .move_left => try app.swapBy(-1),
                     .move_right => try app.swapBy(1),
                     .full_width => app.toggleFull(),
+                    .jump => app.prompt = .{ .what = .jump },
                     .split_right => try app.send(.ignore, "split-window -h -c '#{{pane_current_path}}'", .{}),
                     .split_below => try app.send(.ignore, "split-window -v -c '#{{pane_current_path}}'", .{}),
                     .close_pane => try app.closePane(),
@@ -902,6 +950,10 @@ pub const App = struct {
             'm' => app.openMenu(&menu.main),
             'q' => app.quit = true,
             'z' => app.toggleFull(),
+            'p' => {
+                app.prompt = .{ .what = .jump };
+                app.dirty = true;
+            },
             '\r' => try app.newWindow(),
             else => if (app.cur()) |s| {
                 if (letter - '1' < s.wins.items.len) try app.focusTo(letter - '1');
@@ -910,8 +962,8 @@ pub const App = struct {
     }
 
     /// With Alt: h and l move along the strip, j and k between sessions, 1 to 9 go to a window,
-    /// H and L move the window, Enter opens one, x closes it, z gives it the whole width, m opens
-    /// the menu and q leaves.
+    /// H and L move the window, Enter opens one, x closes it, z gives it the whole width, p asks
+    /// for a window to jump to, m opens the menu and q leaves.
     /// Everything else is the focused pane's, or the menu's while it is open. Alt is ESC and the
     /// letter together, which a typed Escape then a letter rarely is.
     ///
