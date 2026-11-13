@@ -118,6 +118,27 @@ check "Alt+j goes to the next session" see '╭─ 1 solo '
 key M-k
 check "Alt+k comes back, to the window left" see '╭─ 2 two '
 
+rail() { [[ $(screen | grep -oE '^│ (alpha|beta) ' | tr -d '│ \n') == $1 ]] }
+order() { [[ $(inner list-sessions -F '#{@arena_order}#{session_name}' | sort | tr -d '\n') == $1 ]] }
+key M-J
+check "Alt+J moves the session down the rail" await rail betaalpha
+check "and its place is kept in tmux" await order 1beta2alpha
+key M-K
+check "Alt+K moves it up" await rail alphabeta
+
+sessions() { [[ $(inner list-sessions | wc -l) -eq $1 ]] }
+mouse 0 5 4 M
+mouse 0 5 4 m
+check "a click under the last session makes a new one" await sessions 3
+see '│ [0-9]+ +1 │'
+mouse 1 5 4 M
+mouse 1 5 4 m
+check "a middle click on a session asks before closing it" see 'Close session [0-9]+\?'
+key y
+check "and closes it" await sessions 2
+key M-k
+see '╭─ 2 two '
+
 key M-m
 check "Alt+m opens the menu" see 'New window +n'
 key Escape
@@ -155,9 +176,7 @@ check "a window with news marks its session in the rail" see '│ alpha +[◌◉
 mouse 0 3 3 M
 mouse 32 3 2 M
 mouse 0 3 2 m
-rail() { [[ $(screen | grep -oE '^│ (alpha|beta) ' | tr -d '│ \n') == $1 ]] }
 check "dragging a session moves it up the rail" await rail betaalpha
-order() { [[ $(inner list-sessions -F '#{@arena_order}#{session_name}' | sort | tr -d '\n') == $1 ]] }
 check "and its place is kept in tmux" await order 1beta2alpha
 
 key 'echo hello brave world' Enter

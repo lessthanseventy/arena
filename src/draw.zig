@@ -212,6 +212,10 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16) !void {
         try pen.set(w, if (here) chip(app) else dim, null);
         try w.print("{d:>2} ", .{@min(s.wins.items.len, 99)});
         filled = inner;
+    } else if (y == app.railNewRow()) {
+        try pen.set(w, dim, null);
+        try w.writeAll(" " ++ app_mod.rail_new);
+        filled = 1 + cellCount(app_mod.rail_new);
     } else try pen.set(w, .{}, null);
     for (filled..inner) |_| try w.writeAll(" ");
 }
@@ -313,6 +317,9 @@ fn menuBox(app: *const App, w: *Writer, open: menu.Menu) !void {
     if (open.items.ptr == &menu.confirm) {
         const name = clip(if (win) |found| found.name else "window", 20);
         try b.line(heading(app), std.fmt.bufPrint(&buf, "  Close {s}?", .{name}) catch "  Close?", dim, "");
+    } else if (open.items.ptr == &menu.confirm_session) {
+        const name = clip(if (app.sessionById(app.doomed)) |s| s.name else "", 12);
+        try b.line(heading(app), std.fmt.bufPrint(&buf, "  Close session {s}?", .{name}) catch "  Close?", dim, "");
     } else {
         const name = clip(if (session) |s| s.name else "", 16);
         try b.line(heading(app), "  ◆ arena", dim, std.fmt.bufPrint(&buf, "{s}  ", .{name}) catch "");

@@ -10,6 +10,7 @@ const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 
 pub const rail_button = "≡ menu";
+pub const rail_new = "+ new";
 const history_lines = 5000;
 /// Wheel and swipe steps that move between windows or sessions are taken this far apart.
 const nav_gap_ms = 150;
@@ -233,6 +234,8 @@ pub const App = struct {
         /// Text being selected in a pane, from the cell of it the button went down on.
         select: struct { pane: u32, x: u16, y: u16 },
     } = .none,
+    /// The session the open menu asks about closing.
+    doomed: u32 = 0,
     /// The pointer's shape, as the terminal was last told.
     shape: []const u8 = "default",
     /// Where the mouse last was.
@@ -523,16 +526,17 @@ pub const App = struct {
         while (lines.next()) |line| {
             const space = std.mem.indexOfScalar(u8, line, ' ') orelse continue;
             const id = std.fmt.parseInt(u32, line[1..space], 10) catch continue;
+            const rest = line[space + 1 ..];
+            const name = std.mem.indexOfScalar(u8, rest, ' ') orelse continue;
+            // A place is read once: after that arena's own is the newer, and a list asked for
+            // before a move would put the old one back.
             const s = for (old.items, 0..) |known, i| {
                 if (known.id == id) break old.swapRemove(i);
             } else blk: {
                 const made = try app.gpa.create(Session);
-                made.* = .{ .id = id };
+                made.* = .{ .id = id, .order = std.fmt.parseInt(u32, rest[0..name], 10) catch std.math.maxInt(u32) };
                 break :blk made;
             };
-            const rest = line[space + 1 ..];
-            const name = std.mem.indexOfScalar(u8, rest, ' ') orelse continue;
-            s.order = std.fmt.parseInt(u32, rest[0..name], 10) catch std.math.maxInt(u32);
             app.gpa.free(s.name);
             s.name = try app.gpa.dupe(u8, rest[name + 1 ..]);
             try app.sessions.append(app.gpa, s);
@@ -1017,20 +1021,46 @@ pub const App = struct {
         app.want_list = true;
     }
 
-    /// The held button moved to `m` with a session. The session goes to the row under the
-    /// pointer, and every session is told its place; the next move waits for that to be listed.
+    /// The held button moved to `m` with a session, which goes to the row under the pointer.
     fn dragSession(app: *App, id: u32, m: keys.Mouse) !void {
-        if (app.listing or app.want_list) return;
         const at = app.sessionIndex(id) orelse return;
         const shown = @min(app.sessions.items.len, app.view_h -| 4);
         const over = @min(shown -| 1, m.y -| 1);
-        if (over == at) return;
-        app.sessions.insertAssumeCapacity(over, app.sessions.orderedRemove(at));
+        if (over != at) try app.moveSession(at, over);
+    }
+
+    /// Puts the session at `at` of the rail at `to`, and has tmux keep every session's place.
+    fn moveSession(app: *App, at: usize, to: usize) !void {
+        app.sessions.insertAssumeCapacity(to, app.sessions.orderedRemove(at));
         for (app.sessions.items, 1..) |s, place| {
+            s.order = @intCast(place);
             try app.send(.ignore, "set-option -t '${d}' @arena_order {d}", .{ s.id, place });
         }
-        app.want_list = true;
         app.dirty = true;
+    }
+
+    /// Moves the current session up or down the rail.
+    fn sessionSwapBy(app: *App, delta: i32) !void {
+        const at = app.sessionIndex(app.current) orelse return;
+        const next = @as(i32, @intCast(at)) + delta;
+        if (next < 0 or next >= app.sessions.items.len) return;
+        try app.moveSession(at, @intCast(next));
+    }
+
+    /// The row of the rail a click on makes a session, under the last of them; none when the
+    /// rail is full.
+    pub fn railNewRow(app: *const App) ?u16 {
+        const y = app.sessions.items.len + 1;
+        return if (y + 3 < app.view_h) @intCast(y) else null;
+    }
+
+    /// Ends a session and every window in it. tmux would detach arena from the session it is
+    /// on when that ends, so arena moves to a neighbour first.
+    fn closeSession(app: *App, id: u32) !void {
+        const at = app.sessionIndex(id) orelse return;
+        const count = app.sessions.items.len;
+        if (id == app.current and count > 1) try app.sessionTo(if (at + 1 < count) at + 1 else at - 1);
+        try app.send(.ignore, "kill-session -t '${d}'", .{id});
     }
 
     /// What can be taken hold of to resize: a column by one of its sides, or the line after a
@@ -1115,8 +1145,9 @@ pub const App = struct {
     }
 
     /// Whether the mouse event was for something. On the rail: a click picks a session or the
-    /// menu, a second one on the current session renames it, a session is dragged to move it,
-    /// the wheel steps through sessions.
+    /// menu, a second one on the current session renames it, one under the last makes a new
+    /// one, a session is dragged to move it and middle clicked to close it, the wheel steps
+    /// through sessions.
     /// On the strip: a click goes to that window, dot or pane; a title is dragged onto another
     /// column, to take its place, or onto a session of the rail, to go there, clicked twice to
     /// rename its window, middle clicked to close it; the line between panes is dragged to
@@ -1133,8 +1164,14 @@ pub const App = struct {
                 if (app.navStep()) try app.sessionBy(if (m.code & 1 == 0) -1 else 1);
                 return true;
             }
+            if (m.middlePress()) if (app.railSession(m.y)) |row| {
+                app.doomed = app.sessions.items[row].id;
+                app.openMenu(&menu.confirm_session);
+                return true;
+            };
             if (!m.leftPress()) return false;
             if (m.y + 2 == app.view_h) app.openMenu(&menu.main);
+            if (m.y == app.railNewRow()) try app.send(.ignore, "new-session", .{});
             if (app.railSession(m.y)) |row| {
                 const id = app.sessions.items[row].id;
                 if (app.doubleClick(.{ .session = id }) and id == app.current) {
@@ -1360,6 +1397,7 @@ pub const App = struct {
                     .search => app.openSearch(),
                     .close_window => app.openMenu(&menu.confirm),
                     .confirm_close => try app.closeWindow(),
+                    .confirm_close_session => try app.closeSession(app.doomed),
                     .new_session => try app.send(.ignore, "new-session", .{}),
                     .detach => app.quit = true,
                     .cancel => {},
@@ -1407,6 +1445,8 @@ pub const App = struct {
             'l' => try app.focusBy(1),
             'j' => try app.sessionBy(1),
             'k' => try app.sessionBy(-1),
+            'J' => try app.sessionSwapBy(1),
+            'K' => try app.sessionSwapBy(-1),
             'H' => try app.swapBy(-1),
             'L' => try app.swapBy(1),
             'x' => app.openMenu(&menu.confirm),
@@ -1429,6 +1469,7 @@ pub const App = struct {
     }
 
     /// With Alt: h and l move along the strip, j and k between sessions, 1 to 9 go to a window,
+    /// J and K move the session down and up the rail,
     /// H and L move the window, ; and ' make it narrower and wider, Enter opens one, x closes
     /// it, z gives it the whole width, p asks
     /// for a window to jump to, o shows every session's windows at once, / searches the pane's

@@ -62,6 +62,7 @@ Everything is on Alt, so it stays out of the way of your shell and your window m
 | `Alt+j` `Alt+k` | the next session, the one before |
 | `Alt+1` … `Alt+9` | that window |
 | `Alt+H` `Alt+L` | move the window left, right |
+| `Alt+J` `Alt+K` | move the session down, up the rail |
 | `Alt+;` `Alt+'` | make the window narrower, wider |
 | `Alt+Enter` | a new window |
 | `Alt+x` | close the window, after asking |
@@ -80,7 +81,8 @@ With the mouse:
   is kept in the tmux server, with its window.
 - Drag a column's title onto another column and its window takes that place; onto a session in
   the rail and it goes there. Click a title twice to rename; middle-click it to close.
-- Drag a session up or down the rail to move it. The order is kept in the tmux server.
+- Drag a session up or down the rail to move it; the order is kept in the tmux server.
+  Middle-click a session to close it, after asking; click `+ new` under the last for another.
 - Drag in a pane to select text, which is copied when you let go. Two clicks copy a word.
   Where the program in the pane uses the mouse itself, it gets the mouse instead.
 - The wheel scrolls the pane under it. Over the rail it steps through sessions; sideways it steps

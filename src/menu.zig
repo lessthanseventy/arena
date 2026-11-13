@@ -17,6 +17,7 @@ pub const Action = enum {
     overview,
     detach,
     confirm_close,
+    confirm_close_session,
     cancel,
 };
 
@@ -51,6 +52,11 @@ pub const main = [_]Item{
 
 pub const confirm = [_]Item{
     .{ .icon = "×", .label = "Close it", .key = 'y', .action = .confirm_close },
+    .{ .icon = "↩", .label = "Keep it", .key = 'n', .action = .cancel },
+};
+
+pub const confirm_session = [_]Item{
+    .{ .icon = "×", .label = "Close it", .key = 'y', .action = .confirm_close_session },
     .{ .icon = "↩", .label = "Keep it", .key = 'n', .action = .cancel },
 };
 
