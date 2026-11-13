@@ -3,6 +3,7 @@ const vt = @import("ghostty-vt");
 const control = @import("control.zig");
 const layout = @import("layout.zig");
 const theme = @import("theme.zig");
+const keys = @import("keys.zig");
 const posix = std.posix;
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
@@ -24,7 +25,7 @@ const Window = struct {
             .id = id,
             .pane = pane,
             .name = &.{},
-            .term = try .init(app.io, app.gpa, .{ .cols = cols, .rows = rows }),
+            .term = try .init(app.io, app.gpa, .{ .cols = cols, .rows = rows, .max_scrollback_bytes = 8 << 20 }),
             .stream = undefined,
         };
         win.stream = win.term.vtStream();
@@ -46,6 +47,7 @@ const Pending = union(enum) {
     ignore,
     windows,
     sessions,
+    modes: u32,
     capture: u32,
     cursor: u32,
 };
@@ -200,8 +202,17 @@ const App = struct {
         } else return;
         const next = @as(i32, @intCast(at)) + delta;
         if (next < 0 or next >= app.sessions.items.len) return;
-        app.slide = delta;
-        try app.send(.ignore, "switch-client -t '${d}'", .{app.sessions.items[@intCast(next)].id});
+        try app.sessionTo(@intCast(next));
+    }
+
+    fn sessionTo(app: *App, index: usize) !void {
+        const to = app.sessions.items[index];
+        if (to.id == app.session) return;
+        const at = for (app.sessions.items, 0..) |s, i| {
+            if (s.id == app.session) break i;
+        } else index;
+        app.slide = if (index > at) 1 else -1;
+        try app.send(.ignore, "switch-client -t '${d}'", .{to.id});
     }
 
     fn onReply(app: *App, kind: Pending, body: []const u8) !void {
@@ -209,10 +220,20 @@ const App = struct {
             .ignore => {},
             .windows => try app.onWindows(body),
             .sessions => try app.onSessions(body),
+            // What the program set before arena was watching, which no capture shows: without
+            // these a running editor would get no mouse and draw outside the alternate screen.
+            .modes => |pane| {
+                const win = app.byPane(pane) orelse return;
+                var flags = std.mem.tokenizeAny(u8, body, " \n");
+                for (mode_sets) |set| {
+                    if (std.mem.eql(u8, flags.next() orelse return, "1")) win.stream.nextSlice(set);
+                }
+            },
             .capture => |pane| {
                 const win = app.byPane(pane) orelse return;
                 win.stream.nextSlice("\x1b[H\x1b[2J");
-                var lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, body, "\n"), '\n');
+                // Every row is kept, blank ones too: the last screenful has to land as the screen.
+                var lines = std.mem.splitScalar(u8, body[0..body.len -| 1], '\n');
                 var first = true;
                 while (lines.next()) |line| {
                     if (!first) win.stream.nextSlice("\r\n");
@@ -270,7 +291,8 @@ const App = struct {
         try app.relayout();
         for (app.wins.items) |win| {
             if (win.seeded) continue;
-            try app.send(.{ .capture = win.pane }, "capture-pane -p -e -t %{d}", .{win.pane});
+            try app.send(.{ .modes = win.pane }, "display-message -p -t %{d} '" ++ mode_flags ++ "'", .{win.pane});
+            try app.send(.{ .capture = win.pane }, "capture-pane -p -e -S -{d} -t %{d}", .{ history_lines, win.pane });
             try app.send(.{ .cursor = win.pane }, "display-message -p -t %{d} '#{{cursor_x}} #{{cursor_y}}'", .{win.pane});
         }
         if (!app.listed or app.switched) app.scroll = app.target();
@@ -283,27 +305,101 @@ const App = struct {
     fn focusBy(app: *App, delta: i32) !void {
         const next = @as(i32, @intCast(app.focus)) + delta;
         if (next < 0 or next >= app.wins.items.len) return;
-        app.focus = @intCast(next);
-        try app.send(.ignore, "select-window -t @{d}", .{app.wins.items[app.focus].id});
+        try app.focusTo(@intCast(next));
+    }
+
+    fn focusTo(app: *App, index: usize) !void {
+        app.focus = index;
+        try app.send(.ignore, "select-window -t @{d}", .{app.wins.items[index].id});
         app.dirty = true;
+    }
+
+    /// A click on a session, another column or a dot goes there. Inside the focused window the
+    /// mouse is its program's when it asked for one; otherwise the wheel scrolls its history.
+    fn onMouse(app: *App, m: keys.Mouse) !void {
+        const ox = app.term_w - app.view_w;
+        if (m.x < ox) {
+            if (m.leftPress() and m.y >= 1 and m.y - 1 < app.sessions.items.len) try app.sessionTo(m.y - 1);
+            return;
+        }
+        if (app.yoff != 0) return;
+        const col_w = app.colW();
+        const at = @as(i32, m.x) - ox + app.scroll;
+        if (at < 0) return;
+        const stride = @as(i32, col_w) + layout.gap;
+        const index: usize = @intCast(@divTrunc(at, stride));
+        const cx: usize = @intCast(@mod(at, stride));
+        if (index >= app.wins.items.len or cx >= col_w) return;
+        if (index != app.focus) {
+            if (m.leftPress()) try app.focusTo(index);
+            return;
+        }
+        if (m.y == app.view_h - 1) {
+            if (m.leftPress()) if (layout.dotAt(col_w, app.wins.items.len, cx)) |dot| try app.focusTo(dot);
+            return;
+        }
+        if (cx == 0 or cx == col_w - 1 or m.y == 0) return;
+        const win = app.wins.items[index];
+        if (try app.mouseToWindow(win, m, cx - 1, m.y - 1)) return;
+        if (m.wheel()) {
+            win.term.scrollViewport(.{ .delta = if (m.code & 1 == 0) -3 else 3 });
+            app.dirty = true;
+        }
+    }
+
+    /// Reports the mouse to the window's program in the mode and format it asked tmux for; false
+    /// when it asked for none.
+    fn mouseToWindow(app: *App, win: *Window, m: keys.Mouse, x: usize, y: usize) !bool {
+        const mode = win.term.flags.mouse_event;
+        if (mode == .none) return false;
+        if (m.motion() and mode != .button and mode != .any) return true;
+        if (m.release and mode == .x10) return true;
+        var buf: [32]u8 = undefined;
+        switch (win.term.flags.mouse_format) {
+            .sgr, .sgr_pixels => {
+                const end: u8 = if (m.release) 'm' else 'M';
+                try app.forward(try std.fmt.bufPrint(&buf, "\x1b[<{d};{d};{d}{c}", .{ m.code, x + 1, y + 1, end }));
+            },
+            else => {
+                // one byte a coordinate, offset by 32: cells past 222 cannot be said
+                if (x > 222 or y > 222) return true;
+                const code = if (m.release) m.code | 3 else m.code;
+                buf[0..3].* = "\x1b[M".*;
+                buf[3] = @intCast(code + 32);
+                buf[4] = @intCast(x + 33);
+                buf[5] = @intCast(y + 33);
+                try app.forward(buf[0..6]);
+            },
+        }
+        return true;
     }
 
     /// Alt+h and Alt+l move along the strip, Alt+j and Alt+k between sessions, and Alt+q leaves;
     /// everything else is the focused window's. Alt is ESC and the letter in one read, which a
     /// typed Escape then a letter is not.
     fn onInput(app: *App, bytes: []const u8) !void {
-        if (bytes.len == 2 and bytes[0] == 0x1b) switch (bytes[1]) {
-            'h' => return app.focusBy(-1),
-            'l' => return app.focusBy(1),
-            'j' => return app.sessionBy(1),
-            'k' => return app.sessionBy(-1),
-            'q' => {
-                app.quit = true;
-                return;
-            },
-            else => {},
-        };
-        if (app.focus >= app.wins.items.len) return;
+        var rest = bytes;
+        while (rest.len > 0 and !app.quit) {
+            const part = keys.next(rest);
+            rest = part.rest;
+            try app.forward(part.text);
+            switch (part.event orelse continue) {
+                .mouse => |m| try app.onMouse(m),
+                .chord => |letter| switch (letter) {
+                    'h' => try app.focusBy(-1),
+                    'l' => try app.focusBy(1),
+                    'j' => try app.sessionBy(1),
+                    'k' => try app.sessionBy(-1),
+                    else => app.quit = true,
+                },
+            }
+        }
+    }
+
+    fn forward(app: *App, bytes: []const u8) !void {
+        if (bytes.len == 0 or app.focus >= app.wins.items.len) return;
+        app.wins.items[app.focus].term.scrollViewport(.bottom);
+        app.dirty = true;
         var cmd: Writer.Allocating = .init(app.gpa);
         defer cmd.deinit();
         try cmd.writer.print("send-keys -H -t %{d}", .{app.wins.items[app.focus].pane});
@@ -383,15 +479,11 @@ const Column = struct {
         }
 
         const count = app.wins.items.len;
-        const dots = count * 2 + 1;
-        if (bottom and col.focused and count > 1 and dots + 4 <= col.w) {
-            const start = (col.w - dots) / 2;
-            if (cx >= start and cx < start + dots) {
-                const at = cx - start;
-                const here = at / 2 == app.focus;
-                try pen.set(w, if (app.theme) |t| rgbStyle(if (here) t.amber else t.dim) else .{ .fg_color = .palette(if (here) 4 else 8) }, false);
-                return put(w, if (at % 2 == 0) ' ' else if (here) '●' else '○');
-            }
+        if (bottom and col.focused and layout.inDots(col.w, count, cx)) {
+            const dot = layout.dotAt(col.w, count, cx);
+            const here = dot == app.focus;
+            try pen.set(w, if (app.theme) |t| rgbStyle(if (here) t.amber else t.dim) else .{ .fg_color = .palette(if (here) 4 else 8) }, false);
+            return put(w, if (dot == null) ' ' else if (here) '●' else '○');
         }
 
         const style: vt.Style = if (app.theme) |t| rgbStyle(theme.gradient(
@@ -536,6 +628,10 @@ fn draw(app: *App, w: *Writer, what: Draw) !void {
     try w.writeAll("\x1b[?2026l");
 }
 
+const history_lines = 5000;
+const mode_flags = "#{{alternate_on}} #{{?cursor_flag,0,1}} #{{mouse_standard_flag}} #{{mouse_button_flag}} #{{mouse_all_flag}} #{{mouse_sgr_flag}}";
+/// What to feed a window's terminal for each of `mode_flags` that is 1, in the same order.
+const mode_sets = [_][]const u8{ "\x1b[?1049h", "\x1b[?25l", "\x1b[?1000h", "\x1b[?1002h", "\x1b[?1003h", "\x1b[?1006h" };
 const spin_frame_ms = 100;
 const spin_turn_ms = 6000;
 
@@ -622,8 +718,9 @@ fn run(init: std.process.Init) !bool {
     raw.cc[@intFromEnum(posix.V.TIME)] = 0;
     try posix.tcsetattr(posix.STDIN_FILENO, .FLUSH, raw);
     defer posix.tcsetattr(posix.STDIN_FILENO, .FLUSH, saved) catch {};
-    try tty.writeStreamingAll(io, "\x1b[?1049h");
-    defer tty.writeStreamingAll(io, "\x1b[0m\x1b[?25h\x1b[?1049l") catch {};
+    // 1002: presses, releases and drags; 1006: the SGR report format, which has no column limit
+    try tty.writeStreamingAll(io, "\x1b[?1049h\x1b[?1002h\x1b[?1006h");
+    defer tty.writeStreamingAll(io, "\x1b[?1006l\x1b[?1002l\x1b[0m\x1b[?25h\x1b[?1049l") catch {};
 
     posix.sigaction(.WINCH, &.{ .handler = .{ .handler = onWinch }, .mask = posix.sigemptyset(), .flags = 0 }, null);
 
@@ -702,5 +799,6 @@ fn run(init: std.process.Init) !bool {
 test {
     _ = control;
     _ = theme;
+    _ = keys;
     _ = layout;
 }

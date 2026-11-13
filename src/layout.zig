@@ -46,3 +46,32 @@ test "step always arrives" {
     try std.testing.expect(frames < 20);
     try std.testing.expectEqual(@as(i32, -1), step(0, -1));
 }
+
+/// Which window's dot sits at cell `cx` of a focused column's bottom edge, if one does: the dots
+/// are centred, one cell each with a space between. Null too when the column cannot fit them.
+pub fn dotAt(col_w: u16, count: usize, cx: usize) ?usize {
+    const span = count * 2 + 1;
+    if (count < 2 or span + 4 > col_w) return null;
+    const start = (col_w - span) / 2;
+    if (cx <= start or cx >= start + span or (cx - start) % 2 == 0) return null;
+    return (cx - start) / 2;
+}
+
+/// Whether `cx` is in the run of cells the dots and their spacing take up.
+pub fn inDots(col_w: u16, count: usize, cx: usize) bool {
+    const span = count * 2 + 1;
+    if (count < 2 or span + 4 > col_w) return false;
+    const start = (col_w - span) / 2;
+    return cx >= start and cx < start + span;
+}
+
+test "dots are centred, one per window, with spaces between" {
+    // 3 windows in 21 cells: span 7 from cell 7, dots at 8, 10 and 12
+    try std.testing.expectEqual(@as(?usize, null), dotAt(21, 3, 7));
+    try std.testing.expectEqual(@as(?usize, 0), dotAt(21, 3, 8));
+    try std.testing.expectEqual(@as(?usize, null), dotAt(21, 3, 9));
+    try std.testing.expectEqual(@as(?usize, 2), dotAt(21, 3, 12));
+    try std.testing.expect(inDots(21, 3, 7) and inDots(21, 3, 13) and !inDots(21, 3, 14));
+    try std.testing.expectEqual(@as(?usize, null), dotAt(21, 1, 10));
+    try std.testing.expectEqual(@as(?usize, null), dotAt(8, 3, 4));
+}
