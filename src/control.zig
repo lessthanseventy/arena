@@ -8,6 +8,9 @@ pub const Event = union(enum) {
     /// Pane output, still in tmux's octal escaping; see `unescape`.
     output: struct { pane: u32, data: []const u8 },
     windows_changed,
+    sessions_changed,
+    /// This client is now on the session with this id.
+    session_changed: u32,
     exit,
     other,
 };
@@ -26,6 +29,13 @@ pub fn parse(line: []const u8, in_block: bool) Event {
         return .{ .output = .{ .pane = pane, .data = rest[space + 1 ..] } };
     }
     if (std.mem.startsWith(u8, line, "%exit")) return .exit;
+    if (std.mem.startsWith(u8, line, "%session-changed $")) {
+        var it = std.mem.tokenizeScalar(u8, line["%session-changed $".len..], ' ');
+        return .{ .session_changed = std.fmt.parseInt(u32, it.next() orelse return .other, 10) catch return .other };
+    }
+    for ([_][]const u8{ "%sessions-changed", "%session-renamed " }) |prefix| {
+        if (std.mem.startsWith(u8, line, prefix)) return .sessions_changed;
+    }
     for ([_][]const u8{ "%window-add ", "%window-close ", "%window-renamed ", "%unlinked-window-" }) |prefix| {
         if (std.mem.startsWith(u8, line, prefix)) return .windows_changed;
     }
@@ -69,6 +79,12 @@ test "a block's lines are body until end or error" {
 test "window notifications ask for a relist" {
     try std.testing.expectEqual(Event.windows_changed, parse("%window-add @3", false));
     try std.testing.expectEqual(Event.windows_changed, parse("%window-renamed @3 vim", false));
-    try std.testing.expectEqual(Event.other, parse("%session-changed $0 a", false));
+    try std.testing.expectEqual(Event.other, parse("%session-window-changed $0 @1", false));
     try std.testing.expectEqual(Event.exit, parse("%exit", false));
+}
+
+test "session notifications say which session, or ask for a relist" {
+    try std.testing.expectEqual(@as(u32, 7), parse("%session-changed $7 notes", false).session_changed);
+    try std.testing.expectEqual(Event.sessions_changed, parse("%sessions-changed", false));
+    try std.testing.expectEqual(Event.sessions_changed, parse("%session-renamed $7 notes", false));
 }

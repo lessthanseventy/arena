@@ -40,9 +40,12 @@ const Window = struct {
     }
 };
 
+const Session = struct { id: u32, name: []u8 };
+
 const Pending = union(enum) {
     ignore,
     windows,
+    sessions,
     capture: u32,
     cursor: u32,
 };
@@ -54,6 +57,15 @@ const App = struct {
     wins: std.ArrayList(*Window) = .empty,
     focus: usize = 0,
     scroll: i32 = 0,
+    sessions: std.ArrayList(Session) = .empty,
+    session: ?u32 = null,
+    /// Set by a session change until its windows are listed; `slide` is the way it went.
+    switched: bool = false,
+    slide: i32 = 0,
+    /// Rows the strip still has to travel to its place after a session change.
+    yoff: i32 = 0,
+    term_w: u16 = 80,
+    /// The strip's width: the terminal's, less the session rail and its gap.
     view_w: u16 = 80,
     view_h: u16 = 24,
     pending: std.ArrayList(Pending) = .empty,
@@ -66,6 +78,15 @@ const App = struct {
     /// Off under ARENA_REDUCED_MOTION: the border stands still and the strip jumps.
     motion: bool = true,
     phase: f32 = 0,
+
+    fn deinit(app: *App) void {
+        for (app.wins.items) |win| win.destroy(app.gpa);
+        app.wins.deinit(app.gpa);
+        for (app.sessions.items) |s| app.gpa.free(s.name);
+        app.sessions.deinit(app.gpa);
+        app.pending.deinit(app.gpa);
+        app.block.deinit(app.gpa);
+    }
 
     fn send(app: *App, kind: Pending, comptime fmt: []const u8, args: anytype) !void {
         var buf: [256]u8 = undefined;
@@ -81,6 +102,20 @@ const App = struct {
 
     fn target(app: *const App) i32 {
         return layout.scrollTarget(app.view_w, app.colW(), app.focus);
+    }
+
+    /// The session rail's width: the longest name, to 14 cells, and a space either side. A
+    /// terminal too narrow for it has none.
+    fn railW(app: *const App) u16 {
+        if (app.term_w < 40 or app.sessions.items.len == 0) return 0;
+        var longest: usize = 1;
+        for (app.sessions.items) |s| longest = @max(longest, std.unicode.utf8CountCodepoints(s.name) catch s.name.len);
+        return @as(u16, @min(longest, 14)) + 2;
+    }
+
+    fn fit(app: *App) void {
+        const rail = app.railW();
+        app.view_w = app.term_w - if (rail > 0) rail + 1 else 0;
     }
 
     fn byPane(app: *App, pane: u32) ?*Window {
@@ -122,6 +157,12 @@ const App = struct {
                 app.dirty = true;
             },
             .windows_changed => try app.listWindows(),
+            .sessions_changed => try app.listSessions(),
+            .session_changed => |id| {
+                app.session = id;
+                app.switched = true;
+                try app.listWindows();
+            },
             .exit => app.quit = true,
             .other => {},
         }
@@ -131,10 +172,43 @@ const App = struct {
         try app.send(.windows, "list-windows -F '#{{window_id}} #{{pane_id}} #{{window_active}} #{{window_name}}'", .{});
     }
 
+    fn listSessions(app: *App) !void {
+        try app.send(.sessions, "list-sessions -F '#{{session_id}} #{{session_name}}'", .{});
+    }
+
+    fn onSessions(app: *App, body: []const u8) !void {
+        for (app.sessions.items) |s| app.gpa.free(s.name);
+        app.sessions.clearRetainingCapacity();
+        var lines = std.mem.tokenizeScalar(u8, body, '\n');
+        while (lines.next()) |line| {
+            const space = std.mem.indexOfScalar(u8, line, ' ') orelse continue;
+            const id = std.fmt.parseInt(u32, line[1..space], 10) catch continue;
+            try app.sessions.append(app.gpa, .{ .id = id, .name = try app.gpa.dupe(u8, line[space + 1 ..]) });
+        }
+        app.fit();
+        if (app.listed) {
+            try app.relayout();
+            app.scroll = app.target();
+        }
+        app.dirty = true;
+    }
+
+    fn sessionBy(app: *App, delta: i32) !void {
+        const current = app.session orelse return;
+        const at = for (app.sessions.items, 0..) |s, i| {
+            if (s.id == current) break i;
+        } else return;
+        const next = @as(i32, @intCast(at)) + delta;
+        if (next < 0 or next >= app.sessions.items.len) return;
+        app.slide = delta;
+        try app.send(.ignore, "switch-client -t '${d}'", .{app.sessions.items[@intCast(next)].id});
+    }
+
     fn onReply(app: *App, kind: Pending, body: []const u8) !void {
         switch (kind) {
             .ignore => {},
             .windows => try app.onWindows(body),
+            .sessions => try app.onSessions(body),
             .capture => |pane| {
                 const win = app.byPane(pane) orelse return;
                 win.stream.nextSlice("\x1b[H\x1b[2J");
@@ -199,7 +273,10 @@ const App = struct {
             try app.send(.{ .capture = win.pane }, "capture-pane -p -e -t %{d}", .{win.pane});
             try app.send(.{ .cursor = win.pane }, "display-message -p -t %{d} '#{{cursor_x}} #{{cursor_y}}'", .{win.pane});
         }
-        if (!app.listed) app.scroll = app.target();
+        if (!app.listed or app.switched) app.scroll = app.target();
+        if (app.switched and app.motion) app.yoff = app.slide * @divTrunc(@as(i32, app.view_h), 3);
+        app.switched = false;
+        app.slide = 0;
         app.listed = true;
     }
 
@@ -211,12 +288,15 @@ const App = struct {
         app.dirty = true;
     }
 
-    /// Alt+h and Alt+l move along the strip and Alt+q leaves; everything else is the focused
-    /// window's. Alt is ESC and the letter in one read, which a typed Escape then a letter is not.
+    /// Alt+h and Alt+l move along the strip, Alt+j and Alt+k between sessions, and Alt+q leaves;
+    /// everything else is the focused window's. Alt is ESC and the letter in one read, which a
+    /// typed Escape then a letter is not.
     fn onInput(app: *App, bytes: []const u8) !void {
         if (bytes.len == 2 and bytes[0] == 0x1b) switch (bytes[1]) {
             'h' => return app.focusBy(-1),
             'l' => return app.focusBy(1),
+            'j' => return app.sessionBy(1),
+            'k' => return app.sessionBy(-1),
             'q' => {
                 app.quit = true;
                 return;
@@ -329,9 +409,44 @@ const Column = struct {
 
 const Draw = enum { all, focused_border };
 
+/// The sessions, one to a row down the left edge, the current one a chip as a focused title is.
+fn drawRail(app: *const App, w: *Writer) !void {
+    const rail = app.railW();
+    if (rail == 0) return;
+    var pen: Pen = .{};
+    for (app.sessions.items, 0..) |s, i| {
+        if (i + 2 >= app.view_h) break;
+        const current = s.id == app.session;
+        var style: vt.Style = if (app.theme) |t| rgbStyle(if (current) t.ink else t.dim) else .{ .fg_color = .palette(8) };
+        if (current) {
+            style.flags.bold = true;
+            if (app.theme) |t| {
+                style.bg_color = .rgb(.{ .r = t.amber.r, .g = t.amber.g, .b = t.amber.b });
+            } else {
+                style.fg_color = .palette(4);
+                style.flags.inverse = true;
+            }
+        }
+        try w.print("\x1b[{d};1H", .{i + 2});
+        try pen.set(w, style, false);
+        try w.writeAll(" ");
+        var cells: usize = 1;
+        var name = std.unicode.Utf8View.initUnchecked(s.name).iterator();
+        while (name.nextCodepoint()) |cp| : (cells += 1) {
+            if (cells + 1 >= rail) break;
+            try put(w, cp);
+        }
+        while (cells < rail) : (cells += 1) try w.writeAll(" ");
+    }
+}
+
 fn draw(app: *App, w: *Writer, what: Draw) !void {
     try w.writeAll("\x1b[?2026h\x1b[?25l\x1b[0m");
-    if (what == .all) try w.writeAll("\x1b[2J");
+    const ox = app.term_w - app.view_w;
+    if (what == .all) {
+        try w.writeAll("\x1b[2J");
+        try drawRail(app, w);
+    }
     const col_w = app.colW();
     var cursor: ?struct { x: i32, y: i32 } = null;
 
@@ -358,18 +473,20 @@ fn draw(app: *App, w: *Writer, what: Draw) !void {
         var pen: Pen = .{};
         var y: u16 = 0;
         while (y < app.view_h) : (y += 1) {
+            const sy = y + app.yoff;
+            if (sy < 0 or sy >= app.view_h) continue;
             if (y == 0 or y == app.view_h - 1) {
-                try w.print("\x1b[{d};{d}H", .{ y + 1, lo + 1 });
+                try w.print("\x1b[{d};{d}H", .{ sy + 1, ox + lo + 1 });
                 var sx = lo;
                 while (sx < hi) : (sx += 1) try col.border(&pen, w, @intCast(sx - x0), y);
                 continue;
             }
             if (x0 >= 0) {
-                try w.print("\x1b[{d};{d}H", .{ y + 1, x0 + 1 });
+                try w.print("\x1b[{d};{d}H", .{ sy + 1, ox + x0 + 1 });
                 try col.border(&pen, w, 0, y);
             }
             if (x1 < app.view_w) {
-                try w.print("\x1b[{d};{d}H", .{ y + 1, x1 + 1 });
+                try w.print("\x1b[{d};{d}H", .{ sy + 1, ox + x1 + 1 });
                 try col.border(&pen, w, col_w - 1, y);
             }
             if (what == .focused_border) continue;
@@ -378,7 +495,7 @@ fn draw(app: *App, w: *Writer, what: Draw) !void {
             const in_lo: i32 = @max(lo, x0 + 1);
             const in_hi: i32 = @min(hi, x1);
             if (in_lo >= in_hi) continue;
-            try w.print("\x1b[{d};{d}H", .{ y + 1, in_lo + 1 });
+            try w.print("\x1b[{d};{d}H", .{ sy + 1, ox + in_lo + 1 });
             var sx = in_lo;
             while (sx < in_hi) : (sx += 1) {
                 const tx: usize = @intCast(sx - x0 - 1);
@@ -410,7 +527,7 @@ fn draw(app: *App, w: *Writer, what: Draw) !void {
 
         if (focused and win.render.cursor.visible) if (win.render.cursor.viewport) |at| {
             const sx = x0 + 1 + at.x;
-            if (sx >= lo and sx < hi) cursor = .{ .x = sx, .y = at.y + 1 };
+            if (sx >= lo and sx < hi and app.yoff == 0) cursor = .{ .x = ox + sx, .y = at.y + 1 };
         };
     }
 
@@ -432,7 +549,8 @@ fn winsize(app: *App) void {
     var ws: posix.winsize = undefined;
     if (posix.system.ioctl(posix.STDOUT_FILENO, posix.T.IOCGWINSZ, @intFromPtr(&ws)) != 0) return;
     if (ws.col == 0 or ws.row == 0) return;
-    app.view_w = ws.col;
+    app.term_w = ws.col;
+    app.fit();
     app.view_h = ws.row;
 }
 
@@ -460,6 +578,7 @@ pub fn main(init: std.process.Init) !void {
 
     // The attach itself answers with one block before anything we send.
     var app: App = .{ .gpa = gpa, .io = io, .tmux_in = child.stdin.? };
+    defer app.deinit();
     try app.pending.append(gpa, .ignore);
     app.motion = init.environ_map.get("ARENA_REDUCED_MOTION") == null;
     if (init.environ_map.get("HOME")) |home| {
@@ -504,12 +623,17 @@ pub fn main(init: std.process.Init) !void {
     while (!app.quit) {
         if (resized.swap(false, .acq_rel)) {
             winsize(&app);
-            try app.send(.ignore, "refresh-client -C {d}x{d}", .{ app.view_w, app.view_h });
+            try app.send(.ignore, "refresh-client -C {d}x{d}", .{ app.term_w, app.view_h });
+            if (app.sessions.items.len == 0) try app.listSessions();
             if (app.listed) try app.relayout() else try app.listWindows();
             if (app.listed) app.scroll = app.target();
         }
         const spins = app.motion and app.theme != null;
         const now = std.Io.Timestamp.now(io, .awake).toMilliseconds();
+        if (app.yoff != 0) {
+            app.yoff = layout.step(app.yoff, 0);
+            app.dirty = true;
+        }
         if (app.listed and app.scroll != app.target()) {
             app.scroll = if (app.motion) layout.step(app.scroll, app.target()) else app.target();
             app.dirty = true;
@@ -526,7 +650,7 @@ pub fn main(init: std.process.Init) !void {
             try tty.writeStreamingAll(io, frame.written());
         }
 
-        const moving = app.listed and app.scroll != app.target();
+        const moving = app.listed and (app.scroll != app.target() or app.yoff != 0);
         const wait_ms: isize = if (moving) 16 else if (spins) @max(1, spin_frame_ms - (now - last_spin)) else 1000;
         const timeout: posix.timespec = .{ .sec = @divTrunc(wait_ms, 1000), .nsec = @mod(wait_ms, 1000) * std.time.ns_per_ms };
         _ = posix.ppoll(&fds, &timeout, null) catch |err| switch (err) {
