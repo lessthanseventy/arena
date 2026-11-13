@@ -4,6 +4,7 @@ const control = @import("control.zig");
 const layout = @import("layout.zig");
 const theme = @import("theme.zig");
 const keys = @import("keys.zig");
+const menu = @import("menu.zig");
 const posix = std.posix;
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
@@ -66,6 +67,9 @@ const App = struct {
     slide: i32 = 0,
     /// Rows the strip still has to travel to its place after a session change.
     yoff: i32 = 0,
+    menu: ?menu.Menu = null,
+    /// Set when arena asks tmux for a new window, so focus goes to it when it is listed.
+    follow_active: bool = false,
     term_w: u16 = 80,
     /// The strip's width: the terminal's, less the session rail and its gap.
     view_w: u16 = 80,
@@ -112,7 +116,7 @@ const App = struct {
         if (app.term_w < 40 or app.sessions.items.len == 0) return 0;
         var longest: usize = 1;
         for (app.sessions.items) |s| longest = @max(longest, std.unicode.utf8CountCodepoints(s.name) catch s.name.len);
-        return @as(u16, @min(longest, 14)) + 2;
+        return @as(u16, @max(rail_button.len, @min(longest, 14))) + 2;
     }
 
     fn fit(app: *App) void {
@@ -285,9 +289,10 @@ const App = struct {
             return;
         }
         app.focus = active;
-        if (focused_id) |id| for (app.wins.items, 0..) |win, i| {
+        if (!app.follow_active) if (focused_id) |id| for (app.wins.items, 0..) |win, i| {
             if (win.id == id) app.focus = i;
         };
+        app.follow_active = false;
         try app.relayout();
         for (app.wins.items) |win| {
             if (win.seeded) continue;
@@ -316,34 +321,141 @@ const App = struct {
 
     /// A click on a session, another column or a dot goes there. Inside the focused window the
     /// mouse is its program's when it asked for one; otherwise the wheel scrolls its history.
+    /// A right click nothing else took opens the menu; with the menu open, a click picks from it
+    /// or, outside it, closes it.
     fn onMouse(app: *App, m: keys.Mouse) !void {
-        const ox = app.term_w - app.view_w;
-        if (m.x < ox) {
-            if (m.leftPress() and m.y >= 1 and m.y - 1 < app.sessions.items.len) try app.sessionTo(m.y - 1);
+        if (app.menu) |open| {
+            if (!m.leftPress() and !m.rightPress()) return;
+            const box = app.menuBox(open);
+            const inside = m.x >= box.x and m.x < box.x + menu.width and m.y >= box.y and m.y < box.y + open.height();
+            try app.menuResult(if (inside and m.leftPress()) open.click(m.x - box.x, m.y - box.y) else .close);
             return;
         }
-        if (app.yoff != 0) return;
+        if (!try app.mouseHit(m) and m.rightPress()) app.openMenu(&menu.main);
+    }
+
+    /// Whether the mouse event was for something: a session, another column, a dot, or the
+    /// focused window's program or history.
+    fn mouseHit(app: *App, m: keys.Mouse) !bool {
+        const ox = app.term_w - app.view_w;
+        if (m.x < ox) {
+            if (!m.leftPress()) return false;
+            if (m.y == 0) app.openMenu(&menu.main);
+            if (m.y >= 1 and m.y - 1 < app.sessions.items.len) try app.sessionTo(m.y - 1);
+            return true;
+        }
+        if (app.yoff != 0) return false;
         const col_w = app.colW();
         const at = @as(i32, m.x) - ox + app.scroll;
-        if (at < 0) return;
+        if (at < 0) return false;
         const stride = @as(i32, col_w) + layout.gap;
         const index: usize = @intCast(@divTrunc(at, stride));
         const cx: usize = @intCast(@mod(at, stride));
-        if (index >= app.wins.items.len or cx >= col_w) return;
+        if (index >= app.wins.items.len or cx >= col_w) return false;
         if (index != app.focus) {
             if (m.leftPress()) try app.focusTo(index);
-            return;
+            return m.leftPress();
         }
         if (m.y == app.view_h - 1) {
-            if (m.leftPress()) if (layout.dotAt(col_w, app.wins.items.len, cx)) |dot| try app.focusTo(dot);
+            const dot = layout.dotAt(col_w, app.wins.items.len, cx) orelse return false;
+            if (m.leftPress()) try app.focusTo(dot);
+            return m.leftPress();
+        }
+        if (cx == 0 or cx == col_w - 1 or m.y == 0) return false;
+        const win = app.wins.items[index];
+        if (try app.mouseToWindow(win, m, cx - 1, m.y - 1)) return true;
+        if (!m.wheel()) return false;
+        win.term.scrollViewport(.{ .delta = if (m.code & 1 == 0) -3 else 3 });
+        app.dirty = true;
+        return true;
+    }
+
+    fn openMenu(app: *App, items: []const menu.Item) void {
+        app.menu = .{ .items = items };
+        app.dirty = true;
+    }
+
+    /// Where the open menu's top left corner is: the box is centred over the strip.
+    fn menuBox(app: *const App, open: menu.Menu) struct { x: u16, y: u16 } {
+        return .{
+            .x = app.term_w - app.view_w + (app.view_w -| menu.width) / 2,
+            .y = (app.view_h -| open.height()) / 2,
+        };
+    }
+
+    fn menuKeys(app: *App, text: []const u8) !void {
+        var i: usize = 0;
+        while (i < text.len) {
+            const open = &(app.menu orelse return);
+            // an arrow is ESC and two more; anything else is a key a byte
+            const len: usize = if (text[i] == 0x1b and text.len - i >= 3) 3 else 1;
+            try app.menuResult(open.press(text[i..][0..len]));
+            i += len;
+        }
+    }
+
+    fn menuResult(app: *App, result: menu.Menu.Result) !void {
+        app.dirty = true;
+        switch (result) {
+            .none => {},
+            .close => app.menu = null,
+            .act => |action| {
+                app.menu = null;
+                switch (action) {
+                    .new_window => {
+                        app.follow_active = true;
+                        try app.send(.ignore, "new-window -a -c '#{{pane_current_path}}'", .{});
+                    },
+                    .close_window => app.openMenu(&menu.confirm),
+                    .confirm_close => try app.closeWindow(),
+                    .new_session => try app.send(.ignore, "new-session", .{}),
+                    .detach => app.quit = true,
+                    .cancel => {},
+                }
+            },
+        }
+    }
+
+    /// Closes the focused window. A session's last window takes the session with it, and tmux
+    /// would detach arena from a session that ends, so arena moves to a neighbour first.
+    fn closeWindow(app: *App) !void {
+        if (app.focus >= app.wins.items.len) return;
+        const id = app.wins.items[app.focus].id;
+        if (app.wins.items.len == 1 and app.sessions.items.len > 1) {
+            const at = for (app.sessions.items, 0..) |s, i| {
+                if (s.id == app.session) break i;
+            } else 0;
+            try app.sessionTo(if (at + 1 < app.sessions.items.len) at + 1 else at - 1);
+        }
+        try app.send(.ignore, "kill-window -t @{d}", .{id});
+    }
+
+    fn swapBy(app: *App, delta: i32) !void {
+        const next = @as(i32, @intCast(app.focus)) + delta;
+        if (next < 0 or next >= app.wins.items.len) return;
+        const from = app.wins.items[app.focus].id;
+        const to = app.wins.items[@intCast(next)].id;
+        try app.send(.ignore, "swap-window -d -s @{d} -t @{d}", .{ from, to });
+        try app.listWindows();
+    }
+
+    fn onChord(app: *App, letter: u8) !void {
+        if (app.menu != null) {
+            app.menu = null;
+            app.dirty = true;
             return;
         }
-        if (cx == 0 or cx == col_w - 1 or m.y == 0) return;
-        const win = app.wins.items[index];
-        if (try app.mouseToWindow(win, m, cx - 1, m.y - 1)) return;
-        if (m.wheel()) {
-            win.term.scrollViewport(.{ .delta = if (m.code & 1 == 0) -3 else 3 });
-            app.dirty = true;
+        switch (letter) {
+            'h' => try app.focusBy(-1),
+            'l' => try app.focusBy(1),
+            'j' => try app.sessionBy(1),
+            'k' => try app.sessionBy(-1),
+            'H' => try app.swapBy(-1),
+            'L' => try app.swapBy(1),
+            'x' => app.openMenu(&menu.confirm),
+            'm' => app.openMenu(&menu.main),
+            'q' => app.quit = true,
+            else => if (letter - '1' < app.wins.items.len) try app.focusTo(letter - '1'),
         }
     }
 
@@ -374,24 +486,19 @@ const App = struct {
         return true;
     }
 
-    /// Alt+h and Alt+l move along the strip, Alt+j and Alt+k between sessions, and Alt+q leaves;
-    /// everything else is the focused window's. Alt is ESC and the letter in one read, which a
-    /// typed Escape then a letter is not.
+    /// With Alt: h and l move along the strip, j and k between sessions, 1 to 9 go to a window,
+    /// H and L move the window, x closes it, m opens the menu and q leaves. Everything else is
+    /// the focused window's, or the menu's while it is open. Alt is ESC and the letter together,
+    /// which a typed Escape then a letter rarely is.
     fn onInput(app: *App, bytes: []const u8) !void {
         var rest = bytes;
         while (rest.len > 0 and !app.quit) {
             const part = keys.next(rest);
             rest = part.rest;
-            try app.forward(part.text);
+            if (app.menu != null) try app.menuKeys(part.text) else try app.forward(part.text);
             switch (part.event orelse continue) {
                 .mouse => |m| try app.onMouse(m),
-                .chord => |letter| switch (letter) {
-                    'h' => try app.focusBy(-1),
-                    'l' => try app.focusBy(1),
-                    'j' => try app.sessionBy(1),
-                    'k' => try app.sessionBy(-1),
-                    else => app.quit = true,
-                },
+                .chord => |letter| try app.onChord(letter),
             }
         }
     }
@@ -506,6 +613,9 @@ fn drawRail(app: *const App, w: *Writer) !void {
     const rail = app.railW();
     if (rail == 0) return;
     var pen: Pen = .{};
+    try w.writeAll("\x1b[1;1H");
+    try pen.set(w, if (app.theme) |t| rgbStyle(t.dim) else .{ .fg_color = .palette(8) }, false);
+    try w.writeAll(" " ++ rail_button);
     for (app.sessions.items, 0..) |s, i| {
         if (i + 2 >= app.view_h) break;
         const current = s.id == app.session;
@@ -530,6 +640,55 @@ fn drawRail(app: *const App, w: *Writer) !void {
         }
         while (cells < rail) : (cells += 1) try w.writeAll(" ");
     }
+}
+
+fn chip(app: *const App) vt.Style {
+    var style: vt.Style = .{};
+    style.flags.bold = true;
+    if (app.theme) |t| {
+        style.fg_color = .rgb(.{ .r = t.ink.r, .g = t.ink.g, .b = t.ink.b });
+        style.bg_color = .rgb(.{ .r = t.amber.r, .g = t.amber.g, .b = t.amber.b });
+    } else {
+        style.fg_color = .palette(4);
+        style.flags.inverse = true;
+    }
+    return style;
+}
+
+/// The open menu, a box over the middle of the strip: an item a row, its key at the right, the
+/// selected one a chip.
+fn drawMenu(app: *const App, w: *Writer, open: menu.Menu) !void {
+    const box = app.menuBox(open);
+    const edge: vt.Style = if (app.theme) |t| rgbStyle(t.amber) else .{ .fg_color = .palette(4) };
+    var title_buf: [menu.width]u8 = undefined;
+    const title: []const u8 = if (open.items.ptr == &menu.confirm and app.focus < app.wins.items.len)
+        std.fmt.bufPrint(&title_buf, " Close {s}? ", .{app.wins.items[app.focus].name}) catch " Close? "
+    else
+        " arena ";
+    const title_cells = std.unicode.utf8CountCodepoints(title) catch title.len;
+    var pen: Pen = .{};
+
+    try w.print("\x1b[{d};{d}H", .{ box.y + 1, box.x + 1 });
+    try pen.set(w, edge, false);
+    try w.writeAll("╭─");
+    try w.writeAll(title);
+    for (0..menu.width -| (3 + title_cells)) |_| try w.writeAll("─");
+    try w.writeAll("╮");
+    for (open.items, 0..) |item, i| {
+        try w.print("\x1b[{d};{d}H", .{ box.y + 2 + i, box.x + 1 });
+        try pen.set(w, edge, false);
+        try w.writeAll("│");
+        try pen.set(w, if (i == open.selected) chip(app) else .{}, false);
+        try w.print(" {s}", .{item.label});
+        for (0..menu.width - 5 - item.label.len) |_| try w.writeAll(" ");
+        try w.print("{c} ", .{item.key});
+        try pen.set(w, edge, false);
+        try w.writeAll("│");
+    }
+    try w.print("\x1b[{d};{d}H", .{ box.y + 2 + open.items.len, box.x + 1 });
+    try w.writeAll("╰");
+    for (0..menu.width - 2) |_| try w.writeAll("─");
+    try w.writeAll("╯");
 }
 
 fn draw(app: *App, w: *Writer, what: Draw) !void {
@@ -623,11 +782,16 @@ fn draw(app: *App, w: *Writer, what: Draw) !void {
         };
     }
 
+    if (app.menu) |open| {
+        try drawMenu(app, w, open);
+        cursor = null;
+    }
     try w.writeAll("\x1b[0m");
     if (cursor) |at| try w.print("\x1b[{d};{d}H\x1b[?25h", .{ at.y + 1, at.x + 1 });
     try w.writeAll("\x1b[?2026l");
 }
 
+const rail_button = "≡ menu";
 const history_lines = 5000;
 const mode_flags = "#{{alternate_on}} #{{?cursor_flag,0,1}} #{{mouse_standard_flag}} #{{mouse_button_flag}} #{{mouse_all_flag}} #{{mouse_sgr_flag}}";
 /// What to feed a window's terminal for each of `mode_flags` that is 1, in the same order.
@@ -757,7 +921,8 @@ fn run(init: std.process.Init) !bool {
                 app.phase = @as(f32, @floatFromInt(@mod(now, spin_turn_ms))) / spin_turn_ms;
                 last_spin = now;
             }
-            const what: Draw = if (app.dirty) .all else .focused_border;
+            // the menu lies over the border, so a border-only frame would cut through it
+            const what: Draw = if (app.dirty or app.menu != null) .all else .focused_border;
             app.dirty = false;
             frame.clearRetainingCapacity();
             try draw(&app, &frame.writer, what);
@@ -800,5 +965,6 @@ test {
     _ = control;
     _ = theme;
     _ = keys;
+    _ = menu;
     _ = layout;
 }

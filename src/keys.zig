@@ -18,6 +18,10 @@ pub const Mouse = struct {
     pub fn leftPress(m: Mouse) bool {
         return !m.release and m.code & (3 | 32 | 64) == 0;
     }
+
+    pub fn rightPress(m: Mouse) bool {
+        return !m.release and m.code & (3 | 32 | 64) == 2;
+    }
 };
 
 pub const Event = union(enum) {
@@ -33,14 +37,17 @@ pub const Part = struct {
     rest: []const u8,
 };
 
-/// Splits input at the first thing arena reads itself: an Alt chord (ESC then one of h, j, k, l,
-/// q) or an SGR mouse report.
+/// The letters arena takes with Alt.
+pub const chords = "hjklHLxmq123456789";
+
+/// Splits input at the first thing arena reads itself: an Alt chord (ESC then one of `chords`)
+/// or an SGR mouse report.
 pub fn next(bytes: []const u8) Part {
     var i: usize = 0;
     while (std.mem.indexOfScalarPos(u8, bytes, i, 0x1b)) |esc| : (i = esc + 1) {
         const after = bytes[esc + 1 ..];
         if (after.len == 0) break;
-        if (std.mem.indexOfScalar(u8, "hjklq", after[0]) != null) {
+        if (std.mem.indexOfScalar(u8, chords, after[0]) != null) {
             return .{ .text = bytes[0..esc], .event = .{ .chord = after[0] }, .rest = after[1..] };
         }
         if (mouse(after)) |found| {
@@ -70,7 +77,7 @@ test "a chord is found among other typing" {
 }
 
 test "other escape sequences and a trailing escape are the window's" {
-    for ([_][]const u8{ "\x1b[A", "\x1bOP", "\x1bx", "abc\x1b", "\x1b[<0;1", "\x1b[<0;0;1M", "" }) |bytes| {
+    for ([_][]const u8{ "\x1b[A", "\x1bOP", "\x1bz", "abc\x1b", "\x1b[<0;1", "\x1b[<0;0;1M", "" }) |bytes| {
         const part = next(bytes);
         try std.testing.expectEqualStrings(bytes, part.text);
         try std.testing.expectEqual(@as(?Event, null), part.event);
