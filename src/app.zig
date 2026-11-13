@@ -122,6 +122,8 @@ pub const App = struct {
     /// Rows the current strip still has to travel to its place.
     yoff: i32 = 0,
     menu: ?menu.Menu = null,
+    /// A name being typed, over everything else.
+    prompt: ?menu.Prompt = null,
     /// Set when the session's current window changed in tmux, so focus goes to it when listed.
     follow_active: bool = false,
     palette: color.Palette = .{},
@@ -494,11 +496,16 @@ pub const App = struct {
     /// A right click nothing else took opens the menu; with the menu open, a click picks from it
     /// or, outside it, closes it.
     fn onMouse(app: *App, m: keys.Mouse) !void {
+        if (app.prompt != null) {
+            if (m.leftPress() or m.rightPress()) app.prompt = null;
+            app.dirty = true;
+            return;
+        }
         if (app.menu) |open| {
             if (!m.leftPress() and !m.rightPress()) return;
-            const box = app.menuBox(open);
-            const inside = m.x >= box.x and m.x < box.x + menu.width and m.y >= box.y and m.y < box.y + open.height();
-            try app.menuResult(if (inside and m.leftPress()) open.click(m.x - box.x, m.y - box.y) else .close);
+            const at = app.box(open.height());
+            const inside = m.x >= at.x and m.x < at.x + menu.width and m.y >= at.y and m.y < at.y + open.height();
+            try app.menuResult(if (inside and m.leftPress()) open.click(m.x - at.x, m.y - at.y) else .close);
             return;
         }
         if (!try app.mouseHit(m) and m.rightPress()) app.openMenu(&menu.main);
@@ -606,23 +613,63 @@ pub const App = struct {
         app.dirty = true;
     }
 
-    /// Where the open menu's top left corner is: the box is centred over the strip.
-    pub fn menuBox(app: *const App, open: menu.Menu) struct { x: u16, y: u16 } {
+    /// Whether the menu or a prompt is open over the strip.
+    pub fn overlay(app: *const App) bool {
+        return app.menu != null or app.prompt != null;
+    }
+
+    /// Where the top left corner of a menu or prompt `height` rows tall is: centred over the strip.
+    pub fn box(app: *const App, height: u16) struct { x: u16, y: u16 } {
         return .{
             .x = app.term_w - app.view_w + (app.view_w -| menu.width) / 2,
-            .y = (app.view_h -| open.height()) / 2,
+            .y = (app.view_h -| height) / 2,
         };
     }
 
     fn menuKeys(app: *App, text: []const u8) !void {
         var i: usize = 0;
         while (i < text.len) {
-            const open = &(app.menu orelse return);
             // an arrow is ESC and two more; anything else is a key a byte
             const len: usize = if (text[i] == 0x1b and text.len - i >= 3) 3 else 1;
-            try app.menuResult(open.press(text[i..][0..len]));
+            const key = text[i..][0..len];
             i += len;
+            if (app.prompt) |*prompt| {
+                app.dirty = true;
+                switch (prompt.press(key)) {
+                    .none => {},
+                    .cancel => app.prompt = null,
+                    .commit => try app.rename(),
+                }
+            } else if (app.menu) |*open| try app.menuResult(open.press(key)) else return;
         }
+    }
+
+    /// Gives the focused window or the session the name typed; an empty one changes nothing.
+    fn rename(app: *App) !void {
+        const prompt = app.prompt orelse return;
+        app.prompt = null;
+        const s = app.cur() orelse return;
+        if (prompt.len == 0) return;
+        var cmd: Writer.Allocating = .init(app.gpa);
+        defer cmd.deinit();
+        switch (prompt.what) {
+            .window => try cmd.writer.print("rename-window -t @{d} -- '", .{(s.focused() orelse return).id}),
+            .session => try cmd.writer.print("rename-session -t '${d}' -- '", .{s.id}),
+        }
+        for (prompt.text()) |byte| {
+            if (byte == '\'') try cmd.writer.writeAll("'\\''") else try cmd.writer.writeByte(byte);
+        }
+        try cmd.writer.writeAll("'");
+        try app.send(.ignore, "{s}", .{cmd.written()});
+    }
+
+    /// Closes the active pane, asking first when it is the window's only one.
+    fn closePane(app: *App) !void {
+        const s = app.cur() orelse return;
+        const win = s.focused() orelse return;
+        const pane = win.activePane() orelse return;
+        if (win.panes.items.len == 1) return app.openMenu(&menu.confirm);
+        try app.send(.ignore, "kill-pane -t %{d}", .{pane.id});
     }
 
     fn menuResult(app: *App, result: menu.Menu.Result) !void {
@@ -634,6 +681,13 @@ pub const App = struct {
                 app.menu = null;
                 switch (action) {
                     .new_window => try app.newWindow(),
+                    .rename_window => app.prompt = .{ .what = .window },
+                    .rename_session => app.prompt = .{ .what = .session },
+                    .move_left => try app.swapBy(-1),
+                    .move_right => try app.swapBy(1),
+                    .split_right => try app.send(.ignore, "split-window -h -c '#{{pane_current_path}}'", .{}),
+                    .split_below => try app.send(.ignore, "split-window -v -c '#{{pane_current_path}}'", .{}),
+                    .close_pane => try app.closePane(),
                     .close_window => app.openMenu(&menu.confirm),
                     .confirm_close => try app.closeWindow(),
                     .new_session => try app.send(.ignore, "new-session", .{}),
@@ -674,8 +728,9 @@ pub const App = struct {
     }
 
     fn onChord(app: *App, letter: u8) !void {
-        if (app.menu != null) {
+        if (app.overlay()) {
             app.menu = null;
+            app.prompt = null;
             app.dirty = true;
             return;
         }
@@ -707,7 +762,7 @@ pub const App = struct {
         while (rest.len > 0 and !app.quit) {
             const part = keys.next(rest);
             rest = part.rest;
-            if (app.menu != null) try app.menuKeys(part.text) else try app.forward(part.text);
+            if (app.overlay()) try app.menuKeys(part.text) else try app.forward(part.text);
             switch (part.event orelse return part.held.len) {
                 .mouse => |m| try app.onMouse(m),
                 .chord => |letter| try app.onChord(letter),

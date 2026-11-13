@@ -160,41 +160,137 @@ fn rail(app: *const App, w: *Writer) !void {
     }
 }
 
-/// The open menu, a box over the middle of the strip: an item a row, its key at the right, the
-/// selected one a chip.
-fn menuBox(app: *const App, w: *Writer, open: menu.Menu) !void {
-    const box = app.menuBox(open);
-    const edge = ink(app, "amber", 4);
-    var title_buf: [menu.width]u8 = undefined;
-    const closing = if (app.cur()) |s| s.focused() else null;
-    const title: []const u8 = if (open.items.ptr == &menu.confirm and closing != null)
-        std.fmt.bufPrint(&title_buf, " Close {s}? ", .{closing.?.name}) catch " Close? "
-    else
-        " arena ";
-    const title_cells = std.unicode.utf8CountCodepoints(title) catch title.len;
-    var pen: Pen = .{};
+fn cellCount(text: []const u8) usize {
+    return std.unicode.utf8CountCodepoints(text) catch text.len;
+}
 
-    try w.print("\x1b[{d};{d}H", .{ box.y + 1, box.x + 1 });
-    try pen.set(w, edge, null);
-    try w.writeAll("╭─");
-    try w.writeAll(title);
-    for (0..menu.width -| (3 + title_cells)) |_| try w.writeAll("─");
-    try w.writeAll("╮");
-    for (open.items, 0..) |item, i| {
-        try w.print("\x1b[{d};{d}H", .{ box.y + 2 + i, box.x + 1 });
-        try pen.set(w, edge, null);
-        try w.writeAll("│");
-        try pen.set(w, if (i == open.selected) chip(app) else .{}, null);
-        try w.print(" {s}", .{item.label});
-        for (0..menu.width - 5 - item.label.len) |_| try w.writeAll(" ");
-        try w.print("{c} ", .{item.key});
-        try pen.set(w, edge, null);
-        try w.writeAll("│");
+/// The first `max` characters of `text`.
+fn clip(text: []const u8, max: usize) []const u8 {
+    var it = std.unicode.Utf8View.initUnchecked(text).iterator();
+    var n: usize = 0;
+    while (n < max) : (n += 1) _ = it.nextCodepointSlice() orelse break;
+    return text[0..it.i];
+}
+
+/// A bordered box over the strip, drawn a row at a time from the top.
+const Box = struct {
+    app: *const App,
+    w: *Writer,
+    x: u16,
+    y: u16,
+    pen: Pen = .{},
+    row: u16 = 0,
+
+    /// False for a row the terminal is too short to show.
+    fn begin(b: *Box) !bool {
+        defer b.row += 1;
+        if (b.y + b.row >= b.app.view_h) return false;
+        try b.w.print("\x1b[{d};{d}H", .{ b.y + b.row + 1, b.x + 1 });
+        try b.pen.set(b.w, ink(b.app, "amber", 4), null);
+        return true;
     }
-    try w.print("\x1b[{d};{d}H", .{ box.y + 2 + open.items.len, box.x + 1 });
-    try w.writeAll("╰");
-    for (0..menu.width - 2) |_| try w.writeAll("─");
-    try w.writeAll("╯");
+
+    fn edge(b: *Box, left: []const u8, right: []const u8) !void {
+        if (!try b.begin()) return;
+        try b.w.writeAll(left);
+        for (0..menu.width - 2) |_| try b.w.writeAll("─");
+        try b.w.writeAll(right);
+    }
+
+    /// A row of the inside, a cell clear of the border: `left` from its left end and `right`
+    /// at its right end, each in its style, `left`'s filling the space between.
+    fn line(b: *Box, left_style: vt.Style, left: []const u8, right_style: vt.Style, right: []const u8) !void {
+        if (!try b.begin()) return;
+        try b.w.writeAll("│");
+        try b.pen.set(b.w, .{}, null);
+        try b.w.writeAll(" ");
+        try b.pen.set(b.w, left_style, null);
+        try b.w.writeAll(left);
+        for (0..(menu.width - 4) -| (cellCount(left) + cellCount(right))) |_| try b.w.writeAll(" ");
+        try b.pen.set(b.w, right_style, null);
+        try b.w.writeAll(right);
+        try b.pen.set(b.w, .{}, null);
+        try b.w.writeAll(" ");
+        try b.pen.set(b.w, ink(b.app, "amber", 4), null);
+        try b.w.writeAll("│");
+    }
+
+    fn blank(b: *Box) !void {
+        try b.line(.{}, "", .{}, "");
+    }
+};
+
+/// The line between a menu's groups.
+const rule = blk: {
+    var text: []const u8 = "  ";
+    for (0..menu.width - 8) |_| text = text ++ "─";
+    break :blk text;
+};
+
+fn heading(app: *const App) vt.Style {
+    var style = ink(app, "amber", 4);
+    style.flags.bold = true;
+    return style;
+}
+
+/// The open menu: a heading, then an item a row with its icon and, at the right, its key, the
+/// selected one a chip, and the keys that work the menu along the bottom.
+fn menuBox(app: *const App, w: *Writer, open: menu.Menu) !void {
+    const at = app.box(open.height());
+    var b: Box = .{ .app = app, .w = w, .x = at.x, .y = at.y };
+    const dim = ink(app, "dim", 8);
+    const session = app.cur();
+    const win = if (session) |s| s.focused() else null;
+    var buf: [96]u8 = undefined;
+
+    try b.edge("╭", "╮");
+    try b.blank();
+    if (open.items.ptr == &menu.confirm) {
+        const name = clip(if (win) |found| found.name else "window", 20);
+        try b.line(heading(app), std.fmt.bufPrint(&buf, "  Close {s}?", .{name}) catch "  Close?", dim, "");
+    } else {
+        const name = clip(if (session) |s| s.name else "", 16);
+        try b.line(heading(app), "  ◆ arena", dim, std.fmt.bufPrint(&buf, "{s}  ", .{name}) catch "");
+    }
+    try b.blank();
+    for (open.items, 0..) |item, i| {
+        if (item.group) try b.line(dim, rule, dim, "");
+        const picked = i == open.selected;
+        const left = std.fmt.bufPrint(&buf, "  {s}  {s}", .{ item.icon, item.label }) catch item.label;
+        try b.line(if (picked) chip(app) else .{}, left, if (picked) chip(app) else dim, &.{ item.key, ' ', ' ' });
+    }
+    try b.blank();
+    try b.line(dim, "  ↑↓ move   ⏎ pick   esc close", dim, "");
+    try b.edge("╰", "╯");
+}
+
+/// The box a new name is typed into. Returns where its cursor goes.
+fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
+    const at = app.box(menu.Prompt.height);
+    var b: Box = .{ .app = app, .w = w, .x = at.x, .y = at.y };
+    const dim = ink(app, "dim", 8);
+    var buf: [96]u8 = undefined;
+    const session = app.cur();
+    const was: []const u8 = switch (prompt.what) {
+        .window => if (session) |s| (if (s.focused()) |win| win.name else "") else "",
+        .session => if (session) |s| s.name else "",
+    };
+
+    try b.edge("╭", "╮");
+    try b.blank();
+    try b.line(
+        heading(app),
+        if (prompt.what == .window) "  ✎ Rename window" else "  ✎ Rename session",
+        dim,
+        std.fmt.bufPrint(&buf, "{s}  ", .{clip(was, 12)}) catch "",
+    );
+    try b.blank();
+    const shown = clip(prompt.text(), menu.width - 10);
+    try b.line(.{}, std.fmt.bufPrint(&buf, "  › {s}", .{shown}) catch "", .{}, "");
+    try b.blank();
+    try b.line(dim, "  ⏎ rename   esc cancel", dim, "");
+    try b.edge("╰", "╯");
+    return .{ .x = at.x + 6 + @as(i32, @intCast(cellCount(shown))), .y = at.y + 4 };
 }
 
 const Cursor = struct { x: i32, y: i32 };
@@ -327,7 +423,9 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
         _ = try strip(app, w, leaving, app.yoff - way * @as(i32, app.view_h), .all);
     };
     var cursor: ?Cursor = if (app.cur()) |s| try strip(app, w, s, app.yoff, what) else null;
-    if (app.menu) |open| {
+    if (app.prompt) |*prompt| {
+        cursor = try promptBox(app, w, prompt);
+    } else if (app.menu) |open| {
         try menuBox(app, w, open);
         cursor = null;
     }
