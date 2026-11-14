@@ -163,9 +163,10 @@ fn rail(app: *const App, w: *Writer) !void {
         try w.print("\x1b[{d};1H", .{y + 1});
         const top = y == 0;
         const bottom = y == h - 1;
+        const ruled = y == app.railRuleRow() and !top;
         var x: u16 = 0;
         while (x < width) : (x += 1) {
-            if (!top and !bottom and x == 1) {
+            if (!top and !bottom and !ruled and x == 1) {
                 try railRow(app, w, &pen, y, inner);
                 x = width - 2;
                 continue;
@@ -182,7 +183,14 @@ fn rail(app: *const App, w: *Writer) !void {
             try pen.set(w, edge, null);
             const left = x == 0;
             const right = x == width - 1;
-            try put(w, if (top) (if (left) '╭' else if (right) '╮' else '─') else if (bottom) (if (left) '╰' else if (right) '╯' else '─') else '│');
+            try put(w, if (top)
+                (if (left) '╭' else if (right) '╮' else '─')
+            else if (bottom)
+                (if (left) '╰' else if (right) '╯' else '─')
+            else if (ruled)
+                (if (left) '├' else if (right) '┤' else '─')
+            else
+                '│');
         }
     }
 }
@@ -191,15 +199,20 @@ fn rail(app: *const App, w: *Writer) !void {
 fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16) !void {
     const dim = ink(app, "dim", 8);
     var filled: usize = 0;
-    if (y + 2 == app.view_h) {
+    const index: usize = if (y >= 2) (y - 2) / 2 else 0;
+    if (y == app.railMenuRow()) {
         try pen.set(w, dim, null);
         try w.writeAll(" " ++ app_mod.rail_button);
         filled = 1 + cellCount(app_mod.rail_button);
-    } else if (y + 3 < app.view_h and y - 1 < app.sessions.items.len) {
-        const s = app.sessions.items[y - 1];
+    } else if (y == app.railNewRow()) {
+        try pen.set(w, dim, null);
+        try w.writeAll(" " ++ app_mod.rail_new);
+        filled = 1 + cellCount(app_mod.rail_new);
+    } else if (y >= 2 and y % 2 == 0 and index < app.railShown()) {
+        const s = app.sessions.items[index];
         const drop = app.dropAt();
         // lit as the current one is: a window held by its title would go to it
-        const here = s.id == app.current or (drop == .session and drop.session == y - 1);
+        const here = s.id == app.current or (drop == .session and drop.session == index);
         const cut = cellCount(s.name) > inner - 6;
         const name = clip(s.name, inner - 6 - @intFromBool(cut));
         try pen.set(w, if (here) chip(app) else .{}, null);
@@ -212,10 +225,6 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16) !void {
         try pen.set(w, if (here) chip(app) else dim, null);
         try w.print("{d:>2} ", .{@min(s.wins.items.len, 99)});
         filled = inner;
-    } else if (y == app.railNewRow()) {
-        try pen.set(w, dim, null);
-        try w.writeAll(" " ++ app_mod.rail_new);
-        filled = 1 + cellCount(app_mod.rail_new);
     } else try pen.set(w, .{}, null);
     for (filled..inner) |_| try w.writeAll(" ");
 }

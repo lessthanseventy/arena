@@ -1050,10 +1050,31 @@ pub const App = struct {
         return if (s.wins.items[hit.index].id == app.drag.title) .none else .{ .column = hit.index };
     }
 
+    /// The rail's rows: its sessions a row apart from the second, then a rule over the button
+    /// for a new session and the menu button, above its bottom border.
+    pub fn railRuleRow(app: *const App) u16 {
+        return app.view_h -| 4;
+    }
+
+    pub fn railNewRow(app: *const App) u16 {
+        return app.view_h -| 3;
+    }
+
+    pub fn railMenuRow(app: *const App) u16 {
+        return app.view_h -| 2;
+    }
+
+    /// How many sessions fit above the rule, with a row free under the last.
+    pub fn railShown(app: *const App) usize {
+        const room = app.railRuleRow() -| 1;
+        return @min(app.sessions.items.len, if (room > 2) (room - 1) / 2 else 0);
+    }
+
     /// Which session is on row `y` of the rail.
     fn railSession(app: *const App, y: u16) ?usize {
-        if (y < 1 or y + 3 >= app.view_h or y - 1 >= app.sessions.items.len) return null;
-        return y - 1;
+        if (y < 2 or y % 2 != 0) return null;
+        const index = (y - 2) / 2;
+        return if (index < app.railShown()) index else null;
     }
 
     fn dropWindow(app: *App, s: *Session, id: u32, drop: Drop) !void {
@@ -1098,8 +1119,7 @@ pub const App = struct {
     /// The held button moved to `m` with a session, which goes to the row under the pointer.
     fn dragSession(app: *App, id: u32, m: keys.Mouse) !void {
         const at = app.sessionIndex(id) orelse return;
-        const shown = @min(app.sessions.items.len, app.view_h -| 4);
-        const over = @min(shown -| 1, m.y -| 1);
+        const over = @min(app.railShown() -| 1, (m.y -| 1) / 2);
         if (over != at) try app.moveSession(at, over);
     }
 
@@ -1119,13 +1139,6 @@ pub const App = struct {
         const next = @as(i32, @intCast(at)) + delta;
         if (next < 0 or next >= app.sessions.items.len) return;
         try app.moveSession(at, @intCast(next));
-    }
-
-    /// The row of the rail a click on makes a session, under the last of them; none when the
-    /// rail is full.
-    pub fn railNewRow(app: *const App) ?u16 {
-        const y = app.sessions.items.len + 1;
-        return if (y + 3 < app.view_h) @intCast(y) else null;
     }
 
     /// Ends a session and every window in it. tmux would detach arena from the session it is
@@ -1233,7 +1246,7 @@ pub const App = struct {
                 return true;
             };
             if (!m.leftPress()) return false;
-            if (m.y + 2 == app.view_h) app.openMenu(&menu.main);
+            if (m.y == app.railMenuRow()) app.openMenu(&menu.main);
             if (m.y == app.railNewRow()) try app.send(.ignore, "new-session", .{});
             if (app.railSession(m.y)) |row| {
                 const id = app.sessions.items[row].id;
