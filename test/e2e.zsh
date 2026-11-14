@@ -80,6 +80,8 @@ check "a picture a program wraps for tmux is passed on to the terminal" await wr
 check "and its cells keep their colour in a window out of focus" await wrote_bytes $'\e[0;38;2;1;2;3m\U0010EEEE̅̅'
 inner send-keys -t alpha:two clear Enter
 gone $'\U0010EEEE'
+kept() { ! grep -qaF -- $'\e[2J' $tmp/raw }
+check "and no frame erases the whole display, which would take the pictures with it" kept
 
 wide() { [[ $(inner display -p -t alpha:one '#{window_width} #{@arena_width}') == $1 ]] }
 # a ; that ends an argument ends the command for tmux, unless escaped

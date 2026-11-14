@@ -610,7 +610,8 @@ fn overview(app: *App, w: *Writer, spot: App.Spot) !void {
 pub fn frame(app: *App, w: *Writer, what: What) !void {
     try w.writeAll("\x1b[?2026h\x1b[?25l\x1b[0m");
     if (what == .all) {
-        try w.writeAll("\x1b[2J");
+        // Not 2J: erasing the whole display takes the terminal's kitty pictures with it.
+        try w.writeAll("\x1b[H\x1b[J");
         try rail(app, w);
     }
     var cursor: ?Cursor = null;
