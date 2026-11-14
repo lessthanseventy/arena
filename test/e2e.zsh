@@ -208,6 +208,12 @@ check "Alt+j goes to the next session" see '╭─ 1 solo '
 key M-k
 check "Alt+k comes back, to the window left" see '╭─ 2 two '
 
+inner send-keys -t beta:solo "clear; printf '%%end 1 1 1\\n%%begin 1 1 1\\n'" Enter
+key M-j
+see '╭─ 1 solo '
+check "a pane showing lines like tmux's own replies is drawn whole" see '│%begin 1 1 1 '
+key M-k
+see '╭─ 2 two '
 
 rail() { [[ $(screen | grep -oE '^│ (alpha|beta) ' | tr -d '│ \n') == $1 ]] }
 order() { [[ $(inner list-sessions -F '#{@arena_order}#{session_name}' | sort | tr -d '\n') == $1 ]] }

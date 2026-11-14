@@ -214,7 +214,12 @@ pub const App = struct {
     view_w: u16 = 80,
     view_h: u16 = 24,
     pending: std.ArrayList(Pending) = .empty,
+    /// The open reply's guard, its time and number, which its end repeats.
+    guard: std.ArrayList(u8) = .empty,
     in_block: bool = false,
+    /// Whether the open reply answers a command arena sent: tmux also writes replies to
+    /// commands it ran itself for the client, as the attach, which answer nothing pending.
+    block_mine: bool = false,
     block: std.ArrayList(u8) = .empty,
     want_list: bool = true,
     listing: bool = false,
@@ -264,6 +269,7 @@ pub const App = struct {
         app.sessions.deinit(app.gpa);
         app.pending.deinit(app.gpa);
         app.block.deinit(app.gpa);
+        app.guard.deinit(app.gpa);
         app.out.deinit(app.gpa);
         app.plain.deinit(app.gpa);
     }
@@ -437,9 +443,12 @@ pub const App = struct {
     }
 
     pub fn onLine(app: *App, line: []u8) !void {
-        switch (control.parse(line, app.in_block)) {
-            .begin => {
+        switch (control.parse(line, if (app.in_block) app.guard.items else null)) {
+            .begin => |open| {
                 app.in_block = true;
+                app.block_mine = open.mine;
+                app.guard.clearRetainingCapacity();
+                try app.guard.appendSlice(app.gpa, open.guard);
                 app.block.clearRetainingCapacity();
             },
             .body => |body| {
@@ -448,6 +457,7 @@ pub const App = struct {
             },
             .end => {
                 app.in_block = false;
+                if (!app.block_mine) return;
                 const kind: Pending = if (app.pending.items.len > 0) app.pending.orderedRemove(0) else .ignore;
                 try app.onReply(kind, app.block.items);
             },

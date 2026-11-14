@@ -155,10 +155,8 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) 
         child.stdin = null;
     };
 
-    // The attach itself answers with one block before anything we send.
     var app: App = .{ .gpa = gpa, .io = io, .tmux_in = child.stdin.? };
     defer app.deinit();
-    try app.pending.append(gpa, .ignore);
     app.motion = init.environ_map.get("ARENA_REDUCED_MOTION") == null;
     var theme_file: ThemeFile = .{
         .path = if (init.environ_map.get("HOME")) |home| try std.fs.path.join(gpa, &.{ home, ".config/ficciones/theme/palette.sh" }) else null,

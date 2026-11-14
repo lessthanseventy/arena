@@ -1,7 +1,9 @@
 const std = @import("std");
 
 pub const Event = union(enum) {
-    begin,
+    /// A reply opens: `guard` is its time and number, which its end repeats; it answers a
+    /// command of this client's only when `mine`.
+    begin: struct { guard: []const u8, mine: bool },
     end,
     /// A line of a command's reply, between `begin` and `end`.
     body: []const u8,
@@ -23,13 +25,22 @@ const changes = [_][]const u8{
     "%layout-change ",      "%window-pane-changed ",
 };
 
-/// Classifies one line of `tmux -C` output. `in_block` is whether a `%begin` is open.
-pub fn parse(line: []const u8, in_block: bool) Event {
-    if (in_block) {
-        if (std.mem.startsWith(u8, line, "%end ") or std.mem.startsWith(u8, line, "%error ")) return .end;
+/// Classifies one line of `tmux -C` output. `open` is the guard of the open `%begin`, if any:
+/// only an end with the same one closes it, as a reply's own lines may look like guards.
+pub fn parse(line: []const u8, open: ?[]const u8) Event {
+    if (open) |guard| {
+        for ([_][]const u8{ "%end ", "%error " }) |prefix| {
+            if (!std.mem.startsWith(u8, line, prefix)) continue;
+            const rest = line[prefix.len..];
+            if (std.mem.startsWith(u8, rest, guard) and rest.len > guard.len and rest[guard.len] == ' ') return .end;
+        }
         return .{ .body = line };
     }
-    if (std.mem.startsWith(u8, line, "%begin ")) return .begin;
+    if (std.mem.startsWith(u8, line, "%begin ")) {
+        const rest = line["%begin ".len..];
+        const flags = std.mem.lastIndexOfScalar(u8, rest, ' ') orelse return .other;
+        return .{ .begin = .{ .guard = rest[0..flags], .mine = std.mem.eql(u8, rest[flags + 1 ..], "1") } };
+    }
     if (std.mem.startsWith(u8, line, "%output %")) {
         const rest = line["%output %".len..];
         const space = std.mem.indexOfScalar(u8, rest, ' ') orelse return .other;
@@ -73,16 +84,25 @@ pub fn unescape(data: []u8) []u8 {
 
 test "output carries its pane and unescapes" {
     var line = "%output %12 hi\\033[1m\\015\\012\\134".*;
-    const ev = parse(&line, false);
+    const ev = parse(&line, null);
     try std.testing.expectEqual(@as(u32, 12), ev.output.pane);
     try std.testing.expectEqualStrings("hi\x1b[1m\r\n\\", unescape(@constCast(ev.output.data)));
 }
 
-test "a block's lines are body until end or error" {
-    try std.testing.expectEqual(Event.begin, parse("%begin 1 2 0", false));
-    try std.testing.expectEqualStrings("%1 zsh", parse("%1 zsh", true).body);
-    try std.testing.expectEqual(Event.end, parse("%end 1 2 0", true));
-    try std.testing.expectEqual(Event.end, parse("%error 1 2 0", true));
+test "a block's lines are body until its own end or error" {
+    const mine = parse("%begin 1 2 1", null).begin;
+    try std.testing.expectEqualStrings("1 2", mine.guard);
+    try std.testing.expect(mine.mine);
+    try std.testing.expect(!parse("%begin 1 2 0", null).begin.mine);
+    try std.testing.expectEqualStrings("%1 zsh", parse("%1 zsh", "1 2").body);
+    try std.testing.expectEqual(Event.end, parse("%end 1 2 1", "1 2"));
+    try std.testing.expectEqual(Event.end, parse("%error 1 2 1", "1 2"));
+}
+
+test "a line of a reply that looks like a guard is still the reply's" {
+    try std.testing.expectEqualStrings("%end 1 3 1", parse("%end 1 3 1", "1 2").body);
+    try std.testing.expectEqualStrings("%end 1 23 1", parse("%end 1 23 1", "1 2").body);
+    try std.testing.expectEqualStrings("%begin 1 3 1", parse("%begin 1 3 1", "1 2").body);
 }
 
 test "anything that changes the tree asks for a relist" {
@@ -90,12 +110,12 @@ test "anything that changes the tree asks for a relist" {
         "%window-add @3",          "%window-renamed @3 vim",      "%unlinked-window-close @9",
         "%sessions-changed",       "%session-renamed $7 notes",   "%layout-change @0 cf3a,80x24,0,0,0 cf3a,80x24,0,0,0 *",
         "%window-pane-changed @2 %4",
-    }) |line| try std.testing.expectEqual(Event.changed, parse(line, false));
-    try std.testing.expectEqual(Event.other, parse("%client-session-changed /dev/pts/3 $1 a", false));
-    try std.testing.expectEqual(Event.exit, parse("%exit", false));
+    }) |line| try std.testing.expectEqual(Event.changed, parse(line, null));
+    try std.testing.expectEqual(Event.other, parse("%client-session-changed /dev/pts/3 $1 a", null));
+    try std.testing.expectEqual(Event.exit, parse("%exit", null));
 }
 
 test "session notifications say which session" {
-    try std.testing.expectEqual(@as(u32, 7), parse("%session-changed $7 notes", false).session_changed);
-    try std.testing.expectEqual(@as(u32, 0), parse("%session-window-changed $0 @1", false).window_selected);
+    try std.testing.expectEqual(@as(u32, 7), parse("%session-changed $7 notes", null).session_changed);
+    try std.testing.expectEqual(@as(u32, 0), parse("%session-window-changed $0 @1", null).window_selected);
 }
