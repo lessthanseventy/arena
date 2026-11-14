@@ -73,6 +73,21 @@ outer pipe-pane -t o "cat >$tmp/raw"
 
 check "the strip shows, the first column flush against the rail" see '^╭─ sessions ─+╮ ╭─ 1 one '
 
+# A tmux with the pixels patch gives arena's terminal cells of 9x19 pixels, as a real one has.
+mkfifo $tmp/sizer
+outer -C attach -t o <$tmp/sizer >/dev/null 2>&1 &
+exec {sizer}>$tmp/sizer
+# tmux tells a pane its size again only when its cells change, so a cell's pixels come with one
+print -u $sizer 'refresh-client -C 99x24,9x19'
+print -u $sizer 'refresh-client -C 100x24,9x19'
+outer_cells() { [[ $(outer display -p -t o '#{window_cell_width}') == 9 ]] }
+cells() { [[ $(inner display -p -t alpha:one '#{window_cell_width}x#{window_cell_height}') == $1 ]] }
+if await outer_cells; then
+  check "the terminal's cell size in pixels reaches the panes" await cells 9x19
+else
+  print "skip  the terminal's cell size in pixels reaches the panes: this tmux has no pixels patch"
+fi
+
 inner new-session -d sh
 last() { screen | sed -n 4p | grep -qE '^│ [0-9]+ +1 │' }
 check "a new session goes under the others in the rail" await last
@@ -113,7 +128,11 @@ await mousing alpha:one
 # the pane's third column, second row: its frame starts at the title's corner
 at=$(( $(screen | awk 'NR == 1 { print index($0, "╭─ 1 one") }') + 3 ))
 mouse 0 $at 3 M
-clicked() { inner capture-pane -pJ -t alpha:one | grep -qF '<   0   ;   4   0   ;   4   8   M' }
+# the middle of the cell, in the window's cells, spelled as od spells it
+cw=$(inner display -p -t alpha:one '#{window_cell_width}')
+ch=$(inner display -p -t alpha:one '#{window_cell_height}')
+report="<0;$((2 * cw + cw / 2));$((ch + ch / 2))M"
+clicked() { inner capture-pane -pJ -t alpha:one | grep -qF -- "${(j:   :)${(s::)report}}" }
 check "a click reaches a program that asked for pixels in pixels" await clicked
 mouse 0 $at 3 m
 inner send-keys -t alpha:one clear Enter
@@ -188,6 +207,7 @@ key M-j
 check "Alt+j goes to the next session" see '╭─ 1 solo '
 key M-k
 check "Alt+k comes back, to the window left" see '╭─ 2 two '
+
 
 rail() { [[ $(screen | grep -oE '^│ (alpha|beta) ' | tr -d '│ \n') == $1 ]] }
 order() { [[ $(inner list-sessions -F '#{@arena_order}#{session_name}' | sort | tr -d '\n') == $1 ]] }

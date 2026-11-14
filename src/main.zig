@@ -190,7 +190,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) 
             listed_at = now;
             app.want_list = true;
         }
-        if (winch.swap(false, .acq_rel)) if (winsize()) |ws| try app.resized(ws.col, ws.row);
+        if (winch.swap(false, .acq_rel)) if (winsize()) |ws| try app.resized(ws.col, ws.row, ws.xpixel / ws.col, ws.ypixel / ws.row);
         if (now - theme_checked >= theme_check_ms) {
             theme_checked = now;
             try theme_file.check(&app, tty);

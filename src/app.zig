@@ -26,7 +26,7 @@ const claude_state = "#{{?#{{==:#{{@arena_claude}},working}},1,#{{?#{{==:#{{@are
     "#{{?#{{==:#{{@arena_claude}},waiting}},3,0}}}}}}";
 const pane_format = "#{{session_id}} #{{window_id}} #{{pane_id}} #{{window_width}} #{{window_height}} " ++
     "#{{pane_left}} #{{pane_top}} #{{pane_width}} #{{pane_height}} #{{pane_active}} #{{window_active}} " ++
-    claude_state ++ " #{{?@arena_width,#{{@arena_width}},0}} #{{window_name}}";
+    claude_state ++ " #{{window_cell_width}} #{{window_cell_height}} #{{?@arena_width,#{{@arena_width}},0}} #{{window_name}}";
 
 /// The least and the most of the view a window's column is given, in hundredths, and how much
 /// one press of narrower or wider changes it.
@@ -129,6 +129,9 @@ pub const Window = struct {
     /// The size tmux has the window at, which is arena's column unless another client holds it.
     w: u16 = 0,
     h: u16 = 0,
+    /// The size of a cell in pixels, as tmux tells the window's programs.
+    cell_w: u16 = 16,
+    cell_h: u16 = 32,
     /// The size arena last asked tmux for, so one tmux will not give is asked for once.
     asked_w: u16 = 0,
     asked_h: u16 = 0,
@@ -412,12 +415,16 @@ pub const App = struct {
         app.view_w = app.term_w - if (rail > 0) rail + 1 else 0;
     }
 
-    /// A new terminal size: every strip is put in place again once tmux has been told.
-    pub fn resized(app: *App, cols: u16, rows: u16) !void {
+    /// A new terminal size, with its cells' in pixels when the terminal says (0 when not):
+    /// every strip is put in place again once tmux has been told.
+    pub fn resized(app: *App, cols: u16, rows: u16, cell_w: u16, cell_h: u16) !void {
         app.term_w = cols;
         app.view_h = rows;
         app.fit();
-        try app.send(.ignore, "refresh-client -C {d}x{d}", .{ cols, rows });
+        // A tmux without the pixels patch refuses the first, and takes the second.
+        if (cell_w > 0 and cell_h > 0)
+            try app.send(.ignore, "refresh-client -C {d}x{d},{d}x{d}", .{ cols, rows, cell_w, cell_h });
+        try app.send(.ignore, "if -F '#{{==:#{{client_cell_width}},0}}' 'refresh-client -C {d}x{d}'", .{ cols, rows });
         for (app.sessions.items) |s| s.placed = false;
         app.want_list = true;
     }
@@ -587,7 +594,7 @@ pub const App = struct {
         var lines = std.mem.tokenizeScalar(u8, body, '\n');
         while (lines.next()) |line| {
             var it = std.mem.tokenizeScalar(u8, line, ' ');
-            var n: [13]u32 = undefined;
+            var n: [15]u32 = undefined;
             for (&n, 0..) |*field, i| {
                 const token = it.next() orelse break;
                 field.* = std.fmt.parseInt(u32, token[@intFromBool(i < 3)..], 10) catch break;
@@ -606,10 +613,12 @@ pub const App = struct {
                     win.name = try app.gpa.dupe(u8, it.rest());
                     win.w = @intCast(n[3]);
                     win.h = @intCast(n[4]);
+                    win.cell_w = @intCast(n[12]);
+                    win.cell_h = @intCast(n[13]);
                     win.claude = .none;
                     // Read once: after that arena's own is the newer, and a list asked for
                     // before a change would put the old one back.
-                    if (!win.listed) win.share = @intCast(@min(n[12], max_share));
+                    if (!win.listed) win.share = @intCast(@min(n[14], max_share));
                     win.listed = true;
                     if (n[10] == 1) s.focus = s.wins.items.len;
                     try s.wins.append(app.gpa, win);
@@ -1279,7 +1288,7 @@ pub const App = struct {
             const px: u16 = @intCast(cx - 1 - pane.x);
             const py: u16 = @intCast(m.y - 1 - pane.y);
             const shift = m.code & 4 != 0 and !m.wheel();
-            if (!shift and try app.mouseToPane(pane, m, px, py)) return true;
+            if (!shift and try app.mouseToPane(win, pane, m, px, py)) return true;
             // The program takes no mouse, or shift is held: the button selects text, which is
             // copied when it is let go, and two clicks pick a word.
             if (m.leftPress()) {
@@ -1313,7 +1322,7 @@ pub const App = struct {
 
     /// Reports the mouse to the pane's program in the mode and format it asked tmux for; false
     /// when it asked for none.
-    fn mouseToPane(app: *App, pane: *Pane, m: keys.Mouse, x: usize, y: usize) !bool {
+    fn mouseToPane(app: *App, win: *const Window, pane: *Pane, m: keys.Mouse, x: usize, y: usize) !bool {
         const mode = pane.term.flags.mouse_event;
         if (mode == .none) return false;
         if (m.motion() and mode != .button and mode != .any) return true;
@@ -1326,10 +1335,11 @@ pub const App = struct {
                 try app.sendKeys(pane, try std.fmt.bufPrint(&buf, "\x1b[<{d};{d};{d}{c}", .{ m.code, x + 1, y + 1, end }));
             },
             .sgr_pixels => {
-                // tmux tells a pane of a control client its cells are 16x32 pixels, whatever the
-                // terminal's are: the middle of the cell, in those pixels
+                // the middle of the cell, in the pixels tmux tells the program its cells are
                 const end: u8 = if (m.release) 'm' else 'M';
-                try app.sendKeys(pane, try std.fmt.bufPrint(&buf, "\x1b[<{d};{d};{d}{c}", .{ m.code, x * 16 + 8, y * 32 + 16, end }));
+                const px = x * win.cell_w + win.cell_w / 2;
+                const py = y * win.cell_h + win.cell_h / 2;
+                try app.sendKeys(pane, try std.fmt.bufPrint(&buf, "\x1b[<{d};{d};{d}{c}", .{ m.code, px, py, end }));
             },
             else => {
                 // one byte a coordinate, offset by 32: cells past 222 cannot be said
