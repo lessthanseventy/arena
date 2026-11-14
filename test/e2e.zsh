@@ -9,6 +9,11 @@ in=arena-e2e-in-$$
 out=arena-e2e-out-$$
 tmp=$(mktemp -d)
 fails=0
+# stands in for the browser the menu opens: it says it ran, and stays until a line is typed
+mkdir $tmp/bin
+print -r -- $'#!/bin/sh\necho browser-stub\nread _' >$tmp/bin/terminal-browser
+chmod +x $tmp/bin/terminal-browser
+export PATH=$tmp/bin:$PATH
 
 inner() { tmux -L $in -f /dev/null "$@" }
 outer() { tmux -L $out -f /dev/null "$@" }
@@ -217,6 +222,12 @@ key M-/
 key 'brave' Enter
 check "Alt+/ finds text in the history" await highlit
 key Escape
+
+key M-m
+key b
+check "the menu opens the browser beside the pane" see '│browser-stub'
+key Enter
+gone 'browser-stub'
 
 key 'exit' Enter
 # three was the last window dropped on alpha, which makes it the one alpha shows

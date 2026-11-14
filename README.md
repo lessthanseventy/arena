@@ -100,6 +100,8 @@ With the mouse:
 - A program that draws kitty graphics the way it must under tmux, wrapped for passthrough and
   placed with Unicode placeholders, has its pictures in its column, when the terminal draws them.
   Nothing else wrapped for passthrough reaches the terminal.
+- The menu's "Browser beside" runs [terminal-browser](https://terminal-browser.sh), which draws
+  that way, in a pane to the right; it has to be on the tmux server's path.
 - It builds for macOS, and has not been run there.
 
 ## Working on it
