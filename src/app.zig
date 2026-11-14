@@ -233,6 +233,8 @@ pub const App = struct {
         session: u32,
         /// Text being selected in a pane, from the cell of it the button went down on.
         select: struct { pane: u32, x: u16, y: u16 },
+        /// A click that focused a window: its program gets none of it, not even the let go.
+        focus,
     } = .none,
     /// The session the open menu asks about closing.
     doomed: u32 = 0,
@@ -974,7 +976,7 @@ pub const App = struct {
         }
         const ox: i32 = app.term_w - app.view_w;
         switch (app.drag) {
-            .none, .thumb => {},
+            .none, .thumb, .focus => {},
             // Past the pane's top or bottom the history scrolls under the pointer.
             .select => |from| {
                 const pane = app.paneById(from.pane) orelse return;
@@ -1256,8 +1258,10 @@ pub const App = struct {
             return true;
         }
         if (!focused and !m.wheel()) {
-            if (m.leftPress()) try app.focusTo(index);
-            return m.leftPress();
+            if (!m.leftPress()) return false;
+            try app.focusTo(index);
+            app.drag = .focus;
+            return true;
         }
         if (m.y == app.view_h - 1) {
             const dot = layout.dotAt(col_w, s.wins.items.len, cx) orelse return false;

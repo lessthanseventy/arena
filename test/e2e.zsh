@@ -106,18 +106,33 @@ check "a program asking for its foreground is told the terminal's, not tmux's bl
 inner send-keys -t alpha:two clear Enter
 
 print -rn -- $'\e[?1000h\e[?1016h' >$tmp/pixels
-inner select-window -t alpha:one
-inner send-keys -t alpha:one clear Enter
 inner send-keys -t alpha:one "stty -echo -icanon; cat $tmp/pixels; head -c 11 | od -c; printf '\\033[?1016l\\033[?1000l'; stty sane" Enter
 await shows '╭─ sessions ─+╮ ╭─ 1 one '
-await shows '│sh-[0-9.]+\$ stty'
-# the pane's top left corner on the outer screen, from 1
-origin=$(screen | awk '{ i = index($0, "│sh-"); if (i) { print i + 1, NR; exit } }')
-mouse 0 $((${origin% *} + 2)) $((${origin#* } + 1)) M
+mousing() { [[ $(inner display -p -t $1 '#{mouse_standard_flag}') == 1 ]] }
+await mousing alpha:one
+# the pane's third column, second row: its frame starts at the title's corner
+at=$(( $(screen | awk 'NR == 1 { print index($0, "╭─ 1 one") }') + 3 ))
+mouse 0 $at 3 M
 clicked() { inner capture-pane -pJ -t alpha:one | grep -qF '<   0   ;   4   0   ;   4   8   M' }
 check "a click reaches a program that asked for pixels in pixels" await clicked
-mouse 0 $((${origin% *} + 2)) $((${origin#* } + 1)) m
+mouse 0 $at 3 m
 inner send-keys -t alpha:one clear Enter
+
+print -rn -- $'\e[?1000h\e[?1006h' >$tmp/clicks
+inner send-keys -t alpha:two "stty -echo -icanon; cat $tmp/clicks; timeout 2 cat -v; printf '\\033[?1006l\\033[?1000l'; stty sane" Enter
+await mousing alpha:two
+two=$(screen | awk 'NR == 1 { print index($0, "╭─ 2 two") + 3 }')
+mouse 0 $two 6 M
+mouse 0 $two 6 m
+current() { [[ $(inner display -p -t alpha '#{window_name}') == $1 ]] }
+await current two
+zselect -t 50
+untouched() { ! inner capture-pane -pJ -t alpha:two | grep -qF '[<0;' }
+check "a click on a window out of focus focuses it, and its program is not clicked" untouched
+await shows '│sh-[0-9.]+\$ +│'
+inner send-keys -t alpha:two clear Enter
+key M-h
+see '^╭─ sessions ─+╮ ╭─ 1 one '
 
 wide() { [[ $(inner display -p -t alpha:one '#{window_width} #{@arena_width}') == $1 ]] }
 # a ; that ends an argument ends the command for tmux, unless escaped
