@@ -226,9 +226,6 @@ pub const App = struct {
     drag: union(enum) {
         none,
         divider: struct { pane: u32, upright: bool, asked: i32 = -1 },
-        /// A column by one of its sides, to make its window narrower or wider, from where the
-        /// pointer took hold and the width the column had then.
-        edge: struct { win: u32, right: bool, x: u16, w: u16 },
         title: u32,
         /// A window by its picture in the overview.
         thumb: u32,
@@ -1000,16 +997,6 @@ pub const App = struct {
                 const axis: u8 = if (line.upright) 'x' else 'y';
                 try app.send(.ignore, "resize-pane -t %{d} -{c} {d}", .{ pane.id, axis, want });
             },
-            // The width is what it was when taken hold of and how far the pointer has gone
-            // since: the strip moves under the pointer as the column grows, so where the edge
-            // is now says nothing.
-            .edge => |held| {
-                const win = for (s.wins.items) |win| {
-                    if (win.id == held.win) break win;
-                } else return;
-                const moved = @as(i32, m.x) - held.x;
-                try app.setShare(s, win, app.shareOf(held.w + if (held.right) moved else -moved));
-            },
             // Nothing moves until it is let go: where it would go is drawn.
             .title => app.dirty = true,
             .session => |id| try app.dragSession(id, m),
@@ -1119,44 +1106,33 @@ pub const App = struct {
         try app.send(.ignore, "kill-session -t '${d}'", .{id});
     }
 
-    /// What can be taken hold of to resize: a column by one of its sides, or the line after a
-    /// pane of the focused window.
-    pub const Grip = union(enum) {
-        edge: struct { index: usize, right: bool },
-        divider: struct { pane: u32, upright: bool },
-    };
+    /// The line after a pane of the focused window, which is taken hold of to resize the pane.
+    pub const Line = struct { pane: u32, upright: bool };
 
-    pub fn gripAt(app: *const App, x: u16, y: u16) ?Grip {
+    pub fn lineAt(app: *const App, x: u16, y: u16) ?Line {
         const s = app.cur() orelse return null;
         const ox = app.term_w - app.view_w;
         if (x < ox or y == 0 or y + 1 >= app.view_h or app.yoff != 0) return null;
         const hit = app.colAt(s, @as(i32, x) - ox + s.scroll) orelse return null;
         const win = s.wins.items[hit.index];
-        const last = app.colW(s, win) - 1;
-        if (hit.cx == 0 or hit.cx == last) return .{ .edge = .{ .index = hit.index, .right = hit.cx == last } };
-        if (hit.index != s.focus) return null;
+        if (hit.index != s.focus or hit.cx == 0 or hit.cx == app.colW(s, win) - 1) return null;
         const tx = hit.cx - 1;
         const ty = y - 1;
         if (win.paneAt(tx, ty) != null) return null;
-        if (tx > 0) if (win.paneAt(tx - 1, ty)) |before| return .{ .divider = .{ .pane = before.id, .upright = true } };
-        if (ty > 0) if (win.paneAt(tx, ty - 1)) |above| return .{ .divider = .{ .pane = above.id, .upright = false } };
+        if (tx > 0) if (win.paneAt(tx - 1, ty)) |before| return .{ .pane = before.id, .upright = true };
+        if (ty > 0) if (win.paneAt(tx, ty - 1)) |above| return .{ .pane = above.id, .upright = false };
         return null;
     }
 
     /// Has the terminal show the pointer as what it is over, or holds, can be dragged: by
     /// name, as OSC 22 takes them.
     fn pointAs(app: *App, m: keys.Mouse) !void {
-        const sideways = "ew-resize";
-        const upright = "ns-resize";
-        const shape: []const u8 = switch (app.drag) {
-            .edge => sideways,
-            .divider => |line| if (line.upright) sideways else upright,
-            .none => if (app.overlay()) "default" else if (app.gripAt(m.x, m.y)) |grip| switch (grip) {
-                .edge => sideways,
-                .divider => |line| if (line.upright) sideways else upright,
-            } else "default",
-            else => "default",
+        const upright: ?bool = switch (app.drag) {
+            .divider => |line| line.upright,
+            .none => if (app.overlay()) null else if (app.lineAt(m.x, m.y)) |line| line.upright else null,
+            else => null,
         };
+        const shape: []const u8 = if (upright) |is| (if (is) "ew-resize" else "ns-resize") else "default";
         if (shape.ptr == app.shape.ptr) return;
         app.shape = shape;
         try app.out.print(app.gpa, "\x1b]22;{s}\x1b\\", .{shape});
@@ -1207,8 +1183,8 @@ pub const App = struct {
     /// On the strip: a click goes to that window, dot or pane; a title is dragged onto another
     /// column, to take its place, or onto a session of the rail, to go there, clicked twice to
     /// rename its window, middle clicked to close it; the line between panes is dragged to
-    /// resize them, and a column's side to resize its window; a sideways wheel steps through
-    /// windows; and anything inside a pane is its program's or scrolls it.
+    /// resize them; a sideways wheel steps through windows; and anything inside a pane is its
+    /// program's or scrolls it.
     fn mouseHit(app: *App, m: keys.Mouse) !bool {
         const ox = app.term_w - app.view_w;
         if (app.drag != .none and !m.wheel()) {
@@ -1246,11 +1222,8 @@ pub const App = struct {
             if (app.navStep()) try app.focusBy(if (m.code & 1 == 0) -1 else 1);
             return true;
         }
-        if (m.leftPress()) if (app.gripAt(m.x, m.y)) |grip| {
-            app.drag = switch (grip) {
-                .edge => |edge| .{ .edge = .{ .win = s.wins.items[edge.index].id, .right = edge.right, .x = m.x, .w = app.colW(s, s.wins.items[edge.index]) } },
-                .divider => |line| .{ .divider = .{ .pane = line.pane, .upright = line.upright } },
-            };
+        if (m.leftPress()) if (app.lineAt(m.x, m.y)) |line| {
+            app.drag = .{ .divider = .{ .pane = line.pane, .upright = line.upright } };
             return true;
         };
         const hit = app.colAt(s, @as(i32, m.x) - ox + s.scroll) orelse return false;

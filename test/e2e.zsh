@@ -76,18 +76,6 @@ check "and tmux has it that wide, and keeps the width" await wide '58 70'
 key "M-'"
 check "Alt+' makes it wider" see '╭─ 1 one ─{58}╮'
 
-wrote() { grep -q -- "$1" $tmp/raw }
-mouse 35 83 5 M
-check "over a column's side the pointer is the one for resizing" await wrote $'\e]22;ew-resize'
-mouse 0 83 5 M
-mouse 32 66 5 M
-mouse 0 66 5 m
-check "dragging a column's side resizes its window" see '╭─ 1 one ─{41}╮'
-mouse 0 66 5 M
-mouse 32 83 5 M
-mouse 0 83 5 m
-check "and back" await wide '66 80'
-
 windows() { [[ $(inner list-windows -t $1 -F '#{window_name}' | tr '\n' ' ') == "$2 " ]] }
 mouse 0 20 1 M
 mouse 32 90 1 M
@@ -149,6 +137,14 @@ key M-m
 key v
 check "the menu splits the pane" await panes 2
 check "and the split is drawn" see 'echo e2e.* │sh-[0-9.]+\$ +│'
+wrote() { grep -q -- "$1" $tmp/raw }
+first() { [[ $(inner list-panes -t alpha:two -F '#{pane_width}' | head -1) -eq $1 ]] }
+mouse 35 58 5 M
+check "over the line between panes the pointer is the one for resizing" await wrote $'\e]22;ew-resize'
+mouse 0 58 5 M
+mouse 32 50 5 M
+mouse 0 50 5 m
+check "dragging the line resizes the panes" await first 25
 
 key M-m
 key r

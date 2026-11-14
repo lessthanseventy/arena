@@ -63,7 +63,7 @@ Everything is on Alt, so it stays out of the way of your shell and your window m
 | `Alt+1` … `Alt+9` | that window |
 | `Alt+H` `Alt+L` | move the window left, right |
 | `Alt+J` `Alt+K` | move the session down, up the rail |
-| `Alt+;` `Alt+'` | make the window narrower, wider |
+| `Alt+;` `Alt+'` | make the window narrower, wider; tmux keeps the width |
 | `Alt+Enter` | a new window |
 | `Alt+x` | close the window, after asking |
 | `Alt+z` | give the session's columns the whole width, and back |
@@ -78,9 +78,8 @@ With the mouse:
 - Click a column, a dot under the focused column, or a session in the rail to go there.
 - In the overview, drag a window's picture onto another to take its place, in its own session or
   any other, or onto the rest of a session's row to put it at that session's end.
-- Click a pane to select it; drag the line between panes to resize them, or a column's side to
-  make its window narrower or wider. Over either, the pointer shows which way it goes. A width
-  is kept in the tmux server, with its window.
+- Click a pane to select it; drag the line between panes to resize them: over it, the pointer
+  shows which way it goes.
 - Drag a column's title onto another column and its window takes that place; onto a session in
   the rail and it goes there. Click a title twice to rename; middle-click it to close.
 - Drag a session up or down the rail to move it; the order is kept in the tmux server.
