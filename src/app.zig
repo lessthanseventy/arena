@@ -1315,9 +1315,15 @@ pub const App = struct {
         if (m.release and mode == .x10) return true;
         var buf: [32]u8 = undefined;
         switch (pane.term.flags.mouse_format) {
-            .sgr, .sgr_pixels => {
+            .sgr => {
                 const end: u8 = if (m.release) 'm' else 'M';
                 try app.sendKeys(pane, try std.fmt.bufPrint(&buf, "\x1b[<{d};{d};{d}{c}", .{ m.code, x + 1, y + 1, end }));
+            },
+            .sgr_pixels => {
+                // tmux tells a pane of a control client its cells are 16x32 pixels, whatever the
+                // terminal's are: the middle of the cell, in those pixels
+                const end: u8 = if (m.release) 'm' else 'M';
+                try app.sendKeys(pane, try std.fmt.bufPrint(&buf, "\x1b[<{d};{d};{d}{c}", .{ m.code, x * 16 + 8, y * 32 + 16, end }));
             },
             else => {
                 // one byte a coordinate, offset by 32: cells past 222 cannot be said

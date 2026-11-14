@@ -99,6 +99,20 @@ told() { inner capture-pane -pJ -t alpha:two | grep -qF 'b   0   /   0   0   0  
 check "a program asking for its foreground is told the terminal's, not tmux's black" await told
 inner send-keys -t alpha:two clear Enter
 
+print -rn -- $'\e[?1000h\e[?1016h' >$tmp/pixels
+inner select-window -t alpha:one
+inner send-keys -t alpha:one clear Enter
+inner send-keys -t alpha:one "stty -echo -icanon; cat $tmp/pixels; head -c 11 | od -c; printf '\\033[?1016l\\033[?1000l'; stty sane" Enter
+await shows '╭─ sessions ─+╮ ╭─ 1 one '
+await shows '│sh-[0-9.]+\$ stty'
+# the pane's top left corner on the outer screen, from 1
+origin=$(screen | awk '{ i = index($0, "│sh-"); if (i) { print i + 1, NR; exit } }')
+mouse 0 $((${origin% *} + 2)) $((${origin#* } + 1)) M
+clicked() { inner capture-pane -pJ -t alpha:one | grep -qF '<   0   ;   4   0   ;   4   8   M' }
+check "a click reaches a program that asked for pixels in pixels" await clicked
+mouse 0 $((${origin% *} + 2)) $((${origin#* } + 1)) m
+inner send-keys -t alpha:one clear Enter
+
 wide() { [[ $(inner display -p -t alpha:one '#{window_width} #{@arena_width}') == $1 ]] }
 # a ; that ends an argument ends the command for tmux, unless escaped
 key -l $'\e\\;'
