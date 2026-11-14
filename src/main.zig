@@ -273,6 +273,7 @@ test {
     _ = @import("theme.zig");
     _ = @import("keys.zig");
     _ = @import("menu.zig");
+    _ = @import("pass.zig");
     _ = color;
     _ = layout;
 }

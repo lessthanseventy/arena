@@ -68,6 +68,14 @@ outer pipe-pane -t o "cat >$tmp/raw"
 
 check "the strip shows, the first column flush against the rail" see '^╭─ sessions ─+╮ ╭─ 1 one '
 
+wrote_bytes() { grep -qaF -- "$1" $tmp/raw }
+print -rn -- $'\ePtmux;\e\e_Ga=T,f=24,s=1,v=1,i=66051,U=1,q=2;AAAA\e\e\\\e\\\e[38;2;1;2;3m\U0010EEEE̅̅\e[m\n' >$tmp/picture
+inner send-keys -t alpha:two "cat $tmp/picture" Enter
+check "a picture a program wraps for tmux is passed on to the terminal" await wrote_bytes $'\e_Ga=T,f=24,s=1,v=1,i=66051,U=1,q=2;AAAA\e\\'
+check "and its cells keep their colour in a window out of focus" await wrote_bytes $'\e[0;38;2;1;2;3m\U0010EEEE̅̅'
+inner send-keys -t alpha:two clear Enter
+gone $'\U0010EEEE'
+
 wide() { [[ $(inner display -p -t alpha:one '#{window_width} #{@arena_width}') == $1 ]] }
 # a ; that ends an argument ends the command for tmux, unless escaped
 key -l $'\e\\;'

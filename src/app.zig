@@ -6,6 +6,7 @@ const keys = @import("keys.zig");
 const menu = @import("menu.zig");
 const color = @import("color.zig");
 const Theme = @import("theme.zig").Theme;
+const Pass = @import("pass.zig").Pass;
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 
@@ -47,6 +48,7 @@ pub const Pane = struct {
     term: vt.Terminal,
     stream: vt.TerminalStream,
     render: vt.RenderState = .empty,
+    pass: Pass = .{},
     /// A pane's output is dropped until its captured screen has been fed in: the capture holds
     /// it. `wanted` again when arena comes back to a session, whose output it was not sent.
     seed: enum { wanted, asked, done } = .wanted,
@@ -66,6 +68,7 @@ pub const Pane = struct {
     }
 
     fn destroy(pane: *Pane, gpa: Allocator) void {
+        pane.pass.deinit(gpa);
         pane.render.deinit(gpa);
         pane.stream.deinit();
         pane.term.deinit(gpa);
@@ -241,6 +244,8 @@ pub const App = struct {
     pointer: struct { x: u16 = 0, y: u16 = 0 } = .{},
     /// Bytes for the terminal arena runs in, written out after the next frame.
     out: std.ArrayList(u8) = .empty,
+    /// A piece of a pane's output without what it passes to the terminal, between `Pass` and the pane.
+    plain: std.ArrayList(u8) = .empty,
     /// The name last clicked, a window's or a session's, and when.
     clicked: ?Name = null,
     clicked_at: i64 = 0,
@@ -256,6 +261,7 @@ pub const App = struct {
         app.pending.deinit(app.gpa);
         app.block.deinit(app.gpa);
         app.out.deinit(app.gpa);
+        app.plain.deinit(app.gpa);
     }
 
     fn destroySession(app: *App, s: *Session) void {
@@ -437,8 +443,10 @@ pub const App = struct {
             },
             .output => |out| {
                 const pane = app.paneById(out.pane) orelse return;
+                app.plain.clearRetainingCapacity();
+                try pane.pass.feed(app.gpa, control.unescape(@constCast(out.data)), &app.out, &app.plain);
                 if (pane.seed != .done) return;
-                pane.feed(control.unescape(@constCast(out.data)));
+                pane.feed(app.plain.items);
                 app.dirty = true;
             },
             .changed => app.want_list = true,

@@ -97,6 +97,9 @@ With the mouse:
 - Set `ARENA_REDUCED_MOTION` to stop the border turning and the strips sliding.
 - Copying goes through the terminal's clipboard escape (OSC 52), so the terminal has to allow it.
 - Marks are up to two seconds behind: arena asks tmux for them on a timer.
+- A program that draws kitty graphics the way it must under tmux, wrapped for passthrough and
+  placed with Unicode placeholders, has its pictures in its column, when the terminal draws them.
+  Nothing else wrapped for passthrough reaches the terminal.
 - It builds for macOS, and has not been run there.
 
 ## Working on it

@@ -431,7 +431,9 @@ fn cell(app: *const App, pen: *Pen, w: *Writer, win: *const Window, tx: usize, t
     if (pane.render.row_data.items(.selection)[pane.render.viewportStart() + py]) |range| {
         if (px >= range[0] and px <= range[1]) style.flags.inverse = !style.flags.inverse;
     }
-    try pen.set(w, style, dim);
+    // A kitty picture's cell names the picture by its colour, which dimming would change.
+    const picture = raw.hasText() and raw.content.codepoint.data == 0x10EEEE;
+    try pen.set(w, style, if (picture) null else dim);
     // Half of a wide character at a clipped edge is drawn as a space.
     const whole = switch (raw.wide) {
         .wide => !clip_hi,
