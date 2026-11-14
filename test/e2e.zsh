@@ -73,6 +73,12 @@ outer pipe-pane -t o "cat >$tmp/raw"
 
 check "the strip shows, the first column flush against the rail" see '^╭─ sessions ─+╮ ╭─ 1 one '
 
+inner new-session -d sh
+last() { screen | sed -n 4p | grep -qE '^│ [0-9]+ +1 │' }
+check "a new session goes under the others in the rail" await last
+inner kill-session -t "$(inner list-sessions -F '#{session_name}' | grep -E '^[0-9]+$')"
+see '^│ \+ new'
+
 wrote_bytes() { grep -qaF -- "$1" $tmp/raw }
 print -rn -- $'\ePtmux;\e\e_Ga=T,f=24,s=1,v=1,i=66051,U=1,q=2;AAAA\e\e\\\e\\\e[38;2;1;2;3m\U0010EEEE̅̅\e[m\n' >$tmp/picture
 inner send-keys -t alpha:two "cat $tmp/picture" Enter

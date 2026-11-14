@@ -554,7 +554,8 @@ pub const App = struct {
         for (old.items) |s| app.destroySession(s);
         std.sort.insertion(*Session, app.sessions.items, {}, struct {
             fn before(_: void, a: *Session, b: *Session) bool {
-                return a.order < b.order;
+                // tmux lists sessions by name: with no place of their own, the oldest first
+                return a.order < b.order or (a.order == b.order and a.id < b.id);
             }
         }.before);
         app.fit();
