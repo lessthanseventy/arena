@@ -333,6 +333,17 @@ see '│ alpha +3 │'
 claude beta:solo done
 in_view_cleared() { [[ -z $(inner show -pqv -t beta:solo @arena_claude) ]] }
 check "a done Claude in view is taken as looked at" await in_view_cleared
+for w in $(inner list-windows -t alpha -F "#{window_index}"); claude alpha:$w done
+see '│ alpha +◉ +3 │'
+key M-k
+looked() { [[ -z $(inner show -pqv -t "alpha:$(inner display -p -t alpha '#{window_index}')" @arena_claude) ]] }
+await looked
+zselect -t 100
+own_replies() { ! screen | grep -qE '│[01] [01] [01] [01] [01] [01] ' }
+check "and going to one leaves every pane its own reply" own_replies
+for w in $(inner list-windows -t alpha -F "#{window_index}"); inner set -pu -t alpha:$w @arena_claude
+key M-j
+see '╭─ 1 solo '
 
 mouse 0 3 4 M
 mouse 32 3 3 M

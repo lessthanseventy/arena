@@ -393,10 +393,12 @@ pub const App = struct {
         const win = s.focused() orelse return;
         if (win.claude != .done) return;
         win.claude = .none;
+        // Not `if`: a command it runs has a reply of its own, which arena would take for the
+        // reply to the next command it sent.
         for (win.panes.items) |pane| try app.send(
             .ignore,
-            "if -F -t %{d} '#{{==:#{{@arena_claude}},done}}' 'set -pu -t %{d} @arena_claude'",
-            .{ pane.id, pane.id },
+            "set -pF -t %{d} @arena_claude '#{{?#{{==:#{{@arena_claude}},done}},,#{{@arena_claude}}}}'",
+            .{pane.id},
         );
     }
 
@@ -427,10 +429,10 @@ pub const App = struct {
         app.term_w = cols;
         app.view_h = rows;
         app.fit();
-        // A tmux without the pixels patch refuses the first, and takes the second.
+        // A tmux without the pixels patch refuses the second, and keeps the first.
+        try app.send(.ignore, "refresh-client -C {d}x{d}", .{ cols, rows });
         if (cell_w > 0 and cell_h > 0)
             try app.send(.ignore, "refresh-client -C {d}x{d},{d}x{d}", .{ cols, rows, cell_w, cell_h });
-        try app.send(.ignore, "if -F '#{{==:#{{client_cell_width}},0}}' 'refresh-client -C {d}x{d}'", .{ cols, rows });
         for (app.sessions.items) |s| s.placed = false;
         app.want_list = true;
     }
