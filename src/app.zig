@@ -1196,7 +1196,7 @@ pub const App = struct {
     /// column, to take its place, or onto a session of the rail, to go there, clicked twice to
     /// rename its window, middle clicked to close it; the line between panes is dragged to
     /// resize them; a sideways wheel steps through windows; and anything inside a pane is its
-    /// program's or scrolls it.
+    /// program's or scrolls it, but for a shift drag, which selects, and a hover.
     fn mouseHit(app: *App, m: keys.Mouse) !bool {
         const ox = app.term_w - app.view_w;
         if (app.drag != .none and !m.wheel()) {
@@ -1278,9 +1278,10 @@ pub const App = struct {
             }
             const px: u16 = @intCast(cx - 1 - pane.x);
             const py: u16 = @intCast(m.y - 1 - pane.y);
-            if (try app.mouseToPane(pane, m, px, py)) return true;
-            // The program takes no mouse: the button selects text, which is copied when it is
-            // let go, and two clicks pick a word.
+            const shift = m.code & 4 != 0 and !m.wheel();
+            if (!shift and try app.mouseToPane(pane, m, px, py)) return true;
+            // The program takes no mouse, or shift is held: the button selects text, which is
+            // copied when it is let go, and two clicks pick a word.
             if (m.leftPress()) {
                 const screen = pane.term.screens.active;
                 screen.clearSelection();
@@ -1316,7 +1317,7 @@ pub const App = struct {
         const mode = pane.term.flags.mouse_event;
         if (mode == .none) return false;
         if (m.motion() and mode != .button and mode != .any) return true;
-        if (m.hover() and mode != .any) return true;
+        if (m.hover()) return true;
         if (m.release and mode == .x10) return true;
         var buf: [32]u8 = undefined;
         switch (pane.term.flags.mouse_format) {

@@ -131,6 +131,23 @@ untouched() { ! inner capture-pane -pJ -t alpha:two | grep -qF '[<0;' }
 check "a click on a window out of focus focuses it, and its program is not clicked" untouched
 await shows '│sh-[0-9.]+\$ +│'
 inner send-keys -t alpha:two clear Enter
+
+print -rn -- $'\e[?1003h\e[?1006h' >$tmp/any
+inner send-keys -t alpha:two "clear; stty -echo -icanon; echo shift-copy-target; cat $tmp/any; timeout 3 cat -v; printf '\\033[?1006l\\033[?1003l'; stty sane" Enter
+await shows 'shift-copy-target'
+zselect -t 30
+row=$(screen | grep -n 'shift-copy-target' | head -1 | cut -d: -f1)
+col=$(screen | awk -v r=$row 'NR == r { print index($0, "shift-copy-target") }')
+mouse 35 $((col + 2)) $((row + 1)) M
+mouse 4 $col $row M
+mouse 36 $((col + 16)) $row M
+mouse 4 $((col + 16)) $row m
+copied() { [[ $(outer show-buffer 2>/dev/null) == shift-copy-target ]] }
+check "a shift drag over a program that took the mouse copies its text" await copied
+zselect -t 350
+unhovered() { ! inner capture-pane -pJ -t alpha:two | grep -qE '\[<(35|4|36);' }
+check "and neither it nor the pointer moving over it reaches the program" unhovered
+inner send-keys -t alpha:two clear Enter
 key M-h
 see '^╭─ sessions ─+╮ ╭─ 1 one '
 
