@@ -92,6 +92,13 @@ inner send-keys -t alpha:two C-d
 check "and the terminal's answer goes to the pane that asked, not the one in focus" await answered
 inner send-keys -t alpha:two clear Enter
 
+key -l $'\e]10;rgb:ffff/b0b0/0000\e\\'
+print -rn -- $'\e]10;?\e\\' >$tmp/fg
+inner send-keys -t alpha:two "stty -echo -icanon; cat $tmp/fg; head -c 25 | od -c; stty sane" Enter
+told() { inner capture-pane -pJ -t alpha:two | grep -qF 'b   0   /   0   0   0   0 033   \' }
+check "a program asking for its foreground is told the terminal's, not tmux's black" await told
+inner send-keys -t alpha:two clear Enter
+
 wide() { [[ $(inner display -p -t alpha:one '#{window_width} #{@arena_width}') == $1 ]] }
 # a ; that ends an argument ends the command for tmux, unless escaped
 key -l $'\e\\;'

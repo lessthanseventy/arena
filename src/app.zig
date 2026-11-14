@@ -52,6 +52,8 @@ pub const Pane = struct {
     /// A pane's output is dropped until its captured screen has been fed in: the capture holds
     /// it. `wanted` again when arena comes back to a session, whose output it was not sent.
     seed: enum { wanted, asked, done } = .wanted,
+    /// The `App.colors_known` this pane's colours were last told to tmux at, 0 for never.
+    colors_told: u32 = 0,
     /// What the pane's program had set when last asked, by `mode_sets`.
     modes: [mode_sets.len]bool = @splat(false),
 
@@ -249,6 +251,8 @@ pub const App = struct {
     /// The pane that last sent a graphics command, which the terminal's replies go back to: the
     /// terminal does not say which pane asked.
     asker: u32 = std.math.maxInt(u32),
+    /// Counts the terminal's answers for its foreground and background; 0 until the first.
+    colors_known: u32 = 0,
     /// The name last clicked, a window's or a session's, and when.
     clicked: ?Name = null,
     clicked_at: i64 = 0,
@@ -633,6 +637,7 @@ pub const App = struct {
             }
         }
         for (old_panes.items) |pane| pane.destroy(app.gpa);
+        try app.tellColors();
         for (old_wins.items) |win| win.destroy(app.gpa);
 
         for (app.sessions.items, 0..) |s, i| {
@@ -1536,6 +1541,10 @@ pub const App = struct {
                 .osc => |body| {
                     app.palette.answer(body);
                     app.dirty = true;
+                    if (std.mem.startsWith(u8, body, "10;") or std.mem.startsWith(u8, body, "11;")) {
+                        app.colors_known += 1;
+                        try app.tellColors();
+                    }
                 },
                 .graphics => |reply| if (app.paneById(app.asker)) |pane| try app.sendKeys(pane, reply),
             }
@@ -1552,6 +1561,20 @@ pub const App = struct {
         pane.term.scrollViewport(.bottom);
         app.dirty = true;
         try app.sendKeys(pane, bytes);
+    }
+
+    /// tmux answers a program's question for its foreground and background with what the client
+    /// reported for the pane, and a control client that reported nothing gets black for both.
+    fn tellColors(app: *App) !void {
+        if (app.colors_known == 0) return;
+        const fg = app.palette.fg;
+        const bg = app.palette.bg;
+        for (app.sessions.items) |s| for (s.wins.items) |win| for (win.panes.items) |pane| {
+            if (pane.colors_told == app.colors_known) continue;
+            pane.colors_told = app.colors_known;
+            try app.send(.ignore, "refresh-client -r \"%{d}:\\033]10;rgb:{x:0>2}/{x:0>2}/{x:0>2}\\033\\\\\"", .{ pane.id, fg.r, fg.g, fg.b });
+            try app.send(.ignore, "refresh-client -r \"%{d}:\\033]11;rgb:{x:0>2}/{x:0>2}/{x:0>2}\\033\\\\\"", .{ pane.id, bg.r, bg.g, bg.b });
+        };
     }
 
     fn sendKeys(app: *App, pane: *const Pane, bytes: []const u8) !void {
