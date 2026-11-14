@@ -8,8 +8,10 @@ const max_len = 1 << 16;
 /// Parts a pane's output into what the pane's terminal takes and the kitty graphics commands
 /// its program wraps for tmux to pass through, which a control client is sent as output like
 /// any other. Only graphics commands pass: nothing else a program wraps reaches arena's terminal.
+/// A window's name set as screen does, ESC k to ST or BEL, is tmux's, and arena's terminal
+/// would show it as text.
 pub const Pass = struct {
-    state: enum { ground, body, esc } = .ground,
+    state: enum { ground, body, esc, name, name_esc } = .ground,
     matched: u8 = 0,
     buf: std.ArrayList(u8) = .empty,
 
@@ -22,6 +24,11 @@ pub const Pass = struct {
     pub fn feed(pass: *Pass, gpa: Allocator, bytes: []const u8, out: *std.ArrayList(u8), plain: *std.ArrayList(u8)) !void {
         for (bytes) |byte| switch (pass.state) {
             .ground => {
+                if (pass.matched == 1 and byte == 'k') {
+                    pass.matched = 0;
+                    pass.state = .name;
+                    continue;
+                }
                 if (byte != intro[pass.matched]) {
                     try plain.appendSlice(gpa, intro[0..pass.matched]);
                     pass.matched = 0;
@@ -53,6 +60,12 @@ pub const Pass = struct {
                 if (byte == '\\' and std.mem.startsWith(u8, command, "\x1b_G") and std.mem.endsWith(u8, command, "\x1b\\")) try out.appendSlice(gpa, command);
                 pass.state = .ground;
             },
+            .name => if (byte == 0x1b) {
+                pass.state = .name_esc;
+            } else if (byte == 0x07) {
+                pass.state = .ground;
+            },
+            .name_esc => pass.state = if (byte == '\\') .ground else .name,
         };
     }
 
@@ -69,6 +82,11 @@ fn expectParted(pieces: []const []const u8, want_out: []const u8, want_plain: []
     for (pieces) |piece| try pass.feed(gpa, piece, &out, &plain);
     try std.testing.expectEqualStrings(want_out, out.items);
     try std.testing.expectEqualStrings(want_plain, plain.items);
+}
+
+test "a window's name set as screen does, which tmux takes, is not text" {
+    try expectParted(&.{ "\x1bkec", "ho\x1b", "\\hi\r\n" }, "", "hi\r\n");
+    try expectParted(&.{"\x1bkvim\x07:q\x1b[m"}, "", ":q\x1b[m");
 }
 
 test "a wrapped picture is unwrapped, and the text around it is left" {

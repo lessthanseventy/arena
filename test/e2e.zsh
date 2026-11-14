@@ -125,6 +125,12 @@ told() { inner capture-pane -pJ -t alpha:two | grep -qF 'b   0   /   0   0   0  
 check "a program asking for its foreground is told the terminal's, not tmux's black" await told
 inner send-keys -t alpha:two clear Enter
 
+print -rn -- $'\ekscreen-named\e\\after-name\n' >$tmp/named
+inner send-keys -t alpha:two "cat $tmp/named" Enter
+see '│after-name'
+check "a window named as screen names one shows no name in the pane" hides 'screen-named'
+inner send-keys -t alpha:two clear Enter
+
 print -rn -- $'\e[?1000h\e[?1016h' >$tmp/pixels
 inner send-keys -t alpha:one "stty -echo -icanon; cat $tmp/pixels; head -c 11 | od -c; printf '\\033[?1016l\\033[?1000l'; stty sane" Enter
 await shows '╭─ sessions ─+╮ ╭─ 1 one '
