@@ -11,7 +11,7 @@ tmp=$(mktemp -d)
 fails=0
 # stands in for the browser the menu opens: it says it ran, and stays until a line is typed
 mkdir $tmp/bin
-print -r -- $'#!/bin/sh\necho browser-stub\nread _' >$tmp/bin/terminal-browser
+print -r -- $'#!/bin/sh\necho browser-stub $TERMINAL_BROWSER_START_PAGE "$@"\nread _' >$tmp/bin/terminal-browser
 chmod +x $tmp/bin/terminal-browser
 export PATH=$tmp/bin:$PATH
 
@@ -257,7 +257,7 @@ key Escape
 key M-m
 key b
 check "the menu opens the browser in a window of its own, in view" see '╭─ [0-9] browser ─'
-check "running terminal-browser" see '│browser-stub'
+check "running terminal-browser on its start page, for new tabs too" see '│browser-stub 1 terminal-browser://start'
 key Enter
 gone 'browser-stub'
 

@@ -1433,7 +1433,8 @@ pub const App = struct {
                     .split_below => try app.send(.ignore, "split-window -v -c '#{{pane_current_path}}'", .{}),
                     .browser => {
                         app.follow_active = true;
-                        try app.send(.ignore, "new-window -a -n browser -c '#{{pane_current_path}}' terminal-browser", .{});
+                        // without the variable a new tab opens terminal-browser.com
+                        try app.send(.ignore, "new-window -a -n browser -e TERMINAL_BROWSER_START_PAGE=1 -c '#{{pane_current_path}}' terminal-browser terminal-browser://start", .{});
                     },
                     .close_pane => try app.closePane(),
                     .search => app.openSearch(),

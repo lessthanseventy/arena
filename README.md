@@ -102,7 +102,8 @@ With the mouse:
   placed with Unicode placeholders, has its pictures in its column, when the terminal draws them.
   Nothing else wrapped for passthrough reaches the terminal.
 - The menu's "Browser window" runs [terminal-browser](https://terminal-browser.sh), which draws
-  that way, in a window of its own beside the one in view; it has to be on the tmux server's path.
+  that way, in a window of its own beside the one in view, on its start page; it has to be on the
+  tmux server's path.
 - It builds for macOS, and has not been run there.
 
 ## Working on it
