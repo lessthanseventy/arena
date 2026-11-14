@@ -199,7 +199,7 @@ fn rail(app: *const App, w: *Writer) !void {
 fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16) !void {
     const dim = ink(app, "dim", 8);
     var filled: usize = 0;
-    const index: usize = if (y >= 2) (y - 2) / 2 else 0;
+    const index: usize = y -| 2;
     if (y == app.railMenuRow()) {
         try pen.set(w, dim, null);
         try w.writeAll(" " ++ app_mod.rail_button);
@@ -208,7 +208,7 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16) !void {
         try pen.set(w, dim, null);
         try w.writeAll(" " ++ app_mod.rail_new);
         filled = 1 + cellCount(app_mod.rail_new);
-    } else if (y >= 2 and y % 2 == 0 and index < app.railShown()) {
+    } else if (y >= 2 and index < app.railShown()) {
         const s = app.sessions.items[index];
         const drop = app.dropAt();
         // lit as the current one is: a window held by its title would go to it

@@ -75,8 +75,8 @@ outer set -s set-clipboard on
 outer pipe-pane -t o "cat >$tmp/raw"
 
 check "the strip shows, the first column flush against the rail" see '^╭─ sessions ─+╮ ╭─ 1 one '
-foot() { local s=$(screen); [[ $(sed -n 3p <<<$s) == '│ alpha '* && -z $(sed -n 4p <<<$s | grep -E '^│ [a-z]') && $(sed -n 5p <<<$s) == '│ beta '* && $(sed -n 21p <<<$s) == ├─*┤* && $(sed -n 22p <<<$s) == '│ + new '* && $(sed -n 23p <<<$s) == '│ ≡ menu '* ]] }
-check "the rail spaces its sessions, and keeps + new and the menu at its foot" await foot
+foot() { local s=$(screen); [[ $(sed -n 3p <<<$s) == '│ alpha '* && $(sed -n 4p <<<$s) == '│ beta '* && $(sed -n 21p <<<$s) == ├─*┤* && $(sed -n 22p <<<$s) == '│ + new '* && $(sed -n 23p <<<$s) == '│ ≡ menu '* ]] }
+check "the rail keeps + new and the menu at its foot" await foot
 
 # A tmux with the pixels patch gives arena's terminal cells of 9x19 pixels, as a real one has.
 mkfifo $tmp/sizer
@@ -94,7 +94,7 @@ else
 fi
 
 inner new-session -d sh
-last() { screen | sed -n 7p | grep -qE '^│ [0-9]+ +1 │' }
+last() { screen | sed -n 5p | grep -qE '^│ [0-9]+ +1 │' }
 check "a new session goes under the others in the rail" await last
 inner kill-session -t "$(inner list-sessions -F '#{session_name}' | grep -E '^[0-9]+$')"
 gone '^│ [0-9]+ +1 │'
@@ -215,8 +215,8 @@ mouse 0 18 1 m
 check "and back" await windows alpha 'one two three'
 see '^╭─ sessions ─+╮ ╭─ 1 one '
 mouse 0 20 1 M
-mouse 32 5 5 M
-mouse 0 5 5 m
+mouse 32 5 4 M
+mouse 0 5 4 m
 check "a title dropped on a session of the rail sends its window there" await windows beta 'solo one'
 inner move-window -s beta:one -t alpha:0
 inner select-window -t alpha:one
@@ -251,8 +251,8 @@ mouse 0 5 22 M
 mouse 0 5 22 m
 check "a click on + new makes a session" await sessions 3
 see '│ [0-9]+ +1 │'
-mouse 1 5 7 M
-mouse 1 5 7 m
+mouse 1 5 5 M
+mouse 1 5 5 m
 check "a middle click on a session asks before closing it" see 'Close session [0-9]+\?'
 key y
 check "and closes it" await sessions 2
@@ -334,7 +334,7 @@ claude beta:solo done
 in_view_cleared() { [[ -z $(inner show -pqv -t beta:solo @arena_claude) ]] }
 check "a done Claude in view is taken as looked at" await in_view_cleared
 
-mouse 0 3 5 M
+mouse 0 3 4 M
 mouse 32 3 3 M
 mouse 0 3 3 m
 check "dragging a session moves it up the rail" await rail betaalpha

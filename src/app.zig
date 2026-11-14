@@ -1053,7 +1053,7 @@ pub const App = struct {
         return if (s.wins.items[hit.index].id == app.drag.title) .none else .{ .column = hit.index };
     }
 
-    /// The rail's rows: its sessions a row apart from the second, then a rule over the button
+    /// The rail's rows: its sessions one under another from the second, then a rule over the button
     /// for a new session and the menu button, above its bottom border.
     pub fn railRuleRow(app: *const App) u16 {
         return app.view_h -| 4;
@@ -1070,13 +1070,13 @@ pub const App = struct {
     /// How many sessions fit above the rule, with a row free under the last.
     pub fn railShown(app: *const App) usize {
         const room = app.railRuleRow() -| 1;
-        return @min(app.sessions.items.len, if (room > 2) (room - 1) / 2 else 0);
+        return @min(app.sessions.items.len, room -| 2);
     }
 
     /// Which session is on row `y` of the rail.
     fn railSession(app: *const App, y: u16) ?usize {
-        if (y < 2 or y % 2 != 0) return null;
-        const index = (y - 2) / 2;
+        if (y < 2) return null;
+        const index = y - 2;
         return if (index < app.railShown()) index else null;
     }
 
@@ -1122,7 +1122,7 @@ pub const App = struct {
     /// The held button moved to `m` with a session, which goes to the row under the pointer.
     fn dragSession(app: *App, id: u32, m: keys.Mouse) !void {
         const at = app.sessionIndex(id) orelse return;
-        const over = @min(app.railShown() -| 1, (m.y -| 1) / 2);
+        const over = @min(app.railShown() -| 1, m.y -| 2);
         if (over != at) try app.moveSession(at, over);
     }
 
