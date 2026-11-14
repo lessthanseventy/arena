@@ -223,9 +223,9 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16) !void {
 fn glyph(mark: app_mod.Mark) u21 {
     return switch (mark) {
         .none => ' ',
-        .busy => '◌',
-        .unseen => '◉',
-        .bell => '▲',
+        .working => '◌',
+        .done => '◉',
+        .waiting => '▲',
     };
 }
 

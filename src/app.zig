@@ -18,14 +18,15 @@ const nav_gap_ms = 150;
 
 /// Two clicks on a name this close together ask to rename it.
 const double_click_ms = 400;
-/// A window with output this recent is still at it.
-const busy_ms = 3000;
 
 /// tmux has no order of sessions to change, so arena keeps each one's place in an option on it.
 const session_format = "#{{session_id}} #{{?@arena_order,#{{@arena_order}},-}} #{{session_name}}";
+/// A pane's @arena_claude, set by Claude Code's hooks, comes as its `Mark`'s number.
+const claude_state = "#{{?#{{==:#{{@arena_claude}},working}},1,#{{?#{{==:#{{@arena_claude}},done}},2," ++
+    "#{{?#{{==:#{{@arena_claude}},waiting}},3,0}}}}}}";
 const pane_format = "#{{session_id}} #{{window_id}} #{{pane_id}} #{{window_width}} #{{window_height}} " ++
     "#{{pane_left}} #{{pane_top}} #{{pane_width}} #{{pane_height}} #{{pane_active}} #{{window_active}} " ++
-    "#{{window_activity}} #{{window_bell_flag}} #{{?@arena_width,#{{@arena_width}},0}} #{{window_name}}";
+    claude_state ++ " #{{?@arena_width,#{{@arena_width}},0}} #{{window_name}}";
 
 /// The least and the most of the view a window's column is given, in hundredths, and how much
 /// one press of narrower or wider changes it.
@@ -33,9 +34,9 @@ const min_share = 20;
 const max_share = 100;
 const share_step = 10;
 
-/// What a window not being looked at has to say: it is putting out text, it has put some out
-/// and stopped, or it rang the bell. In rising order of how much it wants looking at.
-pub const Mark = enum { none, busy, unseen, bell };
+/// What the Claude in a window not being looked at is doing: working, done and not yet looked
+/// at, or waiting on an answer. In rising order of how much it wants looking at.
+pub const Mark = enum { none, working, done, waiting };
 const mode_flags = "#{{alternate_on}} #{{?cursor_flag,0,1}} #{{mouse_standard_flag}} #{{mouse_button_flag}} #{{mouse_all_flag}} #{{mouse_sgr_flag}}";
 /// What to feed a pane's terminal for each of `mode_flags` that is 1, in the same order.
 const mode_sets = [_][]const u8{ "\x1b[?1049h", "\x1b[?25l", "\x1b[?1000h", "\x1b[?1002h", "\x1b[?1003h", "\x1b[?1006h" };
@@ -134,13 +135,8 @@ pub const Window = struct {
     /// The hundredths of the view its column is given, kept in tmux as @arena_width; 0 until
     /// it is made narrower or wider, when the column has the width every such one has.
     share: u8 = 0,
-    /// When tmux last saw output in the window, and when arena last had it in view, both in
-    /// seconds of the wall clock.
-    activity: i64 = 0,
-    seen: i64 = 0,
-    /// When, on arena's clock, `activity` was last found to have moved.
-    changed_at: i64 = 0,
-    bell: bool = false,
+    /// The most pressing state of the Claudes in its panes.
+    claude: Mark = .none,
     listed: bool = false,
 
     pub fn activePane(win: *const Window) ?*Pane {
@@ -256,11 +252,7 @@ pub const App = struct {
     /// The name last clicked, a window's or a session's, and when.
     clicked: ?Name = null,
     clicked_at: i64 = 0,
-    /// Seconds of the wall clock, as tmux stamps a window's activity.
-    wall: i64 = 0,
     nav_at: i64 = 0,
-    /// Until then output is arena's own doing, windows redrawing at a new size, and marks nothing.
-    hush_until: i64 = 0,
 
     pub fn deinit(app: *App) void {
         for (app.sessions.items) |s| app.destroySession(s);
@@ -350,7 +342,6 @@ pub const App = struct {
         s.full = false;
         win.share = to;
         try app.send(.ignore, "set-option -w -t @{d} @arena_width {d}", .{ win.id, to });
-        app.hush_until = app.now + busy_ms;
         app.want_list = true;
         app.dirty = true;
     }
@@ -371,9 +362,7 @@ pub const App = struct {
     /// What `win` of `s` has to say; nothing when it is the window in view.
     pub fn mark(app: *const App, s: *const Session, win: *const Window) Mark {
         if (s.id == app.current and s.focused() == win) return .none;
-        if (win.bell) return .bell;
-        if (win.activity <= win.seen) return .none;
-        return if (app.now - win.changed_at < busy_ms) .busy else .unseen;
+        return win.claude;
     }
 
     /// The most pressing mark among a session's windows.
@@ -386,17 +375,23 @@ pub const App = struct {
         return most;
     }
 
-    /// The window in view has been seen up to now.
-    fn see(app: *App) void {
-        if (app.cur()) |s| if (s.focused()) |win| {
-            win.seen = app.wall;
-        };
+    /// A Claude done in the window in view has been looked at: its pane's state is cleared in
+    /// tmux, unless a hook has moved it on since.
+    fn see(app: *App) !void {
+        const s = app.cur() orelse return;
+        const win = s.focused() orelse return;
+        if (win.claude != .done) return;
+        win.claude = .none;
+        for (win.panes.items) |pane| try app.send(
+            .ignore,
+            "if -F -t %{d} '#{{==:#{{@arena_claude}},done}}' 'set -pu -t %{d} @arena_claude'",
+            .{ pane.id, pane.id },
+        );
     }
 
     fn toggleFull(app: *App) void {
         const s = app.cur() orelse return;
         s.full = !s.full;
-        app.hush_until = app.now + busy_ms;
         app.want_list = true;
         app.dirty = true;
     }
@@ -422,7 +417,6 @@ pub const App = struct {
         app.fit();
         try app.send(.ignore, "refresh-client -C {d}x{d}", .{ cols, rows });
         for (app.sessions.items) |s| s.placed = false;
-        app.hush_until = app.now + busy_ms;
         app.want_list = true;
     }
 
@@ -590,7 +584,7 @@ pub const App = struct {
         var lines = std.mem.tokenizeScalar(u8, body, '\n');
         while (lines.next()) |line| {
             var it = std.mem.tokenizeScalar(u8, line, ' ');
-            var n: [14]u32 = undefined;
+            var n: [13]u32 = undefined;
             for (&n, 0..) |*field, i| {
                 const token = it.next() orelse break;
                 field.* = std.fmt.parseInt(u32, token[@intFromBool(i < 3)..], 10) catch break;
@@ -609,13 +603,10 @@ pub const App = struct {
                     win.name = try app.gpa.dupe(u8, it.rest());
                     win.w = @intCast(n[3]);
                     win.h = @intCast(n[4]);
-                    if (win.listed and n[11] != win.activity) win.changed_at = app.now;
-                    win.activity = n[11];
-                    if (!win.listed or app.now < app.hush_until) win.seen = win.activity;
-                    win.bell = n[12] == 1;
+                    win.claude = .none;
                     // Read once: after that arena's own is the newer, and a list asked for
                     // before a change would put the old one back.
-                    if (!win.listed) win.share = @intCast(@min(n[13], max_share));
+                    if (!win.listed) win.share = @intCast(@min(n[12], max_share));
                     win.listed = true;
                     if (n[10] == 1) s.focus = s.wins.items.len;
                     try s.wins.append(app.gpa, win);
@@ -626,6 +617,7 @@ pub const App = struct {
                 } else try Pane.create(app, n[2], @intCast(n[7]), @intCast(n[8]));
                 pane.x = @intCast(n[5]);
                 pane.y = @intCast(n[6]);
+                win.claude = @enumFromInt(@max(@intFromEnum(win.claude), @min(n[11], 3)));
                 // tmux wraps a pane's history again at its new width; the copy here, fed in as
                 // rows, cannot, so it is taken afresh.
                 if (pane.term.cols != n[7] or pane.term.rows != n[8]) {
@@ -649,7 +641,7 @@ pub const App = struct {
             s.placed = true;
         }
         app.follow_active = false;
-        app.see();
+        try app.see();
         try app.settle();
         if (app.cur()) |s| app.listed = app.listed or s.wins.items.len > 0;
         app.dirty = true;
@@ -668,7 +660,6 @@ pub const App = struct {
                 if (s.id == app.current and !fits and !asked) {
                     win.asked_w = cols;
                     win.asked_h = rows;
-                    app.hush_until = app.now + busy_ms;
                     try app.send(.ignore, "refresh-client -C @{d}:{d}x{d}", .{ win.id, cols, rows });
                     continue;
                 }
@@ -693,7 +684,7 @@ pub const App = struct {
     fn sessionTo(app: *App, index: usize) !void {
         const to = app.sessions.items[index];
         if (to.id == app.current) return;
-        app.see();
+        try app.see();
         app.slide = if (index > app.sessionIndex(app.current) orelse index) 1 else -1;
         try app.send(.ignore, "switch-client -t '${d}'", .{to.id});
     }
@@ -707,7 +698,7 @@ pub const App = struct {
 
     fn focusTo(app: *App, index: usize) !void {
         const s = app.cur() orelse return;
-        app.see();
+        try app.see();
         s.focus = index;
         try app.send(.ignore, "select-window -t @{d}", .{s.wins.items[index].id});
         app.dirty = true;

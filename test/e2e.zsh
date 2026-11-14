@@ -211,14 +211,27 @@ see '╭─ 3 three '
 key Escape
 check "Escape leaves the overview" see '╭─ 1 solo ─{40}'
 
-# Output in the three seconds after arena resizes windows is taken for theirs redrawing, and marks
-# nothing; tmux stamps activity to the second. The news has to come clear of both.
 zselect -t 400
 key 'printf "\033[%dGX\bY\n" $(tput cols)' Enter
 check "a step back from the last column lands where tmux puts it" see ' Y│$'
 
+# what Claude Code's hooks do, in a pane of their session
+claude() { inner set -p -t $1 @arena_claude $2 }
 inner send-keys -t alpha:one 'echo news' Enter
-check "a window with news marks its session in the rail" see '│ alpha +[◌◉] +3 │'
+zselect -t 250
+check "output alone marks nothing in the rail" shows '│ alpha +3 │'
+claude alpha:one working
+check "a Claude working marks its session ◌" see '│ alpha +◌ +3 │'
+claude alpha:one done
+check "done and not looked at, ◉" see '│ alpha +◉ +3 │'
+claude alpha:three waiting
+check "waiting on an answer, ▲, over a done one" see '│ alpha +▲ +3 │'
+inner set -pu -t alpha:one @arena_claude
+inner set -pu -t alpha:three @arena_claude
+see '│ alpha +3 │'
+claude beta:solo done
+in_view_cleared() { [[ -z $(inner show -pqv -t beta:solo @arena_claude) ]] }
+check "a done Claude in view is taken as looked at" await in_view_cleared
 
 mouse 0 3 3 M
 mouse 32 3 2 M
