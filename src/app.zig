@@ -1435,7 +1435,10 @@ pub const App = struct {
                     .overview => app.openOverview(),
                     .split_right => try app.send(.ignore, "split-window -h -c '#{{pane_current_path}}'", .{}),
                     .split_below => try app.send(.ignore, "split-window -v -c '#{{pane_current_path}}'", .{}),
-                    .browser => try app.send(.ignore, "split-window -h -c '#{{pane_current_path}}' terminal-browser", .{}),
+                    .browser => {
+                        app.follow_active = true;
+                        try app.send(.ignore, "new-window -a -n browser -c '#{{pane_current_path}}' terminal-browser", .{});
+                    },
                     .close_pane => try app.closePane(),
                     .search => app.openSearch(),
                     .close_window => app.openMenu(&menu.confirm),

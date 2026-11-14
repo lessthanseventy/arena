@@ -236,7 +236,8 @@ key Escape
 
 key M-m
 key b
-check "the menu opens the browser beside the pane" see '│browser-stub'
+check "the menu opens the browser in a window of its own, in view" see '╭─ [0-9] browser ─'
+check "running terminal-browser" see '│browser-stub'
 key Enter
 gone 'browser-stub'
 

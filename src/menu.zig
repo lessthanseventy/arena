@@ -42,7 +42,7 @@ pub const main = [_]Item{
     .{ .icon = "×", .label = "Close window", .key = 'x', .action = .close_window },
     .{ .icon = "◫", .label = "Split pane right", .key = 'v', .action = .split_right, .group = true },
     .{ .icon = "⊟", .label = "Split pane below", .key = 's', .action = .split_below },
-    .{ .icon = "◎", .label = "Browser beside", .key = 'b', .action = .browser },
+    .{ .icon = "◎", .label = "Browser window", .key = 'b', .action = .browser },
     .{ .icon = "×", .label = "Close pane", .key = 'c', .action = .close_pane },
     .{ .icon = "/", .label = "Search history", .key = '/', .action = .search },
     .{ .icon = "◇", .label = "New session", .key = 'S', .action = .new_session, .group = true },
