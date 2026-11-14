@@ -82,6 +82,15 @@ inner send-keys -t alpha:two clear Enter
 gone $'\U0010EEEE'
 kept() { ! grep -qaF -- $'\e[2J' $tmp/raw }
 check "and no frame erases the whole display, which would take the pictures with it" kept
+print -rn -- $'\ePtmux;\e\e_Gi=4207,a=q;AAAA\e\e\\\e\\' >$tmp/query
+inner send-keys -t alpha:two "cat $tmp/query; head -c 14 | od -c" Enter
+check "a graphics query is passed on too" await wrote_bytes $'\e_Gi=4207,a=q;AAAA\e\\'
+key -l $'\e_Gi=4207;OK\e\\'
+answered() { inner capture-pane -pJ -t alpha:two | grep -qF '_   G   i   =   4   2   0   7   ;   O   K' }
+zselect -t 50
+inner send-keys -t alpha:two C-d
+check "and the terminal's answer goes to the pane that asked, not the one in focus" await answered
+inner send-keys -t alpha:two clear Enter
 
 wide() { [[ $(inner display -p -t alpha:one '#{window_width} #{@arena_width}') == $1 ]] }
 # a ; that ends an argument ends the command for tmux, unless escaped

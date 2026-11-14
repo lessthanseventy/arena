@@ -44,6 +44,8 @@ pub const Event = union(enum) {
     mouse: Mouse,
     /// A terminal's reply to a query, the text between `ESC ]` and its terminator.
     osc: []const u8,
+    /// The terminal's reply to a kitty graphics command, whole from `ESC _` to `ESC \`.
+    graphics: []const u8,
 };
 
 pub const Part = struct {
@@ -80,6 +82,12 @@ pub fn next(bytes: []const u8) Part {
                     return .{ .text = bytes[0..esc], .event = .{ .osc = after[1..end] }, .rest = after[len..] };
                 }
             }
+        }
+        if (std.mem.startsWith(u8, after, "_G")) {
+            if (std.mem.indexOf(u8, after, "\x1b\\")) |end| {
+                return .{ .text = bytes[0..esc], .event = .{ .graphics = bytes[esc .. esc + 1 + end + 2] }, .rest = after[end + 2 ..] };
+            }
+            if (after.len < 512) return .{ .text = bytes[0..esc], .event = null, .rest = &.{}, .held = bytes[esc..] };
         }
         const unfinished = (std.mem.startsWith(u8, after, "]") and after.len > 1) or
             (std.mem.startsWith(u8, after, "[<") and std.mem.indexOfAny(u8, after, "Mm") == null);
@@ -127,6 +135,14 @@ test "a terminal's reply is an event, ended by ST or BEL" {
     try std.testing.expectEqualStrings("4;5;rgb:ff/00/00", st.event.?.osc);
     try std.testing.expectEqualStrings("b", st.rest);
     try std.testing.expectEqualStrings("11;rgb:00/00/00", next("\x1b]11;rgb:00/00/00\x07").event.?.osc);
+}
+
+test "a graphics reply is an event, whole, and held until its end is read" {
+    const part = next("a\x1b_Gi=4207;OK\x1b\\b");
+    try std.testing.expectEqualStrings("a", part.text);
+    try std.testing.expectEqualStrings("\x1b_Gi=4207;OK\x1b\\", part.event.?.graphics);
+    try std.testing.expectEqualStrings("b", part.rest);
+    try std.testing.expectEqualStrings("\x1b_Gi=4207;O", next("\x1b_Gi=4207;O").held);
 }
 
 test "a report or reply cut off by the read is held, not typed" {

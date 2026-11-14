@@ -7,7 +7,7 @@ const max_len = 1 << 16;
 
 /// Parts a pane's output into what the pane's terminal takes and the kitty graphics commands
 /// its program wraps for tmux to pass through, which a control client is sent as output like
-/// any other. Only pictures pass: nothing else a program wraps reaches arena's terminal.
+/// any other. Only graphics commands pass: nothing else a program wraps reaches arena's terminal.
 pub const Pass = struct {
     state: enum { ground, body, esc } = .ground,
     matched: u8 = 0,
@@ -49,21 +49,13 @@ pub const Pass = struct {
                 try pass.buf.append(gpa, byte);
                 pass.state = .body;
             } else {
-                if (byte == '\\' and passes(pass.buf.items)) try out.appendSlice(gpa, pass.buf.items);
+                const command = pass.buf.items;
+                if (byte == '\\' and std.mem.startsWith(u8, command, "\x1b_G") and std.mem.endsWith(u8, command, "\x1b\\")) try out.appendSlice(gpa, command);
                 pass.state = .ground;
             },
         };
     }
 
-    /// A query is answered on arena's own input, where nothing takes the answer to the pane, so
-    /// it is not passed: a program that hears nothing sends its pictures the plain way.
-    fn passes(command: []const u8) bool {
-        if (!std.mem.startsWith(u8, command, "\x1b_G") or !std.mem.endsWith(u8, command, "\x1b\\")) return false;
-        const keys = command[3 .. std.mem.indexOfScalar(u8, command, ';') orelse command.len - 2];
-        var it = std.mem.tokenizeScalar(u8, keys, ',');
-        while (it.next()) |key| if (std.mem.eql(u8, key, "a=q")) return false;
-        return true;
-    }
 };
 
 fn expectParted(pieces: []const []const u8, want_out: []const u8, want_plain: []const u8) !void {
@@ -92,8 +84,8 @@ test "a picture cut anywhere between pieces of output still passes" {
     for (1..whole.len) |cut| try expectParted(&.{ whole[0..cut], whole[cut..] }, "\x1b_Ga=T,i=7;QUJD\x1b\\", "\x1b\x1bPq");
 }
 
-test "a query, and anything wrapped that is not a picture, does not pass" {
-    try expectParted(&.{"\x1bPtmux;\x1b\x1b_Gi=31,a=q,t=d,f=24,s=1,v=1;AAAA\x1b\x1b\\\x1b\\"}, "", "");
+test "a query passes, and anything wrapped that is not a graphics command does not" {
+    try expectParted(&.{"\x1bPtmux;\x1b\x1b_Gi=31,a=q;AAAA\x1b\x1b\\\x1b\\"}, "\x1b_Gi=31,a=q;AAAA\x1b\\", "");
     try expectParted(&.{"\x1bPtmux;\x1b\x1b]52;c;aGk=\x07\x1b\\"}, "", "");
     try expectParted(&.{"\x1bPtmux;\x1b\x1b_Ga=T;QUJD\x07\x1b\\"}, "", "");
 }

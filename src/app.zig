@@ -246,6 +246,9 @@ pub const App = struct {
     out: std.ArrayList(u8) = .empty,
     /// A piece of a pane's output without what it passes to the terminal, between `Pass` and the pane.
     plain: std.ArrayList(u8) = .empty,
+    /// The pane that last sent a graphics command, which the terminal's replies go back to: the
+    /// terminal does not say which pane asked.
+    asker: u32 = std.math.maxInt(u32),
     /// The name last clicked, a window's or a session's, and when.
     clicked: ?Name = null,
     clicked_at: i64 = 0,
@@ -444,7 +447,9 @@ pub const App = struct {
             .output => |out| {
                 const pane = app.paneById(out.pane) orelse return;
                 app.plain.clearRetainingCapacity();
+                const before = app.out.items.len;
                 try pane.pass.feed(app.gpa, control.unescape(@constCast(out.data)), &app.out, &app.plain);
+                if (app.out.items.len > before) app.asker = pane.id;
                 if (pane.seed != .done) return;
                 pane.feed(app.plain.items);
                 app.dirty = true;
@@ -1529,6 +1534,7 @@ pub const App = struct {
                     app.palette.answer(body);
                     app.dirty = true;
                 },
+                .graphics => |reply| if (app.paneById(app.asker)) |pane| try app.sendKeys(pane, reply),
             }
         }
         return 0;
