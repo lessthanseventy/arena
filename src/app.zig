@@ -731,7 +731,8 @@ pub const App = struct {
     /// What ends a word picked by two clicks.
     const word_ends = [_]u21{ ' ', '\t', '\'', '"', '`', '|', '│', ':', ';', ',', '(', ')', '[', ']', '{', '}', '<', '>', '$' };
 
-    /// Puts the pane's selected text on the system clipboard, through the terminal.
+    /// Puts the pane's selected text on the system clipboard and the primary selection, through
+    /// the terminal.
     fn copy(app: *App, pane: *Pane) !void {
         const screen = pane.term.screens.active;
         const sel = screen.selection orelse return;
@@ -739,9 +740,11 @@ pub const App = struct {
         defer app.gpa.free(text);
         if (text.len == 0) return;
         const encoder = std.base64.standard.Encoder;
-        try app.out.appendSlice(app.gpa, "\x1b]52;c;");
-        _ = encoder.encode(try app.out.addManyAsSlice(app.gpa, encoder.calcSize(text.len)), text);
-        try app.out.append(app.gpa, 0x07);
+        for ([_][]const u8{ "\x1b]52;c;", "\x1b]52;p;" }) |intro| {
+            try app.out.appendSlice(app.gpa, intro);
+            _ = encoder.encode(try app.out.addManyAsSlice(app.gpa, encoder.calcSize(text.len)), text);
+            try app.out.append(app.gpa, 0x07);
+        }
     }
 
     /// Opens the search prompt. Anything selected is let go, so the search starts from the newest.
@@ -1228,7 +1231,8 @@ pub const App = struct {
     /// column, to take its place, or onto a session of the rail, to go there, clicked twice to
     /// rename its window, middle clicked to close it; the line between panes is dragged to
     /// resize them; a sideways wheel steps through windows; and anything inside a pane is its
-    /// program's or scrolls it, but for a shift drag, which selects, and a hover.
+    /// program's or scrolls it, but for a shift drag, which selects, a middle click, which
+    /// pastes the primary selection, and a hover.
     fn mouseHit(app: *App, m: keys.Mouse) !bool {
         const ox = app.term_w - app.view_w;
         if (app.drag != .none and !m.wheel()) {
@@ -1310,6 +1314,10 @@ pub const App = struct {
             }
             const px: u16 = @intCast(cx - 1 - pane.x);
             const py: u16 = @intCast(m.y - 1 - pane.y);
+            if (m.code & (3 | 32 | 64) == 1) {
+                if (!m.release) try app.send(.ignore, "run-shell -b \"wl-paste -p -n | tmux load-buffer -b arena-primary - && tmux paste-buffer -p -d -b arena-primary -t %{d}\"", .{pane.id});
+                return true;
+            }
             const shift = m.code & 4 != 0 and !m.wheel();
             if (!shift and try app.mouseToPane(win, pane, m, px, py)) return true;
             // The program takes no mouse, or shift is held: the button selects text, which is

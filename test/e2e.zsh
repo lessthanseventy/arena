@@ -13,6 +13,9 @@ fails=0
 mkdir $tmp/bin
 print -r -- $'#!/bin/sh\necho browser-stub $TERMINAL_BROWSER_START_PAGE "$@"\nread _' >$tmp/bin/terminal-browser
 chmod +x $tmp/bin/terminal-browser
+# stands in for the primary selection
+print -r -- $'#!/bin/sh\nprintf primary-paste-text' >$tmp/bin/wl-paste
+chmod +x $tmp/bin/wl-paste
 export PATH=$tmp/bin:$PATH
 
 inner() { tmux -L $in -f /dev/null "$@" }
@@ -168,6 +171,18 @@ check "a shift drag over a program that took the mouse copies its text" await co
 zselect -t 350
 unhovered() { ! inner capture-pane -pJ -t alpha:two | grep -qE '\[<(35|4|36);' }
 check "and neither it nor the pointer moving over it reaches the program" unhovered
+inner send-keys -t alpha:two clear Enter
+
+inner send-keys -t alpha:two "clear; stty -echo -icanon; cat $tmp/any; timeout 3 cat -v; printf '\\033[?1006l\\033[?1003l'; stty sane" Enter
+allmouse() { [[ $(inner display -p -t alpha:two '#{mouse_all_flag}') == 1 ]] }
+await allmouse
+mouse 1 $((col + 2)) $((row + 1)) M
+mouse 1 $((col + 2)) $((row + 1)) m
+pasted() { inner capture-pane -pJ -t alpha:two | grep -qF primary-paste-text }
+check "a middle click pastes the primary selection, even into a program that took the mouse" await pasted
+unclicked() { ! inner capture-pane -pJ -t alpha:two | grep -qF '[<1;' }
+check "and the program is not sent the click" unclicked
+zselect -t 350
 inner send-keys -t alpha:two clear Enter
 key M-h
 see '^╭─ sessions ─+╮ ╭─ 1 one '

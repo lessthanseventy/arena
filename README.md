@@ -24,7 +24,7 @@ always did; arena draws them and leaves them running when it quits.
 - **Jump** to any window in any session by typing part of its name.
 - **A menu** for everything, for when you would rather click.
 - **Mouse throughout**: click, wheel, drag to select and copy (shift-drag over a program that takes
-  the mouse), drag a title to reorder.
+  the mouse), middle click to paste what was last selected, drag a title to reorder.
 - **Search** in a pane's history.
 
 ![A window with three panes](docs/screenshots/panes.png)
