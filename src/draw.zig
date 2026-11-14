@@ -221,7 +221,7 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16) !void {
         if (cut) try w.writeAll("…");
         for (0..inner - 5 - cellCount(name) - @intFromBool(cut)) |_| try w.writeAll(" ");
         try pen.set(w, if (here) chip(app) else ink(app, "amber", 4), null);
-        try put(w, glyph(app.sessionMark(s)));
+        try put(w, glyph(App.sessionMark(s)));
         try pen.set(w, if (here) chip(app) else dim, null);
         try w.print("{d:>2} ", .{@min(s.wins.items.len, 99)});
         filled = inner;
@@ -605,7 +605,7 @@ fn overview(app: *App, w: *Writer, spot: App.Spot) !void {
         try w.print(" {s} ", .{clip(s.name, 24)});
         try pen.set(w, ink(app, "amber", 4), null);
         try w.writeAll(" ");
-        try put(w, glyph(app.sessionMark(s)));
+        try put(w, glyph(App.sessionMark(s)));
         for (s.wins.items, 0..) |win, wi| {
             const at = app.thumbAt(.{ .session = si, .win = wi }) orelse continue;
             const picked = if (drop) |to| to.session == si and to.win == wi else si == spot.session and wi == spot.win;

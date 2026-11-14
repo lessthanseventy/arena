@@ -378,12 +378,11 @@ pub const App = struct {
         return win.claude;
     }
 
-    /// The most pressing mark among a session's windows.
-    pub fn sessionMark(app: *const App, s: *const Session) Mark {
+    /// The most pressing mark among a session's windows, the one in view included.
+    pub fn sessionMark(s: *const Session) Mark {
         var most: Mark = .none;
         for (s.wins.items) |win| {
-            const found = app.mark(s, win);
-            if (@backingInt(found) > @backingInt(most)) most = found;
+            if (@backingInt(win.claude) > @backingInt(most)) most = win.claude;
         }
         return most;
     }
