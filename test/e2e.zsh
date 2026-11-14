@@ -20,9 +20,11 @@ export PATH=$tmp/bin:$PATH
 
 inner() { tmux -L $in -f /dev/null "$@" }
 outer() { tmux -L $out -f /dev/null "$@" }
+# kill-server leaves the socket file behind
 cleanup() {
   inner kill-server 2>/dev/null
   outer kill-server 2>/dev/null
+  rm -f ${TMUX_TMPDIR:-/tmp}/tmux-$UID/{$in,$out}
   rm -rf $tmp
 }
 trap cleanup EXIT
