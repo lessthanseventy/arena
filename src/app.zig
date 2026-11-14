@@ -403,7 +403,7 @@ pub const App = struct {
         if (app.term_w < 48 or app.sessions.items.len == 0) return 0;
         var longest: usize = 1;
         for (app.sessions.items) |s| longest = @max(longest, std.unicode.utf8CountCodepoints(s.name) catch s.name.len);
-        return @as(u16, @max(7, @min(longest, 14))) + 7;
+        return @as(u16, @max(7, @min(longest, 14))) + 8;
     }
 
     pub fn fit(app: *App) void {

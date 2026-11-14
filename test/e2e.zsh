@@ -95,10 +95,10 @@ inner send-keys -t alpha:two clear Enter
 wide() { [[ $(inner display -p -t alpha:one '#{window_width} #{@arena_width}') == $1 ]] }
 # a ; that ends an argument ends the command for tmux, unless escaped
 key -l $'\e\\;'
-check "Alt+; makes the window narrower" see '╭─ 1 one ─{50}╮'
-check "and tmux has it that wide, and keeps the width" await wide '58 70'
+check "Alt+; makes the window narrower" see '╭─ 1 one ─{49}╮'
+check "and tmux has it that wide, and keeps the width" await wide '57 70'
 key "M-'"
-check "Alt+' makes it wider" see '╭─ 1 one ─{58}╮'
+check "Alt+' makes it wider" see '╭─ 1 one ─{57}╮'
 
 windows() { [[ $(inner list-windows -t $1 -F '#{window_name}' | tr '\n' ' ') == "$2 " ]] }
 mouse 0 20 1 M
@@ -166,8 +166,8 @@ first() { [[ $(inner list-panes -t alpha:two -F '#{pane_width}' | head -1) -eq $
 mouse 35 58 5 M
 check "over the line between panes the pointer is the one for resizing" await wrote $'\e]22;ew-resize'
 mouse 0 58 5 M
-mouse 32 50 5 M
-mouse 0 50 5 m
+mouse 32 51 5 M
+mouse 0 51 5 m
 check "dragging the line resizes the panes" await first 25
 
 key M-m
@@ -222,9 +222,9 @@ check "and its place is kept in tmux" await order 1beta2alpha
 key 'echo hello brave world' Enter
 see '│hello brave world'
 row=$(screen | grep -n '│hello brave world' | cut -d: -f1)
-mouse 0 23 $row M
-mouse 32 33 $row M
-mouse 0 33 $row m
+mouse 0 24 $row M
+mouse 32 34 $row M
+mouse 0 34 $row m
 copied() { [[ $(outer show-buffer 2>/dev/null) == $1 ]] }
 check "dragging selects text and copies it" await copied 'brave world'
 

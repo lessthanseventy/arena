@@ -200,8 +200,8 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16) !void {
         const drop = app.dropAt();
         // lit as the current one is: a window held by its title would go to it
         const here = s.id == app.current or (drop == .session and drop.session == y - 1);
-        const cut = cellCount(s.name) > inner - 5;
-        const name = clip(s.name, inner - 5 - @intFromBool(cut));
+        const cut = cellCount(s.name) > inner - 6;
+        const name = clip(s.name, inner - 6 - @intFromBool(cut));
         try pen.set(w, if (here) chip(app) else .{}, null);
         try w.writeAll(" ");
         try w.writeAll(name);
