@@ -698,9 +698,13 @@ pub const App = struct {
                 for (win.panes.items) |pane| {
                     if (pane.seed != .wanted) continue;
                     pane.seed = .asked;
-                    try app.send(.{ .modes = pane.id }, "display-message -p -t %{d} '" ++ mode_flags ++ "'", .{pane.id});
-                    try app.send(.{ .capture = pane.id }, "capture-pane -p -e -S -{d} -t %{d}", .{ history_lines, pane.id });
-                    try app.send(.{ .cursor = pane.id }, "display-message -p -t %{d} '#{{cursor_x}} #{{cursor_y}}'", .{pane.id});
+                    // One list, which tmux runs without reading the pane between: output it read
+                    // between the capture and the cursor would be drawn here at the wrong place.
+                    try app.send(.{ .modes = pane.id }, "display-message -p -t %{d} '" ++ mode_flags ++ "' ; " ++
+                        "capture-pane -p -e -S -{d} -t %{d} ; " ++
+                        "display-message -p -t %{d} '#{{cursor_x}} #{{cursor_y}}'", .{ pane.id, history_lines, pane.id, pane.id });
+                    try app.pending.append(app.gpa, .{ .capture = pane.id });
+                    try app.pending.append(app.gpa, .{ .cursor = pane.id });
                 }
             }
         }
