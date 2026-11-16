@@ -22,8 +22,8 @@ const double_click_ms = 400;
 /// tmux has no order of sessions to change, so arena keeps each one's place in an option on it.
 const session_format = "#{{session_id}} #{{?@arena_order,#{{@arena_order}},-}} #{{session_name}}";
 /// A pane's @arena_claude, set by Claude Code's hooks, comes as its `Mark`'s number.
-const claude_state = "#{{?#{{==:#{{@arena_claude}},working}},1,#{{?#{{==:#{{@arena_claude}},done}},2," ++
-    "#{{?#{{==:#{{@arena_claude}},waiting}},3,0}}}}}}";
+const claude_state = "#{{?#{{==:#{{@arena_claude}},background}},1,#{{?#{{==:#{{@arena_claude}},working}},2," ++
+    "#{{?#{{==:#{{@arena_claude}},done}},3,#{{?#{{==:#{{@arena_claude}},waiting}},4,0}}}}}}}}";
 const pane_format = "#{{session_id}} #{{window_id}} #{{pane_id}} #{{window_width}} #{{window_height}} " ++
     "#{{pane_left}} #{{pane_top}} #{{pane_width}} #{{pane_height}} #{{pane_active}} #{{window_active}} " ++
     claude_state ++ " #{{window_cell_width}} #{{window_cell_height}} #{{?@arena_width,#{{@arena_width}},0}} #{{window_name}}";
@@ -34,9 +34,10 @@ const min_share = 20;
 const max_share = 100;
 const share_step = 10;
 
-/// What the Claude in a window not being looked at is doing: working, done and not yet looked
-/// at, or waiting on an answer. In rising order of how much it wants looking at.
-pub const Mark = enum { none, working, done, waiting };
+/// What the Claude in a window not being looked at is doing: between turns with work of its own
+/// running in the background, working, done and not yet looked at, or waiting on an answer. In
+/// rising order of how much it wants looking at.
+pub const Mark = enum { none, background, working, done, waiting };
 const mode_flags = "#{{alternate_on}} #{{?cursor_flag,0,1}} #{{mouse_standard_flag}} #{{mouse_button_flag}} #{{mouse_all_flag}} #{{mouse_sgr_flag}}";
 /// What to feed a pane's terminal for each of `mode_flags` that is 1, in the same order.
 const mode_sets = [_][]const u8{ "\x1b[?1049h", "\x1b[?25l", "\x1b[?1000h", "\x1b[?1002h", "\x1b[?1003h", "\x1b[?1006h" };
@@ -648,7 +649,7 @@ pub const App = struct {
                 } else try Pane.create(app, n[2], @intCast(n[7]), @intCast(n[8]));
                 pane.x = @intCast(n[5]);
                 pane.y = @intCast(n[6]);
-                win.claude = @fromBackingInt(@intCast(@max(@backingInt(win.claude), @min(n[11], 3))));
+                win.claude = @fromBackingInt(@intCast(@max(@backingInt(win.claude), @min(n[11], @backingInt(Mark.waiting)))));
                 // tmux wraps a pane's history again at its new width; the copy here, fed in as
                 // rows, cannot, so it is taken afresh.
                 if (pane.term.cols != n[7] or pane.term.rows != n[8]) {

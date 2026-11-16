@@ -235,6 +235,7 @@ const spinner_step_ms = 200;
 fn glyph(app: *const App, mark: app_mod.Mark) u21 {
     return switch (mark) {
         .none => ' ',
+        .background => '◔',
         .working => if (app.motion) spinner[@intCast(@mod(@divFloor(app.now, spinner_step_ms), spinner.len))] else spinner[0],
         .done => '◉',
         .waiting => '▲',

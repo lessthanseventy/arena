@@ -16,9 +16,10 @@ always did; arena draws them and leaves them running when it quits.
 - **A strip per session.** Windows are columns with rounded borders; the focused one has a slowly
   turning gradient. The first and last columns sit flush against the edges.
 - **A rail of sessions** down the left, with each one's window count.
-- **Marks on windows running Claude Code**: `◐` while it works, `◉` once it is done and until you
-  look, `▲` while it waits on an answer. Its hooks set the pane option `@arena_claude` to
-  `working`, `done` or `waiting`.
+- **Marks on windows running Claude Code**: `◐` turning while it works, `◔` between turns while
+  work it started runs in the background, `◉` once it is done and until you look, `▲` while it
+  waits on an answer. Its hooks set the pane option `@arena_claude` to `working`, `background`,
+  `done` or `waiting`.
 - **Panes**, drawn where tmux has them. Click one to select it, drag the line between two to resize.
 - **An overview** of every session's windows at once.
 - **Jump** to any window in any session by typing part of its name.

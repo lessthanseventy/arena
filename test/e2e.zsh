@@ -334,6 +334,8 @@ zselect -t 250
 check "output alone marks nothing in the rail" shows '│ alpha +3 │'
 claude alpha:one working
 check "a Claude working marks its session ◐" see '│ alpha +◐ +3 │'
+claude alpha:one background
+check "between turns, with work in the background, ◔" see '│ alpha +◔ +3 │'
 claude alpha:one done
 check "done and not looked at, ◉" see '│ alpha +◉ +3 │'
 claude alpha:three waiting
