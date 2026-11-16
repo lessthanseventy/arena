@@ -387,6 +387,12 @@ pub const App = struct {
         return most;
     }
 
+    /// Whether a Claude is working in any window, its mark spinning.
+    pub fn working(app: *const App) bool {
+        for (app.sessions.items) |s| for (s.wins.items) |win| if (win.claude == .working) return true;
+        return false;
+    }
+
     /// A Claude done in the window in view has been looked at: its pane's state is cleared in
     /// tmux, unless a hook has moved it on since.
     fn see(app: *App) !void {

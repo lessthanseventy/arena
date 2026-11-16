@@ -131,7 +131,7 @@ const Column = struct {
             const here = dot == col.session.focus;
             const mark = app.mark(col.session, col.session.wins.items[dot]);
             try pen.set(w, if (here or mark != .none) ink(app, "amber", 4) else ink(app, "dim", 8), null);
-            return put(w, if (here) '●' else if (mark != .none) glyph(mark) else '○');
+            return put(w, if (here) '●' else if (mark != .none) glyph(app, mark) else '○');
         }
 
         const style: vt.Style = if (app.theme) |t| rgbStyle(theme.gradient(
@@ -221,7 +221,7 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16) !void {
         if (cut) try w.writeAll("…");
         for (0..inner - 5 - cellCount(name) - @intFromBool(cut)) |_| try w.writeAll(" ");
         try pen.set(w, if (here) chip(app) else ink(app, "amber", 4), null);
-        try put(w, glyph(App.sessionMark(s)));
+        try put(w, glyph(app, App.sessionMark(s)));
         try pen.set(w, if (here) chip(app) else dim, null);
         try w.print("{d:>2} ", .{@min(s.wins.items.len, 99)});
         filled = inner;
@@ -229,10 +229,13 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16) !void {
     for (filled..inner) |_| try w.writeAll(" ");
 }
 
-fn glyph(mark: app_mod.Mark) u21 {
+const spinner = [_]u21{ '◐', '◓', '◑', '◒' };
+const spinner_step_ms = 200;
+
+fn glyph(app: *const App, mark: app_mod.Mark) u21 {
     return switch (mark) {
         .none => ' ',
-        .working => '◌',
+        .working => if (app.motion) spinner[@intCast(@mod(@divFloor(app.now, spinner_step_ms), spinner.len))] else spinner[0],
         .done => '◉',
         .waiting => '▲',
     };
@@ -389,7 +392,7 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
             const style: vt.Style = if (i == prompt.selected) chip(app) else .{};
             const left = std.fmt.bufPrint(&buf, "  {s} › {s}", .{ clip(s.name, 12), clip(win.name, 14) }) catch "";
             var mark: [8]u8 = undefined;
-            const mark_len = std.unicode.utf8Encode(glyph(app.mark(s, win)), &mark) catch 0;
+            const mark_len = std.unicode.utf8Encode(glyph(app, app.mark(s, win)), &mark) catch 0;
             @memcpy(mark[mark_len..][0..2], "  ");
             try b.line(style, left, if (i == prompt.selected) style else ink(app, "amber", 4), mark[0 .. mark_len + 2]);
         }
@@ -466,7 +469,7 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
 
     for (s.wins.items, 0..) |win, i| {
         const focused = i == s.focus;
-        if (what == .focused_border and !focused) continue;
+        if (what == .focused_border and !focused and app.mark(s, win) != .working) continue;
         const col_w = app.colW(s, win);
         const x0 = app.colX(s, i) - s.scroll;
         const x1 = x0 + col_w - 1;
@@ -483,7 +486,7 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
         while (view.nextCodepoint()) |cp| : (title_len += 1) title_cps[title_len] = cp;
         const mark = app.mark(s, win);
         if (mark != .none and title_len + 2 <= title_cps.len) {
-            title_cps[title_len] = glyph(mark);
+            title_cps[title_len] = glyph(app, mark);
             title_cps[title_len + 1] = ' ';
             title_len += 2;
         }
@@ -574,7 +577,7 @@ fn thumb(app: *App, w: *Writer, s: *const Session, win: *const Window, number: u
                 used += cellCount(title);
                 if (mark != .none) {
                     try pen.set(w, ink(app, "amber", 4), null);
-                    try put(w, glyph(mark));
+                    try put(w, glyph(app, mark));
                     used += 1;
                 }
                 try pen.set(w, edge, null);
@@ -605,7 +608,7 @@ fn overview(app: *App, w: *Writer, spot: App.Spot) !void {
         try w.print(" {s} ", .{clip(s.name, 24)});
         try pen.set(w, ink(app, "amber", 4), null);
         try w.writeAll(" ");
-        try put(w, glyph(App.sessionMark(s)));
+        try put(w, glyph(app, App.sessionMark(s)));
         for (s.wins.items, 0..) |win, wi| {
             const at = app.thumbAt(.{ .session = si, .win = wi }) orelse continue;
             const picked = if (drop) |to| to.session == si and to.win == wi else si == spot.session and wi == spot.win;
@@ -622,7 +625,7 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
         // Not 2J: erasing the whole display takes the terminal's kitty pictures with it.
         try w.writeAll("\x1b[H\x1b[J");
         try rail(app, w);
-    }
+    } else if (app.working()) try rail(app, w);
     var cursor: ?Cursor = null;
     if (app.overview) |spot| {
         try overview(app, w, spot);

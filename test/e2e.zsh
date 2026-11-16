@@ -333,7 +333,7 @@ inner send-keys -t alpha:one 'echo news' Enter
 zselect -t 250
 check "output alone marks nothing in the rail" shows '│ alpha +3 │'
 claude alpha:one working
-check "a Claude working marks its session ◌" see '│ alpha +◌ +3 │'
+check "a Claude working marks its session ◐" see '│ alpha +◐ +3 │'
 claude alpha:one done
 check "done and not looked at, ◉" see '│ alpha +◉ +3 │'
 claude alpha:three waiting
@@ -342,7 +342,7 @@ inner set -pu -t alpha:one @arena_claude
 inner set -pu -t alpha:three @arena_claude
 see '│ alpha +3 │'
 claude beta:solo working
-check "the session in view shows its own mark too" see '│ beta +◌ +1 │'
+check "the session in view shows its own mark too" see '│ beta +◐ +1 │'
 claude beta:solo done
 in_view_cleared() { [[ -z $(inner show -pqv -t beta:solo @arena_claude) ]] }
 check "a done Claude in view is taken as looked at" await in_view_cleared

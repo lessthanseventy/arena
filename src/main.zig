@@ -206,7 +206,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) 
         };
         const moving = app.yoff != 0 or (strip != null and strip.?.scroll != app.target(strip.?));
 
-        const spins = app.motion and app.theme != null and app.yoff == 0;
+        const spins = app.motion and (app.theme != null or app.working()) and app.yoff == 0;
         const whole = app.dirty and now - last_frame >= frame_ms;
         const turn = spins and !app.dirty and now - last_spin >= spin_frame_ms;
         if (app.listed and (whole or turn)) {
