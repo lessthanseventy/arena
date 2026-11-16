@@ -263,6 +263,8 @@ pub const App = struct {
     clicked: ?Name = null,
     clicked_at: i64 = 0,
     nav_at: i64 = 0,
+    /// When the wheel last went up or down.
+    vertical_at: i64 = 0,
 
     pub fn deinit(app: *App) void {
         for (app.sessions.items) |s| app.destroySession(s);
@@ -1237,6 +1239,7 @@ pub const App = struct {
     /// pastes the primary selection, and a hover.
     fn mouseHit(app: *App, m: keys.Mouse) !bool {
         const ox = app.term_w - app.view_w;
+        if (m.wheel() and !m.sideways()) app.vertical_at = app.now;
         if (app.drag != .none and !m.wheel()) {
             try app.dragTo(m);
             return true;
@@ -1269,7 +1272,9 @@ pub const App = struct {
         const s = app.cur() orelse return false;
         if (app.yoff != 0) return false;
         if (m.sideways()) {
-            if (app.navStep()) try app.focusBy(if (m.code & 1 == 0) -1 else 1);
+            // A trackpad's swipe up or down drifts, and the sideways events among its own are not steps.
+            const drift = app.now - app.vertical_at < nav_gap_ms;
+            if (!drift and app.navStep()) try app.focusBy(if (m.code & 1 == 0) -1 else 1);
             return true;
         }
         if (m.leftPress()) if (app.lineAt(m.x, m.y)) |line| {

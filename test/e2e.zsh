@@ -232,6 +232,15 @@ key M-j
 check "Alt+j goes to the next session" see '╭─ 1 solo '
 key M-k
 check "Alt+k comes back, to the window left" see '╭─ 2 two '
+# wheel 64 and 65 are up and down, 66 and 67 left and right
+mouse 65 60 10 M
+mouse 67 60 10 M
+mouse 65 60 10 M
+zselect -t 30
+mouse 66 60 10 M
+check "a sideways wheel among a swipe down is not a step; one on its own is" await current one
+key M-l
+see '╭─ 2 two '
 
 inner send-keys -t beta:solo "clear; printf '%%end 1 1 1\\n%%begin 1 1 1\\n'" Enter
 key M-j
