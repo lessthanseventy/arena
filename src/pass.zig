@@ -68,7 +68,6 @@ pub const Pass = struct {
             .name_esc => pass.state = if (byte == '\\') .ground else .name,
         };
     }
-
 };
 
 fn expectParted(pieces: []const []const u8, want_out: []const u8, want_plain: []const u8) !void {

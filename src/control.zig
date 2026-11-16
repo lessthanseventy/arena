@@ -20,9 +20,9 @@ pub const Event = union(enum) {
 };
 
 const changes = [_][]const u8{
-    "%sessions-changed",    "%session-renamed ",    "%window-add ",
-    "%window-close ",       "%window-renamed ",     "%unlinked-window-",
-    "%layout-change ",      "%window-pane-changed ",
+    "%sessions-changed", "%session-renamed ",     "%window-add ",
+    "%window-close ",    "%window-renamed ",      "%unlinked-window-",
+    "%layout-change ",   "%window-pane-changed ",
 };
 
 /// Classifies one line of `tmux -C` output. `open` is the guard of the open `%begin`, if any:
@@ -107,8 +107,8 @@ test "a line of a reply that looks like a guard is still the reply's" {
 
 test "anything that changes the tree asks for a relist" {
     for ([_][]const u8{
-        "%window-add @3",          "%window-renamed @3 vim",      "%unlinked-window-close @9",
-        "%sessions-changed",       "%session-renamed $7 notes",   "%layout-change @0 cf3a,80x24,0,0,0 cf3a,80x24,0,0,0 *",
+        "%window-add @3",             "%window-renamed @3 vim",    "%unlinked-window-close @9",
+        "%sessions-changed",          "%session-renamed $7 notes", "%layout-change @0 cf3a,80x24,0,0,0 cf3a,80x24,0,0,0 *",
         "%window-pane-changed @2 %4",
     }) |line| try std.testing.expectEqual(Event.changed, parse(line, null));
     try std.testing.expectEqual(Event.other, parse("%client-session-changed /dev/pts/3 $1 a", null));

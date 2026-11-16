@@ -381,7 +381,7 @@ pub const App = struct {
         var most: Mark = .none;
         for (s.wins.items) |win| {
             const found = app.mark(s, win);
-            if (@intFromEnum(found) > @intFromEnum(most)) most = found;
+            if (@backingInt(found) > @backingInt(most)) most = found;
         }
         return most;
     }
@@ -641,7 +641,7 @@ pub const App = struct {
                 } else try Pane.create(app, n[2], @intCast(n[7]), @intCast(n[8]));
                 pane.x = @intCast(n[5]);
                 pane.y = @intCast(n[6]);
-                win.claude = @enumFromInt(@max(@intFromEnum(win.claude), @min(n[11], 3)));
+                win.claude = @fromBackingInt(@intCast(@max(@backingInt(win.claude), @min(n[11], 3))));
                 // tmux wraps a pane's history again at its new width; the copy here, fed in as
                 // rows, cannot, so it is taken afresh.
                 if (pane.term.cols != n[7] or pane.term.rows != n[8]) {

@@ -114,8 +114,8 @@ fn run(init: std.process.Init) !bool {
     raw.iflag.IXON = false;
     raw.iflag.ICRNL = false;
     raw.oflag.OPOST = false;
-    raw.cc[@intFromEnum(posix.V.MIN)] = 1;
-    raw.cc[@intFromEnum(posix.V.TIME)] = 0;
+    raw.cc[@backingInt(posix.V.MIN)] = 1;
+    raw.cc[@backingInt(posix.V.TIME)] = 0;
     try posix.tcsetattr(posix.STDIN_FILENO, .FLUSH, raw);
     defer posix.tcsetattr(posix.STDIN_FILENO, .FLUSH, saved) catch {};
     // 1003: presses, releases and every move of the pointer, for its shape over what it can

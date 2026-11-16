@@ -38,7 +38,6 @@ pub const Theme = struct {
     }
 };
 
-
 /// How far clockwise round a `w` by `h` border the cell at (`x`, `y`) sits, from 0 to 1. A row
 /// counts double a column, as a cell is about twice as tall as it is wide.
 pub fn around(w: u16, h: u16, x: usize, y: usize) f32 {
