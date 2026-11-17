@@ -214,13 +214,19 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16) !void {
         const drop = app.dropAt();
         // lit as the current one is: a window held by its title would go to it
         const here = s.id == app.current or (drop == .session and drop.session == index);
-        const cut = cellCount(s.name) > inner - 6;
-        const name = clip(s.name, inner - 6 - @intFromBool(cut));
+        const review = App.sessionReview(s);
+        const room = inner - 6 - @intFromBool(review != .none);
+        const cut = cellCount(s.name) > room;
+        const name = clip(s.name, room - @intFromBool(cut));
         try pen.set(w, if (here) chip(app) else .{}, null);
         try w.writeAll(" ");
         try w.writeAll(name);
         if (cut) try w.writeAll("…");
-        for (0..inner - 5 - cellCount(name) - @intFromBool(cut)) |_| try w.writeAll(" ");
+        for (0..inner - 5 - @intFromBool(review != .none) - cellCount(name) - @intFromBool(cut)) |_| try w.writeAll(" ");
+        if (review != .none) {
+            try pen.set(w, if (here) chip(app) else reviewInk(app, review), null);
+            try put(w, reviewGlyph(review));
+        }
         try pen.set(w, if (here) chip(app) else ink(app, "amber", 4), null);
         try put(w, glyph(app, App.sessionMark(s)));
         try pen.set(w, if (here) chip(app) else dim, null);
@@ -240,6 +246,25 @@ fn glyph(app: *const App, mark: app_mod.Mark) u21 {
         .working => if (app.motion) spinner[@intCast(@mod(@divFloor(app.now, spinner_step_ms), spinner.len))] else spinner[0],
         .done => '◉',
         .waiting => '▲',
+    };
+}
+
+fn reviewGlyph(review: app_mod.Review) u21 {
+    return switch (review) {
+        .none => ' ',
+        .landed => '◆',
+        .reviewed => '✓',
+        .queued => '»',
+        .changes => '✗',
+    };
+}
+
+fn reviewInk(app: *const App, review: app_mod.Review) vt.Style {
+    return switch (review) {
+        .none, .landed => ink(app, "dim", 8),
+        .reviewed => ink(app, "amber", 4),
+        .queued => ink(app, "violet", 5),
+        .changes => ink(app, "emberdim", 1),
     };
 }
 

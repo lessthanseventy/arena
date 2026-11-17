@@ -360,6 +360,24 @@ check "waiting on an answer, ▲, over a done one" see '│ alpha +▲ +3 │'
 claude alpha:one end
 claude alpha:three end
 check "a session's end takes its mark off" see '│ alpha +3 │'
+review() { inner set -p -t $1 @arena_review $2 }
+review alpha:one landed
+check "a landed branch marks its session ◆" see '│ alpha +◆ +3 │'
+review alpha:one reviewed
+check "an approved one ✓" see '│ alpha +✓ +3 │'
+review alpha:three queued
+check "a queued one » over an approved one" see '│ alpha +» +3 │'
+review alpha:one changes
+check "changes asked for ✗ over the rest" see '│ alpha +✗ +3 │'
+claude alpha:one prompt
+claude alpha:one stop '{"background_tasks": []}'
+check "the review mark sits beside the Claude mark" see '│ alpha +✗◉ +3 │'
+claude alpha:one end
+review alpha:one nonsense
+check "a value it does not know marks nothing but what else is there" see '│ alpha +» +3 │'
+inner set -pu -t alpha:one @arena_review
+inner set -pu -t alpha:three @arena_review
+see '│ alpha +3 │'
 claude beta:solo tool
 check "the session in view shows its own mark too" see '│ beta +◐ +1 │'
 claude beta:solo stop

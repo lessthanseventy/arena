@@ -20,6 +20,9 @@ always did; arena draws them and leaves them running when it quits.
   work it started runs in the background, `◉` once it is done and until you look, `▲` while it
   waits on an answer. arena's Claude Code plugin sets the pane option `@arena_claude` to
   `working`, `background`, `done` or `waiting` ([Install](#install)).
+- **A mark for code review** beside it: `✗` when changes are asked for, `»` while queued to merge,
+  `✓` once approved, `◆` once landed. Set the pane option `@arena_review` to `changes`, `queued`,
+  `reviewed` or `landed`; a session shows the one that most wants looking at.
 - **Panes**, drawn where tmux has them. Click one to select it, drag the line between two to resize.
 - **An overview** of every session's windows at once.
 - **Jump** to any window in any session by typing part of its name.

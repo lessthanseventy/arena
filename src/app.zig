@@ -26,9 +26,13 @@ const session_format = "#{{session_id}} #{{?@arena_order,#{{@arena_order}},-}} #
 /// A pane's @arena_claude, set by Claude Code's hooks, comes as its `Mark`'s number.
 const claude_state = "#{{?#{{==:#{{@arena_claude}},background}},1,#{{?#{{==:#{{@arena_claude}},working}},2," ++
     "#{{?#{{==:#{{@arena_claude}},done}},3,#{{?#{{==:#{{@arena_claude}},waiting}},4,0}}}}}}}}";
+/// A pane's @arena_review, set from its branch's code review, comes as its `Review`'s number.
+const review_state = "#{{?#{{==:#{{@arena_review}},landed}},1,#{{?#{{==:#{{@arena_review}},reviewed}},2," ++
+    "#{{?#{{==:#{{@arena_review}},queued}},3,#{{?#{{==:#{{@arena_review}},changes}},4,0}}}}}}}}";
 const pane_format = "#{{session_id}} #{{window_id}} #{{pane_id}} #{{window_width}} #{{window_height}} " ++
     "#{{pane_left}} #{{pane_top}} #{{pane_width}} #{{pane_height}} #{{pane_active}} #{{window_active}} " ++
-    claude_state ++ " #{{window_cell_width}} #{{window_cell_height}} #{{?@arena_width,#{{@arena_width}},0}} #{{window_name}}";
+    claude_state ++ " #{{window_cell_width}} #{{window_cell_height}} #{{?@arena_width,#{{@arena_width}},0}} " ++
+    review_state ++ " #{{window_name}}";
 
 /// The least and the most of the view a window's column is given, in hundredths, and how much
 /// one press of narrower or wider changes it.
@@ -40,6 +44,20 @@ const share_step = 10;
 /// running in the background, working, done and not yet looked at, or waiting on an answer. In
 /// rising order of how much it wants looking at.
 pub const Mark = enum { none, background, working, done, waiting };
+/// Where the branch a window's panes are on stands in code review: landed, approved, in the
+/// merge queue, or with changes requested. In rising order of how much it wants looking at.
+pub const Review = enum {
+    none,
+    landed,
+    reviewed,
+    queued,
+    changes,
+
+    /// The state tmux's `review_state` gave as a number; anything else is `none`.
+    pub fn of(n: u32) Review {
+        return if (n <= @backingInt(Review.changes)) @fromBackingInt(@intCast(n)) else .none;
+    }
+};
 const mode_flags = "#{{alternate_on}} #{{?cursor_flag,0,1}} #{{mouse_standard_flag}} #{{mouse_button_flag}} #{{mouse_all_flag}} #{{mouse_sgr_flag}}";
 /// What to feed a pane's terminal for each of `mode_flags` that is 1, in the same order.
 const mode_sets = [_][]const u8{ "\x1b[?1049h", "\x1b[?25l", "\x1b[?1000h", "\x1b[?1002h", "\x1b[?1003h", "\x1b[?1006h" };
@@ -143,6 +161,7 @@ pub const Window = struct {
     share: u8 = 0,
     /// The most pressing state of the Claudes in its panes.
     claude: Mark = .none,
+    review: Review = .none,
     listed: bool = false,
 
     pub fn activePane(win: *const Window) ?*Pane {
@@ -396,6 +415,15 @@ pub const App = struct {
         return most;
     }
 
+    /// The most pressing review state among a session's windows.
+    pub fn sessionReview(s: *const Session) Review {
+        var most: Review = .none;
+        for (s.wins.items) |win| {
+            if (@backingInt(win.review) > @backingInt(most)) most = win.review;
+        }
+        return most;
+    }
+
     /// Whether a Claude is working in any window, its mark spinning.
     pub fn working(app: *const App) bool {
         for (app.sessions.items) |s| for (s.wins.items) |win| if (win.claude == .working) return true;
@@ -622,7 +650,7 @@ pub const App = struct {
         var lines = std.mem.tokenizeScalar(u8, body, '\n');
         while (lines.next()) |line| {
             var it = std.mem.tokenizeScalar(u8, line, ' ');
-            var n: [15]u32 = undefined;
+            var n: [16]u32 = undefined;
             for (&n, 0..) |*field, i| {
                 const token = it.next() orelse break;
                 field.* = std.fmt.parseInt(u32, token[@intFromBool(i < 3)..], 10) catch break;
@@ -644,6 +672,7 @@ pub const App = struct {
                     win.cell_w = @intCast(n[12]);
                     win.cell_h = @intCast(n[13]);
                     win.claude = .none;
+                    win.review = .none;
                     // Read once: after that arena's own is the newer, and a list asked for
                     // before a change would put the old one back.
                     if (!win.listed) win.share = @intCast(@min(n[14], max_share));
@@ -658,6 +687,8 @@ pub const App = struct {
                 pane.x = @intCast(n[5]);
                 pane.y = @intCast(n[6]);
                 win.claude = @fromBackingInt(@intCast(@max(@backingInt(win.claude), @min(n[11], @backingInt(Mark.waiting)))));
+                const review = Review.of(n[15]);
+                if (@backingInt(review) > @backingInt(win.review)) win.review = review;
                 // tmux wraps a pane's history again at its new width; the copy here, fed in as
                 // rows, cannot, so it is taken afresh.
                 if (pane.term.cols != n[7] or pane.term.rows != n[8]) {
@@ -1673,3 +1704,30 @@ pub const App = struct {
         try app.send(.ignore, "{s}", .{cmd.written()});
     }
 };
+
+test "a review state is read from its number, and what is not one is none" {
+    try std.testing.expectEqual(Review.none, Review.of(0));
+    try std.testing.expectEqual(Review.landed, Review.of(1));
+    try std.testing.expectEqual(Review.reviewed, Review.of(2));
+    try std.testing.expectEqual(Review.queued, Review.of(3));
+    try std.testing.expectEqual(Review.changes, Review.of(4));
+    try std.testing.expectEqual(Review.none, Review.of(5));
+}
+
+test "a session shows the review state that most wants looking at" {
+    var a: Window = .{ .id = 1 };
+    var b: Window = .{ .id = 2 };
+    var c: Window = .{ .id = 3 };
+    var wins = [_]*Window{ &a, &b, &c };
+    var s: Session = .{ .id = 1 };
+    s.wins = .{ .items = &wins, .capacity = wins.len };
+    try std.testing.expectEqual(Review.none, App.sessionReview(&s));
+    a.review = .landed;
+    try std.testing.expectEqual(Review.landed, App.sessionReview(&s));
+    b.review = .reviewed;
+    try std.testing.expectEqual(Review.reviewed, App.sessionReview(&s));
+    c.review = .queued;
+    try std.testing.expectEqual(Review.queued, App.sessionReview(&s));
+    a.review = .changes;
+    try std.testing.expectEqual(Review.changes, App.sessionReview(&s));
+}
