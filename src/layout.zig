@@ -56,22 +56,19 @@ test "step always arrives" {
     try std.testing.expectEqual(@as(i32, -1), step(0, -1));
 }
 
-/// Which window's dot sits at cell `cx` of a focused column's bottom edge, if one does: the dots
-/// are centred, one cell each with a space between. Null too when the column cannot fit them.
-pub fn dotAt(col_w: u16, count: usize, cx: usize) ?usize {
-    const span = count * 2 + 1;
-    if (count < 2 or span + 4 > col_w) return null;
-    const start = (col_w - span) / 2;
-    if (cx <= start or cx >= start + span or (cx - start) % 2 == 0) return null;
+/// Which window's dot sits at cell `cx` of the row under a strip `view_w` wide, if one does: the
+/// dots are centred, one cell each with a space between. Null too when the row cannot fit them.
+pub fn dotAt(view_w: u16, count: usize, cx: usize) ?usize {
+    const start = dotsStart(view_w, count) orelse return null;
+    if (cx <= start or cx >= start + count * 2 + 1 or (cx - start) % 2 == 0) return null;
     return (cx - start) / 2;
 }
 
-/// Whether `cx` is in the run of cells the dots and their spacing take up.
-pub fn inDots(col_w: u16, count: usize, cx: usize) bool {
+/// The cell before the first dot, whose window's dot is at this plus 1, the next at plus 3.
+pub fn dotsStart(view_w: u16, count: usize) ?usize {
     const span = count * 2 + 1;
-    if (count < 2 or span + 4 > col_w) return false;
-    const start = (col_w - span) / 2;
-    return cx >= start and cx < start + span;
+    if (count < 2 or span + 4 > view_w) return null;
+    return (view_w - span) / 2;
 }
 
 test "dots are centred, one per window, with spaces between" {
@@ -80,7 +77,7 @@ test "dots are centred, one per window, with spaces between" {
     try std.testing.expectEqual(@as(?usize, 0), dotAt(21, 3, 8));
     try std.testing.expectEqual(@as(?usize, null), dotAt(21, 3, 9));
     try std.testing.expectEqual(@as(?usize, 2), dotAt(21, 3, 12));
-    try std.testing.expect(inDots(21, 3, 7) and inDots(21, 3, 13) and !inDots(21, 3, 14));
+
     try std.testing.expectEqual(@as(?usize, null), dotAt(21, 1, 10));
     try std.testing.expectEqual(@as(?usize, null), dotAt(8, 3, 4));
 }

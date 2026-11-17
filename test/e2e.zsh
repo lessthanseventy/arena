@@ -77,8 +77,16 @@ outer set -s set-clipboard on
 outer pipe-pane -t o "cat >$tmp/raw"
 
 check "the strip shows, the first column flush against the rail" see '^╭─ sessions ─+╮ ╭─ 1 one '
-foot() { local s=$(screen); [[ $(sed -n 3p <<<$s) == '│ alpha '* && $(sed -n 4p <<<$s) == '│ beta '* && $(sed -n 21p <<<$s) == ├─*┤* && $(sed -n 22p <<<$s) == '│ + new '* && $(sed -n 23p <<<$s) == '│ ≡ menu '* ]] }
+foot() { local s=$(screen); [[ $(sed -n 3p <<<$s) == '│ alpha '* && $(sed -n 4p <<<$s) == '│ beta '* && $(sed -n 20p <<<$s) == ├─*┤* && $(sed -n 21p <<<$s) == '│ + new '* && $(sed -n 22p <<<$s) == '│ ≡ menu '* ]] }
 check "the rail keeps + new and the menu at its foot" await foot
+dots() { local s=$(screen); [[ $(sed -n 23p <<<$s) == ╰* && $(sed -n 24p <<<$s) =~ "^ {55}$1 *\$" ]] }
+check "a row of its own under the strip has a dot per window, centred on it" await dots '● ○ ○'
+mouse 0 58 24 M
+mouse 0 58 24 m
+check "a click on a dot goes to its window" await dots '○ ● ○'
+mouse 0 56 24 M
+mouse 0 56 24 m
+await dots '● ○ ○'
 
 # A tmux with the pixels patch gives arena's terminal cells of 9x19 pixels, as a real one has.
 mkfifo $tmp/sizer
@@ -258,8 +266,8 @@ key M-K
 check "Alt+K moves it up" await rail alphabeta
 
 sessions() { [[ $(inner list-sessions | wc -l) -eq $1 ]] }
-mouse 0 5 22 M
-mouse 0 5 22 m
+mouse 0 5 21 M
+mouse 0 5 21 m
 check "a click on + new makes a session" await sessions 3
 see '│ [0-9]+ +1 │'
 mouse 1 5 5 M

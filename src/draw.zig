@@ -107,9 +107,7 @@ const Column = struct {
     /// The cell of the title that is the window's mark, drawn in amber.
     mark_at: ?usize = null,
 
-    /// The border cell at (`cx`, `y`) of the column: the frame, the title in its top edge, and
-    /// in the focused column's bottom edge a dot per window, the filled one being this one and
-    /// any other with something to say showing its mark.
+    /// The border cell at (`cx`, `y`) of the column: the frame and the title in its top edge.
     fn border(col: Column, pen: *Pen, w: *Writer, cx: usize, y: u16) !void {
         const app = col.app;
         const h = app.view_h;
@@ -120,18 +118,6 @@ const Column = struct {
             const marked = col.mark_at == cx - 2;
             try pen.set(w, if (col.focused or col.drop) chip(app) else if (marked) ink(app, "amber", 4) else ink(app, "dim", 8), null);
             return put(w, col.title[cx - 2]);
-        }
-
-        const count = col.session.wins.items.len;
-        if (bottom and col.focused and layout.inDots(col.w, count, cx)) {
-            const dot = layout.dotAt(col.w, count, cx) orelse {
-                try pen.set(w, .{}, null);
-                return put(w, ' ');
-            };
-            const here = dot == col.session.focus;
-            const mark = app.mark(col.session, col.session.wins.items[dot]);
-            try pen.set(w, if (here or mark != .none) ink(app, "amber", 4) else ink(app, "dim", 8), null);
-            return put(w, if (here) '●' else if (mark != .none) glyph(app, mark) else '○');
         }
 
         const style: vt.Style = if (app.theme) |t| rgbStyle(theme.gradient(
@@ -146,6 +132,21 @@ const Column = struct {
         try put(w, if (top) (if (left) '╭' else if (right) '╮' else '─') else if (bottom) (if (left) '╰' else if (right) '╯' else '─') else '│');
     }
 };
+
+/// Under the strip, centred on it, a dot per window of the session: the filled one is the window
+/// in view, and any other with something to say shows its mark.
+fn dots(app: *const App, w: *Writer, s: *const Session) !void {
+    const ox = app.term_w - app.view_w;
+    const start = layout.dotsStart(app.view_w, s.wins.items.len) orelse return;
+    var pen: Pen = .{};
+    for (s.wins.items, 0..) |win, i| {
+        const here = i == s.focus;
+        const mark = app.mark(s, win);
+        try w.print("\x1b[{d};{d}H", .{ app.view_h + 1, ox + start + 2 * i + 2 });
+        try pen.set(w, if (here or mark != .none) ink(app, "amber", 4) else ink(app, "dim", 8), null);
+        try put(w, if (here) '●' else if (mark != .none) glyph(app, mark) else '○');
+    }
+}
 
 const rail_title = " sessions ";
 
@@ -635,7 +636,10 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
             const way: i32 = if (app.yoff > 0) 1 else -1;
             _ = try strip(app, w, leaving, app.yoff - way * @as(i32, app.view_h), .all);
         };
-        if (app.cur()) |s| cursor = try strip(app, w, s, app.yoff, what);
+        if (app.cur()) |s| {
+            cursor = try strip(app, w, s, app.yoff, what);
+            try dots(app, w, s);
+        }
     }
     if (app.prompt) |*prompt| {
         cursor = try promptBox(app, w, prompt);

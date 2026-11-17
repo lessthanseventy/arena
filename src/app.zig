@@ -213,7 +213,8 @@ pub const App = struct {
     term_w: u16 = 80,
     /// The strip's width: the terminal's, less the session rail and its gap.
     view_w: u16 = 80,
-    view_h: u16 = 24,
+    /// The strip's height: the terminal's, less the row of dots under it.
+    view_h: u16 = 23,
     pending: std.ArrayList(Pending) = .empty,
     /// The open reply's guard, its time and number, which its end repeats.
     guard: std.ArrayList(u8) = .empty,
@@ -435,7 +436,7 @@ pub const App = struct {
     /// every strip is put in place again once tmux has been told.
     pub fn resized(app: *App, cols: u16, rows: u16, cell_w: u16, cell_h: u16) !void {
         app.term_w = cols;
-        app.view_h = rows;
+        app.view_h = @max(1, rows -| 1);
         app.fit();
         // A tmux without the pixels patch refuses the second, and keeps the first.
         try app.send(.ignore, "refresh-client -C {d}x{d}", .{ cols, rows });
@@ -1281,6 +1282,11 @@ pub const App = struct {
         }
         const s = app.cur() orelse return false;
         if (app.yoff != 0) return false;
+        if (m.y == app.view_h) {
+            const dot = layout.dotAt(app.view_w, s.wins.items.len, m.x - ox) orelse return false;
+            if (m.leftPress()) try app.focusTo(dot);
+            return m.leftPress();
+        }
         if (m.sideways()) {
             // A trackpad's swipe up or down drifts, and the sideways events among its own are not steps.
             const drift = app.now - app.vertical_at < nav_gap_ms;
@@ -1315,11 +1321,6 @@ pub const App = struct {
             try app.focusTo(index);
             app.drag = .focus;
             return true;
-        }
-        if (m.y == app.view_h - 1) {
-            const dot = layout.dotAt(col_w, s.wins.items.len, cx) orelse return false;
-            if (focused and m.leftPress()) try app.focusTo(dot);
-            return focused and m.leftPress();
         }
         if (cx == 0 or cx == col_w - 1 or m.y == 0) return false;
         const pane = win.paneAt(cx - 1, m.y - 1) orelse return false;
