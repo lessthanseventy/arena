@@ -246,7 +246,16 @@ mouse 67 60 10 M
 mouse 65 60 10 M
 zselect -t 30
 mouse 66 60 10 M
-check "a sideways wheel among a swipe down is not a step; one on its own is" await current one
+zselect -t 30
+check "a sideways wheel among a swipe down is not a step, nor is one on its own" current two
+repeat 3 mouse 66 60 10 M
+check "three sideways the same way are a step" await current one
+zselect -t 30
+repeat 8 mouse 67 60 10 M
+zselect -t 30
+check "a swipe steps once however far it goes" await current two
+key M-h
+await current one
 key M-l
 see '╭─ 2 two '
 

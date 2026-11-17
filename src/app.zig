@@ -15,6 +15,8 @@ pub const rail_new = "+ new";
 const history_lines = 5000;
 /// Wheel and swipe steps that move between windows or sessions are taken this far apart.
 const nav_gap_ms = 150;
+/// A sideways swipe steps once it has gone this many wheel events one way.
+const swipe_events = 3;
 
 /// Two clicks on a name this close together ask to rename it.
 const double_click_ms = 400;
@@ -267,6 +269,11 @@ pub const App = struct {
     nav_at: i64 = 0,
     /// When the wheel last went up or down.
     vertical_at: i64 = 0,
+    /// The swipe going sideways now: when its last event came, how far it has gone, signed, and
+    /// whether it has stepped.
+    sideways_at: i64 = 0,
+    sideways_run: i32 = 0,
+    swiped: bool = false,
 
     pub fn deinit(app: *App) void {
         for (app.sessions.items) |s| app.destroySession(s);
@@ -1208,6 +1215,26 @@ pub const App = struct {
         return true;
     }
 
+    /// A sideways swipe steps one window, once it has gone `swipe_events` one way with no up or
+    /// down among them, and no more however long its momentum runs.
+    fn swipe(app: *App, by: i32) !void {
+        if (app.now - app.sideways_at >= nav_gap_ms) {
+            app.sideways_run = 0;
+            app.swiped = false;
+        }
+        app.sideways_at = app.now;
+        // A trackpad's swipe up or down drifts, and the sideways events among its own are not steps.
+        if (app.now - app.vertical_at < nav_gap_ms) {
+            app.sideways_run = 0;
+            return;
+        }
+        if (app.sideways_run * by < 0) app.sideways_run = 0;
+        app.sideways_run += by;
+        if (app.swiped or @abs(app.sideways_run) < swipe_events) return;
+        app.swiped = true;
+        try app.focusBy(by);
+    }
+
     /// A right click nothing else took opens the menu; with the menu open, a click picks from it
     /// or, outside it, closes it.
     fn onMouse(app: *App, m: keys.Mouse) !void {
@@ -1288,9 +1315,7 @@ pub const App = struct {
             return m.leftPress();
         }
         if (m.sideways()) {
-            // A trackpad's swipe up or down drifts, and the sideways events among its own are not steps.
-            const drift = app.now - app.vertical_at < nav_gap_ms;
-            if (!drift and app.navStep()) try app.focusBy(if (m.code & 1 == 0) -1 else 1);
+            try app.swipe(if (m.code & 1 == 0) -1 else 1);
             return true;
         }
         if (m.leftPress()) if (app.lineAt(m.x, m.y)) |line| {
