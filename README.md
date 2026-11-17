@@ -18,8 +18,8 @@ always did; arena draws them and leaves them running when it quits.
 - **A rail of sessions** down the left, with each one's window count.
 - **Marks on windows running Claude Code**: `◐` turning while it works, `◔` between turns while
   work it started runs in the background, `◉` once it is done and until you look, `▲` while it
-  waits on an answer. Its hooks set the pane option `@arena_claude` to `working`, `background`,
-  `done` or `waiting`.
+  waits on an answer. arena's Claude Code plugin sets the pane option `@arena_claude` to
+  `working`, `background`, `done` or `waiting` ([Install](#install)).
 - **Panes**, drawn where tmux has them. Click one to select it, drag the line between two to resize.
 - **An overview** of every session's windows at once.
 - **Jump** to any window in any session by typing part of its name.
@@ -48,6 +48,10 @@ mise run build
 ```
 
 The binary is `zig-out/bin/arena`. Put it on your path however you like.
+
+The marks on windows running Claude Code come from its hooks, which the checkout is a plugin of:
+`claude --plugin-dir /path/to/arena`, or the path in `CLAUDE_CODE_PLUGIN_DIRS` (a `:` list) for
+every session.
 
 ## Use
 

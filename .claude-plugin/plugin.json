@@ -1,0 +1,6 @@
+{
+  "name": "arena",
+  "version": "0.1.0",
+  "author": { "name": "Andrew Moore" },
+  "description": "Marks arena's windows by what Claude Code is doing in them: sets the pane option @arena_claude"
+}

@@ -335,28 +335,28 @@ zselect -t 400
 key 'printf "\033[%dGX\bY\n" $(tput cols)' Enter
 check "a step back from the last column lands where tmux puts it" see ' Y│$'
 
-# what Claude Code's hooks do, in a pane of their session
-claude() { inner set -p -t $1 @arena_claude $2 }
+# arena's Claude Code hook, as Claude Code runs it in a pane of the session: event, then its JSON
+claude() { print -r -- ${3:-'{}'} | TMUX="$(inner display -p '#{socket_path}'),0,0" TMUX_PANE=$1 sh $root/hooks/claude-state.sh $2 }
 inner send-keys -t alpha:one 'echo news' Enter
 zselect -t 250
 check "output alone marks nothing in the rail" shows '│ alpha +3 │'
-claude alpha:one working
+claude alpha:one prompt
 check "a Claude working marks its session ◐" see '│ alpha +◐ +3 │'
-claude alpha:one background
+claude alpha:one stop '{"background_tasks": [{"id": "b1", "status": "running"}]}'
 check "between turns, with work in the background, ◔" see '│ alpha +◔ +3 │'
-claude alpha:one done
-check "done and not looked at, ◉" see '│ alpha +◉ +3 │'
+claude alpha:one stop '{"last_assistant_message": "\"status\": \"running\"", "background_tasks": []}'
+check "done and not looked at, ◉, whatever its last words say" see '│ alpha +◉ +3 │'
 claude alpha:three waiting
 check "waiting on an answer, ▲, over a done one" see '│ alpha +▲ +3 │'
-inner set -pu -t alpha:one @arena_claude
-inner set -pu -t alpha:three @arena_claude
-see '│ alpha +3 │'
-claude beta:solo working
+claude alpha:one end
+claude alpha:three end
+check "a session's end takes its mark off" see '│ alpha +3 │'
+claude beta:solo tool
 check "the session in view shows its own mark too" see '│ beta +◐ +1 │'
-claude beta:solo done
+claude beta:solo stop
 in_view_cleared() { [[ -z $(inner show -pqv -t beta:solo @arena_claude) ]] }
 check "a done Claude in view is taken as looked at" await in_view_cleared
-for w in $(inner list-windows -t alpha -F "#{window_index}"); claude alpha:$w done
+for w in $(inner list-windows -t alpha -F "#{window_index}"); claude alpha:$w stop
 see '│ alpha +◉ +3 │'
 key M-k
 looked() { [[ -z $(inner show -pqv -t "alpha:$(inner display -p -t alpha '#{window_index}')" @arena_claude) ]] }
@@ -364,7 +364,7 @@ await looked
 zselect -t 100
 own_replies() { ! screen | grep -qE '│[01] [01] [01] [01] [01] [01] ' }
 check "and going to one leaves every pane its own reply" own_replies
-for w in $(inner list-windows -t alpha -F "#{window_index}"); inner set -pu -t alpha:$w @arena_claude
+for w in $(inner list-windows -t alpha -F "#{window_index}"); claude alpha:$w end
 key M-j
 see '╭─ 1 solo '
 
