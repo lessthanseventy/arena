@@ -20,6 +20,9 @@ always did; arena draws them and leaves them running when it quits.
   work it started runs in the background, `◉` once it is done and until you look, `▲` while it
   waits on an answer. arena's Claude Code plugin sets the pane option `@arena_claude` to
   `working`, `background`, `done` or `waiting` ([Install](#install)).
+- **Its Claudes listed** under the sessions in the rail, each session's together: the session whose
+  Claude most wants looking at first, and in it the most pressing, with how long it has been so;
+  under one waiting, what it waits for. The hook writes that text with `jq`, when it is there.
 - **A mark for code review** beside it: `✗` when changes are asked for, `»` while queued to merge,
   `✓` once approved, `◆` once landed. Set the pane option `@arena_review` to `changes`, `queued`,
   `reviewed` or `landed`; a session shows the one that most wants looking at.

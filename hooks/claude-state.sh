@@ -7,8 +7,8 @@
 pane=${TMUX_PANE:-}
 [ -n "$pane" ] || exit 0
 opt() { tmux set -p -t "$pane" "$1" "$2" 2>/dev/null; }
-# A line of the hook's JSON, picked out by jq, at most 80 characters.
-text() { command -v jq >/dev/null && jq -r "$1"' | tostring | .[0:80]' 2>/dev/null; }
+# A line of the hook's JSON, picked out by jq, at most 80 characters. arena reads it between tabs.
+text() { command -v jq >/dev/null && jq -r "$1"' | tostring | gsub("\t"; " ") | .[0:80]' 2>/dev/null; }
 case ${1:-} in
 prompt)
 	mark=working
@@ -21,7 +21,7 @@ tool)
 	;;
 waiting)
 	mark=waiting
-	opt @arena_claude_doing "$(text '.message // ""')"
+	opt @arena_claude_doing "$(text '.message // "" | sub("^Claude needs your permission to use "; "allow ") | sub("^Claude "; "")')"
 	;;
 # Quotes inside the JSON's strings are escaped, so only a field of its own matches.
 stop)

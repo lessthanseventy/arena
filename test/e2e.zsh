@@ -266,7 +266,7 @@ check "a pane showing lines like tmux's own replies is drawn whole" see '│%beg
 key M-k
 see '╭─ 2 two '
 
-rail() { [[ $(screen | grep -oE '^│ (alpha|beta) ' | tr -d '│ \n') == $1 ]] }
+rail() { [[ $(screen | sed '/├─ agents/q' | grep -oE '^│ (alpha|beta) ' | tr -d '│ \n') == $1 ]] }
 order() { [[ $(inner list-sessions -F '#{@arena_order}#{session_name}' | sort | tr -d '\n') == $1 ]] }
 key M-J
 check "Alt+J moves the session down the rail" await rail betaalpha
@@ -370,7 +370,7 @@ check "still working, the time it began working stays" is_opt since $since
 claude alpha:one tool '{"tool_name": "TodoWrite", "tool_input": {"todos": []}}'
 check "a tool with nothing to name is its name" is_opt doing 'TodoWrite '
 claude alpha:one waiting '{"message": "Claude needs your permission to use Bash"}'
-check "waiting, what it waits for" is_opt doing 'Claude needs your permission to use Bash'
+check "waiting, what it waits for, in short" is_opt doing 'allow Bash'
 stamped() { [[ -n $(opt since) && $(opt since) -le $(date +%s) ]] }
 check "and when it began waiting" stamped
 claude alpha:one tool "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"$(printf 'x%.0s' {1..100})\"}}"
@@ -383,6 +383,26 @@ claude alpha:three end
 check "a session's end takes its mark off" see '│ alpha +3 │'
 unset_all() { [[ -z $(inner show -p -t alpha:one | grep arena_claude) ]] }
 check "and every option the hook set" unset_all
+line() { sed -n $1p <<<$(screen) }
+claude alpha:three waiting '{"message": "Claude needs your permission to use Bash"}'
+claude alpha:one prompt '{"prompt": "go"}'
+claude beta:solo tool '{"tool_name": "Read", "tool_input": {"file_path": "/a/b.zig"}}'
+listed() {
+  [[ $(line 6) == ├─' agents '─*┤* && $(line 7) == '│ alpha '* && $(line 8) =~ '^│ ▲ three +[0-9]+s │' &&
+    $(line 9) == '│   allow Bash│'* && $(line 10) =~ '^│ ◐ one +[0-9]+s │' &&
+    $(line 11) == '│ beta '* && $(line 12) =~ '^│ ◐ solo +[0-9]+s │' ]]
+}
+check "the rail lists each session's Claudes under a rule of their own, what one waits for under it" await listed
+claude alpha:three end
+claude beta:solo waiting '{"message": "Claude is waiting for your input"}'
+beta_first() {
+  [[ $(line 7) == '│ beta '* && $(line 8) =~ '^│ ▲ solo ' && $(line 9) == '│   is waitin…│'* &&
+    $(line 10) == '│ alpha '* && $(line 11) =~ '^│ ◐ one ' ]]
+}
+check "the session whose Claude most wants looking at comes first, and text past the rail is cut" await beta_first
+claude alpha:one end
+claude beta:solo end
+check "with no Claudes left the rule over them goes" gone '├─ agents'
 review() { inner set -p -t $1 @arena_review $2 }
 review alpha:one landed
 check "a landed branch marks its session ◆" see '│ alpha +◆ +3 │'

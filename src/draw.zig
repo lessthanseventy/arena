@@ -149,32 +149,101 @@ fn dots(app: *const App, w: *Writer, s: *const Session) !void {
 }
 
 const rail_title = " sessions ";
+const agents_title = " agents ";
+
+/// A row of the rail's agents: a session's name over its own, a window with a Claude, what one
+/// waiting waits for, or how many more there are than rows.
+const AgentLine = union(enum) {
+    session: usize,
+    agent: *const Window,
+    doing: *const Window,
+    more: usize,
+};
+
+/// The rail's agents in the rows they have, as `App.agents` orders them.
+fn agentLines(app: *const App, out: []AgentLine) usize {
+    var found: [64]App.Agent = undefined;
+    const count = app.agents(&found);
+    const room = @min(out.len, app.railAgentRows());
+    if (room == 0) return 0;
+    var n: usize = 0;
+    var last: ?usize = null;
+    for (found[0..count]) |a| {
+        if (n == room) break;
+        if (last != a.session) {
+            out[n] = .{ .session = a.session };
+            n += 1;
+            last = a.session;
+        }
+        if (n == room) break;
+        out[n] = .{ .agent = a.win };
+        n += 1;
+        if (n < room and a.win.claude == .waiting and a.win.doing.len > 0) {
+            out[n] = .{ .doing = a.win };
+            n += 1;
+        }
+    }
+    var shown: usize = 0;
+    for (out[0..n]) |line| shown += @intFromBool(line == .agent);
+    if (shown < count) {
+        if (out[n - 1] == .agent) shown -= 1;
+        out[n - 1] = .{ .more = count - shown };
+    }
+    return n;
+}
+
+/// How long ago `since` was, in its largest whole unit: 45s, 4m, 2h, 3d.
+fn ago(buf: []u8, epoch: i64, since: u32) []const u8 {
+    if (since == 0) return "";
+    const s = @max(0, epoch - since);
+    return (if (s < 60)
+        std.fmt.bufPrint(buf, "{d}s", .{s})
+    else if (s < 3600)
+        std.fmt.bufPrint(buf, "{d}m", .{@divFloor(s, 60)})
+    else if (s < 86400)
+        std.fmt.bufPrint(buf, "{d}h", .{@divFloor(s, 3600)})
+    else
+        std.fmt.bufPrint(buf, "{d}d", .{@min(99, @divFloor(s, 86400))})) catch "";
+}
 
 /// The session rail, a bordered panel down the left edge: a session a row with how many windows
-/// it has, the current one a chip, and the menu button on its last row.
+/// it has, the current one a chip, its Claudes under a rule of their own, and the menu button on
+/// its last row.
 fn rail(app: *const App, w: *Writer) !void {
     const width = app.railW();
     if (width == 0) return;
     const h = app.view_h;
     const inner = width - 2;
     const dim = ink(app, "dim", 8);
+    var lines: [64]AgentLine = undefined;
+    const agents = agentLines(app, &lines);
+    const agents_row = app.railAgentsRow();
     var pen: Pen = .{};
     var y: u16 = 0;
     while (y < h) : (y += 1) {
         try w.print("\x1b[{d};1H", .{y + 1});
         const top = y == 0;
         const bottom = y == h - 1;
-        const ruled = y == app.railRuleRow() and !top;
+        const over_agents = y == agents_row and agents > 0;
+        const ruled = (y == app.railRuleRow() or over_agents) and !top;
         var x: u16 = 0;
         while (x < width) : (x += 1) {
             if (!top and !bottom and !ruled and x == 1) {
-                try railRow(app, w, &pen, y, inner);
+                const at = y -| (agents_row + 1);
+                if (y > agents_row and at < agents) {
+                    try agentRow(app, w, &pen, lines[at], inner);
+                } else try railRow(app, w, &pen, y, inner);
                 x = width - 2;
                 continue;
             }
             if (top and x >= 2 and x - 2 < rail_title.len) {
                 try pen.set(w, dim, null);
                 try w.writeByte(rail_title[x - 2]);
+                continue;
+            }
+            if (over_agents and x >= 2 and x - 2 < agents_title.len) {
+                try pen.set(w, dim, null);
+                try w.writeByte(agents_title[x - 2]);
                 continue;
             }
             const edge: vt.Style = if (app.theme) |t|
@@ -233,6 +302,62 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16) !void {
         try w.print("{d:>2} ", .{@min(s.wins.items.len, 99)});
         filled = inner;
     } else try pen.set(w, .{}, null);
+    for (filled..inner) |_| try w.writeAll(" ");
+}
+
+/// The `inner` cells of a row of the rail's agents.
+fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: AgentLine, inner: u16) !void {
+    const dim = ink(app, "dim", 8);
+    var filled: usize = 0;
+    switch (line) {
+        .session => |si| {
+            const name = clip(app.sessions.items[si].name, inner - 2);
+            try pen.set(w, dim, null);
+            try w.writeAll(" ");
+            try w.writeAll(name);
+            filled = 1 + cellCount(name);
+        },
+        .agent => |win| {
+            var buf: [8]u8 = undefined;
+            const time = ago(&buf, app.epoch, win.since);
+            const review = win.review != .none;
+            const room = inner - 3 - 4 - @intFromBool(review);
+            const cut = cellCount(win.name) > room;
+            const name = clip(win.name, room - @intFromBool(cut));
+            try pen.set(w, if (win.claude == .none) dim else ink(app, "amber", 4), null);
+            try w.writeAll(" ");
+            try put(w, if (win.claude == .none) '○' else glyph(app, win.claude));
+            try pen.set(w, .{}, null);
+            try w.writeAll(" ");
+            try w.writeAll(name);
+            if (cut) try w.writeAll("…");
+            for (0..room - cellCount(name) - @intFromBool(cut)) |_| try w.writeAll(" ");
+            if (review) {
+                try pen.set(w, reviewInk(app, win.review), null);
+                try put(w, reviewGlyph(win.review));
+            }
+            try pen.set(w, dim, null);
+            for (time.len..3) |_| try w.writeAll(" ");
+            try w.writeAll(time);
+            try w.writeAll(" ");
+            filled = inner;
+        },
+        .doing => |win| {
+            const room = inner - 3;
+            const cut = cellCount(win.doing) > room;
+            const text = clip(win.doing, room - @intFromBool(cut));
+            try pen.set(w, dim, null);
+            try w.writeAll("   ");
+            try w.writeAll(text);
+            if (cut) try w.writeAll("…");
+            filled = 3 + cellCount(text) + @intFromBool(cut);
+        },
+        .more => |count| {
+            try pen.set(w, dim, null);
+            try w.print(" +{d} more", .{count});
+            filled = @min(inner, 7 + std.fmt.count("{d}", .{count}));
+        },
+    }
     for (filled..inner) |_| try w.writeAll(" ");
 }
 

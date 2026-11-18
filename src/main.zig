@@ -184,6 +184,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) 
     while (!app.quit) {
         const now = std.Io.Timestamp.now(io, .awake).toMilliseconds();
         app.now = now;
+        app.epoch = std.Io.Timestamp.now(io, .real).toSeconds();
         if (now - listed_at >= list_ms) {
             listed_at = now;
             app.want_list = true;

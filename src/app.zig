@@ -32,7 +32,8 @@ const review_state = "#{{?#{{==:#{{@arena_review}},landed}},1,#{{?#{{==:#{{@aren
 const pane_format = "#{{session_id}} #{{window_id}} #{{pane_id}} #{{window_width}} #{{window_height}} " ++
     "#{{pane_left}} #{{pane_top}} #{{pane_width}} #{{pane_height}} #{{pane_active}} #{{window_active}} " ++
     claude_state ++ " #{{window_cell_width}} #{{window_cell_height}} #{{?@arena_width,#{{@arena_width}},0}} " ++
-    review_state ++ " #{{window_name}}";
+    review_state ++ " #{{?@arena_claude_since,#{{@arena_claude_since}},0}} " ++
+    "#{{@arena_claude_doing}}\t#{{@arena_claude_prompt}}\t#{{window_name}}";
 
 /// The least and the most of the view a window's column is given, in hundredths, and how much
 /// one press of narrower or wider changes it.
@@ -163,6 +164,26 @@ pub const Window = struct {
     claude: Mark = .none,
     review: Review = .none,
     listed: bool = false,
+    /// When the state of the Claude it is marked by began, in seconds since the epoch, and what
+    /// that Claude is about, as its hook set them: 0 and empty where no hook has.
+    since: u32 = 0,
+    doing: []u8 = &.{},
+    prompt: []u8 = &.{},
+
+    /// Whether a Claude runs in it, one done and looked at included.
+    pub fn agent(win: *const Window) bool {
+        return win.since != 0 or win.claude != .none;
+    }
+
+    fn about(win: *Window, gpa: Allocator, since: u32, doing: []const u8, prompt: []const u8) !void {
+        gpa.free(win.doing);
+        gpa.free(win.prompt);
+        win.doing = &.{};
+        win.prompt = &.{};
+        win.since = since;
+        win.doing = try gpa.dupe(u8, doing);
+        win.prompt = try gpa.dupe(u8, prompt);
+    }
 
     pub fn activePane(win: *const Window) ?*Pane {
         return if (win.active < win.panes.items.len) win.panes.items[win.active] else null;
@@ -175,6 +196,8 @@ pub const Window = struct {
 
     fn destroy(win: *Window, gpa: Allocator) void {
         gpa.free(win.name);
+        gpa.free(win.doing);
+        gpa.free(win.prompt);
         win.panes.deinit(gpa);
         gpa.destroy(win);
     }
@@ -253,6 +276,8 @@ pub const App = struct {
     ended: bool = false,
     /// Milliseconds on a clock that only goes forward, set each turn of the loop.
     now: i64 = 0,
+    /// Seconds since the epoch, set each turn of the loop.
+    epoch: i64 = 0,
     /// What the held left button is moving: the line after a pane, to resize it, a window by
     /// its title, along the strip, or a session by its name, along the rail.
     drag: union(enum) {
@@ -422,6 +447,36 @@ pub const App = struct {
             if (@backingInt(win.review) > @backingInt(most)) most = win.review;
         }
         return most;
+    }
+
+    pub const Agent = struct { session: usize, win: *Window };
+
+    /// The windows with a Claude, as many as `out` holds, grouped by session: the session whose
+    /// Claude most wants looking at first, then in the rail's order. In a session, the most
+    /// pressing first, and of those alike the one longest in its state.
+    pub fn agents(app: *const App, out: []Agent) usize {
+        var n: usize = 0;
+        for (app.sessions.items, 0..) |s, si| for (s.wins.items) |win| {
+            if (!win.agent() or n == out.len) continue;
+            out[n] = .{ .session = si, .win = win };
+            n += 1;
+        };
+        std.sort.insertion(Agent, out[0..n], app, agentBefore);
+        return n;
+    }
+
+    fn agentBefore(app: *const App, a: Agent, b: Agent) bool {
+        if (a.session != b.session) {
+            const ma = @backingInt(sessionMark(app.sessions.items[a.session]));
+            const mb = @backingInt(sessionMark(app.sessions.items[b.session]));
+            return ma > mb or (ma == mb and a.session < b.session);
+        }
+        const ma = @backingInt(a.win.claude);
+        const mb = @backingInt(b.win.claude);
+        // a state of unknown start sorts as the newest
+        const sa = if (a.win.since == 0) std.math.maxInt(u32) else a.win.since;
+        const sb = if (b.win.since == 0) std.math.maxInt(u32) else b.win.since;
+        return ma > mb or (ma == mb and sa < sb);
     }
 
     /// Whether a Claude is working in any window, its mark spinning.
@@ -650,11 +705,15 @@ pub const App = struct {
         var lines = std.mem.tokenizeScalar(u8, body, '\n');
         while (lines.next()) |line| {
             var it = std.mem.tokenizeScalar(u8, line, ' ');
-            var n: [16]u32 = undefined;
+            var n: [17]u32 = undefined;
             for (&n, 0..) |*field, i| {
                 const token = it.next() orelse break;
                 field.* = std.fmt.parseInt(u32, token[@intFromBool(i < 3)..], 10) catch break;
             } else {
+                var text = std.mem.splitScalar(u8, it.rest(), '\t');
+                const doing = text.next().?;
+                const prompt = text.next() orelse "";
+                const name = text.rest();
                 const s = app.sessionById(n[0]) orelse continue;
                 const last = s.wins.getLastOrNull();
                 const win = if (last != null and last.?.id == n[1]) last.? else blk: {
@@ -666,13 +725,14 @@ pub const App = struct {
                         break :made made;
                     };
                     app.gpa.free(win.name);
-                    win.name = try app.gpa.dupe(u8, it.rest());
+                    win.name = try app.gpa.dupe(u8, name);
                     win.w = @intCast(n[3]);
                     win.h = @intCast(n[4]);
                     win.cell_w = @intCast(n[12]);
                     win.cell_h = @intCast(n[13]);
                     win.claude = .none;
                     win.review = .none;
+                    try win.about(app.gpa, 0, "", "");
                     // Read once: after that arena's own is the newer, and a list asked for
                     // before a change would put the old one back.
                     if (!win.listed) win.share = @intCast(@min(n[14], max_share));
@@ -686,7 +746,11 @@ pub const App = struct {
                 } else try Pane.create(app, n[2], @intCast(n[7]), @intCast(n[8]));
                 pane.x = @intCast(n[5]);
                 pane.y = @intCast(n[6]);
-                win.claude = @fromBackingInt(@intCast(@max(@backingInt(win.claude), @min(n[11], @backingInt(Mark.waiting)))));
+                const claude: Mark = @fromBackingInt(@intCast(@min(n[11], @backingInt(Mark.waiting))));
+                const agent = n[16] != 0 or claude != .none;
+                if (agent and (!win.agent() or @backingInt(claude) > @backingInt(win.claude)))
+                    try win.about(app.gpa, n[16], doing, prompt);
+                if (@backingInt(claude) > @backingInt(win.claude)) win.claude = claude;
                 const review = Review.of(n[15]);
                 if (@backingInt(review) > @backingInt(win.review)) win.review = review;
                 // tmux wraps a pane's history again at its new width; the copy here, fed in as
@@ -1124,6 +1188,16 @@ pub const App = struct {
     pub fn railShown(app: *const App) usize {
         const room = app.railRuleRow() -| 1;
         return @min(app.sessions.items.len, room -| 2);
+    }
+
+    /// The rule over the rail's agents, a row free under the last session, and the rows they can
+    /// have under it, with one free over the rule at its foot.
+    pub fn railAgentsRow(app: *const App) u16 {
+        return @intCast(2 + app.railShown() + 1);
+    }
+
+    pub fn railAgentRows(app: *const App) u16 {
+        return app.railRuleRow() -| 1 -| (app.railAgentsRow() + 1);
     }
 
     /// Which session is on row `y` of the rail.
