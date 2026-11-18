@@ -357,9 +357,32 @@ claude alpha:one stop '{"last_assistant_message": "\"status\": \"running\"", "ba
 check "done and not looked at, ◉, whatever its last words say" see '│ alpha +◉ +3 │'
 claude alpha:three waiting
 check "waiting on an answer, ▲, over a done one" see '│ alpha +▲ +3 │'
+opt() { inner show -pqv -t alpha:one @arena_claude_$1 }
+is_opt() { [[ $(opt $1) == $2 ]] }
+claude alpha:one prompt $'{"prompt": "\\n  \\nfix the \\"rail\\"\\nand the rest"}'
+check "the prompt's first line with words in it is kept" is_opt prompt 'fix the "rail"'
+claude alpha:one tool '{"tool_name": "Bash", "tool_input": {"command": "mise run check\nand more"}}'
+check "a command is the tool's first line" is_opt doing 'Bash mise run check'
+since=$(opt since)
+claude alpha:one tool '{"tool_name": "Edit", "tool_input": {"file_path": "/src/app.zig", "old_string": "a"}}'
+check "a file is the tool's name of it" is_opt doing 'Edit app.zig'
+check "still working, the time it began working stays" is_opt since $since
+claude alpha:one tool '{"tool_name": "TodoWrite", "tool_input": {"todos": []}}'
+check "a tool with nothing to name is its name" is_opt doing 'TodoWrite '
+claude alpha:one waiting '{"message": "Claude needs your permission to use Bash"}'
+check "waiting, what it waits for" is_opt doing 'Claude needs your permission to use Bash'
+stamped() { [[ -n $(opt since) && $(opt since) -le $(date +%s) ]] }
+check "and when it began waiting" stamped
+claude alpha:one tool "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"$(printf 'x%.0s' {1..100})\"}}"
+check "the text is at most 80 characters" is_opt doing "Bash $(printf 'x%.0s' {1..75})"
+claude alpha:one stop
+check "a stop leaves the prompt" is_opt prompt 'fix the "rail"'
+check "and nothing doing" is_opt doing ''
 claude alpha:one end
 claude alpha:three end
 check "a session's end takes its mark off" see '│ alpha +3 │'
+unset_all() { [[ -z $(inner show -p -t alpha:one | grep arena_claude) ]] }
+check "and every option the hook set" unset_all
 review() { inner set -p -t $1 @arena_review $2 }
 review alpha:one landed
 check "a landed branch marks its session ◆" see '│ alpha +◆ +3 │'
