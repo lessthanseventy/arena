@@ -22,7 +22,12 @@ always did; arena draws them and leaves them running when it quits.
   `working`, `background`, `done` or `waiting` ([Install](#install)).
 - **Its Claudes listed** under the sessions in the rail, each session's together: the session whose
   Claude most wants looking at first, and in it the most pressing, with how long it has been so;
-  under one waiting, what it waits for. The hook writes that text with `jq`, when it is there.
+  under one waiting, what it waits for. Each is called by what its conversation is about: the name
+  you gave it with `/rename`, else a topic Haiku is asked for every fifth prompt (one small
+  `claude -p` call, in the background), else the title Claude Code gave it at its start. The hook
+  needs `jq` for all of that text.
+- **A box of every Claude**, wider, with what each is doing or was asked; ordered by urgency or
+  by when each last changed.
 - **A mark for code review** beside it: `✗` when changes are asked for, `»` while queued to merge,
   `✓` once approved, `◆` once landed. Set the pane option `@arena_review` to `changes`, `queued`,
   `reviewed` or `landed`; a session shows the one that most wants looking at.
@@ -82,6 +87,8 @@ Everything is on Alt, so it stays out of the way of your shell and your window m
 | `Alt+z` | give the session's columns the whole width, and back |
 | `Alt+p` | jump to a window by name |
 | `Alt+o` | the overview |
+| `Alt+a` | the box of every Claude: `j` `k` move, `Enter` goes, `s` changes the order |
+| `Alt+n` | the Claude that most wants looking at, waiting or done |
 | `Alt+/` | search the pane's history |
 | `Alt+m` | the menu |
 | `Alt+q` | leave; the sessions keep running |
@@ -89,6 +96,8 @@ Everything is on Alt, so it stays out of the way of your shell and your window m
 With the mouse:
 
 - Click a column, a dot under the focused column, or a session in the rail to go there.
+- Click a Claude in the rail to go to its window. Rest the pointer on them, or click their rule,
+  for the box of every Claude; it closes when the pointer leaves it.
 - In the overview, drag a window's picture onto another to take its place, in its own session or
   any other, or onto the rest of a session's row to put it at that session's end.
 - Click a pane to select it; drag the line between panes to resize them: over it, the pointer

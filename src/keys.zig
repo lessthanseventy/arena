@@ -59,7 +59,7 @@ pub const Part = struct {
 };
 
 /// The keys arena takes with Alt; `\r` is Enter.
-pub const chords = "hjklHLJKxmqzpo/;'123456789\r";
+pub const chords = "hjklHLJKxmqzpoan/;'123456789\r";
 
 /// Splits input at the first thing arena reads itself: an Alt chord (ESC then one of `chords`),
 /// an SGR mouse report, or the terminal's reply to a query.

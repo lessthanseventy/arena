@@ -236,7 +236,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) 
             @max(1, spin_frame_ms - (now - last_spin))
         else
             idle_ms;
-        _ = try posix.poll(&fds, @intCast(@min(wait_ms, idle_ms)));
+        _ = try posix.poll(&fds, @intCast(@min(wait_ms, idle_ms, @max(1, app.dwell()))));
 
         if (fds[0].revents & posix.POLL.IN != 0) {
             const n = try posix.read(posix.STDIN_FILENO, &buf);
