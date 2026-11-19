@@ -19,6 +19,8 @@ chmod +x $tmp/bin/wl-paste
 # stands in for the Claude the hook asks for a topic: it names the requests it was handed
 print -r -- $'#!/bin/sh\necho "$TMUX_PANE" >'$tmp$'/asked-pane\ncat >'$tmp$'/asked\necho \'"Topic From* Haiku"\'' >$tmp/bin/claude
 chmod +x $tmp/bin/claude
+print -r -- $'#!/bin/sh\nprintf "%s|" "$@" >>'$tmp$'/notified\necho >>'$tmp$'/notified' >$tmp/bin/notify-send
+chmod +x $tmp/bin/notify-send
 export PATH=$tmp/bin:$PATH
 
 inner() { tmux -L $in -f /dev/null "$@" }
@@ -447,9 +449,11 @@ check "the context its last answer was given" is_opt tokens 253190
 check "and the branch it works on" is_opt branch "$(git -C $root branch --show-current)"
 check "the rail has its last words under it" see '│   Done. It loads '
 check "and what runs in the background at the foot" see '│   ◔ 1 agent, 1 shell: Explore t… │'
+check "with a shell and nothing heard from its agent, its mark is still" see '│ ◔ Named By Hand '
 claude alpha:one tool '{"agent_id": "a1", "agent_type": "Explore", "tool_name": "Grep", "tool_input": {"pattern": "rail"}}'
 check "a subagent's tool leaves the session as it was" [ "$(opt doing)" = '' -a "$(inner show -pqv -t alpha:one @arena_claude)" = background ]
 check "and what runs as it was" is_opt background '1 agent, 1 shell: Explore the rail · sleep 9'
+check "but with its agent at work it is drawn working" see '│ ◐ Named By Hand '
 claude alpha:one prompt '{"prompt": "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>"}'
 check "a shell's notice that it finished takes it off" is_opt background '1 agent: Explore the rail'
 check "and is not taken for a prompt" is_opt prompt 'p'
@@ -485,11 +489,23 @@ said end
 check "the end takes the title and its count off too" await [ -z "$(inner show -p -t alpha:one | grep arena_claude)" ]
 
 at() { [[ $(inner list-clients -F '#{session_name}:#{window_name}') == $1 ]] }
-claude alpha:three waiting '{"message": "Claude needs your permission to use Bash"}'
 claude beta:solo prompt
 mouse 0 5 4 M
 mouse 0 5 4 m
 await at beta:solo
+see '│ ◐ solo '
+claude alpha:three waiting '{"message": "Claude needs your permission to use Bash"}'
+see '│ ▲ three '
+notified() { [[ $(tail -1 $tmp/notified 2>/dev/null) == $1 ]] }
+check "a Claude out of view come to wait is a desktop notification" await notified '-a|arena|--|three|allow Bash|'
+told=$(wc -l <$tmp/notified)
+claude beta:solo stop '{"last_assistant_message": "All done"}'
+see '│ ◉ solo '
+check "and the one in view is not" [ $(wc -l <$tmp/notified) -eq $told ]
+claude alpha:three stop '{"last_assistant_message": "$(touch '$tmp'/ran) \"q\" `x` #{pane_id}"}'
+check "one done too, its words as they are, run by no shell" await notified '-a|arena|--|three|$(touch '$tmp'/ran) "q" x #{pane_id}|'
+check "nor by tmux" [ ! -e $tmp/ran ]
+claude alpha:three waiting '{"message": "Claude needs your permission to use Bash"}'
 see '│ ▲ three '
 key M-n
 check "Alt+n goes to the Claude that most wants looking at" await at alpha:three

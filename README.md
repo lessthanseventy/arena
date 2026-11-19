@@ -18,9 +18,10 @@ always did; arena draws them and leaves them running when it quits.
 - **A rail of sessions** down the left, with each one's window count. `Alt+w` or a click on its
   top narrows it to two letters a session and a mark and time a Claude; resting the pointer on
   the narrow rail draws it wide over the strip until the pointer leaves.
-- **Marks on windows running Claude Code**: `◐` turning while it works, `◔` between turns while
-  work it started runs in the background, `◉` once it is done and until you look, `▲` while it
-  waits on an answer. arena's Claude Code plugin sets the pane option `@arena_claude` to
+- **Marks on windows running Claude Code**: `◐` turning while it works, or while a subagent it
+  started works, `◔` between turns while only a shell it started runs, `◉` once it is done and
+  until you look, `▲` while it waits on an answer. One out of view that comes to wait or is done
+  is a desktop notification too, through `notify-send` where there is one. arena's Claude Code plugin sets the pane option `@arena_claude` to
   `working`, `background`, `done` or `waiting` ([Install](#install)).
 - **Its Claudes listed** under the sessions in the rail, each session's together: the session whose
   Claude most wants looking at first, and in it the most pressing, or, a click on their rule

@@ -18,6 +18,7 @@ const rail_narrow = 8;
 /// How long the pointer rests on the narrow rail before it is drawn wide over the strip.
 const dwell_ms = 300;
 const quiet_s = 600;
+const stir_s = 60;
 /// Wheel and swipe steps that move between windows or sessions are taken this far apart.
 const nav_gap_ms = 150;
 /// A sideways swipe steps once it has gone this many wheel events one way.
@@ -40,6 +41,7 @@ const pane_format = "#{{session_id}} #{{window_id}} #{{pane_id}} #{{window_width
     review_state ++ " #{{?@arena_claude_since,#{{@arena_claude_since}},0}} " ++
     "#{{?@arena_claude_tokens,#{{@arena_claude_tokens}},0}} #{{?@arena_claude_at,#{{@arena_claude_at}},0}} " ++
     "#{{?@arena_claude_took,#{{@arena_claude_took}},0}} #{{?@arena_claude_ctx,#{{@arena_claude_ctx}},0}} " ++
+    "#{{?@arena_claude_stirred,#{{@arena_claude_stirred}},0}} " ++
     "#{{@arena_claude_doing}}\t#{{@arena_claude_prompt}}\t#{{@arena_claude_title}}\t#{{@arena_claude_said}}\t" ++
     "#{{@arena_claude_branch}}\t#{{@arena_claude_background}}\t#{{window_name}}";
 
@@ -168,8 +170,11 @@ pub const Window = struct {
     /// The hundredths of the view its column is given, kept in tmux as @arena_width; 0 until
     /// it is made narrower or wider, when the column has the width every such one has.
     share: u8 = 0,
-    /// The most pressing state of the Claudes in its panes.
+    /// The most pressing state of the Claudes in its panes, the one it had at the list before,
+    /// null for a window new to arena, and the pane of the Claude it is marked by.
     claude: Mark = .none,
+    was: ?Mark = null,
+    agent_pane: u32 = 0,
     review: Review = .none,
     listed: bool = false,
     /// About the Claude it is marked by, as its hook set it, 0 and empty where no hook has: when
@@ -917,7 +922,7 @@ pub const App = struct {
         var lines = std.mem.tokenizeScalar(u8, body, '\n');
         while (lines.next()) |line| {
             var it = std.mem.tokenizeScalar(u8, line, ' ');
-            var n: [21]u32 = undefined;
+            var n: [22]u32 = undefined;
             for (&n, 0..) |*field, i| {
                 const token = it.next() orelse break;
                 field.* = std.fmt.parseInt(u32, token[@intFromBool(i < 3)..], 10) catch break;
@@ -934,7 +939,10 @@ pub const App = struct {
                 const last = s.wins.getLastOrNull();
                 const win = if (last != null and last.?.id == n[1]) last.? else blk: {
                     const win = for (old_wins.items, 0..) |known, i| {
-                        if (known.id == n[1]) break old_wins.swapRemove(i);
+                        if (known.id == n[1]) {
+                            known.was = known.claude;
+                            break old_wins.swapRemove(i);
+                        }
                     } else made: {
                         const made = try app.gpa.create(Window);
                         made.* = .{ .id = n[1] };
@@ -962,10 +970,14 @@ pub const App = struct {
                 } else try Pane.create(app, n[2], @intCast(n[7]), @intCast(n[8]));
                 pane.x = @intCast(n[5]);
                 pane.y = @intCast(n[6]);
-                const claude: Mark = @fromBackingInt(@intCast(@min(n[11], @backingInt(Mark.waiting))));
+                const said: Mark = @fromBackingInt(@intCast(@min(n[11], @backingInt(Mark.waiting))));
+                // between turns with a subagent of its at work is working: only a shell left running is not
+                const claude: Mark = if (said == .background and n[21] != 0 and app.epoch - n[21] < stir_s) .working else said;
                 const agent = n[16] != 0 or claude != .none;
-                if (agent and (!win.agent() or @backingInt(claude) > @backingInt(win.claude)))
+                if (agent and (!win.agent() or @backingInt(claude) > @backingInt(win.claude))) {
                     try win.know(app.gpa, n[16], n[17], n[18], n[19], n[20], info);
+                    win.agent_pane = n[2];
+                }
                 if (@backingInt(claude) > @backingInt(win.claude)) win.claude = claude;
                 const review = Review.of(n[15]);
                 if (@backingInt(review) > @backingInt(win.review)) win.review = review;
@@ -991,11 +1003,28 @@ pub const App = struct {
             if (!s.placed) s.scroll = app.target(s);
             s.placed = true;
         }
+        try app.notify();
         app.follow_active = false;
         try app.see();
         try app.settle();
         if (app.cur()) |s| app.listed = app.listed or s.wins.items.len > 0;
         app.dirty = true;
+    }
+
+    /// A desktop notification for each Claude come to wait on an answer or done since the list
+    /// before, other than the one in view: notify-send, where there is one, run by tmux, which
+    /// quotes the hook's text for the shell itself.
+    fn notify(app: *App) !void {
+        for (app.sessions.items) |s| for (s.wins.items) |win| {
+            const was = win.was orelse continue;
+            if (win.claude == was or (win.claude != .waiting and win.claude != .done)) continue;
+            if (s.id == app.current and s.focused() == win) continue;
+            try app.send(.ignore, "run-shell -b -t %{d} \"command -v notify-send >/dev/null && notify-send -a arena -- " ++
+                "#{{?@arena_claude_title,#{{q:@arena_claude_title}},#{{q:window_name}}}} {s}\"", .{
+                win.agent_pane,
+                if (win.claude == .waiting) "#{q:@arena_claude_doing}" else "#{q:@arena_claude_said}",
+            });
+        };
     }
 
     /// Asks tmux to size the current session's windows to their columns, and for the screen of
