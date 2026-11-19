@@ -147,6 +147,13 @@ check "a picture a program wraps for tmux is passed on to the terminal" await wr
 check "and its cells keep their colour in a window out of focus" await wrote_bytes $'\e[0;38;2;1;2;3m\U0010EEEE̅̅'
 inner send-keys -t alpha:two clear Enter
 gone $'\U0010EEEE'
+big=${(l:100000::B:)}
+print -rn -- $'\ePtmux;\e\e_Ga=T,f=100,i=66052,q=2;'$big$'\e\e\\\e\\' >$tmp/big
+inner send-keys -t alpha:two "cat $tmp/big" Enter
+check "one sent whole, past 64 KiB, too" await wrote_bytes $'\e_Ga=T,f=100,i=66052,q=2;'$big$'\e\\'
+unleaked() { ! screen | grep -qF BBBBBBBB }
+check "and none of it is text" unleaked
+inner send-keys -t alpha:two clear Enter
 kept() { ! grep -qaF -- $'\e[2J' $tmp/raw }
 check "and no frame erases the whole display, which would take the pictures with it" kept
 print -rn -- $'\ePtmux;\e\e_Gi=4207,a=q;AAAA\e\e\\\e\\' >$tmp/query
