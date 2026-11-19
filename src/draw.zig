@@ -148,7 +148,7 @@ fn dots(app: *const App, w: *Writer, s: *const Session) !void {
         const mark = app.mark(s, win);
         try w.print("\x1b[{d};{d}H", .{ app.view_h + 1, ox + start + 2 * i + 2 });
         try pen.set(w, if (here or mark != .none) ink(app, "amber", 4) else ink(app, "dim", 8), null);
-        try put(w, if (here) '●' else if (mark != .none) glyph(app, mark) else '○');
+        try put(w, if (here) '●' else if (mark != .none) glyph(app, mark) else if (win.alert != .none) alertGlyph(win.alert) else '○');
     }
 }
 
@@ -169,7 +169,7 @@ fn tabs(app: *const App, w: *Writer, pen: *Pen, s: *const Session) !bool {
         try w.writeAll(clip(win.name, app_mod.tab_name));
         try w.writeAll(" ");
         try pen.set(w, if (here) chip(app) else ink(app, "amber", 4), null);
-        try put(w, if (mark != .none) glyph(app, mark) else ' ');
+        try put(w, if (mark != .none) glyph(app, mark) else alertGlyph(win.alert));
         x += width + 2;
     }
     return true;
@@ -307,25 +307,27 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
             try w.writeAll(name);
             for (0..inner - 3 - cellCount(name)) |_| try w.writeAll(" ");
             try pen.set(w, if (here) chip(app) else ink(app, "amber", 4), null);
-            try put(w, glyph(app, App.sessionMark(s)));
+            try put(w, sessionGlyph(app, s));
             try w.writeAll(" ");
             filled = inner;
         } else {
             const review = App.sessionReview(s);
-            const room = inner - 6 - @intFromBool(review != .none);
+            const many = App.sessionMark(s) != .none and App.sessionCount(s) > 1;
+            const room = inner - 6 - @intFromBool(review != .none) - @intFromBool(many);
             const cut = cellCount(s.name) > room;
             const name = clip(s.name, room - @intFromBool(cut));
             try pen.set(w, if (here) chip(app) else .{}, null);
             try w.writeAll(" ");
             try w.writeAll(name);
             if (cut) try w.writeAll("…");
-            for (0..inner - 5 - @intFromBool(review != .none) - cellCount(name) - @intFromBool(cut)) |_| try w.writeAll(" ");
+            for (0..inner - 5 - @intFromBool(review != .none) - @intFromBool(many) - cellCount(name) - @intFromBool(cut)) |_| try w.writeAll(" ");
             if (review != .none) {
                 try pen.set(w, if (here) chip(app) else reviewInk(app, review), null);
                 try put(w, reviewGlyph(review));
             }
             try pen.set(w, if (here) chip(app) else ink(app, "amber", 4), null);
-            try put(w, glyph(app, App.sessionMark(s)));
+            try put(w, sessionGlyph(app, s));
+            if (many) try w.print("{d}", .{@min(App.sessionCount(s), 9)});
             try pen.set(w, if (here) chip(app) else dim, null);
             try w.print("{d:>2} ", .{@min(s.wins.items.len, 99)});
             filled = inner;
@@ -474,6 +476,21 @@ fn glyph(app: *const App, mark: app_mod.Mark) u21 {
         .working => if (app.motion) spinner[@intCast(@mod(@divFloor(app.now, spinner_step_ms), spinner.len))] else spinner[0],
         .done => '◉',
         .waiting => '▲',
+    };
+}
+
+/// A session's mark: its Claudes' most pressing, else what tmux saw in its windows.
+fn sessionGlyph(app: *const App, s: *const app_mod.Session) u21 {
+    const mark = App.sessionMark(s);
+    return if (mark != .none) glyph(app, mark) else alertGlyph(App.sessionAlert(s));
+}
+
+/// tmux's own marks for them in a window list.
+fn alertGlyph(alert: app_mod.Alert) u21 {
+    return switch (alert) {
+        .none => ' ',
+        .activity => '#',
+        .bell => '!',
     };
 }
 
@@ -873,7 +890,7 @@ fn overview(app: *App, w: *Writer, spot: App.Spot) !void {
         try w.print(" {s} ", .{clip(s.name, 24)});
         try pen.set(w, ink(app, "amber", 4), null);
         try w.writeAll(" ");
-        try put(w, glyph(app, App.sessionMark(s)));
+        try put(w, sessionGlyph(app, s));
         for (s.wins.items, 0..) |win, wi| {
             const at = app.thumbAt(.{ .session = si, .win = wi }) orelse continue;
             const picked = if (drop) |to| to.session == si and to.win == wi else si == spot.session and wi == spot.win;

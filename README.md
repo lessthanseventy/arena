@@ -20,7 +20,9 @@ always did; arena draws them and leaves them running when it quits.
   the narrow rail draws it wide over the strip until the pointer leaves.
 - **Marks on windows running Claude Code**: `◐` turning while it works, or while a subagent it
   started works, `◔` between turns while only a shell it started runs, `◉` once it is done and
-  until you look, `▲` while it waits on an answer. One out of view that comes to wait or is done
+  until you look, `▲` while it waits on an answer; a session's mark has a count when several of
+  its Claudes share it, `▲2`, and with no Claude to mark it has tmux's own `!` for a window that
+  rang its bell or `#` for one with output where `monitor-activity` is on. One out of view that comes to wait or is done
   is a desktop notification too, through `notify-send` where there is one. arena's Claude Code plugin sets the pane option `@arena_claude` to
   `working`, `background`, `done` or `waiting` ([Install](#install)).
 - **Its Claudes listed** under the sessions in the rail, each session's together: the session whose

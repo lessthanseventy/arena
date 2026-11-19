@@ -43,7 +43,7 @@ const pane_format = "#{{session_id}} #{{window_id}} #{{pane_id}} #{{window_width
     review_state ++ " #{{?@arena_claude_since,#{{@arena_claude_since}},0}} " ++
     "#{{?@arena_claude_tokens,#{{@arena_claude_tokens}},0}} #{{?@arena_claude_at,#{{@arena_claude_at}},0}} " ++
     "#{{?@arena_claude_took,#{{@arena_claude_took}},0}} #{{?@arena_claude_ctx,#{{@arena_claude_ctx}},0}} " ++
-    "#{{?@arena_claude_stirred,#{{@arena_claude_stirred}},0}} " ++
+    "#{{?@arena_claude_stirred,#{{@arena_claude_stirred}},0}} #{{?window_bell_flag,2,#{{?window_activity_flag,1,0}}}} " ++
     "#{{@arena_claude_doing}}\t#{{@arena_claude_prompt}}\t#{{@arena_claude_title}}\t#{{@arena_claude_said}}\t" ++
     "#{{@arena_claude_branch}}\t#{{@arena_claude_background}}\t#{{window_name}}";
 
@@ -57,6 +57,8 @@ const share_step = 10;
 /// running in the background, working, done and not yet looked at, or waiting on an answer. In
 /// rising order of how much it wants looking at.
 pub const Mark = enum { none, background, working, done, waiting };
+/// What tmux saw in a window out of view: output, where `monitor-activity` is on, or a bell.
+pub const Alert = enum { none, activity, bell };
 /// Where the branch a window's panes are on stands in code review: landed, approved, in the
 /// merge queue, or with changes requested. In rising order of how much it wants looking at.
 pub const Review = enum {
@@ -178,6 +180,7 @@ pub const Window = struct {
     was: ?Mark = null,
     agent_pane: u32 = 0,
     review: Review = .none,
+    alert: Alert = .none,
     listed: bool = false,
     /// About the Claude it is marked by, as its hook set it, 0 and empty where no hook has: when
     /// its state began and when it or a subagent of its last did anything, in seconds since the
@@ -495,6 +498,23 @@ pub const App = struct {
         var most: Mark = .none;
         for (s.wins.items) |win| {
             if (@backingInt(win.claude) > @backingInt(most)) most = win.claude;
+        }
+        return most;
+    }
+
+    /// How many of a session's windows have its most pressing mark.
+    pub fn sessionCount(s: *const Session) usize {
+        const most = sessionMark(s);
+        var count: usize = 0;
+        for (s.wins.items) |win| count += @intFromBool(win.claude == most);
+        return count;
+    }
+
+    /// The most pressing alert among a session's windows.
+    pub fn sessionAlert(s: *const Session) Alert {
+        var most: Alert = .none;
+        for (s.wins.items) |win| {
+            if (@backingInt(win.alert) > @backingInt(most)) most = win.alert;
         }
         return most;
     }
@@ -935,7 +955,7 @@ pub const App = struct {
         var lines = std.mem.tokenizeScalar(u8, body, '\n');
         while (lines.next()) |line| {
             var it = std.mem.tokenizeScalar(u8, line, ' ');
-            var n: [22]u32 = undefined;
+            var n: [23]u32 = undefined;
             for (&n, 0..) |*field, i| {
                 const token = it.next() orelse break;
                 field.* = std.fmt.parseInt(u32, token[@intFromBool(i < 3)..], 10) catch break;
@@ -969,6 +989,7 @@ pub const App = struct {
                     win.cell_h = @intCast(n[13]);
                     win.claude = .none;
                     win.review = .none;
+                    win.alert = @fromBackingInt(@intCast(@min(n[22], @backingInt(Alert.bell))));
                     try win.know(app.gpa, 0, 0, 0, 0, 0, "");
                     // Read once: after that arena's own is the newer, and a list asked for
                     // before a change would put the old one back.

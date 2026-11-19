@@ -442,6 +442,18 @@ check "the session whose Claude most wants looking at comes first" await beta_fi
 claude alpha:one end
 claude beta:solo end
 check "with no Claudes left the rule over them goes" gone '├─ agents'
+claude alpha:one waiting
+claude alpha:three waiting
+check "a session with several Claudes at its mark counts them" see '│ alpha +▲2 +3 │'
+claude alpha:one end
+claude alpha:three end
+inner new-window -d -t beta -n loud sh
+inner set -w -t beta:loud monitor-activity on
+inner send-keys -t beta:loud 'echo out' Enter
+check "a window out of view that tmux saw output in, where it watches for it, marks its session #" see '│ beta +# +2 │'
+inner send-keys -t beta:loud "printf '\\a'" Enter
+check "and one that rang its bell, !" see '│ beta +! +2 │'
+inner kill-window -t beta:loud
 
 transcript=$tmp/transcript.jsonl
 {
