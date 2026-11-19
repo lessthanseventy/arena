@@ -24,10 +24,11 @@ always did; arena draws them and leaves them running when it quits.
   `working`, `background`, `done` or `waiting` ([Install](#install)).
 - **Its Claudes listed** under the sessions in the rail, each session's together: the session whose
   Claude most wants looking at first, and in it the most pressing, or, a click on their rule
-  away, the one that changed last first. A Claude has its mark, what its conversation is about
-  and how long it has been in its state; under that what it is doing, waits for, has running in
-  the background or last said; and under that its branch, its review and the tokens of its
-  context. What a conversation is about is the name you gave it with `/rename`, else a topic Haiku
+  away, the one heard from last first. A Claude has its mark, what its conversation is about
+  and how long it has been in its state; under that what it is doing, waits for or last said,
+  with how long its last turn took, or `quiet` and how long when it has worked ten minutes with
+  nothing heard from it; under that its branch (or `no repo`, `detached` and the commit), its
+  review and the tokens of its context; and under that what it has running in the background. What a conversation is about is the name you gave it with `/rename`, else a topic Haiku
   is asked for every fifth prompt (one small `claude -p` call, in the background), else the title
   Claude Code gave it at its start. The hook needs `jq` for all of that text.
 - **A mark for code review** beside it: `✗` when changes are asked for, `»` while queued to merge,
@@ -90,7 +91,7 @@ Everything is on Alt, so it stays out of the way of your shell and your window m
 | `Alt+p` | jump to a window by name |
 | `Alt+o` | the overview |
 | `Alt+w` | the rail narrow, and wide again |
-| `Alt+n` | the Claude that most wants looking at, waiting or done |
+| `Alt+n` `Alt+N` | the next Claude waiting or done, the one before; the one that most wants looking at first |
 | `Alt+/` | search the pane's history |
 | `Alt+m` | the menu |
 | `Alt+q` | leave; the sessions keep running |

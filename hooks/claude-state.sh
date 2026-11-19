@@ -13,6 +13,9 @@
 pane=${TMUX_PANE:-}
 [ -n "$pane" ] || exit 0
 json=$(cat)
+now=$(date +%s)
+# when the session or one of its subagents last did anything, for arena to tell a quiet one
+[ "${1:-}" = end ] || tmux set -p -t "$pane" @arena_claude_at "$now" 2>/dev/null
 opt() { tmux set -p -t "$pane" "$1" "$2" 2>/dev/null; }
 # A line of the hook's JSON, picked out by jq, at most 80 characters. arena reads it between tabs.
 text() { command -v jq >/dev/null && printf '%s' "$json" | jq -r "$1"' | tostring | gsub("\t"; " ") | .[0:80]' 2>/dev/null; }
@@ -105,10 +108,12 @@ prompt)
 	if [ -n "$(text '.prompt // "" | select(test("^(<(task-notification|agent-message)|Another Claude session)"))')" ]; then
 		l=$(change '[.prompt | scan("<task-id>([^<]+)</task-id>|<agent-message from=\"([^\"]+)\"") | .[] | select(.)] as $done |
 			$list | map(select(.id as $id | $done | index($id) | not))') && keep "$l"
-		[ "$(tmux show -pqv -t "$pane" @arena_claude 2>/dev/null)" = "$mark" ] || opt @arena_claude_since "$(date +%s)"
+		[ "$(tmux show -pqv -t "$pane" @arena_claude 2>/dev/null)" = "$mark" ] || opt @arena_claude_since "$now"
 		opt @arena_claude "$mark"
 		exit 0
 	fi
+	opt @arena_claude_began "$now"
+	opt @arena_claude_took ''
 	opt @arena_claude_prompt "$(text '[.prompt // "" | splits("\n") | select(test("\\S"))][0] // ""')"
 	opt @arena_claude_doing ''
 	opt @arena_claude_said ''
@@ -144,6 +149,8 @@ waiting)
 stop)
 	if printf '%s' "$json" | grep -Eq '"status" *: *"running"'; then mark=background; else mark='done'; fi
 	opt @arena_claude_doing ''
+	began=$(tmux show -pqv -t "$pane" @arena_claude_began 2>/dev/null)
+	[ -n "$began" ] && opt @arena_claude_took "$((now - began))"
 	t=$(title) && [ -n "$t" ] && opt @arena_claude_title "$t"
 	opt @arena_claude_said "$(text '[.last_assistant_message // "" | splits("\n") | gsub("^[#>*\\s-]+|[*`]"; "") | select(test("\\S"))][0] // ""')"
 	l=$(change '[.background_tasks[]? | select(.status == "running") |
@@ -154,13 +161,13 @@ stop)
 end)
 	for o in @arena_claude @arena_claude_since @arena_claude_prompt @arena_claude_doing @arena_claude_title \
 		@arena_claude_topic @arena_claude_prompts @arena_claude_said @arena_claude_tokens @arena_claude_background @arena_claude_running \
-		@arena_claude_branch; do
+		@arena_claude_branch @arena_claude_at @arena_claude_began @arena_claude_took; do
 		tmux set -pu -t "$pane" $o 2>/dev/null
 	done
 	exit 0
 	;;
 *) exit 0 ;;
 esac
-[ "$(tmux show -pqv -t "$pane" @arena_claude 2>/dev/null)" = "$mark" ] || opt @arena_claude_since "$(date +%s)"
+[ "$(tmux show -pqv -t "$pane" @arena_claude 2>/dev/null)" = "$mark" ] || opt @arena_claude_since "$now"
 opt @arena_claude "$mark"
 exit 0

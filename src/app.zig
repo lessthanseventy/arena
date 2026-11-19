@@ -17,6 +17,7 @@ const rail_wide = 36;
 const rail_narrow = 8;
 /// How long the pointer rests on the narrow rail before it is drawn wide over the strip.
 const dwell_ms = 300;
+const quiet_s = 600;
 /// Wheel and swipe steps that move between windows or sessions are taken this far apart.
 const nav_gap_ms = 150;
 /// A sideways swipe steps once it has gone this many wheel events one way.
@@ -37,7 +38,8 @@ const pane_format = "#{{session_id}} #{{window_id}} #{{pane_id}} #{{window_width
     "#{{pane_left}} #{{pane_top}} #{{pane_width}} #{{pane_height}} #{{pane_active}} #{{window_active}} " ++
     claude_state ++ " #{{window_cell_width}} #{{window_cell_height}} #{{?@arena_width,#{{@arena_width}},0}} " ++
     review_state ++ " #{{?@arena_claude_since,#{{@arena_claude_since}},0}} " ++
-    "#{{?@arena_claude_tokens,#{{@arena_claude_tokens}},0}} " ++
+    "#{{?@arena_claude_tokens,#{{@arena_claude_tokens}},0}} #{{?@arena_claude_at,#{{@arena_claude_at}},0}} " ++
+    "#{{?@arena_claude_took,#{{@arena_claude_took}},0}} " ++
     "#{{@arena_claude_doing}}\t#{{@arena_claude_prompt}}\t#{{@arena_claude_title}}\t#{{@arena_claude_said}}\t" ++
     "#{{@arena_claude_branch}}\t#{{@arena_claude_background}}\t#{{window_name}}";
 
@@ -171,10 +173,12 @@ pub const Window = struct {
     review: Review = .none,
     listed: bool = false,
     /// About the Claude it is marked by, as its hook set it, 0 and empty where no hook has: when
-    /// its state began, in seconds since the epoch, the tokens of its context, and its `Info`
-    /// between tabs.
+    /// its state began and when it or a subagent of its last did anything, in seconds since the
+    /// epoch, the tokens of its context, how long its last turn took, and its `Info` between tabs.
     since: u32 = 0,
+    at: u32 = 0,
     tokens: u32 = 0,
+    took: u32 = 0,
     info: []u8 = &.{},
 
     pub const Info = enum { doing, prompt, title, said, branch, background };
@@ -207,12 +211,20 @@ pub const Window = struct {
         return win.since != 0 or win.claude != .none;
     }
 
-    fn know(win: *Window, gpa: Allocator, since: u32, tokens: u32, info: []const u8) !void {
+    fn know(win: *Window, gpa: Allocator, since: u32, tokens: u32, at: u32, took: u32, info: []const u8) !void {
         gpa.free(win.info);
         win.info = &.{};
         win.since = since;
         win.tokens = tokens;
+        win.at = at;
+        win.took = took;
         win.info = try gpa.dupe(u8, info);
+    }
+
+    /// Whether it has been working with nothing heard from it, nor any subagent of its, for
+    /// `quiet_s`: a tool hung, or a call that will not come back.
+    pub fn quiet(win: *const Window, epoch: i64) bool {
+        return win.claude == .working and win.at != 0 and epoch - win.at >= quiet_s;
     }
 
     pub fn activePane(win: *const Window) ?*Pane {
@@ -486,7 +498,7 @@ pub const App = struct {
 
     pub const Agent = struct { session: usize, win: *Window };
     /// How lists of agents are ordered: the one that most wants looking at first, or the one
-    /// whose state changed last.
+    /// heard from last.
     pub const AgentSort = enum { urgency, recent };
 
     /// The windows with a Claude, as many as `out` holds, grouped by session, as `agent_sort`
@@ -513,11 +525,11 @@ pub const App = struct {
 
     /// Where a Claude goes in a list, as `agent_sort` has it: the higher, the sooner.
     fn agentRank(app: *const App, win: *const Window) u64 {
-        // a state of unknown start counts as the newest
-        const since: u64 = if (win.since == 0) std.math.maxInt(u32) else win.since;
+        // a Claude never heard from counts as the newest
+        const last = @max(win.at, win.since);
         return switch (app.agent_sort) {
             .urgency => urgency(win),
-            .recent => since,
+            .recent => if (last == 0) std.math.maxInt(u32) else last,
         };
     }
 
@@ -602,15 +614,30 @@ pub const App = struct {
         try app.jumpTo(s, index);
     }
 
-    /// Goes to the Claude that most wants looking at, waiting or done, other than the one in view.
-    fn nextAgent(app: *App) !void {
-        var best: ?Agent = null;
+    /// Steps `by` through the Claudes waiting or done, the one that most wants looking at first:
+    /// from the one in view to the next or the one before, round; from any other window, to the
+    /// first or the last.
+    fn stepAgent(app: *App, by: i32) !void {
+        var found: [64]Agent = undefined;
+        var n: usize = 0;
         for (app.sessions.items, 0..) |s, si| for (s.wins.items) |win| {
-            if (win.claude != .waiting and win.claude != .done) continue;
-            if (s.id == app.current and s.focused() == win) continue;
-            if (best == null or urgency(win) > urgency(best.?.win)) best = .{ .session = si, .win = win };
+            if ((win.claude != .waiting and win.claude != .done) or n == found.len) continue;
+            found[n] = .{ .session = si, .win = win };
+            n += 1;
         };
-        if (best) |a| try app.goAgent(a);
+        if (n == 0) return;
+        std.sort.insertion(Agent, found[0..n], {}, struct {
+            fn before(_: void, a: Agent, b: Agent) bool {
+                return urgency(a.win) > urgency(b.win);
+            }
+        }.before);
+        const s = app.cur();
+        const here = for (found[0..n], 0..) |a, i| {
+            if (s != null and app.sessions.items[a.session] == s.? and s.?.focused() == a.win) break i;
+        } else null;
+        const len: i32 = @intCast(n);
+        const to: i32 = if (here) |i| @mod(@as(i32, @intCast(i)) + by, len) else if (by > 0) 0 else len - 1;
+        try app.goAgent(found[@intCast(to)]);
     }
 
     fn toggleRail(app: *App) void {
@@ -887,7 +914,7 @@ pub const App = struct {
         var lines = std.mem.tokenizeScalar(u8, body, '\n');
         while (lines.next()) |line| {
             var it = std.mem.tokenizeScalar(u8, line, ' ');
-            var n: [18]u32 = undefined;
+            var n: [20]u32 = undefined;
             for (&n, 0..) |*field, i| {
                 const token = it.next() orelse break;
                 field.* = std.fmt.parseInt(u32, token[@intFromBool(i < 3)..], 10) catch break;
@@ -918,7 +945,7 @@ pub const App = struct {
                     win.cell_h = @intCast(n[13]);
                     win.claude = .none;
                     win.review = .none;
-                    try win.know(app.gpa, 0, 0, "");
+                    try win.know(app.gpa, 0, 0, 0, 0, "");
                     // Read once: after that arena's own is the newer, and a list asked for
                     // before a change would put the old one back.
                     if (!win.listed) win.share = @intCast(@min(n[14], max_share));
@@ -935,7 +962,7 @@ pub const App = struct {
                 const claude: Mark = @fromBackingInt(@intCast(@min(n[11], @backingInt(Mark.waiting))));
                 const agent = n[16] != 0 or claude != .none;
                 if (agent and (!win.agent() or @backingInt(claude) > @backingInt(win.claude)))
-                    try win.know(app.gpa, n[16], n[17], info);
+                    try win.know(app.gpa, n[16], n[17], n[18], n[19], info);
                 if (@backingInt(claude) > @backingInt(win.claude)) win.claude = claude;
                 const review = Review.of(n[15]);
                 if (@backingInt(review) > @backingInt(win.review)) win.review = review;
@@ -1905,7 +1932,8 @@ pub const App = struct {
             '\'' => try app.widenBy(share_step),
             'o' => app.openOverview(),
             'w' => app.toggleRail(),
-            'n' => try app.nextAgent(),
+            'n' => try app.stepAgent(1),
+            'N' => try app.stepAgent(-1),
             '/' => app.openSearch(),
             'p' => {
                 app.prompt = .{ .what = .jump };

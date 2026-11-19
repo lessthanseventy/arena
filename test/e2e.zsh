@@ -461,6 +461,14 @@ check "a shell put in the background is listed" is_opt background '1 shell: Soak
 claude alpha:one tool '{"hook_event_name": "PostToolUse", "tool_name": "Agent", "tool_input": {},
   "tool_response": {"status": "async_launched", "agentId": "a3", "description": "Review it"}}'
 check "and an agent sent off" is_opt background '1 agent, 1 shell: Soak it · Review it'
+inner set -p -t alpha:one @arena_claude_began $(($(date +%s) - 3725))
+claude alpha:one stop '{"last_assistant_message": "Done. It loads"}'
+took() { [[ $(opt took) == 372[56] ]] }
+check "a stop says how long its turn took" took
+check "which the rail has beside its last words" see '│   Done. It loads +1h2m │'
+claude alpha:one prompt '{"prompt": "go on"}'
+inner set -p -t alpha:one @arena_claude_at $(($(date +%s) - 700))
+check "working with nothing heard for ten minutes, it is quiet" see '│   go on +quiet 11m │'
 check "and its branch under that, its context at the right" see "│   $(git -C $root branch --show-current) +253k ctx │"
 mkdir $tmp/norepo
 claude alpha:one stop '{"cwd": "'$tmp/norepo'"}'
@@ -483,18 +491,36 @@ key M-n
 check "Alt+n goes to the Claude that most wants looking at" await at alpha:three
 key M-n
 check "and stays where it is with no other waiting or done" at alpha:three
+claude alpha:one waiting '{"message": "Claude is waiting for your input"}'
+inner set -p -t alpha:one @arena_claude_since $(($(date +%s) - 100))
+see '│ ▲ one '
+key M-n
+check "with another, Alt+n goes on to it, the longer waiting first" await at alpha:one
+key M-n
+check "and round to the first" await at alpha:three
+key M-N
+check "Alt+N goes back" await at alpha:one
+claude alpha:one end
+gone '│ ▲ one '
+key M-n
+check "from a window not listed, Alt+n goes to the first" await at alpha:three
 mouse 0 5 11 M
 mouse 0 5 11 m
 check "a click on a Claude in the rail goes to its window" await at beta:solo
 mouse 0 5 6 M
 mouse 0 5 6 m
-check "a click on the rule over them orders them by when they last changed" see '├─ agents · recent '
+check "a click on the rule over them orders them by when they were last heard from" see '├─ agents · recent '
+inner set -p -t alpha:three @arena_claude_at 0
+inner set -p -t alpha:three @arena_claude_since $(($(date +%s) - 900))
+inner set -p -t beta:solo @arena_claude_at $(date +%s)
+first() { screen | grep -A1 -- '├─ agents' | tail -1 | grep -q -- "$1" }
+check "the one heard from last first" await first '│ beta '
 mouse 0 5 6 M
 mouse 0 5 6 m
 see '├─ agents · urgency '
 key M-w
 check "Alt+w narrows the rail to a session's first letters and its mark" see '^│ al ▲ │ '
-check "and a Claude's mark and time" see '^│ ▲ +[0-9]+s│ '
+check "and a Claude's mark and time" see '^│ ▲ +[0-9]+[sm]│ '
 mouse 35 3 9 M
 check "the pointer resting on it draws it wide over the strip" see '├─ agents · urgency '
 mouse 35 72 3 M

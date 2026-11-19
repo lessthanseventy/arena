@@ -164,6 +164,18 @@ fn ago(buf: []u8, epoch: i64, since: u32) []const u8 {
         std.fmt.bufPrint(buf, "{d}d", .{@min(99, @divFloor(s, 86400))})) catch "";
 }
 
+/// A length of time in its two largest units: 45s, 9m, 1h9m, 2d3h.
+fn span(buf: []u8, s: u32) []const u8 {
+    return (if (s < 60)
+        std.fmt.bufPrint(buf, "{d}s", .{s})
+    else if (s < 3600)
+        std.fmt.bufPrint(buf, "{d}m", .{s / 60})
+    else if (s < 86400)
+        std.fmt.bufPrint(buf, "{d}h{d}m", .{ s / 3600, s / 60 % 60 })
+    else
+        std.fmt.bufPrint(buf, "{d}d{d}h", .{ s / 86400, s / 3600 % 24 })) catch "";
+}
+
 /// A count of tokens in four cells at most: 840, 84k, 1.2M.
 fn tokenCount(buf: []u8, n: u32) []const u8 {
     if (n == 0) return "";
@@ -329,9 +341,25 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
             filled += 4;
         },
         .detail => |a| {
+            const win = a.win;
+            // at the right: how long a quiet one has said nothing, or how long a done one worked
+            var buf: [16]u8 = undefined;
+            var since: [8]u8 = undefined;
+            const quiet = win.quiet(app.epoch);
+            const right: []const u8 = if (quiet)
+                std.fmt.bufPrint(&buf, "quiet {s}", .{ago(&since, app.epoch, win.at)}) catch ""
+            else if ((win.claude == .done or win.claude == .none) and win.took > 0)
+                span(&buf, win.took)
+            else
+                "";
             try pen.set(w, dim, null);
             try w.writeAll("   ");
-            try fitted(w, a.win.detail(), inner - 4);
+            try fitted(w, win.detail(), inner - 4 - if (right.len > 0) right.len + 1 else 0);
+            if (right.len > 0) {
+                try pen.set(w, if (quiet) ink(app, "emberdim", 1) else dim, null);
+                try w.writeAll(" ");
+                try w.writeAll(right);
+            }
             filled = inner - 1;
         },
         .background => |a| {
