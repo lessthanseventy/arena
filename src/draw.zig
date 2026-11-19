@@ -344,8 +344,9 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
     var filled: usize = 0;
     switch (line) {
         .session => |si| {
-            const name = clip(app.sessions.items[si].name, if (wide) inner - 2 else 2);
-            try pen.set(w, dim, null);
+            const s = app.sessions.items[si];
+            const name = clip(s.name, if (wide) inner - 2 else 2);
+            try pen.set(w, if (s.id == app.current) heading(app) else dim, null);
             try w.writeAll(" ");
             try w.writeAll(name);
             filled = 1 + cellCount(name);
@@ -361,7 +362,8 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
             if (wide) {
                 // the time and a space at the right end
                 const room = inner - 3 - 5;
-                try pen.set(w, .{}, null);
+                const s = app.sessions.items[a.session];
+                try pen.set(w, if (s.id == app.current and s.focused() == win) ink(app, "amber", 4) else .{}, null);
                 try w.writeAll(" ");
                 try fitted(w, win.label(), room);
                 filled = 3 + room;

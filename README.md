@@ -27,7 +27,8 @@ always did; arena draws them and leaves them running when it quits.
   `working`, `background`, `done` or `waiting` ([Install](#install)).
 - **Its Claudes listed** under the sessions in the rail, each session's together: the session whose
   Claude most wants looking at first, and in it the most pressing, or, a click on their rule
-  away, the one heard from last first. A Claude has its mark, what its conversation is about
+  away, the one heard from last first; the session in view has its name in amber there, and the
+  Claude in view its title. A Claude has its mark, what its conversation is about
   and how long it has been in its state; under that what it is doing, waits for or last said,
   with how long its last turn took, or `quiet` and how long when it has worked ten minutes with
   nothing heard from it; under that its branch (or `no repo`, `detached` and the commit), its
