@@ -81,3 +81,37 @@ test "dots are centred, one per window, with spaces between" {
     try std.testing.expectEqual(@as(?usize, null), dotAt(21, 1, 10));
     try std.testing.expectEqual(@as(?usize, null), dotAt(8, 3, 4));
 }
+
+/// The first cell of tabs `widths` cells wide with two between, centred in `view_w`; null for
+/// fewer than two, or when they do not fit with two cells to spare at each side.
+pub fn tabsStart(view_w: u16, widths: []const usize) ?usize {
+    if (widths.len < 2) return null;
+    var span: usize = 2 * (widths.len - 1);
+    for (widths) |w| span += w;
+    if (span + 4 > view_w) return null;
+    return (view_w - span) / 2;
+}
+
+/// The tab of `widths` at cell `cx`, laid out as `tabsStart` has them.
+pub fn tabAt(view_w: u16, widths: []const usize, cx: usize) ?usize {
+    var x = tabsStart(view_w, widths) orelse return null;
+    for (widths, 0..) |w, i| {
+        if (cx >= x and cx < x + w) return i;
+        x += w + 2;
+    }
+    return null;
+}
+
+test "tabs are centred, two cells apart, and none when they do not fit" {
+    // 3 + 2 + 4 = 9 cells of 20, from cell 5: the first at 5 to 7, the second at 10 to 13
+    const widths = [_]usize{ 3, 4 };
+    try std.testing.expectEqual(@as(?usize, 5), tabsStart(20, &widths));
+    try std.testing.expectEqual(@as(?usize, null), tabAt(20, &widths, 4));
+    try std.testing.expectEqual(@as(?usize, 0), tabAt(20, &widths, 5));
+    try std.testing.expectEqual(@as(?usize, 0), tabAt(20, &widths, 7));
+    try std.testing.expectEqual(@as(?usize, null), tabAt(20, &widths, 8));
+    try std.testing.expectEqual(@as(?usize, 1), tabAt(20, &widths, 10));
+    try std.testing.expectEqual(@as(?usize, null), tabAt(20, &widths, 14));
+    try std.testing.expectEqual(@as(?usize, null), tabsStart(12, &widths));
+    try std.testing.expectEqual(@as(?usize, null), tabsStart(80, &[_]usize{5}));
+}

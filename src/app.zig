@@ -19,6 +19,8 @@ const rail_narrow = 8;
 const dwell_ms = 300;
 const quiet_s = 600;
 const stir_s = 60;
+pub const max_tabs = 32;
+pub const tab_name = 16;
 /// Wheel and swipe steps that move between windows or sessions are taken this far apart.
 const nav_gap_ms = 150;
 /// A sideways swipe steps once it has gone this many wheel events one way.
@@ -299,6 +301,8 @@ pub const App = struct {
     rail: enum { wide, narrow } = .wide,
     /// The narrow rail drawn wide over the strip, while the pointer is on it.
     peek: bool = false,
+    /// The pointer is on the row under the strip, which then has the windows' names for dots.
+    over_dots: bool = false,
     agent_sort: AgentSort = .urgency,
     /// When the pointer came to rest on the narrow rail; 0 while it is elsewhere.
     hover_at: i64 = 0,
@@ -1027,6 +1031,17 @@ pub const App = struct {
         };
     }
 
+    /// The cells of each window's tab on the row under the strip: its number, a space, its name
+    /// cut to `tab_name`, a space and a cell for its mark. Empty past `max_tabs` windows.
+    pub fn tabWidths(s: *const Session, out: *[max_tabs]usize) []const usize {
+        if (s.wins.items.len > max_tabs) return &.{};
+        for (s.wins.items, 0..) |win, i| {
+            const name = std.unicode.utf8CountCodepoints(win.name) catch win.name.len;
+            out[i] = std.fmt.count("{d}", .{i + 1}) + 1 + @min(name, tab_name) + 2;
+        }
+        return out[0..s.wins.items.len];
+    }
+
     /// Asks tmux to size the current session's windows to their columns, and for the screen of
     /// every pane not yet captured. A window just asked to change size is captured after tmux
     /// reports the new layout, at the size it will be drawn.
@@ -1591,6 +1606,11 @@ pub const App = struct {
         app.pointer = .{ .x = m.x, .y = m.y };
         try app.pointAs(m);
         if (m.hover()) app.hoverRail(m.x);
+        const over_dots = m.y == app.view_h and m.x >= app.term_w - app.view_w;
+        if (over_dots != app.over_dots) {
+            app.over_dots = over_dots;
+            app.dirty = true;
+        }
         if (app.overview != null) return app.overviewMouse(m);
         if (app.prompt) |*prompt| {
             if (!m.leftPress() and !m.rightPress()) return;
@@ -1677,8 +1697,15 @@ pub const App = struct {
         const s = app.cur() orelse return false;
         if (app.yoff != 0) return false;
         if (m.y == app.view_h) {
-            const dot = layout.dotAt(app.view_w, s.wins.items.len, m.x - ox) orelse return false;
-            if (m.leftPress()) try app.focusTo(dot);
+            if (m.wheel() and !m.sideways()) {
+                if (app.navStep()) try app.focusBy(if (m.code & 1 == 0) -1 else 1);
+                return true;
+            }
+            var widths: [max_tabs]usize = undefined;
+            const tabs = tabWidths(s, &widths);
+            const at = (if (tabs.len > 0) layout.tabAt(app.view_w, tabs, m.x - ox) else null) orelse
+                layout.dotAt(app.view_w, s.wins.items.len, m.x - ox) orelse return false;
+            if (m.leftPress()) try app.focusTo(at);
             return m.leftPress();
         }
         if (m.sideways()) {

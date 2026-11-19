@@ -101,7 +101,9 @@ Everything is on Alt, so it stays out of the way of your shell and your window m
 
 With the mouse:
 
-- Click a column, a dot under the focused column, or a session in the rail to go there.
+- Click a column, a dot under the strip, or a session in the rail to go there. With the pointer
+  on the row of dots it has each window's number and name instead, to click, and the wheel there
+  steps through the windows.
 - Click a Claude in the rail to go to its window, the rule over them to change their order, the
   rail's top to narrow or widen it.
 - In the overview, drag a window's picture onto another to take its place, in its own session or

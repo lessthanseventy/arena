@@ -137,8 +137,12 @@ const Column = struct {
 /// in view, and any other with something to say shows its mark.
 fn dots(app: *const App, w: *Writer, s: *const Session) !void {
     const ox = app.term_w - app.view_w;
-    const start = layout.dotsStart(app.view_w, s.wins.items.len) orelse return;
     var pen: Pen = .{};
+    try w.print("\x1b[{d};{d}H", .{ app.view_h + 1, ox + 1 });
+    try pen.set(w, .{}, null);
+    for (0..app.view_w) |_| try w.writeAll(" ");
+    if (app.over_dots) if (try tabs(app, w, &pen, s)) return;
+    const start = layout.dotsStart(app.view_w, s.wins.items.len) orelse return;
     for (s.wins.items, 0..) |win, i| {
         const here = i == s.focus;
         const mark = app.mark(s, win);
@@ -146,6 +150,29 @@ fn dots(app: *const App, w: *Writer, s: *const Session) !void {
         try pen.set(w, if (here or mark != .none) ink(app, "amber", 4) else ink(app, "dim", 8), null);
         try put(w, if (here) '●' else if (mark != .none) glyph(app, mark) else '○');
     }
+}
+
+/// With the pointer on the row of dots, each window's number and name in their place, the one in
+/// view a chip and any other with something to say its mark. False when they do not fit.
+fn tabs(app: *const App, w: *Writer, pen: *Pen, s: *const Session) !bool {
+    var widths: [app_mod.max_tabs]usize = undefined;
+    const all = App.tabWidths(s, &widths);
+    var x = layout.tabsStart(app.view_w, all) orelse return false;
+    const ox = app.term_w - app.view_w;
+    for (s.wins.items, all, 0..) |win, width, i| {
+        const here = i == s.focus;
+        const mark = app.mark(s, win);
+        try w.print("\x1b[{d};{d}H", .{ app.view_h + 1, ox + x + 1 });
+        try pen.set(w, if (here) chip(app) else ink(app, "dim", 8), null);
+        try w.print("{d} ", .{i + 1});
+        try pen.set(w, if (here) chip(app) else .{}, null);
+        try w.writeAll(clip(win.name, app_mod.tab_name));
+        try w.writeAll(" ");
+        try pen.set(w, if (here) chip(app) else ink(app, "amber", 4), null);
+        try put(w, if (mark != .none) glyph(app, mark) else ' ');
+        x += width + 2;
+    }
+    return true;
 }
 
 const rail_title = " sessions ";

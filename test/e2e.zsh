@@ -86,11 +86,37 @@ foot() { local s=$(screen); [[ $(sed -n 3p <<<$s) == '│ alpha '* && $(sed -n 4
 check "the rail keeps + new and the menu at its foot" await foot
 dots() { local s=$(screen); [[ $(sed -n 23p <<<$s) == ╰* && $(sed -n 24p <<<$s) =~ "^ {76}$1 *\$" ]] }
 check "a row of its own under the strip has a dot per window, centred on it" await dots '● ○ ○'
-mouse 0 79 24 M
-mouse 0 79 24 m
-check "a click on a dot goes to its window" await dots '○ ● ○'
-mouse 0 77 24 M
-mouse 0 77 24 m
+# the column, from 1, where $1 starts on the screen's last row
+col() { local l=$(screen | sed -n 24p); local pre=${l%%$1*}; print $(( ${#pre} + 1 )) }
+mouse 35 60 24 M
+check "the pointer on it has each window's number and name in place of its dot" see '^ +1 one +2 two +3 three *$'
+x=$(col '2 two')
+mouse 0 $x 24 M
+mouse 0 $x 24 m
+mouse 35 60 10 M
+check "a click on a name goes to its window, and away from the row it is dots again" await dots '○ ● ○'
+mouse 35 60 24 M
+see '1 one'
+mouse 65 60 24 M
+mouse 35 60 10 M
+check "the wheel down on it goes to the next window" await dots '○ ○ ●'
+zselect -t 50
+mouse 35 60 24 M
+mouse 65 60 24 M
+mouse 35 60 10 M
+check "and stops at the last" await dots '○ ○ ●'
+mouse 35 60 24 M
+see '1 one'
+zselect -t 30
+mouse 64 60 24 M
+mouse 35 60 10 M
+check "the wheel up, the one before" await dots '○ ● ○'
+mouse 35 60 24 M
+see '1 one'
+x=$(col '1 one')
+mouse 0 $x 24 M
+mouse 0 $x 24 m
+mouse 35 60 10 M
 await dots '● ○ ○'
 
 # A tmux with the pixels patch gives arena's terminal cells of 9x19 pixels, as a real one has.
