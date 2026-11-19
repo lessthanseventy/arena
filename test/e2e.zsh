@@ -393,7 +393,7 @@ claude beta:solo tool '{"tool_name": "Read", "tool_input": {"file_path": "/a/b.z
 inner set -p -t alpha:three @arena_review changes
 listed() {
   [[ $(line 6) == ├─' agents · urgency '─*┤* && $(line 7) == '│ alpha '* && $(line 8) =~ '^│ ▲ three +[0-9]+s │' &&
-    $(line 9) == '│   allow Bash '* && $(line 10) == '│   ✗ changes '* && $(line 11) =~ '^│ ◐ one +[0-9]+s │' &&
+    $(line 9) == '│   allow Bash '* && $(line 10) == '│   branch unknown  ✗ changes '* && $(line 11) =~ '^│ ◐ one +[0-9]+s │' &&
     $(line 12) == '│   go '* && $(line 13) == '│ beta '* && $(line 14) =~ '^│ ◐ solo +[0-9]+s │' &&
     $(line 15) == '│   Read b.zig '* ]]
 }
@@ -437,13 +437,25 @@ zselect -t 50
 check "and Haiku is not asked again" [ ! -e $tmp/asked ]
 print -r -- '{"type":"assistant","message":{"usage":{"input_tokens":4,"cache_read_input_tokens":253118,"cache_creation_input_tokens":68}}}' >>$transcript
 claude alpha:one stop '{"last_assistant_message": "## **Done.** It loads\nmore", "cwd": "'$root'", "transcript_path": "'$transcript'",
-  "background_tasks": [{"status": "running"}, {"status": "done"}]}'
+  "background_tasks": [{"type": "subagent", "status": "running", "description": "Explore the rail"},
+    {"type": "shell", "status": "running", "command": "sleep 9\nmore"}, {"type": "shell", "status": "done", "command": "x"}]}'
 check "a stop keeps the first line of its answer, plain" is_opt said 'Done. It loads'
-check "how many of its tasks still run" is_opt tasks 1
+check "what still runs in the background" is_opt background '1 agent, 1 shell: Explore the rail · sleep 9'
 check "the context its last answer was given" is_opt tokens 253190
 check "and the branch it works on" is_opt branch "$(git -C $root branch --show-current)"
-check "the rail has how many run under it, between turns" see '│   1 running '
-check "and its branch and context under that" see "│   $(git -C $root branch --show-current)  253k ctx "
+check "the rail has its last words under it" see '│   Done. It loads '
+check "and what runs in the background at the foot" see '│   ◔ 1 agent, 1 shell: Explore t… │'
+claude alpha:one tool '{"agent_id": "a1", "agent_type": "Explore", "tool_name": "Grep", "tool_input": {"pattern": "rail"}}'
+check "a subagent's tool is its background" is_opt background 'agent Explore: Grep rail'
+check "and the session stays as it was" [ "$(opt doing)" = '' -a "$(inner show -pqv -t alpha:one @arena_claude)" = background ]
+check "and its branch under that, its context at the right" see "│   $(git -C $root branch --show-current) +253k ctx │"
+mkdir $tmp/norepo
+claude alpha:one stop '{"cwd": "'$tmp/norepo'"}'
+check "outside a repo, no repo" is_opt branch 'no repo'
+git -C $tmp/norepo init -q && git -C $tmp/norepo -c user.name=e2e -c user.email=e2e@localhost commit -q --allow-empty -m one &&
+  git -C $tmp/norepo checkout -q --detach
+claude alpha:one stop '{"cwd": "'$tmp/norepo'"}'
+check "on no branch, detached and its commit" is_opt branch "detached $(git -C $tmp/norepo rev-parse --short HEAD)"
 said end
 check "the end takes the title and its count off too" await [ -z "$(inner show -p -t alpha:one | grep arena_claude)" ]
 

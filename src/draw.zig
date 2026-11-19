@@ -329,22 +329,35 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
             filled += 4;
         },
         .detail => |a| {
-            var buf: [24]u8 = undefined;
             try pen.set(w, dim, null);
             try w.writeAll("   ");
-            try fitted(w, a.win.detail(&buf), inner - 4);
+            try fitted(w, a.win.detail(), inner - 4);
+            filled = inner - 1;
+        },
+        .background => |a| {
+            try w.writeAll("   ");
+            try pen.set(w, ink(app, "amber", 4), null);
+            try put(w, '◔');
+            try pen.set(w, dim, null);
+            try w.writeAll(" ");
+            try fitted(w, a.win.text(.background), inner - 6);
             filled = inner - 1;
         },
         .meta => |a| {
             const win = a.win;
             try w.writeAll("   ");
-            var left: usize = inner - 4;
-            const branch = clip(win.text(.branch), left);
-            if (branch.len > 0) {
-                try pen.set(w, ink(app, "violet", 5), null);
-                try w.writeAll(branch);
-                left -= cellCount(branch);
-            }
+            var count: [8]u8 = undefined;
+            const tokens = tokenCount(&count, win.tokens);
+            // the context at the right end, kept clear of the rest by two cells at least
+            const ctx: usize = if (tokens.len > 0) tokens.len + 4 else 0;
+            var left: usize = inner - 4 - if (ctx > 0) ctx + 2 else 0;
+            // the hook says "no repo" or "detached" and a commit for no branch; nothing, until it says
+            const said = win.text(.branch);
+            const named = said.len > 0 and !std.mem.eql(u8, said, "no repo") and !std.mem.startsWith(u8, said, "detached ");
+            const branch = clip(if (said.len > 0) said else "branch unknown", left);
+            try pen.set(w, if (named) ink(app, "violet", 5) else dim, null);
+            try w.writeAll(branch);
+            left -= cellCount(branch);
             var gap: usize = if (branch.len > 0) 2 else 0;
             if (win.review != .none and left >= gap + 3) {
                 const word = clip(reviewWord(win.review), left - gap - 2);
@@ -356,14 +369,12 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
                 left -= gap + 2 + cellCount(word);
                 gap = 2;
             }
-            var count: [8]u8 = undefined;
-            const tokens = tokenCount(&count, win.tokens);
-            if (tokens.len > 0 and left >= gap + tokens.len + 4) {
+            if (ctx > 0) {
                 try pen.set(w, dim, null);
-                for (0..gap) |_| try w.writeAll(" ");
+                for (0..left + 2) |_| try w.writeAll(" ");
                 try w.writeAll(tokens);
                 try w.writeAll(" ctx");
-                left -= gap + tokens.len + 4;
+                left = 0;
             }
             filled = inner - 1 - left;
         },

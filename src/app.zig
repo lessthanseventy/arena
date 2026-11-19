@@ -37,9 +37,9 @@ const pane_format = "#{{session_id}} #{{window_id}} #{{pane_id}} #{{window_width
     "#{{pane_left}} #{{pane_top}} #{{pane_width}} #{{pane_height}} #{{pane_active}} #{{window_active}} " ++
     claude_state ++ " #{{window_cell_width}} #{{window_cell_height}} #{{?@arena_width,#{{@arena_width}},0}} " ++
     review_state ++ " #{{?@arena_claude_since,#{{@arena_claude_since}},0}} " ++
-    "#{{?@arena_claude_tokens,#{{@arena_claude_tokens}},0}} #{{?@arena_claude_tasks,#{{@arena_claude_tasks}},0}} " ++
+    "#{{?@arena_claude_tokens,#{{@arena_claude_tokens}},0}} " ++
     "#{{@arena_claude_doing}}\t#{{@arena_claude_prompt}}\t#{{@arena_claude_title}}\t#{{@arena_claude_said}}\t" ++
-    "#{{@arena_claude_branch}}\t#{{window_name}}";
+    "#{{@arena_claude_branch}}\t#{{@arena_claude_background}}\t#{{window_name}}";
 
 /// The least and the most of the view a window's column is given, in hundredths, and how much
 /// one press of narrower or wider changes it.
@@ -171,14 +171,13 @@ pub const Window = struct {
     review: Review = .none,
     listed: bool = false,
     /// About the Claude it is marked by, as its hook set it, 0 and empty where no hook has: when
-    /// its state began, in seconds since the epoch, the tokens of its context, how many of its
-    /// tasks run in the background, and its `Info` between tabs.
+    /// its state began, in seconds since the epoch, the tokens of its context, and its `Info`
+    /// between tabs.
     since: u32 = 0,
     tokens: u32 = 0,
-    tasks: u32 = 0,
     info: []u8 = &.{},
 
-    pub const Info = enum { doing, prompt, title, said, branch };
+    pub const Info = enum { doing, prompt, title, said, branch, background };
 
     pub fn text(win: *const Window, field: Info) []const u8 {
         var it = std.mem.splitScalar(u8, win.info, '\t');
@@ -193,13 +192,12 @@ pub const Window = struct {
         return if (title.len > 0) title else win.name;
     }
 
-    /// What a list of Claudes says under it: the tool it is on or what it waits for, how many of
-    /// its tasks run, or the first line of its last answer; else what it was last asked.
-    pub fn detail(win: *const Window, buf: []u8) []const u8 {
+    /// What a list of Claudes says its session itself is doing, under it: the tool it is on or
+    /// what it waits for, or the first line of its last answer; else what it was last asked.
+    pub fn detail(win: *const Window) []const u8 {
         const now = switch (win.claude) {
             .working, .waiting => win.text(.doing),
-            .background => if (win.tasks > 0) std.fmt.bufPrint(buf, "{d} running", .{win.tasks}) catch "" else "",
-            .done, .none => win.text(.said),
+            .background, .done, .none => win.text(.said),
         };
         return if (now.len > 0) now else win.text(.prompt);
     }
@@ -209,12 +207,11 @@ pub const Window = struct {
         return win.since != 0 or win.claude != .none;
     }
 
-    fn know(win: *Window, gpa: Allocator, since: u32, tokens: u32, tasks: u32, info: []const u8) !void {
+    fn know(win: *Window, gpa: Allocator, since: u32, tokens: u32, info: []const u8) !void {
         gpa.free(win.info);
         win.info = &.{};
         win.since = since;
         win.tokens = tokens;
-        win.tasks = tasks;
         win.info = try gpa.dupe(u8, info);
     }
 
@@ -539,11 +536,13 @@ pub const App = struct {
     }
 
     /// A row of a list of agents: a session's name over its own, a window with a Claude, its
-    /// `Window.detail`, its branch, review and context, or how many more there are than rows.
-    pub const AgentLine = union(enum) { session: usize, agent: Agent, detail: Agent, meta: Agent, more: usize };
+    /// `Window.detail`, its branch, review and context, what it has running in the background, or
+    /// how many more there are than rows.
+    pub const AgentLine = union(enum) { session: usize, agent: Agent, detail: Agent, meta: Agent, background: Agent, more: usize };
 
     /// The agents in at most `room` rows of `out`, as `agents` orders them, with each one's
-    /// detail and its branch, review and context under it when `details`, where it has them.
+    /// detail, its branch, review and context, and its background under it when `details`, where
+    /// it has them.
     pub fn agentLines(app: *const App, out: []AgentLine, room: usize, details: bool) usize {
         var found: [64]Agent = undefined;
         const count = app.agents(&found);
@@ -561,13 +560,16 @@ pub const App = struct {
             if (n == rows) break;
             out[n] = .{ .agent = a };
             n += 1;
-            var buf: [24]u8 = undefined;
-            if (details and n < rows and a.win.detail(&buf).len > 0) {
+            if (details and n < rows and a.win.detail().len > 0) {
                 out[n] = .{ .detail = a };
                 n += 1;
             }
             if (details and n < rows and (a.win.text(.branch).len > 0 or a.win.review != .none or a.win.tokens > 0)) {
                 out[n] = .{ .meta = a };
+                n += 1;
+            }
+            if (details and n < rows and a.win.text(.background).len > 0) {
+                out[n] = .{ .background = a };
                 n += 1;
             }
         }
@@ -885,7 +887,7 @@ pub const App = struct {
         var lines = std.mem.tokenizeScalar(u8, body, '\n');
         while (lines.next()) |line| {
             var it = std.mem.tokenizeScalar(u8, line, ' ');
-            var n: [19]u32 = undefined;
+            var n: [18]u32 = undefined;
             for (&n, 0..) |*field, i| {
                 const token = it.next() orelse break;
                 field.* = std.fmt.parseInt(u32, token[@intFromBool(i < 3)..], 10) catch break;
@@ -916,7 +918,7 @@ pub const App = struct {
                     win.cell_h = @intCast(n[13]);
                     win.claude = .none;
                     win.review = .none;
-                    try win.know(app.gpa, 0, 0, 0, "");
+                    try win.know(app.gpa, 0, 0, "");
                     // Read once: after that arena's own is the newer, and a list asked for
                     // before a change would put the old one back.
                     if (!win.listed) win.share = @intCast(@min(n[14], max_share));
@@ -933,7 +935,7 @@ pub const App = struct {
                 const claude: Mark = @fromBackingInt(@intCast(@min(n[11], @backingInt(Mark.waiting))));
                 const agent = n[16] != 0 or claude != .none;
                 if (agent and (!win.agent() or @backingInt(claude) > @backingInt(win.claude)))
-                    try win.know(app.gpa, n[16], n[17], n[18], info);
+                    try win.know(app.gpa, n[16], n[17], info);
                 if (@backingInt(claude) > @backingInt(win.claude)) win.claude = claude;
                 const review = Review.of(n[15]);
                 if (@backingInt(review) > @backingInt(win.review)) win.review = review;
@@ -1585,7 +1587,7 @@ pub const App = struct {
             if (!m.leftPress()) return false;
             if (app.railAgentAt(m.y)) |line| {
                 switch (line) {
-                    .agent, .detail, .meta => |a| try app.goAgent(a),
+                    .agent, .detail, .meta, .background => |a| try app.goAgent(a),
                     .session => |si| try app.sessionTo(si),
                     .more => {},
                 }

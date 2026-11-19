@@ -3,8 +3,9 @@
 # by, @arena_claude_since, when that last changed, and what it is about: @arena_claude_prompt, the
 # turn's prompt, @arena_claude_doing, the tool it is on or what it waits for,
 # @arena_claude_title, what the conversation is about, @arena_claude_said, the first line of its
-# last answer, @arena_claude_tokens, its context in tokens, @arena_claude_tasks, how many of its
-# tasks run in the background, and @arena_claude_branch, the git branch it works on. $1 is the
+# last answer, @arena_claude_tokens, its context in tokens, @arena_claude_background, what its
+# subagents and shells in the background are doing, and @arena_claude_branch, the git branch it
+# works on. $1 is the
 # event (prompt | tool | stop | waiting |
 # end), the hook's JSON is on stdin. A hook must never fail a turn: every miss is silent and the
 # exit is 0. Without jq the text is left out.
@@ -58,9 +59,17 @@ Install Fix." 2>/dev/null |
 	opt @arena_claude_topic "$topic"
 	opt @arena_claude_title "$topic"
 }
+# The branch, "detached" and its commit, or "no repo".
 branch() {
 	cwd=$(printf '%s' "$json" | jq -r '.cwd // ""' 2>/dev/null)
-	[ -d "$cwd" ] && opt @arena_claude_branch "$(git -C "$cwd" branch --show-current 2>/dev/null | cut -c1-40)"
+	[ -d "$cwd" ] || return 0
+	if ! git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1; then
+		b='no repo'
+	else
+		b=$(git -C "$cwd" branch --show-current 2>/dev/null)
+		[ -n "$b" ] || b="detached $(git -C "$cwd" rev-parse --short HEAD 2>/dev/null)"
+	fi
+	opt @arena_claude_branch "$(printf '%s' "$b" | cut -c1-40)"
 }
 # The context its last answer was given: what was read from cache, written to it, and sent new.
 tokens() {
@@ -68,13 +77,15 @@ tokens() {
 	grep '"type":"assistant"' "$transcript" | tail -1 | jq -r '.message.usage |
 		(.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0)' 2>/dev/null
 }
+# A tool and what it is used on: its command's first line, its file's name, its pattern.
+tool_text='.tool_name + " " + (.tool_input | .command // (.file_path // .path // "" | split("/") | last) // .pattern // .description // .url // "" | tostring | split("\n")[0])'
 case ${1:-} in
 prompt)
 	mark=working
 	opt @arena_claude_prompt "$(text '[.prompt // "" | splits("\n") | select(test("\\S"))][0] // ""')"
 	opt @arena_claude_doing ''
 	opt @arena_claude_said ''
-	opt @arena_claude_tasks 0
+	opt @arena_claude_background ''
 	branch
 	t=$(title) && [ -n "$t" ] && opt @arena_claude_title "$t"
 	# every fifth prompt the topic is asked again, apart from the turn
@@ -82,9 +93,14 @@ prompt)
 	opt @arena_claude_prompts "$n"
 	[ $((n % 5)) -eq 0 ] && (retitle) </dev/null >/dev/null 2>&1 &
 	;;
+# A subagent's tool is its own: the session's state and what it is doing stay as they are.
 tool)
+	if [ -n "$(text '.agent_id // ""')" ]; then
+		opt @arena_claude_background "$(text '"agent " + (.agent_type // "") + ": " + ('"$tool_text"')')"
+		exit 0
+	fi
 	mark=working
-	opt @arena_claude_doing "$(text '.tool_name + " " + (.tool_input | .command // (.file_path // .path // "" | split("/") | last) // .pattern // .description // .url // "" | tostring | split("\n")[0])')"
+	opt @arena_claude_doing "$(text "$tool_text")"
 	;;
 waiting)
 	mark=waiting
@@ -96,13 +112,19 @@ stop)
 	opt @arena_claude_doing ''
 	t=$(title) && [ -n "$t" ] && opt @arena_claude_title "$t"
 	opt @arena_claude_said "$(text '[.last_assistant_message // "" | splits("\n") | gsub("^[#>*\\s-]+|[*`]"; "") | select(test("\\S"))][0] // ""')"
-	opt @arena_claude_tasks "$(text '[.background_tasks[]? | select(.status == "running")] | length')"
+	opt @arena_claude_background "$(text '[.background_tasks[]? | select(.status == "running")] |
+		if length == 0 then "" else
+			(map(select(.type == "subagent")) | length) as $a | (length - $a) as $s |
+			([if $a > 0 then "\($a) agent\(if $a > 1 then "s" else "" end)" else empty end,
+				if $s > 0 then "\($s) shell\(if $s > 1 then "s" else "" end)" else empty end] | join(", "))
+			+ ": " + (map(.description // .command // "" | split("\n")[0]) | join(" · "))
+		end')"
 	n=$(tokens) && [ -n "$n" ] && opt @arena_claude_tokens "$n"
 	branch
 	;;
 end)
 	for o in @arena_claude @arena_claude_since @arena_claude_prompt @arena_claude_doing @arena_claude_title \
-		@arena_claude_topic @arena_claude_prompts @arena_claude_said @arena_claude_tokens @arena_claude_tasks \
+		@arena_claude_topic @arena_claude_prompts @arena_claude_said @arena_claude_tokens @arena_claude_background \
 		@arena_claude_branch; do
 		tmux set -pu -t "$pane" $o 2>/dev/null
 	done
