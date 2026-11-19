@@ -426,6 +426,11 @@ listed() {
     $(line 15) == '│   Read b.zig '* ]]
 }
 check "the rail lists each session's Claudes under a rule of their own, each over what it is doing and its review" await listed
+claude alpha:renamed prompt '{"prompt": "more"}'
+for w in alpha:one alpha:renamed beta:solo; inner set -p -t $w @arena_claude_background 'a shell'
+check "more than it has rows for, a Claude whose rows do not all fit is left to a count of the rest" await eval '[[ $(line 16) =~ "^│   ◔ a shell +│" && $(line 17) =~ "^│ \+1 more +│" ]]'
+for w in alpha:one beta:solo; inner set -pu -t $w @arena_claude_background
+claude alpha:renamed end
 inner set -pu -t alpha:three @arena_review
 claude alpha:three end
 claude beta:solo waiting '{"message": "Claude is waiting for your input"}'

@@ -576,6 +576,11 @@ pub const App = struct {
         var last: ?usize = null;
         for (found[0..count]) |a| {
             if (n == rows) break;
+            // a Claude's rows go together: past the first, one they do not all fit is left to the count
+            const rest = @as(usize, @intFromBool(details and a.win.detail().len > 0)) +
+                @intFromBool(details and (a.win.text(.branch).len > 0 or a.win.review != .none or a.win.tokens > 0)) +
+                @intFromBool(details and a.win.text(.background).len > 0);
+            if (n > 0 and n + @intFromBool(last != a.session) + 1 + rest > rows) break;
             if (last != a.session) {
                 out[n] = .{ .session = a.session };
                 n += 1;
@@ -600,8 +605,12 @@ pub const App = struct {
         var shown: usize = 0;
         for (out[0..n]) |line| shown += @intFromBool(line == .agent);
         if (shown < count) {
-            if (out[n - 1] == .agent) shown -= 1;
-            out[n - 1] = .{ .more = count - shown };
+            if (n == rows) {
+                if (out[n - 1] == .agent) shown -= 1;
+                n -= 1;
+            }
+            out[n] = .{ .more = count - shown };
+            n += 1;
         }
         return n;
     }
