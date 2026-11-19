@@ -44,6 +44,9 @@ defmodule Babylon.MixProject do
       {:ecto_sql, "~> 3.12"},
       {:postgrex, "~> 0.22"},
       {:jason, "~> 1.4"},
+      {:anubis_mcp, "~> 2.2"},
+      {:bandit, "~> 1.0"},
+      {:plug, "~> 1.0"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
     ]
   end

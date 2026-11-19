@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# babylon's CLI: each command is one stateless MCP tools/call to the server on BABYLON_URL.
+set -euo pipefail
+
+url=${BABYLON_URL:-http://127.0.0.1:${BABYLON_PORT:-4050}/}
+version=2026-07-28
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: babylon file TITLE [--repo R] [--body B] [--priority low|med|high] [--epic N] [--blocked-by N,N]
+       babylon list [--repo R] [--status S,S]
+       babylon show N
+       babylon update N [--title T] [--body B] [--repo R] [--status S] [--priority P]
+       babylon link FROM blocks|relates|duplicates|parent TO
+       babylon unlink FROM KIND TO
+       babylon call TOOL JSON
+A ticket's repo defaults to the git repository you are in.
+USAGE
+  exit 2
+}
+
+call() {
+  local tool=$1 args=$2 body response
+  body=$(jq -nc --arg tool "$tool" --argjson args "$args" --arg v "$version" \
+    '{jsonrpc: "2.0", id: 1, method: "tools/call",
+      params: {name: $tool, arguments: $args,
+               _meta: {"io.modelcontextprotocol/protocolVersion": $v,
+                       "io.modelcontextprotocol/clientCapabilities": {}}}}')
+  response=$(curl -sS --fail-with-body "$url" \
+    -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
+    -H "mcp-protocol-version: $version" -H 'mcp-method: tools/call' -H "mcp-name: $tool" \
+    --data-binary "$body") || { echo "babylon: no server at $url" >&2; exit 1; }
+  if jq -e '.error' <<<"$response" >/dev/null; then
+    jq -r '"babylon: " + .error.message' <<<"$response" >&2
+    exit 1
+  fi
+  if jq -e '.result.isError == true' <<<"$response" >/dev/null; then
+    jq -r '"babylon: " + .result.content[0].text' <<<"$response" >&2
+    exit 1
+  fi
+  jq -r '.result.content[0].text' <<<"$response"
+}
+
+# --flag value pairs into a JSON object; --blocked-by and --status take comma lists
+flags() {
+  local json='{}' key value
+  while (($#)); do
+    [[ $1 == --* && $# -ge 2 ]] || usage
+    key=${1#--}; key=${key//-/_}; value=$2; shift 2
+    case $key in
+      epic) json=$(jq -c --argjson v "$value" '. + {epic_id: $v}' <<<"$json") ;;
+      blocked_by) json=$(jq -c --arg v "$value" '. + {blocked_by: ($v | split(",") | map(tonumber))}' <<<"$json") ;;
+      status) json=$(jq -c --arg v "$value" '. + {status: ($v | split(","))}' <<<"$json") ;;
+      title | body | repo | priority) json=$(jq -c --arg k "$key" --arg v "$value" '. + {($k): $v}' <<<"$json") ;;
+      *) usage ;;
+    esac
+  done
+  printf '%s' "$json"
+}
+
+lines() { jq -r '.[] | "#\(.id)\t\(.status)\t\(.priority)\t\(.repo // "-")\t\(.title)"'; }
+
+(($#)) || usage
+command=$1; shift
+
+case $command in
+  file)
+    (($#)) || usage
+    title=$1; shift
+    args=$(flags "$@")
+    if ! jq -e 'has("repo")' <<<"$args" >/dev/null && top=$(git rev-parse --show-toplevel 2>/dev/null); then
+      args=$(jq -c --arg r "$(basename "$top")" '. + {repo: $r}' <<<"$args")
+    fi
+    call file_ticket "$(jq -c --arg t "$title" '. + {title: $t}' <<<"$args")" | jq -r '"#\(.id) \(.title)"'
+    ;;
+  list) call list_tickets "$(flags "$@")" | lines ;;
+  show) (($# == 1)) || usage; call get_ticket "{\"id\": $1}" | jq . ;;
+  update)
+    (($#)) || usage
+    id=$1; shift
+    args=$(flags "$@" | jq -c 'if .status then .status |= .[0] else . end')
+    call update_ticket "$(jq -c --argjson id "$id" '. + {id: $id}' <<<"$args")" |
+      jq -r '"#\(.id) \(.status) \(.title)"'
+    ;;
+  link | unlink)
+    (($# == 3)) || usage
+    call "${command}_tickets" "{\"from\": $1, \"kind\": \"$2\", \"to\": $3}" | jq -c .
+    ;;
+  call) (($# == 2)) || usage; call "$1" "$2" ;;
+  *) usage ;;
+esac
