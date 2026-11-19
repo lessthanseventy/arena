@@ -39,7 +39,7 @@ const pane_format = "#{{session_id}} #{{window_id}} #{{pane_id}} #{{window_width
     claude_state ++ " #{{window_cell_width}} #{{window_cell_height}} #{{?@arena_width,#{{@arena_width}},0}} " ++
     review_state ++ " #{{?@arena_claude_since,#{{@arena_claude_since}},0}} " ++
     "#{{?@arena_claude_tokens,#{{@arena_claude_tokens}},0}} #{{?@arena_claude_at,#{{@arena_claude_at}},0}} " ++
-    "#{{?@arena_claude_took,#{{@arena_claude_took}},0}} " ++
+    "#{{?@arena_claude_took,#{{@arena_claude_took}},0}} #{{?@arena_claude_ctx,#{{@arena_claude_ctx}},0}} " ++
     "#{{@arena_claude_doing}}\t#{{@arena_claude_prompt}}\t#{{@arena_claude_title}}\t#{{@arena_claude_said}}\t" ++
     "#{{@arena_claude_branch}}\t#{{@arena_claude_background}}\t#{{window_name}}";
 
@@ -174,10 +174,12 @@ pub const Window = struct {
     listed: bool = false,
     /// About the Claude it is marked by, as its hook set it, 0 and empty where no hook has: when
     /// its state began and when it or a subagent of its last did anything, in seconds since the
-    /// epoch, the tokens of its context, how long its last turn took, and its `Info` between tabs.
+    /// epoch, the tokens of its context and the share of its budget they are, as its status line
+    /// set it, how long its last turn took, and its `Info` between tabs.
     since: u32 = 0,
     at: u32 = 0,
     tokens: u32 = 0,
+    ctx: u32 = 0,
     took: u32 = 0,
     info: []u8 = &.{},
 
@@ -211,13 +213,14 @@ pub const Window = struct {
         return win.since != 0 or win.claude != .none;
     }
 
-    fn know(win: *Window, gpa: Allocator, since: u32, tokens: u32, at: u32, took: u32, info: []const u8) !void {
+    fn know(win: *Window, gpa: Allocator, since: u32, tokens: u32, at: u32, took: u32, ctx: u32, info: []const u8) !void {
         gpa.free(win.info);
         win.info = &.{};
         win.since = since;
         win.tokens = tokens;
         win.at = at;
         win.took = took;
+        win.ctx = ctx;
         win.info = try gpa.dupe(u8, info);
     }
 
@@ -914,7 +917,7 @@ pub const App = struct {
         var lines = std.mem.tokenizeScalar(u8, body, '\n');
         while (lines.next()) |line| {
             var it = std.mem.tokenizeScalar(u8, line, ' ');
-            var n: [20]u32 = undefined;
+            var n: [21]u32 = undefined;
             for (&n, 0..) |*field, i| {
                 const token = it.next() orelse break;
                 field.* = std.fmt.parseInt(u32, token[@intFromBool(i < 3)..], 10) catch break;
@@ -945,7 +948,7 @@ pub const App = struct {
                     win.cell_h = @intCast(n[13]);
                     win.claude = .none;
                     win.review = .none;
-                    try win.know(app.gpa, 0, 0, 0, 0, "");
+                    try win.know(app.gpa, 0, 0, 0, 0, 0, "");
                     // Read once: after that arena's own is the newer, and a list asked for
                     // before a change would put the old one back.
                     if (!win.listed) win.share = @intCast(@min(n[14], max_share));
@@ -962,7 +965,7 @@ pub const App = struct {
                 const claude: Mark = @fromBackingInt(@intCast(@min(n[11], @backingInt(Mark.waiting))));
                 const agent = n[16] != 0 or claude != .none;
                 if (agent and (!win.agent() or @backingInt(claude) > @backingInt(win.claude)))
-                    try win.know(app.gpa, n[16], n[17], n[18], n[19], info);
+                    try win.know(app.gpa, n[16], n[17], n[18], n[19], n[20], info);
                 if (@backingInt(claude) > @backingInt(win.claude)) win.claude = claude;
                 const review = Review.of(n[15]);
                 if (@backingInt(review) > @backingInt(win.review)) win.review = review;

@@ -161,7 +161,7 @@ stop)
 end)
 	for o in @arena_claude @arena_claude_since @arena_claude_prompt @arena_claude_doing @arena_claude_title \
 		@arena_claude_topic @arena_claude_prompts @arena_claude_said @arena_claude_tokens @arena_claude_background @arena_claude_running \
-		@arena_claude_branch @arena_claude_at @arena_claude_began @arena_claude_took; do
+		@arena_claude_branch @arena_claude_at @arena_claude_began @arena_claude_took @arena_claude_ctx; do
 		tmux set -pu -t "$pane" $o 2>/dev/null
 	done
 	exit 0

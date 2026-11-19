@@ -470,6 +470,8 @@ claude alpha:one prompt '{"prompt": "go on"}'
 inner set -p -t alpha:one @arena_claude_at $(($(date +%s) - 700))
 check "working with nothing heard for ten minutes, it is quiet" see '│   go on +quiet 11m │'
 check "and its branch under that, its context at the right" see "│   $(git -C $root branch --show-current) +253k ctx │"
+inner set -p -t alpha:one @arena_claude_ctx 88
+check "the share of its budget, where its status line says it" see "│   $(git -C $root branch --show-current) +88% ctx │"
 mkdir $tmp/norepo
 claude alpha:one stop '{"cwd": "'$tmp/norepo'"}'
 check "outside a repo, no repo" is_opt branch 'no repo'

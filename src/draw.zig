@@ -164,6 +164,9 @@ fn ago(buf: []u8, epoch: i64, since: u32) []const u8 {
         std.fmt.bufPrint(buf, "{d}d", .{@min(99, @divFloor(s, 86400))})) catch "";
 }
 
+/// The share of its context budget past which a Claude's is drawn to be seen: compaction is near.
+const ctx_warn = 80;
+
 /// A length of time in its two largest units: 45s, 9m, 1h9m, 2d3h.
 fn span(buf: []u8, s: u32) []const u8 {
     return (if (s < 60)
@@ -375,7 +378,11 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
             const win = a.win;
             try w.writeAll("   ");
             var count: [8]u8 = undefined;
-            const tokens = tokenCount(&count, win.tokens);
+            // the share of its budget, when its status line says, else the tokens
+            const tokens = if (win.ctx > 0)
+                std.fmt.bufPrint(&count, "{d}%", .{@min(win.ctx, 999)}) catch ""
+            else
+                tokenCount(&count, win.tokens);
             // the context at the right end, kept clear of the rest by two cells at least
             const ctx: usize = if (tokens.len > 0) tokens.len + 4 else 0;
             var left: usize = inner - 4 - if (ctx > 0) ctx + 2 else 0;
@@ -398,7 +405,7 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
                 gap = 2;
             }
             if (ctx > 0) {
-                try pen.set(w, dim, null);
+                try pen.set(w, if (win.ctx >= ctx_warn) ink(app, "emberdim", 1) else dim, null);
                 for (0..left + 2) |_| try w.writeAll(" ");
                 try w.writeAll(tokens);
                 try w.writeAll(" ctx");

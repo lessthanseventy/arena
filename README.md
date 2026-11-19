@@ -28,7 +28,9 @@ always did; arena draws them and leaves them running when it quits.
   and how long it has been in its state; under that what it is doing, waits for or last said,
   with how long its last turn took, or `quiet` and how long when it has worked ten minutes with
   nothing heard from it; under that its branch (or `no repo`, `detached` and the commit), its
-  review and the tokens of its context; and under that what it has running in the background. What a conversation is about is the name you gave it with `/rename`, else a topic Haiku
+  review and its context: the share of its budget, drawn to be seen past 80%, where your status
+  line sets the pane option `@arena_claude_ctx` to it (hooks are not told the window's size),
+  else its tokens; and under that what it has running in the background. What a conversation is about is the name you gave it with `/rename`, else a topic Haiku
   is asked for every fifth prompt (one small `claude -p` call, in the background), else the title
   Claude Code gave it at its start. The hook needs `jq` for all of that text.
 - **A mark for code review** beside it: `✗` when changes are asked for, `»` while queued to merge,
