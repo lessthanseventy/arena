@@ -73,7 +73,7 @@ inner new-session -d -s beta -n solo sh
 inner select-window -t alpha:one
 
 # An empty HOME: no machine palette, so colours are the fallback ones. No motion: no slides to wait out.
-outer new-session -d -s o -x 109 -y 24 \
+outer new-session -d -s o -x 121 -y 24 \
   "env -u TMUX HOME=$tmp ARENA_REDUCED_MOTION=1 $bin -L $in alpha 2>$tmp/err; echo EXIT \$?; cat"
 outer set -s set-clipboard on
 # what arena writes, for what a picture of the screen does not show
@@ -82,13 +82,13 @@ outer pipe-pane -t o "cat >$tmp/raw"
 check "the strip shows, the first column flush against the rail" see '^╭─ sessions ─+╮ ╭─ 1 one '
 foot() { local s=$(screen); [[ $(sed -n 3p <<<$s) == '│ alpha '* && $(sed -n 4p <<<$s) == '│ beta '* && $(sed -n 20p <<<$s) == ├─*┤* && $(sed -n 21p <<<$s) == '│ + new '* && $(sed -n 22p <<<$s) == '│ ≡ menu '* ]] }
 check "the rail keeps + new and the menu at its foot" await foot
-dots() { local s=$(screen); [[ $(sed -n 23p <<<$s) == ╰* && $(sed -n 24p <<<$s) =~ "^ {64}$1 *\$" ]] }
+dots() { local s=$(screen); [[ $(sed -n 23p <<<$s) == ╰* && $(sed -n 24p <<<$s) =~ "^ {76}$1 *\$" ]] }
 check "a row of its own under the strip has a dot per window, centred on it" await dots '● ○ ○'
-mouse 0 67 24 M
-mouse 0 67 24 m
+mouse 0 79 24 M
+mouse 0 79 24 m
 check "a click on a dot goes to its window" await dots '○ ● ○'
-mouse 0 65 24 M
-mouse 0 65 24 m
+mouse 0 77 24 M
+mouse 0 77 24 m
 await dots '● ○ ○'
 
 # A tmux with the pixels patch gives arena's terminal cells of 9x19 pixels, as a real one has.
@@ -96,8 +96,8 @@ mkfifo $tmp/sizer
 outer -C attach -t o <$tmp/sizer >/dev/null 2>&1 &
 exec {sizer}>$tmp/sizer
 # tmux tells a pane its size again only when its cells change, so a cell's pixels come with one
-print -u $sizer 'refresh-client -C 108x24,9x19'
-print -u $sizer 'refresh-client -C 109x24,9x19'
+print -u $sizer 'refresh-client -C 120x24,9x19'
+print -u $sizer 'refresh-client -C 121x24,9x19'
 outer_cells() { [[ $(outer display -p -t o '#{window_cell_width}') == 9 ]] }
 cells() { [[ $(inner display -p -t alpha:one '#{window_cell_width}x#{window_cell_height}') == $1 ]] }
 if await outer_cells; then
@@ -215,19 +215,19 @@ key "M-'"
 check "Alt+' makes it wider" see '╭─ 1 one ─{57}╮'
 
 windows() { [[ $(inner list-windows -t $1 -F '#{window_name}' | tr '\n' ' ') == "$2 " ]] }
-mouse 0 29 1 M
-mouse 32 99 1 M
-mouse 32 101 1 M
-mouse 32 104 1 M
-mouse 0 104 1 m
+mouse 0 41 1 M
+mouse 32 111 1 M
+mouse 32 113 1 M
+mouse 32 116 1 M
+mouse 0 116 1 m
 check "a title dropped on another column takes its place, and goes no further" await windows alpha 'two one three'
 see '─╮ ╭─ 2 one '
-mouse 0 37 1 M
-mouse 32 27 1 M
-mouse 0 27 1 m
+mouse 0 49 1 M
+mouse 32 39 1 M
+mouse 0 39 1 m
 check "and back" await windows alpha 'one two three'
 see '^╭─ sessions ─+╮ ╭─ 1 one '
-mouse 0 29 1 M
+mouse 0 41 1 M
 mouse 32 5 4 M
 mouse 0 5 4 m
 check "a title dropped on a session of the rail sends its window there" await windows beta 'solo one'
@@ -244,17 +244,17 @@ check "Alt+j goes to the next session" see '╭─ 1 solo '
 key M-k
 check "Alt+k comes back, to the window left" see '╭─ 2 two '
 # wheel 64 and 65 are up and down, 66 and 67 left and right
-mouse 65 69 10 M
-mouse 67 69 10 M
-mouse 65 69 10 M
+mouse 65 81 10 M
+mouse 67 81 10 M
+mouse 65 81 10 M
 zselect -t 30
-mouse 66 69 10 M
+mouse 66 81 10 M
 zselect -t 30
 check "a sideways wheel among a swipe down is not a step, nor is one on its own" current two
-repeat 3 mouse 66 69 10 M
+repeat 3 mouse 66 81 10 M
 check "three sideways the same way are a step" await current one
 zselect -t 30
-repeat 8 mouse 67 69 10 M
+repeat 8 mouse 67 81 10 M
 zselect -t 30
 check "a swipe steps once however far it goes" await current two
 key M-h
@@ -302,11 +302,11 @@ check "the menu splits the pane" await panes 2
 check "and the split is drawn" see 'echo e2e.* │sh-[0-9.]+\$ +│'
 wrote() { grep -q -- "$1" $tmp/raw }
 first() { [[ $(inner list-panes -t alpha:two -F '#{pane_width}' | head -1) -eq $1 ]] }
-mouse 35 67 5 M
+mouse 35 79 5 M
 check "over the line between panes the pointer is the one for resizing" await wrote $'\e]22;ew-resize'
-mouse 0 67 5 M
-mouse 32 60 5 M
-mouse 0 60 5 m
+mouse 0 79 5 M
+mouse 32 72 5 M
+mouse 0 72 5 m
 check "dragging the line resizes the panes" await first 25
 
 key M-m
@@ -320,24 +320,24 @@ check "Alt+p jumps to a window of another session" see '╭─ 1 solo '
 
 key M-o
 check "Alt+o shows every session's windows" see '╭─ 1 one ─+╮ ╭─ 2 renamed '
-mouse 0 89 4 M
-mouse 32 29 4 M
-mouse 0 29 4 m
+mouse 0 101 4 M
+mouse 32 41 4 M
+mouse 0 41 4 m
 check "a picture dropped on another takes its place" await windows alpha 'three one renamed'
 see '╭─ 1 three ─+╮ ╭─ 2 one '
-mouse 0 29 4 M
-mouse 32 89 4 M
-mouse 0 89 4 m
+mouse 0 41 4 M
+mouse 32 101 4 M
+mouse 0 101 4 m
 check "and back" await windows alpha 'one renamed three'
 see '╭─ 1 one ─+╮ ╭─ 2 renamed '
-mouse 0 89 4 M
-mouse 32 29 12 M
-mouse 0 29 12 m
+mouse 0 101 4 M
+mouse 32 41 12 M
+mouse 0 41 12 m
 check "on one of another session, it goes there in front of it" await windows beta 'three solo'
 see '╭─ 1 three ─+╮ ╭─ 2 solo '
-mouse 0 29 12 M
-mouse 32 99 4 M
-mouse 0 99 4 m
+mouse 0 41 12 M
+mouse 32 111 4 M
+mouse 0 111 4 m
 check "and on the rest of a session's row, to that session's end" await windows alpha 'one renamed three'
 see '╭─ 3 three '
 key Escape
@@ -390,19 +390,22 @@ line() { sed -n $1p <<<$(screen) }
 claude alpha:three waiting '{"message": "Claude needs your permission to use Bash"}'
 claude alpha:one prompt '{"prompt": "go"}'
 claude beta:solo tool '{"tool_name": "Read", "tool_input": {"file_path": "/a/b.zig"}}'
+inner set -p -t alpha:three @arena_review changes
 listed() {
-  [[ $(line 6) == ├─' agents '─*┤* && $(line 7) == '│ alpha '* && $(line 8) =~ '^│ ▲ three +[0-9]+s │' &&
-    $(line 9) == '│   allow Bash '* && $(line 10) =~ '^│ ◐ one +[0-9]+s │' &&
-    $(line 11) == '│ beta '* && $(line 12) =~ '^│ ◐ solo +[0-9]+s │' ]]
+  [[ $(line 6) == ├─' agents · urgency '─*┤* && $(line 7) == '│ alpha '* && $(line 8) =~ '^│ ▲ three +[0-9]+s │' &&
+    $(line 9) == '│   allow Bash '* && $(line 10) == '│   ✗ changes '* && $(line 11) =~ '^│ ◐ one +[0-9]+s │' &&
+    $(line 12) == '│   go '* && $(line 13) == '│ beta '* && $(line 14) =~ '^│ ◐ solo +[0-9]+s │' &&
+    $(line 15) == '│   Read b.zig '* ]]
 }
-check "the rail lists each session's Claudes under a rule of their own, what one waits for under it" await listed
+check "the rail lists each session's Claudes under a rule of their own, each over what it is doing and its review" await listed
+inner set -pu -t alpha:three @arena_review
 claude alpha:three end
 claude beta:solo waiting '{"message": "Claude is waiting for your input"}'
 beta_first() {
-  [[ $(line 7) == '│ beta '* && $(line 8) =~ '^│ ▲ solo ' && $(line 9) == '│   is waiting for you…│'* &&
+  [[ $(line 7) == '│ beta '* && $(line 8) =~ '^│ ▲ solo ' && $(line 9) == '│   is waiting for your input '* &&
     $(line 10) == '│ alpha '* && $(line 11) =~ '^│ ◐ one ' ]]
 }
-check "the session whose Claude most wants looking at comes first, and text past the rail is cut" await beta_first
+check "the session whose Claude most wants looking at comes first" await beta_first
 claude alpha:one end
 claude beta:solo end
 check "with no Claudes left the rule over them goes" gone '├─ agents'
@@ -432,6 +435,15 @@ rm $tmp/asked
 repeat 5 said prompt
 zselect -t 50
 check "and Haiku is not asked again" [ ! -e $tmp/asked ]
+print -r -- '{"type":"assistant","message":{"usage":{"input_tokens":4,"cache_read_input_tokens":253118,"cache_creation_input_tokens":68}}}' >>$transcript
+claude alpha:one stop '{"last_assistant_message": "## **Done.** It loads\nmore", "cwd": "'$root'", "transcript_path": "'$transcript'",
+  "background_tasks": [{"status": "running"}, {"status": "done"}]}'
+check "a stop keeps the first line of its answer, plain" is_opt said 'Done. It loads'
+check "how many of its tasks still run" is_opt tasks 1
+check "the context its last answer was given" is_opt tokens 253190
+check "and the branch it works on" is_opt branch "$(git -C $root branch --show-current)"
+check "the rail has how many run under it, between turns" see '│   1 running '
+check "and its branch and context under that" see "│   $(git -C $root branch --show-current)  253k ctx "
 said end
 check "the end takes the title and its count off too" await [ -z "$(inner show -p -t alpha:one | grep arena_claude)" ]
 
@@ -449,19 +461,21 @@ check "and stays where it is with no other waiting or done" at alpha:three
 mouse 0 5 11 M
 mouse 0 5 11 m
 check "a click on a Claude in the rail goes to its window" await at beta:solo
-key M-a
-check "Alt+a opens the box of every Claude, by urgency" see '│ +◐ agents +by urgency +│'
-check "each with what it is doing" see '▲ three +allow Bash +[0-9]+s'
-key s
-check "s orders them by when they last changed" see '│ +◐ agents +by recent +│'
-key s
-key Enter
-check "Enter goes to the one picked, the first" await at alpha:three
-check "and closes the box" gone 'by urgency'
-mouse 35 5 8 M
-check "the pointer resting on the rail's Claudes opens the box" see 'by urgency'
-mouse 35 60 3 M
-check "and leaving them and the box closes it" gone 'by urgency'
+mouse 0 5 6 M
+mouse 0 5 6 m
+check "a click on the rule over them orders them by when they last changed" see '├─ agents · recent '
+mouse 0 5 6 M
+mouse 0 5 6 m
+see '├─ agents · urgency '
+key M-w
+check "Alt+w narrows the rail to a session's first letters and its mark" see '^│ al ▲ │ '
+check "and a Claude's mark and time" see '^│ ▲ +[0-9]+s│ '
+mouse 35 3 9 M
+check "the pointer resting on it draws it wide over the strip" see '├─ agents · urgency '
+mouse 35 72 3 M
+check "and leaving it, narrow again" gone '├─ agents · urgency '
+key M-w
+check "Alt+w again widens it" see '^╭─ sessions ─+╮ '
 claude alpha:three end
 claude beta:solo end
 mouse 0 5 4 M
@@ -511,9 +525,9 @@ check "and its place is kept in tmux" await order 1beta2alpha
 key 'echo hello brave world' Enter
 see '│hello brave world'
 row=$(screen | grep -n '│hello brave world' | cut -d: -f1)
-mouse 0 33 $row M
-mouse 32 43 $row M
-mouse 0 43 $row m
+mouse 0 45 $row M
+mouse 32 55 $row M
+mouse 0 55 $row m
 copied() { [[ $(outer show-buffer 2>/dev/null) == $1 ]] }
 check "dragging selects text and copies it" await copied 'brave world'
 

@@ -1,8 +1,11 @@
 #!/bin/sh
 # Claude Code's hook for arena: sets the pane option @arena_claude, which arena marks the window
 # by, @arena_claude_since, when that last changed, and what it is about: @arena_claude_prompt, the
-# turn's prompt, @arena_claude_doing, the tool it is on or what it waits for, and
-# @arena_claude_title, what the conversation is about. $1 is the event (prompt | tool | stop | waiting |
+# turn's prompt, @arena_claude_doing, the tool it is on or what it waits for,
+# @arena_claude_title, what the conversation is about, @arena_claude_said, the first line of its
+# last answer, @arena_claude_tokens, its context in tokens, @arena_claude_tasks, how many of its
+# tasks run in the background, and @arena_claude_branch, the git branch it works on. $1 is the
+# event (prompt | tool | stop | waiting |
 # end), the hook's JSON is on stdin. A hook must never fail a turn: every miss is silent and the
 # exit is 0. Without jq the text is left out.
 pane=${TMUX_PANE:-}
@@ -55,11 +58,24 @@ Install Fix." 2>/dev/null |
 	opt @arena_claude_topic "$topic"
 	opt @arena_claude_title "$topic"
 }
+branch() {
+	cwd=$(printf '%s' "$json" | jq -r '.cwd // ""' 2>/dev/null)
+	[ -d "$cwd" ] && opt @arena_claude_branch "$(git -C "$cwd" branch --show-current 2>/dev/null | cut -c1-40)"
+}
+# The context its last answer was given: what was read from cache, written to it, and sent new.
+tokens() {
+	[ -f "$transcript" ] || return 0
+	grep '"type":"assistant"' "$transcript" | tail -1 | jq -r '.message.usage |
+		(.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0)' 2>/dev/null
+}
 case ${1:-} in
 prompt)
 	mark=working
 	opt @arena_claude_prompt "$(text '[.prompt // "" | splits("\n") | select(test("\\S"))][0] // ""')"
 	opt @arena_claude_doing ''
+	opt @arena_claude_said ''
+	opt @arena_claude_tasks 0
+	branch
 	t=$(title) && [ -n "$t" ] && opt @arena_claude_title "$t"
 	# every fifth prompt the topic is asked again, apart from the turn
 	n=$(($(tmux show -pqv -t "$pane" @arena_claude_prompts 2>/dev/null || echo 0) + 1))
@@ -79,10 +95,15 @@ stop)
 	if printf '%s' "$json" | grep -Eq '"status" *: *"running"'; then mark=background; else mark='done'; fi
 	opt @arena_claude_doing ''
 	t=$(title) && [ -n "$t" ] && opt @arena_claude_title "$t"
+	opt @arena_claude_said "$(text '[.last_assistant_message // "" | splits("\n") | gsub("^[#>*\\s-]+|[*`]"; "") | select(test("\\S"))][0] // ""')"
+	opt @arena_claude_tasks "$(text '[.background_tasks[]? | select(.status == "running")] | length')"
+	n=$(tokens) && [ -n "$n" ] && opt @arena_claude_tokens "$n"
+	branch
 	;;
 end)
 	for o in @arena_claude @arena_claude_since @arena_claude_prompt @arena_claude_doing @arena_claude_title \
-		@arena_claude_topic @arena_claude_prompts; do
+		@arena_claude_topic @arena_claude_prompts @arena_claude_said @arena_claude_tokens @arena_claude_tasks \
+		@arena_claude_branch; do
 		tmux set -pu -t "$pane" $o 2>/dev/null
 	done
 	exit 0

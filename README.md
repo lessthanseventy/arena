@@ -15,19 +15,21 @@ always did; arena draws them and leaves them running when it quits.
 
 - **A strip per session.** Windows are columns with rounded borders; the focused one has a slowly
   turning gradient. The first and last columns sit flush against the edges.
-- **A rail of sessions** down the left, with each one's window count.
+- **A rail of sessions** down the left, with each one's window count. `Alt+w` or a click on its
+  top narrows it to two letters a session and a mark and time a Claude; resting the pointer on
+  the narrow rail draws it wide over the strip until the pointer leaves.
 - **Marks on windows running Claude Code**: `◐` turning while it works, `◔` between turns while
   work it started runs in the background, `◉` once it is done and until you look, `▲` while it
   waits on an answer. arena's Claude Code plugin sets the pane option `@arena_claude` to
   `working`, `background`, `done` or `waiting` ([Install](#install)).
 - **Its Claudes listed** under the sessions in the rail, each session's together: the session whose
-  Claude most wants looking at first, and in it the most pressing, with how long it has been so;
-  under one waiting, what it waits for. Each is called by what its conversation is about: the name
-  you gave it with `/rename`, else a topic Haiku is asked for every fifth prompt (one small
-  `claude -p` call, in the background), else the title Claude Code gave it at its start. The hook
-  needs `jq` for all of that text.
-- **A box of every Claude**, wider, with what each is doing or was asked; ordered by urgency or
-  by when each last changed.
+  Claude most wants looking at first, and in it the most pressing, or, a click on their rule
+  away, the one that changed last first. A Claude has its mark, what its conversation is about
+  and how long it has been in its state; under that what it is doing, waits for, has running in
+  the background or last said; and under that its branch, its review and the tokens of its
+  context. What a conversation is about is the name you gave it with `/rename`, else a topic Haiku
+  is asked for every fifth prompt (one small `claude -p` call, in the background), else the title
+  Claude Code gave it at its start. The hook needs `jq` for all of that text.
 - **A mark for code review** beside it: `✗` when changes are asked for, `»` while queued to merge,
   `✓` once approved, `◆` once landed. Set the pane option `@arena_review` to `changes`, `queued`,
   `reviewed` or `landed`; a session shows the one that most wants looking at.
@@ -87,7 +89,7 @@ Everything is on Alt, so it stays out of the way of your shell and your window m
 | `Alt+z` | give the session's columns the whole width, and back |
 | `Alt+p` | jump to a window by name |
 | `Alt+o` | the overview |
-| `Alt+a` | the box of every Claude: `j` `k` move, `Enter` goes, `s` changes the order |
+| `Alt+w` | the rail narrow, and wide again |
 | `Alt+n` | the Claude that most wants looking at, waiting or done |
 | `Alt+/` | search the pane's history |
 | `Alt+m` | the menu |
@@ -96,8 +98,8 @@ Everything is on Alt, so it stays out of the way of your shell and your window m
 With the mouse:
 
 - Click a column, a dot under the focused column, or a session in the rail to go there.
-- Click a Claude in the rail to go to its window. Rest the pointer on them, or click their rule,
-  for the box of every Claude; it closes when the pointer leaves it.
+- Click a Claude in the rail to go to its window, the rule over them to change their order, the
+  rail's top to narrow or widen it.
 - In the overview, drag a window's picture onto another to take its place, in its own session or
   any other, or onto the rest of a session's row to put it at that session's end.
 - Click a pane to select it; drag the line between panes to resize them: over it, the pointer

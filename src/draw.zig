@@ -149,7 +149,6 @@ fn dots(app: *const App, w: *Writer, s: *const Session) !void {
 }
 
 const rail_title = " sessions ";
-const agents_title = " agents ";
 
 /// How long ago `since` was, in its largest whole unit: 45s, 4m, 2h, 3d.
 fn ago(buf: []u8, epoch: i64, since: u32) []const u8 {
@@ -165,18 +164,31 @@ fn ago(buf: []u8, epoch: i64, since: u32) []const u8 {
         std.fmt.bufPrint(buf, "{d}d", .{@min(99, @divFloor(s, 86400))})) catch "";
 }
 
+/// A count of tokens in four cells at most: 840, 84k, 1.2M.
+fn tokenCount(buf: []u8, n: u32) []const u8 {
+    if (n == 0) return "";
+    return (if (n < 1000)
+        std.fmt.bufPrint(buf, "{d}", .{n})
+    else if (n < 1_000_000)
+        std.fmt.bufPrint(buf, "{d}k", .{n / 1000})
+    else
+        std.fmt.bufPrint(buf, "{d}.{d}M", .{ n / 1_000_000, n / 100_000 % 10 })) catch "";
+}
+
 /// The session rail, a bordered panel down the left edge: a session a row with how many windows
 /// it has, the current one a chip, its Claudes under a rule of their own, and the menu button on
-/// its last row.
+/// its last row. Narrow, it has no titles, and its rows show less.
 fn rail(app: *const App, w: *Writer) !void {
-    const width = app.railW();
+    const width = app.railDrawnW();
     if (width == 0) return;
+    const wide = width == app.railWideW();
     const h = app.view_h;
     const inner = width - 2;
     const dim = ink(app, "dim", 8);
     var lines: [64]App.AgentLine = undefined;
     const agents = app.railAgents(&lines);
     const agents_row = app.railAgentsRow();
+    const agents_title: []const u8 = if (!wide) "" else if (app.agent_sort == .urgency) " agents · urgency " else " agents · recent ";
     var pen: Pen = .{};
     var y: u16 = 0;
     while (y < h) : (y += 1) {
@@ -185,24 +197,24 @@ fn rail(app: *const App, w: *Writer) !void {
         const bottom = y == h - 1;
         const over_agents = y == agents_row and agents > 0;
         const ruled = (y == app.railRuleRow() or over_agents) and !top;
+        const title: []const u8 = if (top and wide) rail_title else if (over_agents) agents_title else "";
         var x: u16 = 0;
+        var at_title: usize = 0;
         while (x < width) : (x += 1) {
             if (!top and !bottom and !ruled and x == 1) {
                 const at = y -| (agents_row + 1);
                 if (y > agents_row and at < agents) {
-                    try agentRow(app, w, &pen, lines[at], inner);
-                } else try railRow(app, w, &pen, y, inner);
+                    try agentRow(app, w, &pen, lines[at], inner, wide);
+                } else try railRow(app, w, &pen, y, inner, wide);
                 x = width - 2;
                 continue;
             }
-            if (top and x >= 2 and x - 2 < rail_title.len) {
+            // a title is written a character at a time from the third cell, the multibyte · too
+            if (x >= 2 and at_title < title.len) {
                 try pen.set(w, dim, null);
-                try w.writeByte(rail_title[x - 2]);
-                continue;
-            }
-            if (over_agents and x >= 2 and x - 2 < agents_title.len) {
-                try pen.set(w, dim, null);
-                try w.writeByte(agents_title[x - 2]);
+                const len = std.unicode.utf8ByteSequenceLength(title[at_title]) catch 1;
+                try w.writeAll(title[at_title..][0..len]);
+                at_title += len;
                 continue;
             }
             const edge: vt.Style = if (app.theme) |t|
@@ -225,52 +237,70 @@ fn rail(app: *const App, w: *Writer) !void {
 }
 
 /// The `inner` cells of the rail's row `y` between its borders.
-fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16) !void {
+fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: bool) !void {
     const dim = ink(app, "dim", 8);
     var filled: usize = 0;
     const index: usize = y -| 2;
     if (y == app.railMenuRow()) {
         try pen.set(w, dim, null);
-        try w.writeAll(" " ++ app_mod.rail_button);
-        filled = 1 + cellCount(app_mod.rail_button);
+        const button = if (wide) app_mod.rail_button else "≡";
+        try w.writeAll(" ");
+        try w.writeAll(button);
+        filled = 1 + cellCount(button);
     } else if (y == app.railNewRow()) {
         try pen.set(w, dim, null);
-        try w.writeAll(" " ++ app_mod.rail_new);
-        filled = 1 + cellCount(app_mod.rail_new);
+        const button = if (wide) app_mod.rail_new else "+";
+        try w.writeAll(" ");
+        try w.writeAll(button);
+        filled = 1 + cellCount(button);
     } else if (y >= 2 and index < app.railShown()) {
         const s = app.sessions.items[index];
         const drop = app.dropAt();
         // lit as the current one is: a window held by its title would go to it
         const here = s.id == app.current or (drop == .session and drop.session == index);
-        const review = App.sessionReview(s);
-        const room = inner - 6 - @intFromBool(review != .none);
-        const cut = cellCount(s.name) > room;
-        const name = clip(s.name, room - @intFromBool(cut));
-        try pen.set(w, if (here) chip(app) else .{}, null);
-        try w.writeAll(" ");
-        try w.writeAll(name);
-        if (cut) try w.writeAll("…");
-        for (0..inner - 5 - @intFromBool(review != .none) - cellCount(name) - @intFromBool(cut)) |_| try w.writeAll(" ");
-        if (review != .none) {
-            try pen.set(w, if (here) chip(app) else reviewInk(app, review), null);
-            try put(w, reviewGlyph(review));
+        if (!wide) {
+            const name = clip(s.name, inner -| 4);
+            try pen.set(w, if (here) chip(app) else .{}, null);
+            try w.writeAll(" ");
+            try w.writeAll(name);
+            for (0..inner - 3 - cellCount(name)) |_| try w.writeAll(" ");
+            try pen.set(w, if (here) chip(app) else ink(app, "amber", 4), null);
+            try put(w, glyph(app, App.sessionMark(s)));
+            try w.writeAll(" ");
+            filled = inner;
+        } else {
+            const review = App.sessionReview(s);
+            const room = inner - 6 - @intFromBool(review != .none);
+            const cut = cellCount(s.name) > room;
+            const name = clip(s.name, room - @intFromBool(cut));
+            try pen.set(w, if (here) chip(app) else .{}, null);
+            try w.writeAll(" ");
+            try w.writeAll(name);
+            if (cut) try w.writeAll("…");
+            for (0..inner - 5 - @intFromBool(review != .none) - cellCount(name) - @intFromBool(cut)) |_| try w.writeAll(" ");
+            if (review != .none) {
+                try pen.set(w, if (here) chip(app) else reviewInk(app, review), null);
+                try put(w, reviewGlyph(review));
+            }
+            try pen.set(w, if (here) chip(app) else ink(app, "amber", 4), null);
+            try put(w, glyph(app, App.sessionMark(s)));
+            try pen.set(w, if (here) chip(app) else dim, null);
+            try w.print("{d:>2} ", .{@min(s.wins.items.len, 99)});
+            filled = inner;
         }
-        try pen.set(w, if (here) chip(app) else ink(app, "amber", 4), null);
-        try put(w, glyph(app, App.sessionMark(s)));
-        try pen.set(w, if (here) chip(app) else dim, null);
-        try w.print("{d:>2} ", .{@min(s.wins.items.len, 99)});
-        filled = inner;
     } else try pen.set(w, .{}, null);
     for (filled..inner) |_| try w.writeAll(" ");
 }
 
-/// The `inner` cells of a row of the rail's agents.
-fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: u16) !void {
+/// The `inner` cells of a row of the rail's agents. Wide, a Claude's row has its mark, name,
+/// review mark, context and time, and its detail under it with its branch; narrow, its mark and
+/// time alone.
+fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: u16, wide: bool) !void {
     const dim = ink(app, "dim", 8);
     var filled: usize = 0;
     switch (line) {
         .session => |si| {
-            const name = clip(app.sessions.items[si].name, inner - 2);
+            const name = clip(app.sessions.items[si].name, if (wide) inner - 2 else 2);
             try pen.set(w, dim, null);
             try w.writeAll(" ");
             try w.writeAll(name);
@@ -280,43 +310,67 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
             const win = a.win;
             var buf: [8]u8 = undefined;
             const time = ago(&buf, app.epoch, win.since);
-            const review = win.review != .none;
-            const room = inner - 3 - 4 - @intFromBool(review);
-            const cut = cellCount(win.label()) > room;
-            const name = clip(win.label(), room - @intFromBool(cut));
             try pen.set(w, if (win.claude == .none) dim else ink(app, "amber", 4), null);
             try w.writeAll(" ");
             try put(w, agentGlyph(app, win));
-            try pen.set(w, .{}, null);
-            try w.writeAll(" ");
-            try w.writeAll(name);
-            if (cut) try w.writeAll("…");
-            for (0..room - cellCount(name) - @intFromBool(cut)) |_| try w.writeAll(" ");
-            if (review) {
-                try pen.set(w, reviewInk(app, win.review), null);
-                try put(w, reviewGlyph(win.review));
+            filled = 2;
+            if (wide) {
+                // the time and a space at the right end
+                const room = inner - 3 - 5;
+                try pen.set(w, .{}, null);
+                try w.writeAll(" ");
+                try fitted(w, win.label(), room);
+                filled = 3 + room;
             }
             try pen.set(w, dim, null);
+            try w.writeAll(" ");
             for (time.len..3) |_| try w.writeAll(" ");
             try w.writeAll(time);
-            try w.writeAll(" ");
-            filled = inner;
+            filled += 4;
         },
-        .doing => |a| {
-            const win = a.win;
-            const room = inner - 3;
-            const cut = cellCount(win.doing) > room;
-            const text = clip(win.doing, room - @intFromBool(cut));
+        .detail => |a| {
+            var buf: [24]u8 = undefined;
             try pen.set(w, dim, null);
             try w.writeAll("   ");
-            try w.writeAll(text);
-            if (cut) try w.writeAll("…");
-            filled = 3 + cellCount(text) + @intFromBool(cut);
+            try fitted(w, a.win.detail(&buf), inner - 4);
+            filled = inner - 1;
+        },
+        .meta => |a| {
+            const win = a.win;
+            try w.writeAll("   ");
+            var left: usize = inner - 4;
+            const branch = clip(win.text(.branch), left);
+            if (branch.len > 0) {
+                try pen.set(w, ink(app, "violet", 5), null);
+                try w.writeAll(branch);
+                left -= cellCount(branch);
+            }
+            var gap: usize = if (branch.len > 0) 2 else 0;
+            if (win.review != .none and left >= gap + 3) {
+                const word = clip(reviewWord(win.review), left - gap - 2);
+                try pen.set(w, reviewInk(app, win.review), null);
+                for (0..gap) |_| try w.writeAll(" ");
+                try put(w, reviewGlyph(win.review));
+                try w.writeAll(" ");
+                try w.writeAll(word);
+                left -= gap + 2 + cellCount(word);
+                gap = 2;
+            }
+            var count: [8]u8 = undefined;
+            const tokens = tokenCount(&count, win.tokens);
+            if (tokens.len > 0 and left >= gap + tokens.len + 4) {
+                try pen.set(w, dim, null);
+                for (0..gap) |_| try w.writeAll(" ");
+                try w.writeAll(tokens);
+                try w.writeAll(" ctx");
+                left -= gap + tokens.len + 4;
+            }
+            filled = inner - 1 - left;
         },
         .more => |count| {
             try pen.set(w, dim, null);
-            try w.print(" +{d} more", .{count});
-            filled = @min(inner, 7 + std.fmt.count("{d}", .{count}));
+            if (wide) try w.print(" +{d} more", .{count}) else try w.print(" +{d}", .{count});
+            filled = @min(inner, (if (wide) @as(usize, 7) else 2) + std.fmt.count("{d}", .{count}));
         },
     }
     for (filled..inner) |_| try w.writeAll(" ");
@@ -325,69 +379,6 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
 /// A Claude's mark in a list of them, where one done and looked at is still listed.
 fn agentGlyph(app: *const App, win: *const Window) u21 {
     return if (win.claude == .none) '○' else glyph(app, win.claude);
-}
-
-/// The box of every Claude: a session's name over its own, and for each its mark, its window's
-/// name, what it is doing or was asked, its review mark and how long it has been so; the one
-/// picked a chip, and the keys that work the box along the bottom.
-fn agentBox(app: *const App, w: *Writer, picked: usize) !void {
-    var lines: [64]App.AgentLine = undefined;
-    const n = app.boxAgents(&lines);
-    const at = app.agentBoxAt(n);
-    var b: Box = .{ .app = app, .w = w, .x = at.x, .y = at.y, .width = at.w };
-    const dim = ink(app, "dim", 8);
-    try b.edge("╭", "╮");
-    try b.blank();
-    try b.line(heading(app), "  ◐ agents", dim, if (app.agent_sort == .urgency) "by urgency  " else "by recent  ");
-    try b.blank();
-    // inside the border: two cells in, the mark, a space, the name, two spaces, the text, a
-    // space, the review mark, a space and the time
-    const inner = at.w -| 4;
-    const name_w = 24;
-    const text_w = inner -| (2 + 1 + 1 + name_w + 2 + 1 + 1 + 1 + 3);
-    for (lines[0..n], 0..) |line, i| switch (line) {
-        .session => |si| try b.line(dim, app.sessions.items[si].name, dim, ""),
-        .more => |count| {
-            var buf: [24]u8 = undefined;
-            try b.line(dim, std.fmt.bufPrint(&buf, "  +{d} more", .{count}) catch "", dim, "");
-        },
-        .doing => {},
-        .agent => |a| {
-            if (!try b.begin()) continue;
-            const win = a.win;
-            const here = i == picked;
-            const plain: vt.Style = if (here) chip(app) else .{};
-            try b.w.writeAll("│");
-            try b.pen.set(w, plain, null);
-            try w.writeAll(" ");
-            try w.writeAll("  ");
-            try b.pen.set(w, if (here) chip(app) else if (win.claude == .none) dim else ink(app, "amber", 4), null);
-            try put(w, agentGlyph(app, win));
-            try b.pen.set(w, plain, null);
-            try w.writeAll(" ");
-            try fitted(w, win.label(), name_w);
-            try w.writeAll("  ");
-            const shows_doing = (win.claude == .working or win.claude == .waiting) and win.doing.len > 0;
-            try b.pen.set(w, if (here) chip(app) else dim, null);
-            try fitted(w, if (shows_doing) win.doing else win.prompt, text_w);
-            try w.writeAll(" ");
-            try b.pen.set(w, if (here) chip(app) else reviewInk(app, win.review), null);
-            try put(w, reviewGlyph(win.review));
-            try w.writeAll(" ");
-            var buf: [8]u8 = undefined;
-            const time = ago(&buf, app.epoch, win.since);
-            try b.pen.set(w, if (here) chip(app) else dim, null);
-            for (time.len..3) |_| try w.writeAll(" ");
-            try w.writeAll(time);
-            try b.pen.set(w, .{}, null);
-            try w.writeAll(" ");
-            try b.pen.set(w, ink(app, "amber", 4), null);
-            try w.writeAll("│");
-        },
-    };
-    try b.blank();
-    try b.line(dim, "  ↑↓ move   ⏎ go   s sort   esc close", dim, "");
-    try b.edge("╰", "╯");
 }
 
 /// `text` in exactly `width` cells: cut with an ellipsis, or padded.
@@ -423,6 +414,16 @@ fn reviewGlyph(review: app_mod.Review) u21 {
     };
 }
 
+fn reviewWord(review: app_mod.Review) []const u8 {
+    return switch (review) {
+        .none => "",
+        .landed => "landed",
+        .reviewed => "approved",
+        .queued => "queued",
+        .changes => "changes",
+    };
+}
+
 fn reviewInk(app: *const App, review: app_mod.Review) vt.Style {
     return switch (review) {
         .none, .landed => ink(app, "dim", 8),
@@ -452,7 +453,6 @@ const Box = struct {
     y: u16,
     pen: Pen = .{},
     row: u16 = 0,
-    width: u16 = menu.width,
 
     /// False for a row the terminal is too short to show.
     fn begin(b: *Box) !bool {
@@ -466,7 +466,7 @@ const Box = struct {
     fn edge(b: *Box, left: []const u8, right: []const u8) !void {
         if (!try b.begin()) return;
         try b.w.writeAll(left);
-        for (0..b.width - 2) |_| try b.w.writeAll("─");
+        for (0..menu.width - 2) |_| try b.w.writeAll("─");
         try b.w.writeAll(right);
     }
 
@@ -479,7 +479,7 @@ const Box = struct {
         try b.w.writeAll(" ");
         try b.pen.set(b.w, left_style, null);
         try b.w.writeAll(left);
-        for (0..(b.width - 4) -| (cellCount(left) + cellCount(right))) |_| try b.w.writeAll(" ");
+        for (0..(menu.width - 4) -| (cellCount(left) + cellCount(right))) |_| try b.w.writeAll(" ");
         try b.pen.set(b.w, right_style, null);
         try b.w.writeAll(right);
         try b.pen.set(b.w, .{}, null);
@@ -831,10 +831,8 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
             try dots(app, w, s);
         }
     }
-    if (app.agent_box) |open| {
-        try agentBox(app, w, open.picked);
-        cursor = null;
-    }
+    // a narrow rail drawn wide lies over the strip
+    if (app.peek) try rail(app, w);
     if (app.prompt) |*prompt| {
         cursor = try promptBox(app, w, prompt);
     } else if (app.menu) |open| {

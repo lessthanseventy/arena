@@ -13,10 +13,10 @@ const Writer = std.Io.Writer;
 pub const rail_button = "≡ menu";
 pub const rail_new = "+ new";
 const history_lines = 5000;
-const rail_w = 24;
-const agent_box_w = 72;
-/// How long the pointer rests over the rail's agents before their box opens.
-const dwell_ms = 600;
+const rail_wide = 36;
+const rail_narrow = 8;
+/// How long the pointer rests on the narrow rail before it is drawn wide over the strip.
+const dwell_ms = 300;
 /// Wheel and swipe steps that move between windows or sessions are taken this far apart.
 const nav_gap_ms = 150;
 /// A sideways swipe steps once it has gone this many wheel events one way.
@@ -37,7 +37,9 @@ const pane_format = "#{{session_id}} #{{window_id}} #{{pane_id}} #{{window_width
     "#{{pane_left}} #{{pane_top}} #{{pane_width}} #{{pane_height}} #{{pane_active}} #{{window_active}} " ++
     claude_state ++ " #{{window_cell_width}} #{{window_cell_height}} #{{?@arena_width,#{{@arena_width}},0}} " ++
     review_state ++ " #{{?@arena_claude_since,#{{@arena_claude_since}},0}} " ++
-    "#{{@arena_claude_doing}}\t#{{@arena_claude_prompt}}\t#{{@arena_claude_title}}\t#{{window_name}}";
+    "#{{?@arena_claude_tokens,#{{@arena_claude_tokens}},0}} #{{?@arena_claude_tasks,#{{@arena_claude_tasks}},0}} " ++
+    "#{{@arena_claude_doing}}\t#{{@arena_claude_prompt}}\t#{{@arena_claude_title}}\t#{{@arena_claude_said}}\t" ++
+    "#{{@arena_claude_branch}}\t#{{window_name}}";
 
 /// The least and the most of the view a window's column is given, in hundredths, and how much
 /// one press of narrower or wider changes it.
@@ -168,17 +170,38 @@ pub const Window = struct {
     claude: Mark = .none,
     review: Review = .none,
     listed: bool = false,
-    /// When the state of the Claude it is marked by began, in seconds since the epoch, and what
-    /// that Claude is about, as its hook set them: 0 and empty where no hook has.
+    /// About the Claude it is marked by, as its hook set it, 0 and empty where no hook has: when
+    /// its state began, in seconds since the epoch, the tokens of its context, how many of its
+    /// tasks run in the background, and its `Info` between tabs.
     since: u32 = 0,
-    doing: []u8 = &.{},
-    prompt: []u8 = &.{},
-    title: []u8 = &.{},
+    tokens: u32 = 0,
+    tasks: u32 = 0,
+    info: []u8 = &.{},
+
+    pub const Info = enum { doing, prompt, title, said, branch };
+
+    pub fn text(win: *const Window, field: Info) []const u8 {
+        var it = std.mem.splitScalar(u8, win.info, '\t');
+        for (0..@backingInt(field)) |_| _ = it.next();
+        return it.next() orelse "";
+    }
 
     /// What a list of Claudes calls it: its conversation's title, or the window's name before
     /// it has one.
     pub fn label(win: *const Window) []const u8 {
-        return if (win.title.len > 0) win.title else win.name;
+        const title = win.text(.title);
+        return if (title.len > 0) title else win.name;
+    }
+
+    /// What a list of Claudes says under it: the tool it is on or what it waits for, how many of
+    /// its tasks run, or the first line of its last answer; else what it was last asked.
+    pub fn detail(win: *const Window, buf: []u8) []const u8 {
+        const now = switch (win.claude) {
+            .working, .waiting => win.text(.doing),
+            .background => if (win.tasks > 0) std.fmt.bufPrint(buf, "{d} running", .{win.tasks}) catch "" else "",
+            .done, .none => win.text(.said),
+        };
+        return if (now.len > 0) now else win.text(.prompt);
     }
 
     /// Whether a Claude runs in it, one done and looked at included.
@@ -186,17 +209,13 @@ pub const Window = struct {
         return win.since != 0 or win.claude != .none;
     }
 
-    fn about(win: *Window, gpa: Allocator, since: u32, doing: []const u8, prompt: []const u8, title: []const u8) !void {
-        gpa.free(win.doing);
-        gpa.free(win.prompt);
-        gpa.free(win.title);
-        win.doing = &.{};
-        win.prompt = &.{};
-        win.title = &.{};
+    fn know(win: *Window, gpa: Allocator, since: u32, tokens: u32, tasks: u32, info: []const u8) !void {
+        gpa.free(win.info);
+        win.info = &.{};
         win.since = since;
-        win.doing = try gpa.dupe(u8, doing);
-        win.prompt = try gpa.dupe(u8, prompt);
-        win.title = try gpa.dupe(u8, title);
+        win.tokens = tokens;
+        win.tasks = tasks;
+        win.info = try gpa.dupe(u8, info);
     }
 
     pub fn activePane(win: *const Window) ?*Pane {
@@ -210,9 +229,7 @@ pub const Window = struct {
 
     fn destroy(win: *Window, gpa: Allocator) void {
         gpa.free(win.name);
-        gpa.free(win.doing);
-        gpa.free(win.prompt);
-        gpa.free(win.title);
+        gpa.free(win.info);
         win.panes.deinit(gpa);
         gpa.destroy(win);
     }
@@ -262,11 +279,11 @@ pub const App = struct {
     prompt: ?menu.Prompt = null,
     /// The window picked in the overview, while it is open in place of the strip.
     overview: ?Spot = null,
-    /// The box of every Claude, while open: the row picked, and whether the pointer opened it,
-    /// resting over the rail's agents.
-    agent_box: ?struct { picked: usize, hovered: bool } = null,
+    rail: enum { wide, narrow } = .wide,
+    /// The narrow rail drawn wide over the strip, while the pointer is on it.
+    peek: bool = false,
     agent_sort: AgentSort = .urgency,
-    /// When the pointer came to rest over the rail's agents; 0 while it is elsewhere.
+    /// When the pointer came to rest on the narrow rail; 0 while it is elsewhere.
     hover_at: i64 = 0,
     /// Set when the session's current window changed in tmux, so focus goes to it when listed.
     follow_active: bool = false,
@@ -521,13 +538,13 @@ pub const App = struct {
         return best;
     }
 
-    /// A row of a list of agents: a session's name over its own, a window with a Claude, what one
-    /// waiting waits for, or how many more there are than rows.
-    pub const AgentLine = union(enum) { session: usize, agent: Agent, doing: Agent, more: usize };
+    /// A row of a list of agents: a session's name over its own, a window with a Claude, its
+    /// `Window.detail`, its branch, review and context, or how many more there are than rows.
+    pub const AgentLine = union(enum) { session: usize, agent: Agent, detail: Agent, meta: Agent, more: usize };
 
-    /// The agents in at most `room` rows of `out`, as `agents` orders them, with what one waiting
-    /// waits for under it when `doing`.
-    pub fn agentLines(app: *const App, out: []AgentLine, room: usize, doing: bool) usize {
+    /// The agents in at most `room` rows of `out`, as `agents` orders them, with each one's
+    /// detail and its branch, review and context under it when `details`, where it has them.
+    pub fn agentLines(app: *const App, out: []AgentLine, room: usize, details: bool) usize {
         var found: [64]Agent = undefined;
         const count = app.agents(&found);
         const rows = @min(out.len, room);
@@ -544,8 +561,13 @@ pub const App = struct {
             if (n == rows) break;
             out[n] = .{ .agent = a };
             n += 1;
-            if (doing and n < rows and a.win.claude == .waiting and a.win.doing.len > 0) {
-                out[n] = .{ .doing = a };
+            var buf: [24]u8 = undefined;
+            if (details and n < rows and a.win.detail(&buf).len > 0) {
+                out[n] = .{ .detail = a };
+                n += 1;
+            }
+            if (details and n < rows and (a.win.text(.branch).len > 0 or a.win.review != .none or a.win.tokens > 0)) {
+                out[n] = .{ .meta = a };
                 n += 1;
             }
         }
@@ -558,9 +580,9 @@ pub const App = struct {
         return n;
     }
 
-    /// The rail's agents, as many as have rows.
+    /// The rail's agents, as many as have rows, with their details while the rail is drawn wide.
     pub fn railAgents(app: *const App, out: []AgentLine) usize {
-        return app.agentLines(out, app.railAgentRows(), true);
+        return app.agentLines(out, app.railAgentRows(), app.railDrawnW() == app.railWideW());
     }
 
     /// The row of the rail's agents at row `y`, null for any other row.
@@ -571,9 +593,7 @@ pub const App = struct {
         return if (y >= top and y - top < n) lines[y - top] else null;
     }
 
-    /// Goes to a Claude's window, closing the agents box.
     fn goAgent(app: *App, a: Agent) !void {
-        app.agent_box = null;
         app.dirty = true;
         const s = app.sessions.items[a.session];
         const index = std.mem.indexOfScalar(*Window, s.wins.items, a.win) orelse return;
@@ -591,105 +611,46 @@ pub const App = struct {
         if (best) |a| try app.goAgent(a);
     }
 
-    /// The agents box's rows, which the box's own heading and hints are not.
-    pub fn boxAgents(app: *const App, out: []AgentLine) usize {
-        return app.agentLines(out, app.view_h -| 9, false);
+    fn toggleRail(app: *App) void {
+        app.rail = if (app.rail == .wide) .narrow else .wide;
+        app.peek = false;
+        app.fit();
+        app.want_list = true;
+        app.dirty = true;
     }
 
-    pub const AgentBox = struct { x: u16, y: u16, w: u16, h: u16 };
-
-    /// Where the agents box goes, `rows` of agents tall: centred over the strip.
-    pub fn agentBoxAt(app: *const App, rows: usize) AgentBox {
-        const w: u16 = @min(app.view_w -| 2, agent_box_w);
-        const h: u16 = @intCast(rows + 7);
-        return .{ .x = app.term_w - app.view_w + (app.view_w -| w) / 2, .y = (app.view_h -| h) / 2, .w = w, .h = h };
+    fn toggleSort(app: *App) void {
+        app.agent_sort = if (app.agent_sort == .urgency) .recent else .urgency;
+        app.dirty = true;
     }
 
-    /// The agents box, listing every Claude, with the first agent in it picked.
-    fn openAgents(app: *App, hovered: bool) void {
-        var lines: [64]AgentLine = undefined;
-        const n = app.boxAgents(&lines);
-        const first = for (lines[0..n], 0..) |line, i| {
-            if (line == .agent) break i;
-        } else 0;
-        app.agent_box = .{ .picked = first, .hovered = hovered };
+    /// The pointer moved with no button held: resting on the narrow rail draws it wide over the
+    /// strip, after `dwell`, and leaving it draws it narrow again.
+    fn hoverRail(app: *App, x: u16) void {
+        if (app.rail == .wide or app.railW() == 0) return;
+        if (x < app.railDrawnW()) {
+            if (app.hover_at == 0 and !app.peek) app.hover_at = app.now;
+            return;
+        }
         app.hover_at = 0;
-        app.dirty = true;
-    }
-
-    /// A key in the agents box: j, k and the arrows move between agents, Enter goes to the one
-    /// picked, s changes the order, Escape and q close it.
-    fn agentKey(app: *App, key: []const u8) !void {
-        const open = &app.agent_box.?;
-        var lines: [64]AgentLine = undefined;
-        const n = app.boxAgents(&lines);
-        app.dirty = true;
-        const eql = std.mem.eql;
-        if (eql(u8, key, "\x1b") or eql(u8, key, "q")) {
-            app.agent_box = null;
-        } else if (eql(u8, key, "s")) {
-            app.agent_sort = if (app.agent_sort == .urgency) .recent else .urgency;
-            app.openAgents(open.hovered);
-        } else if (eql(u8, key, "\r")) {
-            if (open.picked < n and lines[open.picked] == .agent) try app.goAgent(lines[open.picked].agent);
-        } else if (eql(u8, key, "j") or eql(u8, key, "\x1b[B")) {
-            var i = open.picked + 1;
-            while (i < n) : (i += 1) if (lines[i] == .agent) {
-                open.picked = i;
-                break;
-            };
-        } else if (eql(u8, key, "k") or eql(u8, key, "\x1b[A")) {
-            var i = open.picked;
-            while (i > 0) {
-                i -= 1;
-                if (lines[i] == .agent) {
-                    open.picked = i;
-                    break;
-                }
-            }
+        if (app.peek) {
+            app.peek = false;
+            app.dirty = true;
         }
     }
 
-    /// The mouse with the agents box open: a click on an agent goes to it, one outside the box
-    /// closes it, and a box the pointer opened closes once it is over neither the box nor the
-    /// rail's agents.
-    fn agentBoxMouse(app: *App, m: keys.Mouse) !void {
-        var lines: [64]AgentLine = undefined;
-        const n = app.boxAgents(&lines);
-        const at = app.agentBoxAt(n);
-        const inside = m.x >= at.x and m.x < at.x + at.w and m.y >= at.y and m.y < at.y + at.h;
-        if (m.hover()) {
-            if (app.agent_box.?.hovered and !inside and !app.overRailAgents(m.x, m.y)) {
-                app.agent_box = null;
-                app.dirty = true;
-            }
-            return;
-        }
-        if (!m.leftPress() and !m.rightPress()) return;
-        app.dirty = true;
-        if (inside and m.leftPress()) {
-            const row = m.y -| (at.y + 4);
-            if (m.y >= at.y + 4 and row < n and lines[row] == .agent) try app.goAgent(lines[row].agent);
-            return;
-        }
-        app.agent_box = null;
-    }
-
-    fn overRailAgents(app: *const App, x: u16, y: u16) bool {
-        return x < app.railW() and (y == app.railAgentsRow() or app.railAgentAt(y) != null);
-    }
-
-    /// Opens the agents box once the pointer has rested over the rail's agents long enough.
-    /// Returns how long until it would.
+    /// Draws the narrow rail wide once the pointer has rested on it long enough. Returns how
+    /// long until it would.
     pub fn dwell(app: *App) i64 {
         if (app.hover_at == 0 or app.overlay()) return std.math.maxInt(i64);
         const left = app.hover_at + dwell_ms - app.now;
         if (left > 0) return left;
-        app.openAgents(true);
+        app.hover_at = 0;
+        app.peek = true;
+        app.dirty = true;
         return std.math.maxInt(i64);
     }
 
-    /// Whether a Claude is working in any window, its mark spinning.
     /// Whether a Claude is working in any window, its mark spinning.
     pub fn working(app: *const App) bool {
         for (app.sessions.items) |s| for (s.wins.items) |win| if (win.claude == .working) return true;
@@ -721,9 +682,19 @@ pub const App = struct {
 
     /// The session rail's width, the same whatever its names, so the strip does not move when a
     /// Claude comes or goes. A terminal too narrow for it has none.
+    /// Narrow, the rail shows a session by two letters, and a Claude by its mark and time.
     pub fn railW(app: *const App) u16 {
         if (app.term_w < 48 or app.sessions.items.len == 0) return 0;
-        return rail_w;
+        return if (app.rail == .wide) app.railWideW() else rail_narrow;
+    }
+
+    pub fn railWideW(app: *const App) u16 {
+        return @min(rail_wide, @max(rail_narrow, app.term_w / 3));
+    }
+
+    /// The rail's width as drawn, which a narrow one peeking is not.
+    pub fn railDrawnW(app: *const App) u16 {
+        return if (app.peek and app.railW() > 0) app.railWideW() else app.railW();
     }
 
     pub fn fit(app: *App) void {
@@ -914,16 +885,19 @@ pub const App = struct {
         var lines = std.mem.tokenizeScalar(u8, body, '\n');
         while (lines.next()) |line| {
             var it = std.mem.tokenizeScalar(u8, line, ' ');
-            var n: [17]u32 = undefined;
+            var n: [19]u32 = undefined;
             for (&n, 0..) |*field, i| {
                 const token = it.next() orelse break;
                 field.* = std.fmt.parseInt(u32, token[@intFromBool(i < 3)..], 10) catch break;
             } else {
-                var text = std.mem.splitScalar(u8, it.rest(), '\t');
-                const doing = text.next().?;
-                const prompt = text.next() orelse "";
-                const title = text.next() orelse "";
-                const name = text.rest();
+                const rest = it.rest();
+                var tabs: usize = 0;
+                const cut = for (rest, 0..) |c, i| {
+                    tabs += @intFromBool(c == '\t');
+                    if (tabs == std.enums.values(Window.Info).len) break i;
+                } else rest.len;
+                const info = rest[0..cut];
+                const name = if (cut < rest.len) rest[cut + 1 ..] else "";
                 const s = app.sessionById(n[0]) orelse continue;
                 const last = s.wins.getLastOrNull();
                 const win = if (last != null and last.?.id == n[1]) last.? else blk: {
@@ -942,7 +916,7 @@ pub const App = struct {
                     win.cell_h = @intCast(n[13]);
                     win.claude = .none;
                     win.review = .none;
-                    try win.about(app.gpa, 0, "", "", "");
+                    try win.know(app.gpa, 0, 0, 0, "");
                     // Read once: after that arena's own is the newer, and a list asked for
                     // before a change would put the old one back.
                     if (!win.listed) win.share = @intCast(@min(n[14], max_share));
@@ -959,7 +933,7 @@ pub const App = struct {
                 const claude: Mark = @fromBackingInt(@intCast(@min(n[11], @backingInt(Mark.waiting))));
                 const agent = n[16] != 0 or claude != .none;
                 if (agent and (!win.agent() or @backingInt(claude) > @backingInt(win.claude)))
-                    try win.about(app.gpa, n[16], doing, prompt, title);
+                    try win.know(app.gpa, n[16], n[17], n[18], info);
                 if (@backingInt(claude) > @backingInt(win.claude)) win.claude = claude;
                 const review = Review.of(n[15]);
                 if (@backingInt(review) > @backingInt(win.review)) win.review = review;
@@ -1555,13 +1529,8 @@ pub const App = struct {
     fn onMouse(app: *App, m: keys.Mouse) !void {
         app.pointer = .{ .x = m.x, .y = m.y };
         try app.pointAs(m);
-        if (m.hover()) {
-            if (!app.overRailAgents(m.x, m.y)) {
-                app.hover_at = 0;
-            } else if (app.hover_at == 0) app.hover_at = app.now;
-        }
+        if (m.hover()) app.hoverRail(m.x);
         if (app.overview != null) return app.overviewMouse(m);
-        if (app.agent_box != null) return app.agentBoxMouse(m);
         if (app.prompt) |*prompt| {
             if (!m.leftPress() and !m.rightPress()) return;
             app.dirty = true;
@@ -1603,7 +1572,7 @@ pub const App = struct {
             try app.dragTo(m);
             return true;
         }
-        if (m.x < ox) {
+        if (m.x < @max(ox, app.railDrawnW())) {
             if (m.wheel()) {
                 if (app.navStep()) try app.sessionBy(if (m.code & 1 == 0) -1 else 1);
                 return true;
@@ -1616,14 +1585,18 @@ pub const App = struct {
             if (!m.leftPress()) return false;
             if (app.railAgentAt(m.y)) |line| {
                 switch (line) {
-                    .agent, .doing => |a| try app.goAgent(a),
+                    .agent, .detail, .meta => |a| try app.goAgent(a),
                     .session => |si| try app.sessionTo(si),
-                    .more => app.openAgents(false),
+                    .more => {},
                 }
                 return true;
             }
             if (m.y == app.railAgentsRow() and app.railAgentAt(m.y + 1) != null) {
-                app.openAgents(false);
+                app.toggleSort();
+                return true;
+            }
+            if (m.y == 0) {
+                app.toggleRail();
                 return true;
             }
             if (m.y == app.railMenuRow()) app.openMenu(&menu.main);
@@ -1769,7 +1742,7 @@ pub const App = struct {
 
     /// Whether the menu, a prompt or the overview has the keys and lies over the strip.
     pub fn overlay(app: *const App) bool {
-        return app.menu != null or app.prompt != null or app.overview != null or app.agent_box != null;
+        return app.menu != null or app.prompt != null or app.overview != null;
     }
 
     /// Where the top left corner of a menu or prompt `height` rows tall is: centred over the strip.
@@ -1789,8 +1762,6 @@ pub const App = struct {
             i += len;
             if (app.overview != null) {
                 try app.overviewKey(key);
-            } else if (app.agent_box != null) {
-                try app.agentKey(key);
             } else if (app.prompt) |*prompt| {
                 app.dirty = true;
                 switch (prompt.press(key)) {
@@ -1860,7 +1831,7 @@ pub const App = struct {
                     .full_width => app.toggleFull(),
                     .jump => app.prompt = .{ .what = .jump },
                     .overview => app.openOverview(),
-                    .agents => app.openAgents(false),
+                    .rail_width => app.toggleRail(),
                     .split_right => try app.send(.ignore, "split-window -h -c '#{{pane_current_path}}'", .{}),
                     .split_below => try app.send(.ignore, "split-window -v -c '#{{pane_current_path}}'", .{}),
                     .browser => {
@@ -1912,7 +1883,6 @@ pub const App = struct {
             app.menu = null;
             app.prompt = null;
             app.overview = null;
-            app.agent_box = null;
             app.dirty = true;
             return;
         }
@@ -1932,7 +1902,7 @@ pub const App = struct {
             ';' => try app.widenBy(-share_step),
             '\'' => try app.widenBy(share_step),
             'o' => app.openOverview(),
-            'a' => app.openAgents(false),
+            'w' => app.toggleRail(),
             'n' => try app.nextAgent(),
             '/' => app.openSearch(),
             'p' => {

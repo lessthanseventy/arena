@@ -216,7 +216,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) 
                 last_spin = now;
             }
             // the menu lies over the border, so a border-only frame would cut through it
-            const what: draw.What = if (whole or app.overlay()) .all else .focused_border;
+            const what: draw.What = if (whole or app.overlay() or app.peek) .all else .focused_border;
             if (whole) last_frame = now;
             app.dirty = false;
             frame.clearRetainingCapacity();
