@@ -36,6 +36,17 @@ defmodule Babylon.TicketsTest do
       assert %{from_id: ["only an epic can be a parent"]} = errors_on(changeset)
       refute Enum.any?(Tickets.list(), &(&1.title == "orphan"))
     end
+
+    test "waiting on its blockers, in one transaction: an unknown blocker files nothing" do
+      blocker = file!(%{title: "blocker"})
+
+      blocked = file!(%{title: "blocked", blocked_by: [blocker.id]})
+      assert [blocker.id] == Tickets.blockers(blocked.id)
+
+      assert {:error, changeset} = Tickets.file(%{title: "stray", blocked_by: [blocker.id, 0]})
+      assert %{from_id: ["does not exist"]} = errors_on(changeset)
+      refute Enum.any?(Tickets.list(), &(&1.title == "stray"))
+    end
   end
 
   describe "list/1" do

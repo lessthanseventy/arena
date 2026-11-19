@@ -10,18 +10,20 @@ defmodule Babylon.Tickets do
 
   @doc """
   File a ticket at the bottom of its repo's backlog. With `epic_id` in `attrs` it is filed under
-  that epic in the same transaction, so a refused parent files nothing. `opts[:filed_by]` is the
-  filing session's id.
+  that epic, and with `blocked_by` (ticket ids) it waits on those, all in one transaction, so a
+  refused parent or blocker files nothing. `opts[:filed_by]` is the filing session's id.
   """
   @spec file(map(), keyword()) :: {:ok, Ticket.t()} | {:error, Ecto.Changeset.t()}
   def file(attrs, opts \\ []) do
     {epic_id, attrs} = Map.pop(attrs, :epic_id)
+    {blocked_by, attrs} = Map.pop(attrs, :blocked_by, [])
     attrs = Map.put_new_lazy(attrs, :sort, fn -> next_sort(attrs[:repo]) end)
     changeset = Ticket.file_changeset(attrs, opts[:filed_by])
 
     Repo.transaction(fn ->
       with {:ok, ticket} <- Repo.insert(changeset),
-           {:ok, _} <- under(epic_id, ticket.id) do
+           {:ok, _} <- under(epic_id, ticket.id),
+           :ok <- wait_on(blocked_by, ticket.id) do
         ticket
       else
         {:error, changeset} -> Repo.rollback(changeset)
@@ -150,4 +152,13 @@ defmodule Babylon.Tickets do
 
   defp under(nil, _id), do: {:ok, nil}
   defp under(epic_id, id), do: link(epic_id, id, "parent")
+
+  defp wait_on(blockers, id) do
+    Enum.reduce_while(blockers, :ok, fn by, :ok ->
+      case link(by, id, "blocks") do
+        {:ok, _} -> {:cont, :ok}
+        {:error, changeset} -> {:halt, {:error, changeset}}
+      end
+    end)
+  end
 end
