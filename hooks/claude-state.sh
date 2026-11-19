@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC2016 # jq's own $variables sit in single quotes
 # Claude Code's hook for arena: sets the pane option @arena_claude, which arena marks the window
 # by, @arena_claude_since, when that last changed, and what it is about: @arena_claude_prompt, the
 # turn's prompt, @arena_claude_doing, the tool it is on or what it waits for,
@@ -42,7 +43,7 @@ retitle() {
 	grep -q '"type":"custom-title"' "$transcript" && return 0
 	prompts=$(grep '"type":"user"' "$transcript" | tail -400 | jq -r '.message.content |
 		if type == "string" then . else ([.[]? | select(.type == "text") | .text] | join(" ")) end |
-		select(length > 0 and (startswith("<") | not)) | gsub("\\s+"; " ") | .[0:300]' 2>/dev/null | tail -10)
+		select(length > 0 and (test("^(<|\\[|Another Claude session)") | not)) | gsub("\\s+"; " ") | .[0:300]' 2>/dev/null | tail -10)
 	[ -n "$prompts" ] || return 0
 	began=$(grep '"type":"ai-title"' "$transcript" | head -1 | jq -r '.aiTitle // ""' 2>/dev/null)
 	now=$(tmux show -pqv -t "$pane" @arena_claude_title 2>/dev/null)
@@ -79,13 +80,38 @@ tokens() {
 }
 # A tool and what it is used on: its command's first line, its file's name, its pattern.
 tool_text='.tool_name + " " + (.tool_input | .command // (.file_path // .path // "" | split("/") | last) // .pattern // .description // .url // "" | tostring | split("\n")[0])'
+# What runs in the background is kept in @arena_claude_running, as JSON: an entry of id, type
+# and description for each shell and subagent started, until a notification says it finished or
+# a stop lists what runs. @arena_claude_background is that list as arena shows it.
+running() {
+	r=$(tmux show -pqv -t "$pane" @arena_claude_running 2>/dev/null)
+	printf '%s' "${r:-[]}"
+}
+keep() {
+	opt @arena_claude_running "$1"
+	opt @arena_claude_background "$(json=$1 text 'if length == 0 then "" else
+		(map(select(.type == "subagent")) | length) as $a | (length - $a) as $s |
+		([if $a > 0 then "\($a) agent\(if $a > 1 then "s" else "" end)" else empty end,
+			if $s > 0 then "\($s) shell\(if $s > 1 then "s" else "" end)" else empty end] | join(", "))
+		+ ": " + (map(.description) | join(" · "))
+	end')"
+}
+# The JSON of `running` with $1, a jq filter on the hook's JSON, done to it as $list.
+change() { printf '%s' "$json" | jq -c --argjson list "$(running)" "$1" 2>/dev/null; }
 case ${1:-} in
+# A shell or subagent finishing comes as a prompt, which nobody typed: it is taken off the list.
 prompt)
 	mark=working
+	if [ -n "$(text '.prompt // "" | select(test("^(<(task-notification|agent-message)|Another Claude session)"))')" ]; then
+		l=$(change '[.prompt | scan("<task-id>([^<]+)</task-id>|<agent-message from=\"([^\"]+)\"") | .[] | select(.)] as $done |
+			$list | map(select(.id as $id | $done | index($id) | not))') && keep "$l"
+		[ "$(tmux show -pqv -t "$pane" @arena_claude 2>/dev/null)" = "$mark" ] || opt @arena_claude_since "$(date +%s)"
+		opt @arena_claude "$mark"
+		exit 0
+	fi
 	opt @arena_claude_prompt "$(text '[.prompt // "" | splits("\n") | select(test("\\S"))][0] // ""')"
 	opt @arena_claude_doing ''
 	opt @arena_claude_said ''
-	opt @arena_claude_background ''
 	branch
 	t=$(title) && [ -n "$t" ] && opt @arena_claude_title "$t"
 	# every fifth prompt the topic is asked again, apart from the turn
@@ -93,14 +119,22 @@ prompt)
 	opt @arena_claude_prompts "$n"
 	[ $((n % 5)) -eq 0 ] && (retitle) </dev/null >/dev/null 2>&1 &
 	;;
-# A subagent's tool is its own: the session's state and what it is doing stay as they are.
+# A subagent's tool is its own: the session's state and what it is doing stay as they are, and
+# with nothing listed running it is shown as what runs. A shell or subagent the session starts
+# in the background is listed.
 tool)
 	if [ -n "$(text '.agent_id // ""')" ]; then
-		opt @arena_claude_background "$(text '"agent " + (.agent_type // "") + ": " + ('"$tool_text"')')"
+		[ "$(running)" = '[]' ] && opt @arena_claude_background "$(text '"agent " + (.agent_type // "") + ": " + ('"$tool_text"')')"
 		exit 0
 	fi
 	mark=working
 	opt @arena_claude_doing "$(text "$tool_text")"
+	l=$(change 'if .tool_response.backgroundTaskId then
+			$list + [{id: .tool_response.backgroundTaskId, type: "shell",
+				description: (.tool_input.description // .tool_input.command // "" | split("\n")[0])}]
+		elif .tool_response.status == "async_launched" then
+			$list + [{id: .tool_response.agentId, type: "subagent", description: (.tool_response.description // "")}]
+		else empty end') && [ -n "$l" ] && keep "$l"
 	;;
 waiting)
 	mark=waiting
@@ -112,19 +146,14 @@ stop)
 	opt @arena_claude_doing ''
 	t=$(title) && [ -n "$t" ] && opt @arena_claude_title "$t"
 	opt @arena_claude_said "$(text '[.last_assistant_message // "" | splits("\n") | gsub("^[#>*\\s-]+|[*`]"; "") | select(test("\\S"))][0] // ""')"
-	opt @arena_claude_background "$(text '[.background_tasks[]? | select(.status == "running")] |
-		if length == 0 then "" else
-			(map(select(.type == "subagent")) | length) as $a | (length - $a) as $s |
-			([if $a > 0 then "\($a) agent\(if $a > 1 then "s" else "" end)" else empty end,
-				if $s > 0 then "\($s) shell\(if $s > 1 then "s" else "" end)" else empty end] | join(", "))
-			+ ": " + (map(.description // .command // "" | split("\n")[0]) | join(" · "))
-		end')"
+	l=$(change '[.background_tasks[]? | select(.status == "running") |
+		{id, type, description: (.description // .command // "" | split("\n")[0])}]') && keep "$l"
 	n=$(tokens) && [ -n "$n" ] && opt @arena_claude_tokens "$n"
 	branch
 	;;
 end)
 	for o in @arena_claude @arena_claude_since @arena_claude_prompt @arena_claude_doing @arena_claude_title \
-		@arena_claude_topic @arena_claude_prompts @arena_claude_said @arena_claude_tokens @arena_claude_background \
+		@arena_claude_topic @arena_claude_prompts @arena_claude_said @arena_claude_tokens @arena_claude_background @arena_claude_running \
 		@arena_claude_branch; do
 		tmux set -pu -t "$pane" $o 2>/dev/null
 	done

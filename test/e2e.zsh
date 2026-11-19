@@ -437,8 +437,8 @@ zselect -t 50
 check "and Haiku is not asked again" [ ! -e $tmp/asked ]
 print -r -- '{"type":"assistant","message":{"usage":{"input_tokens":4,"cache_read_input_tokens":253118,"cache_creation_input_tokens":68}}}' >>$transcript
 claude alpha:one stop '{"last_assistant_message": "## **Done.** It loads\nmore", "cwd": "'$root'", "transcript_path": "'$transcript'",
-  "background_tasks": [{"type": "subagent", "status": "running", "description": "Explore the rail"},
-    {"type": "shell", "status": "running", "command": "sleep 9\nmore"}, {"type": "shell", "status": "done", "command": "x"}]}'
+  "background_tasks": [{"id": "a1", "type": "subagent", "status": "running", "description": "Explore the rail"},
+    {"id": "b1", "type": "shell", "status": "running", "command": "sleep 9\nmore"}, {"id": "b0", "type": "shell", "status": "done", "command": "x"}]}'
 check "a stop keeps the first line of its answer, plain" is_opt said 'Done. It loads'
 check "what still runs in the background" is_opt background '1 agent, 1 shell: Explore the rail · sleep 9'
 check "the context its last answer was given" is_opt tokens 253190
@@ -446,8 +446,21 @@ check "and the branch it works on" is_opt branch "$(git -C $root branch --show-c
 check "the rail has its last words under it" see '│   Done. It loads '
 check "and what runs in the background at the foot" see '│   ◔ 1 agent, 1 shell: Explore t… │'
 claude alpha:one tool '{"agent_id": "a1", "agent_type": "Explore", "tool_name": "Grep", "tool_input": {"pattern": "rail"}}'
-check "a subagent's tool is its background" is_opt background 'agent Explore: Grep rail'
-check "and the session stays as it was" [ "$(opt doing)" = '' -a "$(inner show -pqv -t alpha:one @arena_claude)" = background ]
+check "a subagent's tool leaves the session as it was" [ "$(opt doing)" = '' -a "$(inner show -pqv -t alpha:one @arena_claude)" = background ]
+check "and what runs as it was" is_opt background '1 agent, 1 shell: Explore the rail · sleep 9'
+claude alpha:one prompt '{"prompt": "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>"}'
+check "a shell's notice that it finished takes it off" is_opt background '1 agent: Explore the rail'
+check "and is not taken for a prompt" is_opt prompt 'p'
+claude alpha:one prompt '{"prompt": "<agent-message from=\"a1\">\ndone\n</agent-message>"}'
+check "nor is a subagent's, which takes it off too" is_opt background ''
+claude alpha:one tool '{"agent_id": "a2", "agent_type": "Plan", "tool_name": "Grep", "tool_input": {"pattern": "rail"}}'
+check "with nothing running, a subagent's tool is shown as what runs" is_opt background 'agent Plan: Grep rail'
+claude alpha:one tool '{"hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": {"command": "sleep 9", "description": "Soak it"},
+  "tool_response": {"backgroundTaskId": "b2"}}'
+check "a shell put in the background is listed" is_opt background '1 shell: Soak it'
+claude alpha:one tool '{"hook_event_name": "PostToolUse", "tool_name": "Agent", "tool_input": {},
+  "tool_response": {"status": "async_launched", "agentId": "a3", "description": "Review it"}}'
+check "and an agent sent off" is_opt background '1 agent, 1 shell: Soak it · Review it'
 check "and its branch under that, its context at the right" see "│   $(git -C $root branch --show-current) +253k ctx │"
 mkdir $tmp/norepo
 claude alpha:one stop '{"cwd": "'$tmp/norepo'"}'
