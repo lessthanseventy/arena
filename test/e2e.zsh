@@ -416,6 +416,8 @@ transcript=$tmp/transcript.jsonl
   for p in one two; print -r -- '{"type":"user","message":{"content":"ask '$p'"}}'
   print -r -- '{"type":"user","message":{"content":[{"type":"tool_result","content":"no"}]}}'
   print -r -- '{"type":"user","message":{"content":"<command-name>/clear</command-name>"}}'
+  print -r -- '{"type":"user","message":{"content":"This session is being continued from a previous conversation"}}'
+  print -r -- '{"type":"queue-operation","operation":"enqueue","content":"ask three"}'
 } >$transcript
 said() { claude alpha:one $1 '{"prompt": "p", "transcript_path": "'$transcript'"}' }
 titled() { [[ $(inner show -pqv -t alpha:one @arena_claude_title) == $1 ]] }
@@ -424,8 +426,8 @@ check "a Claude is called by the title its conversation began with" titled 'Star
 check "which the rail shows in place of its window's name" see '│ ◐ Started Here +[0-9]+s │'
 repeat 4 said prompt
 check "every fifth prompt Haiku is asked what it is about now" await titled 'Topic From Haiku'
-asked() { [[ $(<$tmp/asked) == $'Began as: Started Here\nCalled now: Started Here\nLatest requests, oldest first:\nask one\nask two' && -z $(<$tmp/asked-pane) ]] }
-check "from what was typed, with no pane for its own hooks to mark" asked
+asked() { [[ $(<$tmp/asked) == $'Began as: Started Here\nCalled now: Started Here\nLatest requests, oldest first:\nask one\nask two\nask three' && -z $(<$tmp/asked-pane) ]] }
+check "from what was typed, sent while it worked too, with no pane for its own hooks to mark" asked
 said stop
 check "a stop keeps that topic" titled 'Topic From Haiku'
 print -r -- '{"type":"custom-title","customTitle":"Named By Hand"}' >>$transcript

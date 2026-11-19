@@ -44,9 +44,12 @@ title() {
 retitle() {
 	[ -f "$transcript" ] && command -v claude >/dev/null || return 0
 	grep -q '"type":"custom-title"' "$transcript" && return 0
-	prompts=$(grep '"type":"user"' "$transcript" | tail -400 | jq -r '.message.content |
+	# a message sent while it works is queued, not a user record; the summary a compaction leaves is not one
+	prompts=$(grep -E '"type":"user"|"operation":"enqueue"' "$transcript" | tail -400 | jq -r '
+		if .type == "queue-operation" then .content // "" else .message.content end |
 		if type == "string" then . else ([.[]? | select(.type == "text") | .text] | join(" ")) end |
-		select(length > 0 and (test("^(<|\\[|Another Claude session)") | not)) | gsub("\\s+"; " ") | .[0:300]' 2>/dev/null | tail -10)
+		select(length > 0 and (test("^(<|\\[|Another Claude session|This session is being continued)") | not)) |
+		gsub("\\s+"; " ") | .[0:300]' 2>/dev/null | uniq | tail -10)
 	[ -n "$prompts" ] || return 0
 	began=$(grep '"type":"ai-title"' "$transcript" | head -1 | jq -r '.aiTitle // ""' 2>/dev/null)
 	now=$(tmux show -pqv -t "$pane" @arena_claude_title 2>/dev/null)
