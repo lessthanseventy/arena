@@ -45,6 +45,15 @@ pub const Board = struct {
         return b.parsed.value.tickets;
     }
 
+    /// The card babylon's pipeline is working on now (verifying, reviewing or landing), if any.
+    pub fn running(b: *const Board) ?*const Card {
+        for (b.cards()) |*card| {
+            const stage = card.stage orelse continue;
+            for ([_][]const u8{ "verifying", "reviewing", "landing" }) |busy| if (std.mem.eql(u8, stage, busy)) return card;
+        }
+        return null;
+    }
+
     /// The repos on the board, each once and in order of name, as many as fit in `out`.
     pub fn repos(b: *const Board, out: [][]const u8) usize {
         var n: usize = 0;
@@ -107,6 +116,20 @@ test "a column is narrowed to one repo, in board order, those waiting last" {
     try std.testing.expectEqual(@as(usize, 1), b.column(.todo, "arena", &out));
     try std.testing.expectEqual(@as(u32, 2), out[0].id);
     try std.testing.expectEqual(@as(usize, 0), b.column(.done, null, &out));
+}
+
+test "the card the pipeline is working on is the one verifying, reviewing or landing" {
+    const gpa = std.testing.allocator;
+    var idle = try Board.parse(gpa,
+        \\{"tickets":[{"id":1,"title":"a","status":"review","stage":"queued"},{"id":2,"title":"b","status":"doing","stage":"failed"}]}
+    );
+    defer idle.deinit();
+    try std.testing.expectEqual(null, idle.running());
+    var busy = try Board.parse(gpa,
+        \\{"tickets":[{"id":1,"title":"a","status":"review","stage":"queued"},{"id":3,"title":"c","status":"review","stage":"reviewing"}]}
+    );
+    defer busy.deinit();
+    try std.testing.expectEqual(@as(u32, 3), busy.running().?.id);
 }
 
 test "the repos are each named once, in order" {

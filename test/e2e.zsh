@@ -700,6 +700,9 @@ mouse 0 3 2 M
 check "a click on its row in the rail opens the board again" see ' board · '
 mouse 0 3 2 M
 check "and another closes it" gone ' board · '
+print -r -- '{"tickets":[{"id":9,"repo":"arena","title":"Pipe","kind":"ticket","status":"review","priority":"med","blocked_by":[],"stage":"reviewing"}]}' \
+  >$tmp/run/babylon/board.json
+check "while babylon works a ticket toward main, the board's row says which and how far" see '^│ ▤ board +◐ #9 reviewing │'
 
 key M-q
 check "Alt+q leaves cleanly" see 'EXIT 0'

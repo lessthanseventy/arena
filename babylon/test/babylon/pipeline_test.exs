@@ -50,8 +50,20 @@ defmodule Babylon.PipelineTest do
       before = sh(origin, "git rev-parse main")
       gated(tmp, ["sh", "-c", "echo boom; exit 3"], @approve)
 
-      assert Run.run(ticket, fn _ -> :ok end) == {:failed, "the gate is red (exit 3).\nboom"}
+      log = Path.join(tmp, "logs/app-t1.log")
+
+      assert Run.run(ticket, fn _ -> :ok end) ==
+               {:failed, "the gate is red (exit 3); its whole output is in #{log}\nboom"}
+
+      assert File.read!(log) == "boom\n"
       assert sh(origin, "git rev-parse main") == before
+    end
+
+    test "leads the note of a red gate with its failing lines", %{tmp_dir: tmp, ticket: ticket} do
+      gated(tmp, ["sh", "-c", "echo 'FAIL one'; seq 1 50; exit 1"], @approve)
+
+      assert {:failed, note} = Run.run(ticket, fn _ -> :ok end)
+      assert [_, "FAIL one", "…", "12" | _] = String.split(note, "\n")
     end
 
     test "stops when the review asks for changes, with its findings", %{tmp_dir: tmp, ticket: ticket} do
@@ -67,10 +79,17 @@ defmodule Babylon.PipelineTest do
 
     test "hands the reviewer the diff", %{tmp_dir: tmp, ticket: ticket} do
       seen = Path.join(tmp, "seen")
-      gated(tmp, ["sh", "-c", "exit 0"], ["sh", "-c", "cat > #{seen}; echo 'VERDICT: approve'"])
+
+      gated(tmp, ["sh", "-c", "exit 0"], [
+        "sh",
+        "-c",
+        ~s(cat > #{seen}; echo "$@" >> #{seen}; echo 'VERDICT: approve'),
+        "sh"
+      ])
 
       assert {:landed, _} = Run.run(ticket, fn _ -> :ok end)
       assert File.read!(seen) =~ "#1 Work"
+      assert File.read!(seen) =~ "--name babylon review · app #1"
       assert File.read!(seen) =~ "+two"
     end
 

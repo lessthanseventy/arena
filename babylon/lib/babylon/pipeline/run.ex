@@ -23,11 +23,11 @@ defmodule Babylon.Pipeline.Run do
            :ok <- checkout(repo, dir, ticket.branch),
            :ok <- onto_main(dir),
            :ok <- ahead(dir),
-           :ok <- gate(dir),
+           :ok <- gate(dir, ticket),
            :ok <- stage.("reviewing"),
            :ok <- review(dir, ticket),
            :ok <- stage.("landing") do
-        land(dir, 3)
+        land(dir, ticket, 3)
       end
     after
       git(repo, ["worktree", "remove", "--force", dir])
@@ -73,13 +73,28 @@ defmodule Babylon.Pipeline.Run do
     end
   end
 
-  defp gate(dir) do
+  defp gate(dir, ticket) do
     minutes = div(conf(:gate_timeout), 60)
+    {out, code} = cmd(conf(:gate), dir, timeout: conf(:gate_timeout), env: [{"MISE_TRUSTED_CONFIG_PATHS", dir}])
+    log = Path.join([Path.dirname(conf(:work)), "logs", "#{ticket.repo}-t#{ticket.id}.log"])
+    File.mkdir_p!(Path.dirname(log))
+    File.write!(log, out)
 
-    case cmd(conf(:gate), dir, timeout: conf(:gate_timeout), env: [{"MISE_TRUSTED_CONFIG_PATHS", dir}]) do
-      {_, 0} -> :ok
-      {_, 124} -> {:failed, "the gate ran past #{minutes} minutes"}
-      {out, code} -> {:failed, "the gate is red (exit #{code}).\n" <> tail(out)}
+    case code do
+      0 -> :ok
+      124 -> {:failed, "the gate ran past #{minutes} minutes; its output is in #{log}"}
+      _ -> {:failed, "the gate is red (exit #{code}); its whole output is in #{log}\n" <> failing(out)}
+    end
+  end
+
+  # what failed first, as a gate's own summary can come long after it
+  defp failing(out) do
+    lines = String.split(out, "\n")
+    failed = Enum.filter(lines, &Regex.match?(~r/\bFAIL|\bERROR|\*\* \(|\berror:|\bfailed\b/i, &1))
+
+    case Enum.take(failed, 20) do
+      [] -> tail(out)
+      first -> Enum.join(first ++ ["…", tail(out)], "\n")
     end
   end
 
@@ -89,7 +104,9 @@ defmodule Babylon.Pipeline.Run do
     File.write!(prompt, review_prompt(ticket, String.slice(diff, 0, @diff_limit)))
 
     try do
-      case cmd(conf(:reviewer), dir, timeout: conf(:review_timeout), stdin: prompt) do
+      named = conf(:reviewer) ++ ["--name", "babylon review · #{ticket.repo} ##{ticket.id}"]
+
+      case cmd(named, dir, timeout: conf(:review_timeout), stdin: prompt) do
         {out, 0} -> verdict(out)
         {_, 124} -> {:failed, "the review ran past #{div(conf(:review_timeout), 60)} minutes"}
         {out, code} -> {:failed, "the reviewer failed (exit #{code}).\n" <> tail(out)}
@@ -133,16 +150,16 @@ defmodule Babylon.Pipeline.Run do
     """
   end
 
-  defp land(dir, tries) do
+  defp land(dir, ticket, tries) do
     with :ok <- ok(git(dir, ["fetch", "-q", "origin", "main"]), "could not fetch origin's main"),
-         :ok <- caught_up(dir) do
+         :ok <- caught_up(dir, ticket) do
       case git(dir, ["push", "-q", "origin", "HEAD:refs/heads/main"]) do
         {_, 0} ->
           {sha, 0} = git(dir, ["rev-parse", "HEAD"])
           {:landed, String.trim(sha)}
 
         {_, _} when tries > 1 ->
-          land(dir, tries - 1)
+          land(dir, ticket, tries - 1)
 
         {out, _} ->
           {:failed, "main would not take the push.\n" <> tail(out)}
@@ -151,10 +168,10 @@ defmodule Babylon.Pipeline.Run do
   end
 
   # main moved since the gate ran: what lands is what was gated, so rebase and gate again
-  defp caught_up(dir) do
+  defp caught_up(dir, ticket) do
     case git(dir, ["merge-base", "--is-ancestor", "origin/main", "HEAD"]) do
       {_, 0} -> :ok
-      _ -> with :ok <- onto_main(dir), do: gate(dir)
+      _ -> with :ok <- onto_main(dir), do: gate(dir, ticket)
     end
   end
 

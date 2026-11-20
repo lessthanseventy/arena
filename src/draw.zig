@@ -302,17 +302,26 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
         const doing = app.boardCount(.doing);
         var buf: [48]u8 = undefined;
         try pen.set(w, if (open) chip(app) else ink(app, "amber", 4), null);
+        const running = if (app.board) |*b| b.running() else null;
         if (wide) {
-            const counts = std.fmt.bufPrint(&buf, "{d} todo  {d} doing ", .{ todo, doing }) catch "";
+            // the pipeline's work in hand stands in for the counts while there is any
+            var spun: [8]u8 = undefined;
+            const mark = spun[0 .. std.unicode.utf8Encode(glyph(app, .working), &spun) catch 0];
+            const counts = if (running) |card|
+                std.fmt.bufPrint(&buf, "{s} #{d} {s} ", .{ mark, card.id, card.stage.? }) catch ""
+            else
+                std.fmt.bufPrint(&buf, "{d} todo  {d} doing ", .{ todo, doing }) catch "";
             try w.writeAll(" ▤ board");
             try pen.set(w, if (open) chip(app) else ink(app, "dim", 8), null);
             try fitted(w, "", inner -| 8 -| cellCount(counts));
             try w.writeAll(counts);
             filled = 8 + (inner -| 8 -| cellCount(counts)) + cellCount(counts);
         } else {
-            const count = std.fmt.bufPrint(&buf, "{d} ", .{doing}) catch "";
+            var spun: [8]u8 = undefined;
+            const mark = spun[0 .. std.unicode.utf8Encode(glyph(app, .working), &spun) catch 0];
+            const count = if (running != null) std.fmt.bufPrint(&buf, "{s} ", .{mark}) catch "" else std.fmt.bufPrint(&buf, "{d} ", .{doing}) catch "";
             try w.writeAll(" ▤");
-            try fitted(w, "", inner -| 2 -| count.len);
+            try fitted(w, "", inner -| 2 -| cellCount(count));
             try w.writeAll(count);
             filled = inner;
         }
