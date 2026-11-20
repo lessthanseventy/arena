@@ -19,8 +19,8 @@ defmodule Babylon.Board do
   def start_link(path), do: GenServer.start_link(__MODULE__, path, name: __MODULE__)
 
   @doc """
-  The board now, each card with the open tickets blocking it and the epic it is under, in board
-  order: the top of a column first.
+  The board now, each card with the open tickets blocking it, the epic it is under and the
+  question it waits on you for, in board order: the top of a column first.
   """
   @spec build() :: %{tickets: [map()]}
   def build do
@@ -46,7 +46,14 @@ defmodule Babylon.Board do
     blockers = Enum.group_by(for({"blocks", from, to} <- links, do: {to, from}), &elem(&1, 0), &elem(&1, 1))
     epics = Map.new(for {"parent", from, to} <- links, do: {to, from})
 
-    %{tickets: Enum.map(tickets, &card(&1, Map.get(blockers, &1.id, []), epics[&1.id]))}
+    asks = Map.new(Babylon.Asks.open(), &{&1.ticket_id, Map.take(&1, [:id, :question, :options])})
+
+    %{
+      tickets:
+        Enum.map(tickets, fn t ->
+          t |> card(Map.get(blockers, t.id, []), epics[t.id]) |> Map.put(:ask, asks[t.id])
+        end)
+    }
   end
 
   @impl true

@@ -297,6 +297,8 @@ pub const BoardView = struct {
     row: usize = 0,
     /// The repo it is narrowed to: 0 for every one, else its place in the board's repos from 1.
     repo: usize = 0,
+    /// The picked card's question shown over the board, waiting on its answer's number.
+    answering: bool = false,
 };
 
 /// The cards a column of the board can hold, and the repos it can be narrowed to.
@@ -1405,6 +1407,11 @@ pub const App = struct {
         app.dirty = true;
         const view = &app.board_view.?;
         const is = anyKey;
+        if (view.answering) return app.answerKey(key);
+        if (is(key, &.{"a"})) {
+            if (app.boardCard(view.col, view.row)) |card| view.answering = card.ask != null;
+            return;
+        }
         if (is(key, &.{ "h", "\x1b[D", "\x1bOD" })) view.col -|= 1;
         if (is(key, &.{ "l", "\x1b[C", "\x1bOC" }) and view.col + 1 < tickets.statuses.len) view.col += 1;
         if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.row -|= 1;
@@ -1424,6 +1431,20 @@ pub const App = struct {
         };
     }
 
+    /// A key while a question is shown: its option's number answers it through babylon, which
+    /// types the answer into the asking session; Esc puts it away unanswered.
+    fn answerKey(app: *App, key: []const u8) !void {
+        const view = &app.board_view.?;
+        if (anyKey(key, &.{ "\x1b", "q" })) view.answering = false;
+        if (key.len != 1 or key[0] < '1' or key[0] > '9') return;
+        const card = app.boardCard(view.col, view.row) orelse return;
+        const ask = card.ask orelse return;
+        const choice = key[0] - '0';
+        if (choice > ask.options.len) return;
+        try app.send(.ignore, "run-shell -b \"babylon answer {d} {d}\"", .{ ask.id, choice });
+        view.answering = false;
+    }
+
     /// The mouse on the board: a click on a card picks it, and on the card picked goes to the
     /// Claude holding it; the wheel moves along the column. Whether it was the board's: on the
     /// rail it is the rail's, and closes the board but for its own row there.
@@ -1441,6 +1462,7 @@ pub const App = struct {
         const at = app.boardCardAt(m.x, m.y) orelse return true;
         const view = &app.board_view.?;
         app.dirty = true;
+        view.answering = false;
         if (view.col == at.col and view.row == at.row) {
             try app.goCard();
         } else view.* = .{ .col = at.col, .row = at.row, .repo = view.repo };

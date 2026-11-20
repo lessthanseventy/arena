@@ -21,6 +21,9 @@ print -r -- $'#!/bin/sh\necho "$TMUX_PANE" >'$tmp$'/asked-pane\ncat >'$tmp$'/ask
 chmod +x $tmp/bin/claude
 print -r -- $'#!/bin/sh\nprintf "%s|" "$@" >>'$tmp$'/notified\necho >>'$tmp$'/notified' >$tmp/bin/notify-send
 chmod +x $tmp/bin/notify-send
+# stands in for babylon's command line: it says what the board answered
+print -r -- $'#!/bin/sh\necho "$@" >>'$tmp$'/babylon' >$tmp/bin/babylon
+chmod +x $tmp/bin/babylon
 export PATH=$tmp/bin:$PATH
 
 inner() { tmux -L $in -f /dev/null "$@" }
@@ -682,7 +685,8 @@ check "and takes it off the rail" gone '│ beta '
 
 one=$(inner display -p -t alpha:one '#{pane_id}')
 mkdir -p $tmp/run/babylon
-print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[],"stage":"failed"},'\
+print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[],"stage":"failed",'\
+'"ask":{"id":5,"question":"Which colour?","options":["red","blue"]}},'\
 '{"id":8,"repo":"arena","title":"Board","kind":"ticket","status":"doing","priority":"high","claimed_by":"'$one'","blocked_by":[7]}]}' \
   >$tmp/run/babylon/board.json
 check "babylon's board has a row atop the rail, with its counts" see '^│ ▤ board +1 todo  1 doing │'
@@ -694,7 +698,14 @@ alone() { [[ $(railed 2) == *$'\e[1;7m'* && $(railed 3)$(railed 4)$(railed 5) !=
 check "and the board's row is the one lit, not the session's" alone
 check "a card has its number and title" see '│ #8 Board +│'
 check "under them its repo and the Claude holding it" see '│ arena · alpha:one'
-check "and, sent back from the pipeline, that first" see '│ ✗ sent back · tlon'
+check "and, sent back from the pipeline, that first, after a question waiting on you" see '│ ? asks · ✗ sent back · tlon'
+key a
+check "a shows the picked card's question" see '│ Which colour\? +│'
+check "with its options by number" see '│ 2  blue +│'
+key 2
+checked() { [[ -f $tmp/babylon && $(<$tmp/babylon) == 'answer 5 2' ]] }
+check "and a number answers it through babylon" await checked
+check "and puts it away" gone 'Which colour'
 key r
 check "r narrows it to one repo" see ' board · arena '
 check "and to its cards" gone '#7 Lights'

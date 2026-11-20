@@ -44,7 +44,10 @@ always did; arena draws them and leaves them running when it quits.
 - **An overview** of every session's windows at once.
 - **The board**: the tickets every Claude on the machine shares, from [babylon](babylon/README.md),
   in place of the strip, a column for each of todo, doing, review and done. A card has its number and title, and under them its repo, the window of the Claude
-  holding it, what it waits on; one that waits is dimmed, at the foot of its column. `r` narrows it to one repo, then the next, then every one again; Enter, or a second click,
+  holding it, what it waits on, where it is on babylon's way to main (queued, verifying, reviewing,
+  landing, `✗ sent back`, `◆ landed`) and `? asks` when its Claude waits on a decision from you:
+  `a` shows the question and its options, and an option's number answers it, typed into that
+  Claude by babylon. One that waits is dimmed, at the foot of its column. `r` narrows it to one repo, then the next, then every one again; Enter, or a second click,
   on a card goes to the Claude holding it. Its row atop the rail counts what is to do and being
   done, and a click there opens it; it is there while babylon keeps its file.
 - **Jump** to any window in any session by typing part of its name.

@@ -950,7 +950,7 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     try pen.set(w, heading(app), null);
     try w.writeAll(title);
     try pen.set(w, dim, null);
-    const hint = if (app.gateSession() != null) "  hjkl pick · ⏎ go to its Claude · r repo · g gate · esc close" else "  hjkl pick · ⏎ go to its Claude · r repo · esc close";
+    const hint = if (app.gateSession() != null) "  hjkl pick · ⏎ go to its Claude · a answer · r repo · g gate · esc close" else "  hjkl pick · ⏎ go to its Claude · a answer · r repo · esc close";
     try fitted(w, hint, app.view_w -| cellCount(title));
 
     for (tickets.statuses, 0..) |status, c| {
@@ -993,6 +993,66 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         for (0..inner) |_| try w.writeAll("─");
         try w.writeAll("╯");
     }
+    if (view.answering) if (app.boardCard(view.col, view.row)) |card| if (card.ask) |ask| try askBox(app, w, card.id, ask);
+}
+
+/// The question a card waits on, boxed over the middle of the board: the question wrapped to the
+/// box, then each option by its number.
+fn askBox(app: *App, w: *Writer, id: u32, ask: tickets.Ask) !void {
+    const bw: u16 = @min(app.view_w -| 4, 64);
+    const inner = bw -| 4;
+    const x = app.term_w - app.view_w + (app.view_w -| bw) / 2;
+    const edge = ink(app, "amber", 4);
+    var pen: Pen = .{};
+    var buf: [48]u8 = undefined;
+    var y: u16 = 4;
+
+    const title = std.fmt.bufPrint(&buf, " #{d} asks ", .{id}) catch " asks ";
+    try pen.set(w, edge, null);
+    try w.print("\x1b[{d};{d}H╭─", .{ y, x + 1 });
+    try pen.set(w, heading(app), null);
+    try w.writeAll(title);
+    try pen.set(w, edge, null);
+    for (cellCount(title) + 1..bw - 2) |_| try w.writeAll("─");
+    try w.writeAll("╮");
+
+    var rest = ask.question;
+    while (rest.len > 0 and y < 10) {
+        const line = clip(rest, inner);
+        y += 1;
+        try boxLine(w, &pen, edge, .{}, x, y, line, inner);
+        rest = std.mem.trimStart(u8, rest[line.len..], " ");
+    }
+    y += 1;
+    try boxLine(w, &pen, edge, .{}, x, y, "", inner);
+    for (ask.options, 1..) |option, n| {
+        if (n > 9) break;
+        y += 1;
+        try pen.set(w, edge, null);
+        try w.print("\x1b[{d};{d}H│ ", .{ y, x + 1 });
+        try pen.set(w, heading(app), null);
+        try w.print("{d}  ", .{n});
+        try pen.set(w, .{}, null);
+        try fitted(w, option, inner -| 3);
+        try pen.set(w, edge, null);
+        try w.writeAll(" │");
+    }
+    y += 1;
+    try boxLine(w, &pen, edge, ink(app, "dim", 8), x, y, "its number answers · esc puts it away", inner);
+    y += 1;
+    try pen.set(w, edge, null);
+    try w.print("\x1b[{d};{d}H╰", .{ y, x + 1 });
+    for (0..bw - 2) |_| try w.writeAll("─");
+    try w.writeAll("╯");
+}
+
+fn boxLine(w: *Writer, pen: *Pen, edge: vt.Style, style: vt.Style, x: u16, y: u16, text: []const u8, inner: u16) !void {
+    try pen.set(w, edge, null);
+    try w.print("\x1b[{d};{d}H│ ", .{ y, x + 1 });
+    try pen.set(w, style, null);
+    try fitted(w, text, inner);
+    try pen.set(w, edge, null);
+    try w.writeAll(" │");
 }
 
 /// What else is so of a card, joined: its repo when the board shows every one, the Claude
@@ -1000,6 +1060,10 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
 fn cardDetail(app: *const App, card: *const tickets.Card, with_repo: bool, buf: []u8) []const u8 {
     var out: Writer = .fixed(buf);
     var sep: []const u8 = "";
+    if (card.ask != null) {
+        out.writeAll("? asks") catch {};
+        sep = " · ";
+    }
     if (card.stage) |stage| {
         const shown = if (std.mem.eql(u8, stage, "failed")) "✗ sent back" else if (std.mem.eql(u8, stage, "landed")) "◆ landed" else if (std.mem.eql(u8, stage, "queued")) "» queued" else stage;
         out.writeAll(shown) catch {};

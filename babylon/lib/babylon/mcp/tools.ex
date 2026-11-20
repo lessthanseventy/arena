@@ -169,6 +169,54 @@ defmodule Babylon.MCP.Tools.SubmitTicket do
   end
 end
 
+defmodule Babylon.MCP.Tools.AskHuman do
+  @moduledoc """
+  Ask your human a decision about a ticket, as a question and two to nine options. It shows on
+  their board, on the ticket's card; this answers at once, and their answer is typed into this
+  session when they give it. Carry on with what does not hang on it, or stop and wait.
+  """
+  use Babylon.MCP.Tool
+
+  alias Babylon.Asks
+
+  schema do
+    field :ticket_id, :integer, required: true, description: "The ticket it is about"
+    field :question, :string, required: true
+    field :options, {:list, :string}, required: true, description: "Two to nine, each a short answer"
+  end
+
+  @impl true
+  def execute(params, frame) do
+    with_pane(frame, fn pane ->
+      case Asks.ask(params, pane) do
+        {:ok, ask} -> ok(frame, %{ask_id: ask.id, asked: "the answer will be typed into this session"})
+        {:error, %Ecto.Changeset{}} = error -> reply(frame, error, & &1)
+        {:error, reason} -> fail(frame, reason)
+      end
+    end)
+  end
+end
+
+defmodule Babylon.MCP.Tools.AnswerAsk do
+  @moduledoc "The human's answer to an ask, by its option number from 1. arena's board gives it; a session never answers one."
+  use Babylon.MCP.Tool
+
+  alias Babylon.Asks
+
+  schema do
+    field :id, :integer, required: true
+    field :choice, :integer, required: true
+  end
+
+  @impl true
+  def execute(%{id: id, choice: choice}, frame) do
+    case Asks.answer(id, choice) do
+      {:ok, ask} -> ok(frame, %{id: ask.id, answer: ask.answer})
+      {:error, reason} -> fail(frame, reason)
+    end
+  end
+end
+
 defmodule Babylon.MCP.Tools.ReleaseTicket do
   @moduledoc "Give back a ticket you claimed and will not finish: it is `todo` again, its branch kept for whoever takes it."
   use Babylon.MCP.Tool

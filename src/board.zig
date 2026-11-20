@@ -4,6 +4,13 @@ const std = @import("std");
 pub const Status = enum { todo, doing, review, done };
 pub const statuses = [_]Status{ .todo, .doing, .review, .done };
 
+/// A decision a session is waiting on its human for.
+pub const Ask = struct {
+    id: u32,
+    question: []const u8,
+    options: []const []const u8 = &.{},
+};
+
 pub const Card = struct {
     id: u32,
     repo: ?[]const u8 = null,
@@ -19,6 +26,8 @@ pub const Card = struct {
     epic_id: ?u32 = null,
     /// Where it is on its way to main: queued, verifying, reviewing, landing, landed or failed.
     stage: ?[]const u8 = null,
+    /// The question about it waiting on an answer, if there is one.
+    ask: ?Ask = null,
 
     /// The id of the pane holding it, if one does.
     pub fn holder(card: *const Card) ?u32 {
