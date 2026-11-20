@@ -320,7 +320,7 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
         const s = app.sessions.items[index];
         const drop = app.dropAt();
         // lit as the current one is: a window held by its title would go to it
-        const here = s.id == app.current or (drop == .session and drop.session == index);
+        const here = (s.id == app.current and app.board_view == null) or (drop == .session and drop.session == index);
         if (!wide) {
             const name = clip(s.name, inner -| 4);
             try pen.set(w, if (here) chip(app) else .{}, null);

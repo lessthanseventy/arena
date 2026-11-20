@@ -684,6 +684,9 @@ check "babylon's board has a row atop the rail, with its counts" see '^│ ▤ b
 key M-b
 check "Alt+b opens it in place of the strip" see ' board · every repo '
 check "a column a status, with its count" see '╭─ doing 1 ─'
+railed() { local l=$(inked $1); print -r -- "${${l#*│}%%│*}" }
+alone() { [[ $(railed 2) == *$'\e[1;7m'* && $(railed 3)$(railed 4)$(railed 5) != *$'\e[1;7m'* ]] }
+check "and the board's row is the one lit, not the session's" alone
 check "a card has its number and title" see '│ #8 Board +│'
 check "under them its repo and the Claude holding it" see '│ arena · alpha:one'
 key r
