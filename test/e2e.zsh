@@ -501,7 +501,7 @@ claude alpha:one stop '{"last_assistant_message": "## **Done.** It loads\nmore",
 check "a stop keeps the first line of its answer, plain" is_opt said 'Done. It loads'
 check "what still runs in the background" is_opt background '1 agent, 1 shell: Explore the rail · sleep 9'
 check "the context its last answer was given" is_opt tokens 253190
-check "and the branch it works on" is_opt branch "$(git -C $root branch --show-current)"
+check "and the branch it works on" is_opt branch "$(git -C $root branch --show-current | cut -c1-40)"
 check "the rail has its last words under it" see '│   Done. It loads '
 check "and what runs in the background at the foot" see '│   ◔ 1 agent, 1 shell: Explore t… │'
 check "with a shell and nothing heard from its agent, its mark is still" see '│ ◔ Named By Hand '
@@ -530,9 +530,9 @@ check "which the rail has beside its last words" see '│   Done. It loads +1h2m
 claude alpha:one prompt '{"prompt": "go on"}'
 inner set -p -t alpha:one @arena_claude_at $(($(date +%s) - 700))
 check "working with nothing heard for ten minutes, it is quiet" see '│   go on +quiet 11m │'
-check "and its branch under that, its context at the right" see "│   $(git -C $root branch --show-current) +253k ctx │"
+check "and its branch under that, its context at the right" see "│   $(git -C $root branch --show-current | cut -c1-12).* +253k ctx │"
 inner set -p -t alpha:one @arena_claude_ctx 88
-check "the share of its budget, where its status line says it" see "│   $(git -C $root branch --show-current) +88% ctx │"
+check "the share of its budget, where its status line says it" see "│   $(git -C $root branch --show-current | cut -c1-12).* +88% ctx │"
 mkdir $tmp/norepo
 claude alpha:one stop '{"cwd": "'$tmp/norepo'"}'
 check "outside a repo, no repo" is_opt branch 'no repo'
