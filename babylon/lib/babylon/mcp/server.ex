@@ -12,7 +12,7 @@ defmodule Babylon.MCP.Server do
 
     - Work you notice but will not do now (a follow-up, a bug outside the task, a plan's next step): file_ticket it with its repo, rather than leaving it in chat.
     - Before working a ticket, claim_ticket it. The claim belongs to this session's tmux pane for as long as the session runs; run the `start` command its answer gives, which puts you on the ticket's own branch with wt.
-    - Finished: update_ticket to done. Stopping short: write where it stands into its body, then release_ticket so another session can pick it up.
+    - Finished: commit the work on the ticket's branch, then submit_ticket. babylon rebases it onto main, runs the repo's gate, has it reviewed and lands it on main, and types how it went into this session: landed (the ticket is done) or sent back with why. Work with nothing to land: update_ticket to done. Stopping short: write where it stands into its body, then release_ticket so another session can pick it up.
     - Work that has to wait on other work: file it with blocked_by, or link_tickets with blocks. A blocked ticket cannot be claimed.
     - list_tickets with mine shows what this session holds; with repo, one repo's tickets.
     """,
@@ -26,4 +26,5 @@ defmodule Babylon.MCP.Server do
   component(Babylon.MCP.Tools.UnlinkTickets, name: "unlink_tickets")
   component(Babylon.MCP.Tools.ClaimTicket, name: "claim_ticket")
   component(Babylon.MCP.Tools.ReleaseTicket, name: "release_ticket")
+  component(Babylon.MCP.Tools.SubmitTicket, name: "submit_ticket")
 end

@@ -143,6 +143,32 @@ defmodule Babylon.MCP.Tools.ClaimTicket do
   defp start(branch, _), do: "wt switch #{branch}"
 end
 
+defmodule Babylon.MCP.Tools.SubmitTicket do
+  @moduledoc """
+  Hand in a ticket you hold whose work is committed on its branch: babylon rebases it onto main,
+  runs the repo's gate, has it reviewed, and lands it on main by fast-forward, one ticket at a
+  time. It goes to `review` now; how it went is typed into this session when it is settled:
+  landed and done, or sent back to `doing` with why in its `stage_note`.
+  """
+  use Babylon.MCP.Tool
+
+  alias Babylon.Pipeline
+
+  schema do
+    field :id, :integer, required: true
+  end
+
+  @impl true
+  def execute(%{id: id}, frame) do
+    with_pane(frame, fn pane ->
+      case Pipeline.submit(id, pane) do
+        {:ok, ticket} -> ok(frame, render(ticket))
+        {:error, reason} -> fail(frame, reason)
+      end
+    end)
+  end
+end
+
 defmodule Babylon.MCP.Tools.ReleaseTicket do
   @moduledoc "Give back a ticket you claimed and will not finish: it is `todo` again, its branch kept for whoever takes it."
   use Babylon.MCP.Tool

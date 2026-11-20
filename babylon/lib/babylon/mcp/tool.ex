@@ -66,7 +66,7 @@ defmodule Babylon.MCP.Tool do
   def render(%Ticket{} = t) do
     Map.take(
       t,
-      ~w(id repo title body kind status priority labels filed_by sort closed_at claimed_by claimed_at branch inserted_at updated_at)a
+      ~w(id repo title body kind status priority labels filed_by sort closed_at claimed_by claimed_at branch stage stage_note submitted_at inserted_at updated_at)a
     )
   end
 

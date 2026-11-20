@@ -20,4 +20,18 @@ defmodule Babylon.Panes do
   rescue
     ErlangError -> :unknown
   end
+
+  @doc """
+  Type `text` into `pane` as one line and submit it, as if its human had: an idle Claude takes it
+  as its next turn, a busy one queues it.
+  """
+  @spec tell(String.t(), String.t()) :: :ok
+  def tell(pane, text) do
+    line = String.replace(text, ~r/\s*\n\s*/, " ")
+    _ = System.cmd("tmux", ["send-keys", "-t", pane, "-l", line], stderr_to_stdout: true)
+    _ = System.cmd("tmux", ["send-keys", "-t", pane, "Enter"], stderr_to_stdout: true)
+    :ok
+  rescue
+    ErlangError -> :ok
+  end
 end

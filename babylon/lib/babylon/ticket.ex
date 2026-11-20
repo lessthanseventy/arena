@@ -29,6 +29,9 @@ defmodule Babylon.Ticket do
     field :claimed_by, :string
     field :claimed_at, :utc_datetime
     field :branch, :string
+    field :stage, :string
+    field :stage_note, :string, default: ""
+    field :submitted_at, :utc_datetime
     timestamps(type: :utc_datetime)
   end
 

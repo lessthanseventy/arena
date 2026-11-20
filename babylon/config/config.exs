@@ -5,4 +5,25 @@ config :babylon, ecto_repos: [Babylon.Repo]
 # immediate: a transaction takes the write lock as it begins, so a claim's read and write are one step
 config :babylon, Babylon.Repo, default_transaction_mode: :immediate
 
+config :babylon, :pipeline,
+  gate: ~w(mise run check),
+  gate_timeout: 1800,
+  reviewer: [
+    "claude",
+    "-p",
+    "--model",
+    "claude-sonnet-5-5",
+    "--no-session-persistence",
+    "--permission-mode",
+    "dontAsk",
+    "--strict-mcp-config",
+    "--mcp-config",
+    ~s({"mcpServers":{}}),
+    "--tools",
+    "Read,Grep,Glob",
+    "--setting-sources",
+    "user"
+  ],
+  review_timeout: 900
+
 import_config "#{config_env()}.exs"

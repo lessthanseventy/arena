@@ -52,7 +52,7 @@ defmodule Babylon.Claims do
   def lapse(:unknown), do: []
 
   def lapse(panes) do
-    held = Repo.all(from t in Ticket, where: not is_nil(t.claimed_by) and t.status != "done")
+    held = Repo.all(from t in Ticket, where: not is_nil(t.claimed_by) and t.status not in ["done", "review"])
 
     for ticket <- held, not MapSet.member?(panes, ticket.claimed_by) do
       {:ok, _} = let_go(ticket, ["lapsed"])

@@ -677,7 +677,7 @@ check "and takes it off the rail" gone '│ beta '
 
 one=$(inner display -p -t alpha:one '#{pane_id}')
 mkdir -p $tmp/run/babylon
-print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[]},'\
+print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[],"stage":"failed"},'\
 '{"id":8,"repo":"arena","title":"Board","kind":"ticket","status":"doing","priority":"high","claimed_by":"'$one'","blocked_by":[7]}]}' \
   >$tmp/run/babylon/board.json
 check "babylon's board has a row atop the rail, with its counts" see '^│ ▤ board +1 todo  1 doing │'
@@ -689,6 +689,7 @@ alone() { [[ $(railed 2) == *$'\e[1;7m'* && $(railed 3)$(railed 4)$(railed 5) !=
 check "and the board's row is the one lit, not the session's" alone
 check "a card has its number and title" see '│ #8 Board +│'
 check "under them its repo and the Claude holding it" see '│ arena · alpha:one'
+check "and, sent back from the pipeline, that first" see '│ ✗ sent back · tlon'
 key r
 check "r narrows it to one repo" see ' board · arena '
 check "and to its cards" gone '#7 Lights'

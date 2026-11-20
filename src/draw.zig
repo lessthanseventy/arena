@@ -988,8 +988,13 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
 fn cardDetail(app: *const App, card: *const tickets.Card, with_repo: bool, buf: []u8) []const u8 {
     var out: Writer = .fixed(buf);
     var sep: []const u8 = "";
+    if (card.stage) |stage| {
+        const shown = if (std.mem.eql(u8, stage, "failed")) "✗ sent back" else if (std.mem.eql(u8, stage, "landed")) "◆ landed" else if (std.mem.eql(u8, stage, "queued")) "» queued" else stage;
+        out.writeAll(shown) catch {};
+        sep = " · ";
+    }
     if (with_repo) {
-        out.writeAll(card.repo orelse "no repo") catch {};
+        out.print("{s}{s}", .{ sep, card.repo orelse "no repo" }) catch {};
         sep = " · ";
     }
     if (card.holder()) |pane| {

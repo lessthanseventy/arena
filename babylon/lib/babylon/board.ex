@@ -75,7 +75,7 @@ defmodule Babylon.Board do
 
   defp card(%Ticket{} = t, blocked_by, epic_id) do
     t
-    |> Map.take(~w(id repo title kind status priority labels claimed_by branch)a)
+    |> Map.take(~w(id repo title kind status priority labels claimed_by branch stage)a)
     |> Map.merge(%{blocked_by: blocked_by, epic_id: epic_id})
   end
 end

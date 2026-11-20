@@ -17,6 +17,8 @@ pub const Card = struct {
     /// The open tickets it waits on.
     blocked_by: []const u32 = &.{},
     epic_id: ?u32 = null,
+    /// Where it is on its way to main: queued, verifying, reviewing, landing, landed or failed.
+    stage: ?[]const u8 = null,
 
     /// The id of the pane holding it, if one does.
     pub fn holder(card: *const Card) ?u32 {

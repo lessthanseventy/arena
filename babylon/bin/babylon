@@ -12,6 +12,7 @@ usage: babylon file TITLE [--repo R] [--body B] [--priority low|med|high] [--epi
        babylon show N
        babylon claim N
        babylon release N
+       babylon submit N
        babylon update N [--title T] [--body B] [--repo R] [--status S] [--priority P]
        babylon link FROM blocks|relates|duplicates|parent TO
        babylon unlink FROM KIND TO
@@ -93,6 +94,7 @@ case $command in
     call claim_ticket "{\"id\": $1}" | jq -r '"#\(.id) \(.title)\nbranch \(.branch)\nstart  \(.start)"'
     ;;
   release) (($# == 1)) || usage; call release_ticket "{\"id\": $1}" | jq -r '"#\(.id) \(.status) \(.title)"' ;;
+  submit) (($# == 1)) || usage; call submit_ticket "{\"id\": $1}" | jq -r '"#\(.id) \(.stage) \(.title)"' ;;
   link | unlink)
     (($# == 3)) || usage
     call "${command}_tickets" "{\"from\": $1, \"kind\": \"$2\", \"to\": $3}" | jq -c .

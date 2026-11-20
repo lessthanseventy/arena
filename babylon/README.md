@@ -28,12 +28,21 @@ header names the session's tmux pane, which is what holds a claim. The server's 
 session when to file a ticket and when to claim one.
 
 Its tools are `file_ticket`, `list_tickets`, `get_ticket`, `update_ticket`, `link_tickets`,
-`unlink_tickets`, `claim_ticket` and `release_ticket`. `bin/babylon` is the same tools from a shell
+`unlink_tickets`, `claim_ticket`, `release_ticket` and `submit_ticket`. `bin/babylon` is the same tools from a shell
 (`babylon` alone for its usage); it needs `curl` and `jq`.
 
 A claimed ticket is `doing`, held by its pane while that pane runs Claude, with a branch
 `t<id>-<slug>` to work it on (`wt switch --create <branch>`). Once a minute a claim whose pane is
 gone goes back to `todo`, labelled `lapsed`, its branch kept for whoever picks it up.
+
+A submitted ticket is `review` and goes through the pipeline, one ticket at a time in the order
+submitted, in a throwaway worktree of its repo (`~/projects/<repo>`) under `~/.cache/babylon/work`:
+its branch is rebased onto `origin/main` and the repo's `mise run check` run (30 minutes at most),
+then a headless `claude -p` reviews the diff and ends on a verdict, then it is pushed as main's
+new head, which only a fast-forward passes; main having moved meanwhile means another rebase and
+gate first. How it went is typed into the holding session's pane: landed, the ticket is `done`;
+sent back, it is `doing` again with why in `stage_note`, or `todo` labelled `sent back` when that
+session is gone. There are no pull requests: the gate and the review are babylon's.
 
 Served, it keeps the board arena draws in `$XDG_RUNTIME_DIR/babylon/board.json` (beside the database where there is no runtime
 dir, as on the Mac): every open

@@ -22,6 +22,8 @@ defmodule Babylon.Application do
          port: Application.fetch_env!(:babylon, :port),
          thousand_island_options: [shutdown_timeout: 2_000]},
         Babylon.Lapse,
+        {Task.Supervisor, name: Babylon.Tasks},
+        Babylon.Pipeline,
         {Babylon.Board, Application.fetch_env!(:babylon, :board)}
       ]
     else
