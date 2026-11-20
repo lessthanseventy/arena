@@ -34,6 +34,10 @@ A claimed ticket is `doing`, held by its pane while that pane runs Claude, with 
 `t<id>-<slug>` to work it on (`wt switch --create <branch>`). Once a minute a claim whose pane is
 gone goes back to `todo`, labelled `lapsed`, its branch kept for whoever picks it up.
 
+Served, it keeps the board arena draws in `$XDG_RUNTIME_DIR/babylon/board.json`: every open
+ticket and those done in the last day, each with its open blockers and its epic, rewritten within
+a second of a change.
+
 ```sh
 babylon file "Claim with a lease" --priority high
 babylon list --repo babylon --status backlog,doing
