@@ -376,7 +376,9 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
         .session => |si| {
             const s = app.sessions.items[si];
             const name = clip(s.name, if (wide) inner - 2 else 2);
-            try pen.set(w, if (s.id == app.current) heading(app) else dim, null);
+            // lit as its row above is, so the session in view reads the same in both lists
+            const lit = s.id == app.current and app.board_view == null;
+            try pen.set(w, if (lit) chip(app) else if (s.id == app.current) heading(app) else dim, null);
             try w.writeAll(" ");
             try w.writeAll(name);
             filled = 1 + cellCount(name);

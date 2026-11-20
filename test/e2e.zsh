@@ -439,8 +439,8 @@ listed() {
 }
 check "the rail lists each session's Claudes under a rule of their own, each over what it is doing and its review" await listed
 inked() { sed -n $1p <<<$(outer capture-pane -ep -t o) }
-lit() { [[ $(inked 13) == *$'\e[1m\e[38;5;4m beta '* && $(inked 7) != *$'\e[1m'* ]] }
-check "the session in view has its name there in amber" lit
+lit() { [[ $(inked 13) == *$'\e[1;7m\e[38;5;4m beta '* && $(inked 7) != *$'\e[1;7m'* ]] }
+check "the session in view has its name there lit, as in the list above" lit
 looked() { [[ $(inked 14) == *$'\e[38;5;4m ◐ solo '* && $(inked 11) == *$'\e[39m one '* ]] }
 check "and the Claude in view its title" looked
 claude alpha:renamed prompt '{"prompt": "more"}'
