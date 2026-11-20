@@ -22,7 +22,7 @@ defmodule Babylon.Claims do
           {:ok, Ticket.t(), :new | :resumed | :held} | {:error, String.t()}
   def claim(id, pane, panes) do
     Repo.transaction(fn ->
-      ticket = Repo.one(from t in Ticket, where: t.id == ^id, lock: "FOR UPDATE")
+      ticket = Repo.get(Ticket, id)
 
       case claimable(ticket, id, pane, panes) do
         :ok -> take(ticket, pane)

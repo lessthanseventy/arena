@@ -1,3 +1,3 @@
 import Config
 
-config :babylon, Babylon.Repo, database: "babylon_dev", pool_size: 5
+config :babylon, Babylon.Repo, database: Path.expand("../babylon_dev.db", __DIR__), pool_size: 5

@@ -34,17 +34,25 @@ defmodule Babylon.TicketLink do
     |> validate_required([:from_id, :to_id, :kind])
     |> validate_inclusion(:kind, @kinds)
     |> validate_not_self()
+    |> validate_exists(:from_id)
+    |> validate_exists(:to_id)
     |> validate_parent()
-    |> foreign_key_constraint(:from_id)
-    |> foreign_key_constraint(:to_id)
     |> check_constraint(:to_id, name: :not_self, message: "a ticket cannot link to itself")
-    |> unique_constraint(:to_id, name: :ticket_link_one_parent, message: "already has a parent")
+    |> unique_constraint(:to_id, name: :ticket_link_to_id_index, message: "already has a parent")
   end
 
   defp validate_not_self(changeset) do
     if get_field(changeset, :from_id) == get_field(changeset, :to_id),
       do: add_error(changeset, :to_id, "a ticket cannot link to itself"),
       else: changeset
+  end
+
+  # SQLite does not say which key a foreign key failure was, so each end is looked for first
+  defp validate_exists(changeset, field) do
+    case get_field(changeset, field) do
+      nil -> changeset
+      id -> if Repo.get(Ticket, id), do: changeset, else: add_error(changeset, field, "does not exist")
+    end
   end
 
   defp validate_parent(changeset) do

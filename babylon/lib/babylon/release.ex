@@ -1,5 +1,5 @@
 defmodule Babylon.Release do
-  @moduledoc "What the release runs before it starts: `bin/babylon eval Babylon.Release.migrate()`."
+  @moduledoc "The database made and brought up to date, which the served app does as it starts."
 
   @doc "Create the database if it is not there, then run every migration."
   @spec migrate() :: :ok

@@ -13,7 +13,8 @@ mise run test     # the suite, on a fresh babylon_test database
 mise run check    # the gate: format, warnings as errors, Credo, the suite
 ```
 
-Postgres over the local socket (`/run/postgresql`, or `PGHOST`), with peer auth.
+SQLite: `babylon_dev.db` and `babylon_test.db` beside the project, and the release's in
+`$XDG_STATE_HOME/babylon/babylon.db` (`~/.local/state` when unset), made and migrated at start.
 
 ## Serve it
 

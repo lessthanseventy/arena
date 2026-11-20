@@ -43,7 +43,7 @@ defmodule Babylon.MixProject do
   defp deps do
     [
       {:ecto_sql, "~> 3.12"},
-      {:postgrex, "~> 0.22"},
+      {:ecto_sqlite3, "~> 0.22"},
       {:jason, "~> 1.4"},
       {:anubis_mcp, "~> 2.2"},
       {:bandit, "~> 1.0"},

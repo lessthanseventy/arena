@@ -1,7 +1,7 @@
 import Config
 
 config :babylon, Babylon.Repo,
-  database: "babylon_test",
+  database: Path.expand("../babylon_test.db", __DIR__),
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: 5,
   log: false

@@ -4,6 +4,8 @@ defmodule Babylon.Application do
 
   @impl true
   def start(_type, _args) do
+    if Application.get_env(:babylon, :serve, false), do: Babylon.Release.migrate()
+
     children =
       [Babylon.Repo, {Babylon.MCP.Server, transport: {:streamable_http, start: true}}] ++ listener()
 

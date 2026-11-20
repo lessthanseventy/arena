@@ -1,5 +1,5 @@
 defmodule Babylon.ClaimsTest do
-  use Babylon.DataCase, async: true
+  use Babylon.DataCase
 
   alias Babylon.Claims
   alias Babylon.Tickets

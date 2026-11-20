@@ -1,5 +1,8 @@
 defmodule Babylon.DataCase do
-  @moduledoc "A test case with its own sandboxed connection to the test database."
+  @moduledoc """
+  A test case with its own sandboxed connection to the test database. Not async: SQLite has one
+  writer, and a sandboxed test holds its write transaction for as long as it runs.
+  """
   use ExUnit.CaseTemplate
 
   alias Ecto.Adapters.SQL.Sandbox
