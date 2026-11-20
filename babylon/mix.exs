@@ -31,6 +31,7 @@ defmodule Babylon.MixProject do
   defp aliases do
     [
       precommit: [
+        "deps.get",
         "format --check-formatted",
         "compile --warnings-as-errors",
         "credo --strict",
