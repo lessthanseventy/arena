@@ -1066,7 +1066,7 @@ fn cardDetail(app: *const App, card: *const tickets.Card, with_repo: bool, buf: 
     }
     if (card.stage) |stage| {
         const shown = if (std.mem.eql(u8, stage, "failed")) "✗ sent back" else if (std.mem.eql(u8, stage, "landed")) "◆ landed" else if (std.mem.eql(u8, stage, "queued")) "» queued" else stage;
-        out.writeAll(shown) catch {};
+        out.print("{s}{s}", .{ sep, shown }) catch {};
         sep = " · ";
     }
     if (with_repo) {

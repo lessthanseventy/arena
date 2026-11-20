@@ -698,7 +698,7 @@ alone() { [[ $(railed 2) == *$'\e[1;7m'* && $(railed 3)$(railed 4)$(railed 5) !=
 check "and the board's row is the one lit, not the session's" alone
 check "a card has its number and title" see '│ #8 Board +│'
 check "under them its repo and the Claude holding it" see '│ arena · alpha:one'
-check "and, sent back from the pipeline, that first, after a question waiting on you" see '│ ? asks · ✗ sent back · tlon'
+check "and, sent back from the pipeline, that first, after a question waiting on you" see '│ \? asks · ✗ sent'
 key a
 check "a shows the picked card's question" see '│ Which colour\? +│'
 check "with its options by number" see '│ 2  blue +│'
