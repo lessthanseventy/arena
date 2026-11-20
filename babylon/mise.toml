@@ -9,3 +9,24 @@ run = "mix precommit"
 [tasks.test]
 description = "The suite"
 run = "mix test"
+
+[tasks.release]
+description = "Build main's release into ~/.local/share/babylon/rel and restart the service on it (-- REF for another)"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+ref=${1:-origin/main}
+dest=${XDG_DATA_HOME:-$HOME/.local/share}/babylon/rel
+build=$(mktemp -d)
+trap 'git worktree remove --force "$build"' EXIT
+git fetch -q origin
+git worktree add -q --detach "$build" "$ref"
+cd "$build"
+MIX_ENV=prod mix deps.get --only prod >/dev/null
+MIX_ENV=prod mix release --overwrite --path "$dest" >/dev/null
+echo "babylon: $(git rev-parse --short HEAD) released to $dest"
+if systemctl --user cat babylon.service >/dev/null 2>&1; then
+  systemctl --user restart babylon.service
+  echo "babylon: service restarted"
+fi
+'''
