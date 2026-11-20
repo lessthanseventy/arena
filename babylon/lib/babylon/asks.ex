@@ -7,21 +7,26 @@ defmodule Babylon.Asks do
   alias Babylon.Repo
   alias Babylon.Ticket
 
-  @doc "Ask, from `pane`, the question in `attrs` about its ticket."
+  @doc "Ask, from `pane`, the question in `attrs` about its ticket: one open ask a ticket."
   @spec ask(map(), String.t()) :: {:ok, Ask.t()} | {:error, Ecto.Changeset.t() | String.t()}
   def ask(attrs, pane) do
-    case Repo.get(Ticket, attrs[:ticket_id]) do
-      nil -> {:error, "no ticket ##{attrs[:ticket_id]}"}
+    open = Repo.one(from a in Ask, where: a.ticket_id == ^attrs[:ticket_id] and is_nil(a.answered_at), limit: 1)
+
+    case {Repo.get(Ticket, attrs[:ticket_id]), open} do
+      {nil, _} -> {:error, "no ticket ##{attrs[:ticket_id]}"}
+      {_, %Ask{id: id}} -> {:error, "##{attrs[:ticket_id]} has ask ##{id} open: wait for its answer"}
       _ -> attrs |> Ask.changeset(pane) |> Repo.insert()
     end
   end
 
   @doc """
   Answer ask `id` with its option number `choice` (from 1), and type the answer into the pane that
-  asked. An ask answered already is refused.
+  asked. An ask answered already is refused; so is one whose pane no longer runs Claude (by
+  `live`, the panes that do), which is closed unanswered, as no one is left to tell.
   """
-  @spec answer(pos_integer(), pos_integer()) :: {:ok, Ask.t()} | {:error, String.t()}
-  def answer(id, choice) do
+  @spec answer(pos_integer(), pos_integer(), MapSet.t(String.t()) | :unknown) ::
+          {:ok, Ask.t()} | {:error, String.t()}
+  def answer(id, choice, live \\ Panes.claude()) do
     case Repo.get(Ask, id) do
       nil ->
         {:error, "no ask ##{id}"}
@@ -33,15 +38,25 @@ defmodule Babylon.Asks do
         {:error, "ask ##{id} has options 1 to #{length(options)}"}
 
       ask ->
-        picked = Enum.at(ask.options, choice - 1)
-        now = DateTime.truncate(DateTime.utc_now(), :second)
-        answered = ask |> Ecto.Changeset.change(answer: picked, answered_at: now) |> Repo.update!()
-        Panes.tell(ask.pane, ~s(babylon: you asked about ##{ask.ticket_id}, "#{ask.question}" The answer: #{picked}))
-        {:ok, answered}
+        if live == :unknown or MapSet.member?(live, ask.pane), do: give(ask, choice), else: close(ask)
     end
   end
 
   @doc "The open asks, oldest first."
   @spec open() :: [Ask.t()]
   def open, do: Repo.all(from a in Ask, where: is_nil(a.answered_at), order_by: [asc: a.id])
+
+  defp now, do: DateTime.truncate(DateTime.utc_now(), :second)
+
+  defp close(ask) do
+    Repo.update!(Ecto.Changeset.change(ask, answered_at: now()))
+    {:error, "the session that asked ##{ask.id} is gone (pane #{ask.pane}): closed unanswered"}
+  end
+
+  defp give(ask, choice) do
+    picked = Enum.at(ask.options, choice - 1)
+    answered = ask |> Ecto.Changeset.change(answer: picked, answered_at: now()) |> Repo.update!()
+    Panes.tell(ask.pane, ~s(babylon: you asked about ##{ask.ticket_id}, "#{ask.question}" The answer: #{picked}))
+    {:ok, answered}
+  end
 end

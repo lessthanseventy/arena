@@ -54,8 +54,8 @@ defmodule Babylon.MCP.ToolsTest do
     ask = %{ticket_id: id, question: "Which?", options: ["this", "that"]}
 
     assert {:error, "this session sent no pane" <> _} = call("ask_human", ask)
-    assert {:ok, %{"ask_id" => ask_id}} = call("ask_human", ask, "%999999")
     assert {:error, "options should have at least 2 item(s)"} = call("ask_human", %{ask | options: ["x"]}, "%999999")
-    assert {:ok, %{"answer" => "this"}} = call("answer_ask", %{id: ask_id, choice: 1})
+    assert {:ok, %{"ask_id" => ask_id}} = call("ask_human", ask, "%999999")
+    assert {:error, "the session that asked #" <> _} = call("answer_ask", %{id: ask_id, choice: 1})
   end
 end
