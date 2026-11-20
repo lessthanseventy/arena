@@ -25,8 +25,11 @@ cd "$build/babylon"
 MIX_ENV=prod mix deps.get --only prod >/dev/null
 MIX_ENV=prod mix release --overwrite --path "$dest" >/dev/null
 echo "babylon: $(git rev-parse --short HEAD) released to $dest"
-if systemctl --user cat babylon.service >/dev/null 2>&1; then
+if command -v systemctl >/dev/null && systemctl --user cat babylon.service >/dev/null 2>&1; then
   systemctl --user restart babylon.service
   echo "babylon: service restarted"
+elif command -v launchctl >/dev/null && launchctl print "gui/$(id -u)/org.nix-community.home.babylon" >/dev/null 2>&1; then
+  launchctl kickstart -k "gui/$(id -u)/org.nix-community.home.babylon"
+  echo "babylon: agent restarted"
 fi
 '''

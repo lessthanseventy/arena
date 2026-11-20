@@ -61,6 +61,29 @@ const ThemeFile = struct {
 };
 
 /// babylon's board, read again with the theme, and handed to arena when it changed.
+/// Where babylon writes its board: the runtime dir, or beside its database where there is none (the Mac).
+fn boardPath(gpa: std.mem.Allocator, env: *const std.process.Environ.Map) !?[]u8 {
+    if (env.get("XDG_RUNTIME_DIR")) |dir| return try std.fs.path.join(gpa, &.{ dir, "babylon/board.json" });
+    if (env.get("XDG_STATE_HOME")) |dir| return try std.fs.path.join(gpa, &.{ dir, "babylon/board.json" });
+    if (env.get("HOME")) |home| return try std.fs.path.join(gpa, &.{ home, ".local/state/babylon/board.json" });
+    return null;
+}
+
+test boardPath {
+    const gpa = std.testing.allocator;
+    var env: std.process.Environ.Map = .init(gpa);
+    defer env.deinit();
+    try std.testing.expectEqual(null, try boardPath(gpa, &env));
+    try env.put("HOME", "/Users/a");
+    const mac = (try boardPath(gpa, &env)).?;
+    defer gpa.free(mac);
+    try std.testing.expectEqualStrings("/Users/a/.local/state/babylon/board.json", mac);
+    try env.put("XDG_RUNTIME_DIR", "/run/user/1000");
+    const linux = (try boardPath(gpa, &env)).?;
+    defer gpa.free(linux);
+    try std.testing.expectEqualStrings("/run/user/1000/babylon/board.json", linux);
+}
+
 const BoardFile = struct {
     path: ?[]u8,
     text: ?[]u8 = null,
@@ -187,7 +210,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) 
     };
     defer theme_file.deinit(&app);
     var board_file: BoardFile = .{
-        .path = if (init.environ_map.get("XDG_RUNTIME_DIR")) |run_dir| try std.fs.path.join(gpa, &.{ run_dir, "babylon/board.json" }) else null,
+        .path = try boardPath(gpa, init.environ_map),
     };
     defer board_file.deinit(&app);
     winch.store(true, .release);

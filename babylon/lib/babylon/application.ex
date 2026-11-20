@@ -22,7 +22,7 @@ defmodule Babylon.Application do
          port: Application.fetch_env!(:babylon, :port),
          thousand_island_options: [shutdown_timeout: 2_000]},
         Babylon.Lapse,
-        {Babylon.Board, Path.join(System.fetch_env!("XDG_RUNTIME_DIR"), "babylon/board.json")}
+        {Babylon.Board, Application.fetch_env!(:babylon, :board)}
       ]
     else
       []
