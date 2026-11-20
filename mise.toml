@@ -12,6 +12,11 @@ description = "arena driven in a private tmux, against another"
 depends = ["build"]
 run = "zsh test/e2e.zsh"
 
+[tasks."babylon:check"]
+description = "babylon's gate"
+dir = "babylon"
+run = "mise run check"
+
 [tasks.check]
-description = "the unit tests, then end to end"
-depends = ["test", "e2e"]
+description = "the unit tests, then end to end, then babylon's gate"
+depends = ["test", "e2e", "babylon:check"]

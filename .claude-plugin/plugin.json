@@ -2,5 +2,12 @@
   "name": "arena",
   "version": "0.1.0",
   "author": { "name": "Andrew Moore" },
-  "description": "Marks arena's windows by what Claude Code is doing in them: sets the pane option @arena_claude"
+  "description": "Marks arena's windows by what Claude Code is doing in them, and gives each session babylon's tickets",
+  "mcpServers": {
+    "babylon": {
+      "type": "http",
+      "url": "http://127.0.0.1:4050/",
+      "headers": { "X-Babylon-Pane": "${TMUX_PANE}" }
+    }
+  }
 }

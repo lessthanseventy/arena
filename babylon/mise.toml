@@ -21,7 +21,7 @@ build=$(mktemp -d)
 trap 'git worktree remove --force "$build"' EXIT
 git fetch -q origin
 git worktree add -q --detach "$build" "$ref"
-cd "$build"
+cd "$build/babylon"
 MIX_ENV=prod mix deps.get --only prod >/dev/null
 MIX_ENV=prod mix release --overwrite --path "$dest" >/dev/null
 echo "babylon: $(git rev-parse --short HEAD) released to $dest"

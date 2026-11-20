@@ -22,13 +22,9 @@ mix ecto.create && mix ecto.migrate
 BABYLON_SERVE=1 mix run --no-halt     # MCP on http://127.0.0.1:4050/ (BABYLON_PORT)
 ```
 
-A Claude session reaches it as an HTTP MCP server. The header names the session's tmux pane, which
-is what holds a claim:
-
-```sh
-claude mcp add --scope user --transport http babylon http://127.0.0.1:4050/ \
-  --header 'X-Babylon-Pane: ${TMUX_PANE}'
-```
+A Claude session reaches it as an HTTP MCP server through arena's plugin (`../.claude-plugin/plugin.json`), whose
+header names the session's tmux pane, which is what holds a claim. The server's instructions tell a
+session when to file a ticket and when to claim one.
 
 Its tools are `file_ticket`, `list_tickets`, `get_ticket`, `update_ticket`, `link_tickets`,
 `unlink_tickets`, `claim_ticket` and `release_ticket`. `bin/babylon` is the same tools from a shell
