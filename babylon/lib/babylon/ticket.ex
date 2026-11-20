@@ -26,6 +26,9 @@ defmodule Babylon.Ticket do
     field :filed_by, :string
     field :sort, :integer, default: 0
     field :closed_at, :utc_datetime
+    field :claimed_by, :string
+    field :claimed_at, :utc_datetime
+    field :branch, :string
     timestamps(type: :utc_datetime)
   end
 

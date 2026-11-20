@@ -37,7 +37,7 @@ defmodule Babylon.Tickets do
 
   @doc """
   Tickets in board order, the top of a column first. `opts`: `:repo` narrows to one repository,
-  `:status` to one status or a list of them.
+  `:status` to one status or a list of them, `:claimed_by` to the tickets a pane holds.
   """
   @spec list(keyword()) :: [Ticket.t()]
   def list(opts \\ []) do
@@ -45,6 +45,7 @@ defmodule Babylon.Tickets do
       {:repo, repo}, query -> where(query, [t], t.repo == ^repo)
       {:status, statuses}, query when is_list(statuses) -> where(query, [t], t.status in ^statuses)
       {:status, status}, query -> where(query, [t], t.status == ^status)
+      {:claimed_by, pane}, query -> where(query, [t], t.claimed_by == ^pane)
     end)
     |> Repo.all()
   end
@@ -122,9 +123,11 @@ defmodule Babylon.Tickets do
   @spec epic_of(pos_integer()) :: pos_integer() | nil
   def epic_of(id), do: Repo.one(from l in TicketLink, where: l.to_id == ^id and l.kind == "parent", select: l.from_id)
 
-  defp refresh_epic(nil), do: :ok
+  @doc "Set the epic `epic_id`'s status to the one its tickets give it. Nil is no epic."
+  @spec refresh_epic(pos_integer() | nil) :: :ok
+  def refresh_epic(nil), do: :ok
 
-  defp refresh_epic(epic_id) do
+  def refresh_epic(epic_id) do
     epic = get(epic_id)
 
     statuses =

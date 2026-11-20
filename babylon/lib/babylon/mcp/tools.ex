@@ -31,12 +31,17 @@ defmodule Babylon.MCP.Tools.ListTickets do
   schema do
     field :repo, :string, description: "Only this repository's"
     field :status, {:list, {:enum, ~w(backlog todo doing done)}}, description: "Only these statuses"
+    field :mine, :boolean, description: "Only the tickets your pane holds"
   end
 
   @impl true
-  def execute(params, frame) do
-    ok(frame, params |> given() |> Keyword.new() |> Tickets.list() |> Enum.map(&render/1))
+  def execute(%{mine: true} = params, frame) do
+    with_pane(frame, &list(frame, params |> Map.delete(:mine) |> Map.put(:claimed_by, &1)))
   end
+
+  def execute(params, frame), do: list(frame, Map.delete(params, :mine))
+
+  defp list(frame, params), do: ok(frame, params |> given() |> Keyword.new() |> Tickets.list() |> Enum.map(&render/1))
 end
 
 defmodule Babylon.MCP.Tools.GetTicket do
@@ -105,6 +110,57 @@ defmodule Babylon.MCP.Tools.LinkTickets do
   @impl true
   def execute(%{from: from, to: to, kind: kind}, frame) do
     reply(frame, Tickets.link(from, to, kind), fn _ -> Tickets.links_of(to) end)
+  end
+end
+
+defmodule Babylon.MCP.Tools.ClaimTicket do
+  @moduledoc """
+  Take a ticket to work on: it becomes `doing`, held by your tmux pane for as long as that pane
+  runs Claude, and gets a branch. Then switch to the branch's worktree in the ticket's repo with
+  the `start` command in the answer. Refused while another session holds it or it waits on an
+  open ticket.
+  """
+  use Babylon.MCP.Tool
+
+  alias Babylon.Claims
+  alias Babylon.Panes
+
+  schema do
+    field :id, :integer, required: true
+  end
+
+  @impl true
+  def execute(%{id: id}, frame) do
+    with_pane(frame, fn pane ->
+      case Claims.claim(id, pane, Panes.claude()) do
+        {:ok, ticket, how} -> ok(frame, Map.put(render(ticket), :start, start(ticket.branch, how)))
+        {:error, reason} -> fail(frame, reason)
+      end
+    end)
+  end
+
+  defp start(branch, :new), do: "wt switch --create #{branch}"
+  defp start(branch, _), do: "wt switch #{branch}"
+end
+
+defmodule Babylon.MCP.Tools.ReleaseTicket do
+  @moduledoc "Give back a ticket you claimed and will not finish: it is `todo` again, its branch kept for whoever takes it."
+  use Babylon.MCP.Tool
+
+  alias Babylon.Claims
+
+  schema do
+    field :id, :integer, required: true
+  end
+
+  @impl true
+  def execute(%{id: id}, frame) do
+    with_pane(frame, fn pane ->
+      case Claims.release(id, pane) do
+        {:ok, ticket} -> ok(frame, render(ticket))
+        {:error, reason} -> fail(frame, reason)
+      end
+    end)
   end
 end
 

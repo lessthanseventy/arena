@@ -22,9 +22,12 @@ defmodule Babylon.MCPCase do
     :ok
   end
 
-  @doc "Call `tool` with `args`: `{:ok, decoded}` from the tool's JSON, or `{:error, message}` for a refusal."
-  @spec call(String.t(), map()) :: {:ok, term()} | {:error, String.t()}
-  def call(tool, args) do
+  @doc """
+  Call `tool` with `args` from tmux pane `pane` (nil sends no pane): `{:ok, decoded}` from the
+  tool's JSON, or `{:error, message}` for a refusal.
+  """
+  @spec call(String.t(), map(), String.t() | nil) :: {:ok, term()} | {:error, String.t()}
+  def call(tool, args, pane \\ nil) do
     body = %{
       jsonrpc: "2.0",
       id: 1,
@@ -47,6 +50,7 @@ defmodule Babylon.MCPCase do
       |> put_req_header("mcp-protocol-version", @version)
       |> put_req_header("mcp-method", "tools/call")
       |> put_req_header("mcp-name", tool)
+      |> then(&if(pane, do: put_req_header(&1, "x-babylon-pane", pane), else: &1))
       |> Transport.call(Transport.init(server: Babylon.MCP.Server))
 
     case JSON.decode!(conn.resp_body) do

@@ -18,7 +18,8 @@ defmodule Babylon.Application do
          plug: {Anubis.Server.Transport.StreamableHTTP.Plug, server: Babylon.MCP.Server},
          ip: {127, 0, 0, 1},
          port: Application.fetch_env!(:babylon, :port),
-         thousand_island_options: [shutdown_timeout: 2_000]}
+         thousand_island_options: [shutdown_timeout: 2_000]},
+        Babylon.Lapse
       ]
     else
       []

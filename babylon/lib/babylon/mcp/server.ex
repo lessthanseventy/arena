@@ -15,4 +15,6 @@ defmodule Babylon.MCP.Server do
   component(Babylon.MCP.Tools.UpdateTicket, name: "update_ticket")
   component(Babylon.MCP.Tools.LinkTickets, name: "link_tickets")
   component(Babylon.MCP.Tools.UnlinkTickets, name: "unlink_tickets")
+  component(Babylon.MCP.Tools.ClaimTicket, name: "claim_ticket")
+  component(Babylon.MCP.Tools.ReleaseTicket, name: "release_ticket")
 end

@@ -22,6 +22,21 @@ defmodule Babylon.MCP.ToolsTest do
     assert {:ok, [%{"kind" => "relates"}]} = call("link_tickets", %{from: blocker, to: blocked, kind: "relates"})
   end
 
+  test "a claim is held by the calling pane, and refused without one" do
+    {:ok, %{"id" => id}} = call("file_ticket", %{title: "Claim me"})
+
+    assert {:error, "this session sent no pane" <> _} = call("claim_ticket", %{id: id})
+
+    assert {:ok, %{"status" => "doing", "claimed_by" => "%9", "start" => start}} =
+             call("claim_ticket", %{id: id}, "%9")
+
+    assert start == "wt switch --create t#{id}-claim-me"
+    assert {:ok, [%{"id" => ^id}]} = call("list_tickets", %{mine: true}, "%9")
+    assert {:ok, []} = call("list_tickets", %{mine: true}, "%8")
+
+    assert {:ok, %{"status" => "todo", "claimed_by" => nil}} = call("release_ticket", %{id: id}, "%9")
+  end
+
   test "refusals come back as one sentence" do
     assert {:error, "no ticket #0"} = call("get_ticket", %{id: 0})
     assert {:ok, %{"id" => id}} = call("file_ticket", %{title: "t"})

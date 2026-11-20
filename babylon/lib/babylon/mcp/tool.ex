@@ -11,7 +11,7 @@ defmodule Babylon.MCP.Tool do
     quote do
       use Anubis.Server.Component, type: :tool
 
-      import Babylon.MCP.Tool, only: [ok: 2, fail: 2, reply: 3, given: 1, render: 1, with_ticket: 3]
+      import Babylon.MCP.Tool, only: [ok: 2, fail: 2, reply: 3, given: 1, render: 1, with_ticket: 3, with_pane: 2]
     end
   end
 
@@ -41,10 +41,32 @@ defmodule Babylon.MCP.Tool do
     end
   end
 
+  @doc """
+  Run `fun` with the caller's tmux pane, from its `X-Babylon-Pane` header, or refuse when it sent
+  none: a claim is held by a pane.
+  """
+  @spec with_pane(Frame.t(), (String.t() -> reply())) :: reply()
+  def with_pane(frame, fun) do
+    case pane(frame) do
+      nil ->
+        fail(frame, "this session sent no pane: its babylon MCP config needs the header X-Babylon-Pane: ${TMUX_PANE}")
+
+      pane ->
+        fun.(pane)
+    end
+  end
+
+  @doc "The caller's tmux pane, or nil."
+  @spec pane(Frame.t()) :: String.t() | nil
+  def pane(%Frame{context: %{headers: headers}}), do: non_empty(headers["x-babylon-pane"])
+
   @doc "A ticket as a tool answers it."
   @spec render(Ticket.t()) :: map()
   def render(%Ticket{} = t) do
-    Map.take(t, ~w(id repo title body kind status priority labels filed_by sort closed_at inserted_at updated_at)a)
+    Map.take(
+      t,
+      ~w(id repo title body kind status priority labels filed_by sort closed_at claimed_by claimed_at branch inserted_at updated_at)a
+    )
   end
 
   defp sentence(changeset) do
@@ -54,4 +76,7 @@ defmodule Babylon.MCP.Tool do
     end)
     |> Enum.map_join("; ", fn {field, messages} -> "#{field} #{Enum.join(messages, ", ")}" end)
   end
+
+  defp non_empty(""), do: nil
+  defp non_empty(value), do: value
 end
