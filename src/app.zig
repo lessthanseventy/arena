@@ -7,6 +7,7 @@ const menu = @import("menu.zig");
 const color = @import("color.zig");
 const Theme = @import("theme.zig").Theme;
 const Pass = @import("pass.zig").Pass;
+const tickets = @import("board.zig");
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 
@@ -284,6 +285,23 @@ const Pending = union(enum) {
     cursor: u32,
 };
 
+pub const BoardView = struct {
+    /// The column and the card in it picked.
+    col: usize = 1,
+    row: usize = 0,
+    /// The repo it is narrowed to: 0 for every one, else its place in the board's repos from 1.
+    repo: usize = 0,
+};
+
+/// The cards a column of the board can hold, and the repos it can be narrowed to.
+pub const max_cards = 256;
+const max_repos = 32;
+
+fn anyKey(pressed: []const u8, names: []const []const u8) bool {
+    for (names) |name| if (std.mem.eql(u8, pressed, name)) return true;
+    return false;
+}
+
 pub const App = struct {
     gpa: Allocator,
     io: std.Io,
@@ -301,6 +319,10 @@ pub const App = struct {
     prompt: ?menu.Prompt = null,
     /// The window picked in the overview, while it is open in place of the strip.
     overview: ?Spot = null,
+    /// babylon's board, as its file was last read; null while there is none.
+    board: ?tickets.Board = null,
+    /// The board while it is open in place of the strip.
+    board_view: ?BoardView = null,
     rail: enum { wide, narrow } = .wide,
     /// The narrow rail drawn wide over the strip, while the pointer is on it.
     peek: bool = false,
@@ -389,6 +411,7 @@ pub const App = struct {
         app.guard.deinit(app.gpa);
         app.out.deinit(app.gpa);
         app.plain.deinit(app.gpa);
+        if (app.board) |*b| b.deinit();
     }
 
     fn destroySession(app: *App, s: *Session) void {
@@ -1262,12 +1285,7 @@ pub const App = struct {
         }
         const spot = &app.overview.?;
         spot.session = @min(spot.session, count - 1);
-        const is = struct {
-            fn any(pressed: []const u8, names: []const []const u8) bool {
-                for (names) |name| if (std.mem.eql(u8, pressed, name)) return true;
-                return false;
-            }
-        }.any;
+        const is = anyKey;
         if (is(key, &.{ "h", "\x1b[D", "\x1bOD" })) spot.win -|= 1;
         if (is(key, &.{ "l", "\x1b[C", "\x1bOC" })) spot.win += 1;
         if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) spot.session -|= 1;
@@ -1280,6 +1298,141 @@ pub const App = struct {
             app.overview = null;
             try app.jumpTo(s, win);
         }
+    }
+
+    /// The board file's text as read now: the board it holds takes the place of the one before;
+    /// there is none when there is no file or it does not parse.
+    pub fn setBoard(app: *App, text: ?[]const u8) void {
+        if (app.board) |*b| b.deinit();
+        app.board = if (text) |t| tickets.Board.parse(app.gpa, t) catch null else null;
+        if (app.board == null) app.board_view = null;
+        app.dirty = true;
+    }
+
+    fn toggleBoard(app: *App) void {
+        app.board_view = if (app.board_view != null or app.board == null) null else .{};
+        app.dirty = true;
+    }
+
+    /// The repo the open board is narrowed to; null for every one.
+    pub fn boardRepo(app: *const App) ?[]const u8 {
+        const view = app.board_view orelse return null;
+        if (view.repo == 0) return null;
+        const b = if (app.board) |*b| b else return null;
+        var repos: [max_repos][]const u8 = undefined;
+        const n = b.repos(&repos);
+        return if (view.repo <= n) repos[view.repo - 1] else null;
+    }
+
+    /// The cards of the board's column `col` as it is narrowed, as many as fit in `out`; the
+    /// count of them all.
+    pub fn boardColumn(app: *const App, col: usize, out: []*const tickets.Card) usize {
+        const b = if (app.board) |*b| b else return 0;
+        return b.column(tickets.statuses[col], app.boardRepo(), out);
+    }
+
+    /// The cards in `status` on the whole board, whatever it is narrowed to.
+    pub fn boardCount(app: *const App, status: tickets.Status) usize {
+        const b = if (app.board) |*b| b else return 0;
+        return b.column(status, null, &.{});
+    }
+
+    pub fn boardCard(app: *const App, col: usize, row: usize) ?*const tickets.Card {
+        var out: [max_cards]*const tickets.Card = undefined;
+        const n = app.boardColumn(col, &out);
+        return if (row < @min(n, max_cards)) out[row] else null;
+    }
+
+    /// The board's four columns side by side under a row of its own; in each, a card is two
+    /// rows with one between, from the second row inside its border.
+    pub fn boardColW(app: *const App) u16 {
+        return app.view_w / 4;
+    }
+
+    pub fn boardShown(app: *const App) usize {
+        return @max(1, (app.view_h -| 2) / 3);
+    }
+
+    /// The first card column `col` shows: the picked card's column scrolls to keep it in view.
+    pub fn boardFirst(app: *const App, col: usize) usize {
+        const view = app.board_view orelse return 0;
+        const shown = app.boardShown();
+        return if (col == view.col and view.row >= shown) view.row - shown + 1 else 0;
+    }
+
+    fn boardCardAt(app: *const App, x: u16, y: u16) ?struct { col: usize, row: usize } {
+        const ox = app.term_w - app.view_w;
+        if (x < ox or y < 2) return null;
+        const col: usize = (x - ox) / @max(1, app.boardColW());
+        const k: usize = (y - 2) / 3;
+        if (col >= tickets.statuses.len or (y - 2) % 3 == 2 or k >= app.boardShown()) return null;
+        const row = app.boardFirst(col) + k;
+        return if (row < app.boardColumn(col, &.{})) .{ .col = col, .row = row } else null;
+    }
+
+    /// The window with pane `id` in it, and that window's place in its session.
+    pub fn paneWindow(app: *const App, id: u32) ?struct { session: *Session, index: usize } {
+        for (app.sessions.items) |s| for (s.wins.items, 0..) |win, wi| for (win.panes.items) |pane| {
+            if (pane.id == id) return .{ .session = s, .index = wi };
+        };
+        return null;
+    }
+
+    /// Goes to the Claude holding the card picked, closing the board; nothing when none does.
+    fn goCard(app: *App) !void {
+        const view = app.board_view orelse return;
+        const card = app.boardCard(view.col, view.row) orelse return;
+        const pane = card.holder() orelse return;
+        const at = app.paneWindow(pane) orelse return;
+        app.board_view = null;
+        app.dirty = true;
+        try app.send(.ignore, "select-pane -t %{d}", .{pane});
+        try app.jumpTo(at.session, at.index);
+    }
+
+    /// A key on the board: h, l and the arrows go between columns, j and k along one, r narrows
+    /// it to the next repo and from the last back to every one, Enter goes to the Claude holding
+    /// the card picked, Escape and q close.
+    fn boardKey(app: *App, key: []const u8) !void {
+        app.dirty = true;
+        const view = &app.board_view.?;
+        const is = anyKey;
+        if (is(key, &.{ "h", "\x1b[D", "\x1bOD" })) view.col -|= 1;
+        if (is(key, &.{ "l", "\x1b[C", "\x1bOC" }) and view.col + 1 < tickets.statuses.len) view.col += 1;
+        if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.row -|= 1;
+        if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) view.row += 1;
+        if (is(key, &.{"r"})) {
+            var repos: [max_repos][]const u8 = undefined;
+            const n = if (app.board) |*b| b.repos(&repos) else 0;
+            view.repo = (view.repo + 1) % (n + 1);
+            view.row = 0;
+        }
+        view.row = @min(view.row, app.boardColumn(view.col, &.{}) -| 1);
+        if (is(key, &.{ "\x1b", "q" })) app.board_view = null;
+        if (is(key, &.{"\r"})) try app.goCard();
+    }
+
+    /// The mouse on the board: a click on a card picks it, and on the card picked goes to the
+    /// Claude holding it; the wheel moves along the column. Whether it was the board's: on the
+    /// rail it is the rail's, and closes the board but for its own row there.
+    fn boardMouse(app: *App, m: keys.Mouse) !bool {
+        if (m.x < app.term_w - app.view_w) {
+            if (m.leftPress() and m.y != 1) app.board_view = null;
+            app.dirty = true;
+            return false;
+        }
+        if (m.wheel()) {
+            if (app.navStep()) try app.boardKey(if (m.code & 1 == 0) "k" else "j");
+            return true;
+        }
+        if (!m.leftPress()) return true;
+        const at = app.boardCardAt(m.x, m.y) orelse return true;
+        const view = &app.board_view.?;
+        app.dirty = true;
+        if (view.col == at.col and view.row == at.row) {
+            try app.goCard();
+        } else view.* = .{ .col = at.col, .row = at.row, .repo = view.repo };
+        return true;
     }
 
     /// The mouse in the overview: a click on a picture goes to its window; a picture dragged
@@ -1642,6 +1795,7 @@ pub const App = struct {
             app.dirty = true;
         }
         if (app.overview != null) return app.overviewMouse(m);
+        if (app.board_view != null) if (try app.boardMouse(m)) return;
         if (app.prompt) |*prompt| {
             if (!m.leftPress() and !m.rightPress()) return;
             app.dirty = true;
@@ -1708,6 +1862,10 @@ pub const App = struct {
             }
             if (m.y == 0) {
                 app.toggleRail();
+                return true;
+            }
+            if (m.y == 1 and app.board != null) {
+                app.toggleBoard();
                 return true;
             }
             if (m.y == app.railMenuRow()) app.openMenu(&menu.main);
@@ -1860,7 +2018,7 @@ pub const App = struct {
 
     /// Whether the menu, a prompt or the overview has the keys and lies over the strip.
     pub fn overlay(app: *const App) bool {
-        return app.menu != null or app.prompt != null or app.overview != null;
+        return app.menu != null or app.prompt != null or app.overview != null or app.board_view != null;
     }
 
     /// Where the top left corner of a menu or prompt `height` rows tall is: centred over the strip.
@@ -1880,6 +2038,8 @@ pub const App = struct {
             i += len;
             if (app.overview != null) {
                 try app.overviewKey(key);
+            } else if (app.board_view != null) {
+                try app.boardKey(key);
             } else if (app.prompt) |*prompt| {
                 app.dirty = true;
                 switch (prompt.press(key)) {
@@ -1949,6 +2109,7 @@ pub const App = struct {
                     .full_width => app.toggleFull(),
                     .jump => app.prompt = .{ .what = .jump },
                     .overview => app.openOverview(),
+                    .board => app.toggleBoard(),
                     .rail_width => app.toggleRail(),
                     .split_right => try app.send(.ignore, "split-window -h -c '#{{pane_current_path}}'", .{}),
                     .split_below => try app.send(.ignore, "split-window -v -c '#{{pane_current_path}}'", .{}),
@@ -2001,6 +2162,7 @@ pub const App = struct {
             app.menu = null;
             app.prompt = null;
             app.overview = null;
+            app.board_view = null;
             app.dirty = true;
             return;
         }
@@ -2020,6 +2182,7 @@ pub const App = struct {
             ';' => try app.widenBy(-share_step),
             '\'' => try app.widenBy(share_step),
             'o' => app.openOverview(),
+            'b' => app.toggleBoard(),
             'w' => app.toggleRail(),
             'n' => try app.stepAgent(1),
             'N' => try app.stepAgent(-1),
@@ -2039,8 +2202,8 @@ pub const App = struct {
     /// J and K move the session down and up the rail,
     /// H and L move the window, ; and ' make it narrower and wider, Enter opens one, x closes
     /// it, z gives it the whole width, p asks
-    /// for a window to jump to, o shows every session's windows at once, / searches the pane's
-    /// history, m opens the menu and q leaves.
+    /// for a window to jump to, o shows every session's windows at once, b babylon's board, /
+    /// searches the pane's history, m opens the menu and q leaves.
     /// Everything else is the focused pane's, or the menu's while it is open. Alt is ESC and the
     /// letter together, which a typed Escape then a letter rarely is.
     ///

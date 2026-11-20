@@ -76,7 +76,7 @@ inner select-window -t alpha:one
 
 # An empty HOME: no machine palette, so colours are the fallback ones. No motion: no slides to wait out.
 outer new-session -d -s o -x 121 -y 24 \
-  "env -u TMUX HOME=$tmp ARENA_REDUCED_MOTION=1 $bin -L $in alpha 2>$tmp/err; echo EXIT \$?; cat"
+  "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 $bin -L $in alpha 2>$tmp/err; echo EXIT \$?; cat"
 outer set -s set-clipboard on
 # what arena writes, for what a picture of the screen does not show
 outer pipe-pane -t o "cat >$tmp/raw"
@@ -674,6 +674,28 @@ key 'exit' Enter
 # three was the last window dropped on alpha, which makes it the one alpha shows
 check "a session ending moves arena to one that is left" see '╭─ 3 three '
 check "and takes it off the rail" gone '│ beta '
+
+one=$(inner display -p -t alpha:one '#{pane_id}')
+mkdir -p $tmp/run/babylon
+print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[]},'\
+'{"id":8,"repo":"arena","title":"Board","kind":"ticket","status":"doing","priority":"high","claimed_by":"'$one'","blocked_by":[7]}]}' \
+  >$tmp/run/babylon/board.json
+check "babylon's board has a row atop the rail, with its counts" see '^│ ▤ board +1 todo  1 doing │'
+key M-b
+check "Alt+b opens it in place of the strip" see ' board · every repo '
+check "a column a status, with its count" see '╭─ doing 1 ─'
+check "a card has its number and title" see '│ #8 Board +│'
+check "under them its repo and the Claude holding it" see '│ arena · alpha:one'
+key r
+check "r narrows it to one repo" see ' board · arena '
+check "and to its cards" gone '#7 Lights'
+key l
+key Enter
+check "Enter on a card goes to the Claude holding it" see '╭─ 1 one '
+mouse 0 3 2 M
+check "a click on its row in the rail opens the board again" see ' board · '
+mouse 0 3 2 M
+check "and another closes it" gone ' board · '
 
 key M-q
 check "Alt+q leaves cleanly" see 'EXIT 0'

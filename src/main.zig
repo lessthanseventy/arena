@@ -60,6 +60,30 @@ const ThemeFile = struct {
     }
 };
 
+/// babylon's board, read again with the theme, and handed to arena when it changed.
+const BoardFile = struct {
+    path: ?[]u8,
+    text: ?[]u8 = null,
+
+    fn check(file: *BoardFile, app: *App) void {
+        const path = file.path orelse return;
+        const text = std.Io.Dir.cwd().readFileAlloc(app.io, path, app.gpa, .limited(1 << 22)) catch null;
+        const same = if (text) |now| (if (file.text) |was| std.mem.eql(u8, now, was) else false) else file.text == null;
+        if (same) {
+            if (text) |now| app.gpa.free(now);
+            return;
+        }
+        if (file.text) |was| app.gpa.free(was);
+        file.text = text;
+        app.setBoard(text);
+    }
+
+    fn deinit(file: *BoardFile, app: *App) void {
+        if (file.text) |was| app.gpa.free(was);
+        if (file.path) |path| app.gpa.free(path);
+    }
+};
+
 pub fn main(init: std.process.Init) !void {
     if (try run(init)) return;
     try std.Io.File.stderr().writeStreamingAll(init.io, "arena: tmux gave no session to show\n");
@@ -162,6 +186,10 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) 
         .path = if (init.environ_map.get("HOME")) |home| try std.fs.path.join(gpa, &.{ home, ".config/ficciones/theme/palette.sh" }) else null,
     };
     defer theme_file.deinit(&app);
+    var board_file: BoardFile = .{
+        .path = if (init.environ_map.get("XDG_RUNTIME_DIR")) |run_dir| try std.fs.path.join(gpa, &.{ run_dir, "babylon/board.json" }) else null,
+    };
+    defer board_file.deinit(&app);
     winch.store(true, .release);
     try tty.writeStreamingAll(io, color.Palette.query);
 
@@ -193,6 +221,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) 
         if (now - theme_checked >= theme_check_ms) {
             theme_checked = now;
             try theme_file.check(&app, tty);
+            board_file.check(&app);
         }
         if (app.want_list and !app.listing) try app.requestList();
 
@@ -270,6 +299,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) 
 test {
     _ = @import("control.zig");
     _ = @import("theme.zig");
+    _ = @import("board.zig");
     _ = @import("keys.zig");
     _ = @import("menu.zig");
     _ = @import("pass.zig");

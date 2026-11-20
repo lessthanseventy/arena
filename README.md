@@ -42,6 +42,12 @@ always did; arena draws them and leaves them running when it quits.
   `reviewed` or `landed`; a session shows the one that most wants looking at.
 - **Panes**, drawn where tmux has them. Click one to select it, drag the line between two to resize.
 - **An overview** of every session's windows at once.
+- **The board**: the tickets every Claude on the machine shares, from [babylon](babylon/README.md),
+  in place of the strip, a column for each of backlog, todo, doing and done. A card has its
+  number and title, and under them its repo, the window of the Claude holding it, what it waits
+  on. `r` narrows it to one repo, then the next, then every one again; Enter, or a second click,
+  on a card goes to the Claude holding it. Its row atop the rail counts what is to do and being
+  done, and a click there opens it; it is there while babylon keeps its file.
 - **Jump** to any window in any session by typing part of its name.
 - **A menu** for everything, for when you would rather click.
 - **Mouse throughout**: click, wheel, drag to select and copy (shift-drag over a program that takes
@@ -97,6 +103,7 @@ Everything is on Alt, so it stays out of the way of your shell and your window m
 | `Alt+z` | give the session's columns the whole width, and back |
 | `Alt+p` | jump to a window by name |
 | `Alt+o` | the overview |
+| `Alt+b` | the board |
 | `Alt+w` | the rail narrow, and wide again |
 | `Alt+n` `Alt+N` | the next Claude waiting or done, the one before; the one that most wants looking at first |
 | `Alt+/` | search the pane's history |

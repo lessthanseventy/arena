@@ -5,6 +5,7 @@ const menu = @import("menu.zig");
 const color = @import("color.zig");
 const theme = @import("theme.zig");
 const app_mod = @import("app.zig");
+const tickets = @import("board.zig");
 const App = app_mod.App;
 const Session = app_mod.Session;
 const Window = app_mod.Window;
@@ -295,6 +296,26 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
         try w.writeAll(" ");
         try w.writeAll(button);
         filled = 1 + cellCount(button);
+    } else if (y == 1 and app.board != null) {
+        const open = app.board_view != null;
+        const todo = app.boardCount(.todo);
+        const doing = app.boardCount(.doing);
+        var buf: [48]u8 = undefined;
+        try pen.set(w, if (open) chip(app) else ink(app, "amber", 4), null);
+        if (wide) {
+            const counts = std.fmt.bufPrint(&buf, "{d} todo  {d} doing ", .{ todo, doing }) catch "";
+            try w.writeAll(" ▤ board");
+            try pen.set(w, if (open) chip(app) else ink(app, "dim", 8), null);
+            try fitted(w, "", inner -| 8 -| cellCount(counts));
+            try w.writeAll(counts);
+            filled = 8 + (inner -| 8 -| cellCount(counts)) + cellCount(counts);
+        } else {
+            const count = std.fmt.bufPrint(&buf, "{d} ", .{doing}) catch "";
+            try w.writeAll(" ▤");
+            try fitted(w, "", inner -| 2 -| count.len);
+            try w.writeAll(count);
+            filled = inner;
+        }
     } else if (y >= 2 and index < app.railShown()) {
         const s = app.sessions.items[index];
         const drop = app.dropAt();
@@ -901,6 +922,95 @@ fn overview(app: *App, w: *Writer, spot: App.Spot) !void {
     }
 }
 
+/// babylon's board in place of the strip: a row naming the repo it is narrowed to and its keys,
+/// then a column a status, each a box of its cards: the ticket's number and title, and under it
+/// what else is so of it, the picked one lit.
+fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
+    const ox = app.term_w - app.view_w;
+    const cw = app.boardColW();
+    const dim = ink(app, "dim", 8);
+    const edge: vt.Style = .{ .fg_color = .palette(8) };
+    const repo = app.boardRepo();
+    var pen: Pen = .{};
+    var buf: [160]u8 = undefined;
+
+    try w.print("\x1b[1;{d}H", .{ox + 1});
+    const title = std.fmt.bufPrint(&buf, " board · {s} ", .{repo orelse "every repo"}) catch " board ";
+    try pen.set(w, heading(app), null);
+    try w.writeAll(title);
+    try pen.set(w, dim, null);
+    try fitted(w, "  hjkl pick · ⏎ go to its Claude · r repo · esc close", app.view_w -| cellCount(title));
+
+    for (tickets.statuses, 0..) |status, c| {
+        const x = ox + c * cw;
+        const inner = cw -| 2;
+        var cards: [app_mod.max_cards]*const tickets.Card = undefined;
+        const n = app.boardColumn(c, &cards);
+        const label = std.fmt.bufPrint(&buf, " {s} {d} ", .{ @tagName(status), n }) catch "";
+        try pen.set(w, edge, null);
+        try w.print("\x1b[2;{d}H╭─", .{x + 1});
+        try pen.set(w, dim, null);
+        try w.writeAll(label);
+        try pen.set(w, edge, null);
+        for (cellCount(label) + 1..inner) |_| try w.writeAll("─");
+        try w.writeAll("╮");
+        const first = app.boardFirst(c);
+        var y: u16 = 2;
+        while (y + 1 < app.view_h) : (y += 1) {
+            try w.print("\x1b[{d};{d}H", .{ y + 1, x + 1 });
+            try pen.set(w, edge, null);
+            try w.writeAll("│");
+            const k: usize = (y - 2) / 3;
+            const at = first + k;
+            const second = (y - 2) % 3 == 1;
+            if ((y - 2) % 3 == 2 or at >= @min(n, cards.len)) {
+                try pen.set(w, .{}, null);
+                try fitted(w, "", inner);
+            } else {
+                const card = cards[at];
+                const picked = c == view.col and at == view.row;
+                const text = if (second) cardDetail(app, card, repo == null, &buf) else std.fmt.bufPrint(&buf, "#{d} {s}", .{ card.id, card.title }) catch card.title;
+                try pen.set(w, if (picked) chip(app) else if (second) dim else .{}, null);
+                try w.writeAll(" ");
+                try fitted(w, text, inner -| 1);
+            }
+            try pen.set(w, edge, null);
+            try w.writeAll("│");
+        }
+        try w.print("\x1b[{d};{d}H╰", .{ app.view_h, x + 1 });
+        for (0..inner) |_| try w.writeAll("─");
+        try w.writeAll("╯");
+    }
+}
+
+/// What else is so of a card, joined: its repo when the board shows every one, the Claude
+/// holding it, the tickets it waits on, that it is an epic, a priority not the usual one.
+fn cardDetail(app: *const App, card: *const tickets.Card, with_repo: bool, buf: []u8) []const u8 {
+    var out: Writer = .fixed(buf);
+    var sep: []const u8 = "";
+    if (with_repo) {
+        out.writeAll(card.repo orelse "no repo") catch {};
+        sep = " · ";
+    }
+    if (card.holder()) |pane| {
+        if (app.paneWindow(pane)) |at| {
+            out.print("{s}{s}:{s}", .{ sep, at.session.name, at.session.wins.items[at.index].name }) catch {};
+        } else out.print("{s}{s}", .{ sep, card.claimed_by.? }) catch {};
+        sep = " · ";
+    }
+    if (card.blocked_by.len > 0) {
+        out.print("{s}waits", .{sep}) catch {};
+        for (card.blocked_by) |id| out.print(" #{d}", .{id}) catch {};
+        sep = " · ";
+    }
+    if (std.mem.eql(u8, card.kind, "epic")) {
+        out.print("{s}epic", .{sep}) catch {};
+        sep = " · ";
+    }
+    if (!std.mem.eql(u8, card.priority, "med")) out.print("{s}{s}", .{ sep, card.priority }) catch {};
+    return out.buffered();
+}
+
 /// One frame: the rail, the current session's strip (and, mid-slide, the one being left) or the
 /// overview in its place, the menu or prompt when open, and the cursor.
 pub fn frame(app: *App, w: *Writer, what: What) !void {
@@ -913,6 +1023,8 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
     var cursor: ?Cursor = null;
     if (app.overview) |spot| {
         try overview(app, w, spot);
+    } else if (app.board_view) |view| {
+        try boardView(app, w, view);
     } else {
         if (app.yoff != 0) if (app.sessionById(app.prev)) |leaving| {
             const way: i32 = if (app.yoff > 0) 1 else -1;
