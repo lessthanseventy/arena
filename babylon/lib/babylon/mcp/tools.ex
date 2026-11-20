@@ -19,7 +19,7 @@ defmodule Babylon.MCP.Tools.FileTicket do
   end
 
   @impl true
-  def execute(params, frame), do: reply(frame, Tickets.file(given(params)), &render/1)
+  def execute(params, frame), do: reply(frame, Tickets.file(given(params), filed_by: pane(frame)), &render/1)
 end
 
 defmodule Babylon.MCP.Tools.ListTickets do

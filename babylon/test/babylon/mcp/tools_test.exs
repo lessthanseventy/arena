@@ -28,7 +28,8 @@ defmodule Babylon.MCP.ToolsTest do
   end
 
   test "a claim is held by the calling pane, and refused without one" do
-    {:ok, %{"id" => id}} = call("file_ticket", %{title: "Claim me"})
+    {:ok, %{"id" => id, "filed_by" => nil}} = call("file_ticket", %{title: "Claim me"})
+    assert {:ok, %{"filed_by" => "%7"}} = call("file_ticket", %{title: "Filed from a pane"}, "%7")
 
     assert {:error, "this session sent no pane" <> _} = call("claim_ticket", %{id: id})
 

@@ -11,7 +11,8 @@ defmodule Babylon.MCP.Tool do
     quote do
       use Anubis.Server.Component, type: :tool
 
-      import Babylon.MCP.Tool, only: [ok: 2, fail: 2, reply: 3, given: 1, render: 1, with_ticket: 3, with_pane: 2]
+      import Babylon.MCP.Tool,
+        only: [ok: 2, fail: 2, reply: 3, given: 1, render: 1, with_ticket: 3, with_pane: 2, pane: 1]
     end
   end
 
