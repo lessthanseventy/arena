@@ -26,7 +26,7 @@ defmodule Babylon.AsksTest do
 
     assert {:error, "ask ##{id} has options 1 to 2"} == Asks.answer(id, 3, told)
     assert {:ok, %Ask{answer: "that"}} = Asks.answer(id, 2, told)
-    assert_received {:told, @nobody, "babylon: you asked about #" <> said}
+    assert_received {:told, @nobody, "You asked about #" <> said}
     assert said =~ ~s("Which?" The answer: that)
     assert {:error, "ask ##{id} is answered already"} == Asks.answer(id, 1, told)
     assert Asks.open() == []

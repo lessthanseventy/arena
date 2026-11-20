@@ -140,5 +140,5 @@ defmodule Babylon.Pipeline do
   end
 
   defp tell(%Ticket{claimed_by: nil}, _text), do: :ok
-  defp tell(%Ticket{claimed_by: pane}, text), do: Panes.tell(pane, "babylon: " <> text)
+  defp tell(%Ticket{claimed_by: pane}, text), do: Babylon.Inbox.send(pane, text)
 end

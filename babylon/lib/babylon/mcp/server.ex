@@ -13,8 +13,9 @@ defmodule Babylon.MCP.Server do
     - Work you notice but will not do now (a follow-up, a bug outside the task, a plan's next step): file_ticket it with its repo, rather than leaving it in chat.
     - Before working a ticket, claim_ticket it. The claim belongs to this session's tmux pane for as long as the session runs; run the `start` command its answer gives, which puts you on the ticket's own branch with wt.
     - While working, run only the tests of what you change; do not run the repo's whole gate (`mise run check`) yourself: submit_ticket is the gate, run once by babylon, so you do not wait on it.
-    - Finished: commit the work on the ticket's branch, then submit_ticket. babylon rebases it onto main, runs the repo's gate, has it reviewed and lands it on main, and types how it went into this session: landed (the ticket is done) or sent back with why. Work with nothing to land: update_ticket to done. Stopping short: write where it stands into its body, then release_ticket so another session can pick it up.
-    - A decision about a ticket you need from your human: ask_human with the options; it shows on their board, and the answer is typed into this session.
+    - Finished: commit the work on the ticket's branch, then submit_ticket. babylon rebases it onto main, runs the repo's gate, has it reviewed and lands it on main, and tells this session how it went (see inbox): landed (the ticket is done) or sent back with why. Work with nothing to land: update_ticket to done. Stopping short: write where it stands into its body, then release_ticket so another session can pick it up.
+    - A decision about a ticket you need from your human: ask_human with the options; it shows on their board, and the answer comes to this session's inbox.
+    - A line typed into this session saying babylon has new messages for it: call inbox, and act on what it says.
     - Work that has to wait on other work: file it with blocked_by, or link_tickets with blocks. A blocked ticket cannot be claimed.
     - list_tickets with mine shows what this session holds; with repo, one repo's tickets.
     """,
@@ -31,4 +32,5 @@ defmodule Babylon.MCP.Server do
   component(Babylon.MCP.Tools.SubmitTicket, name: "submit_ticket")
   component(Babylon.MCP.Tools.AskHuman, name: "ask_human")
   component(Babylon.MCP.Tools.AnswerAsk, name: "answer_ask")
+  component(Babylon.MCP.Tools.Inbox, name: "inbox")
 end

@@ -1,5 +1,8 @@
 defmodule Babylon.Lapse do
-  @moduledoc "Once a minute, lets go of the claims whose pane no longer runs Claude."
+  @moduledoc """
+  Once a minute, lets go of the claims whose pane no longer runs Claude, and nudges again the panes
+  with a message they have not read.
+  """
   use GenServer
 
   require Logger
@@ -24,6 +27,7 @@ defmodule Babylon.Lapse do
       ids -> Logger.info("claims lapsed: #{Enum.map_join(ids, ", ", &"##{&1}")}")
     end
 
+    Babylon.Inbox.renudge()
     Process.send_after(self(), :sweep, @every)
     {:noreply, state}
   end

@@ -147,7 +147,7 @@ defmodule Babylon.MCP.Tools.SubmitTicket do
   @moduledoc """
   Hand in a ticket you hold whose work is committed on its branch: babylon rebases it onto main,
   runs the repo's gate, has it reviewed, and lands it on main by fast-forward, one ticket at a
-  time. It goes to `review` now; how it went is typed into this session when it is settled:
+  time. It goes to `review` now; how it went comes to this session's inbox when it is settled:
   landed and done, or sent back to `doing` with why in its `stage_note`.
   """
   use Babylon.MCP.Tool
@@ -172,8 +172,8 @@ end
 defmodule Babylon.MCP.Tools.AskHuman do
   @moduledoc """
   Ask your human a decision about a ticket, as a question and two to nine options. It shows on
-  their board, on the ticket's card; this answers at once, and their answer is typed into this
-  session when they give it. Carry on with what does not hang on it, or stop and wait.
+  their board, on the ticket's card; this answers at once, and their answer comes to this
+  session's inbox when they give it. Carry on with what does not hang on it, or stop and wait.
   """
   use Babylon.MCP.Tool
 
@@ -189,7 +189,7 @@ defmodule Babylon.MCP.Tools.AskHuman do
   def execute(params, frame) do
     with_pane(frame, fn pane ->
       case Asks.ask(params, pane) do
-        {:ok, ask} -> ok(frame, %{ask_id: ask.id, asked: "the answer will be typed into this session"})
+        {:ok, ask} -> ok(frame, %{ask_id: ask.id, asked: "the answer will come to this session's inbox"})
         {:error, %Ecto.Changeset{}} = error -> reply(frame, error, & &1)
         {:error, reason} -> fail(frame, reason)
       end
@@ -214,6 +214,27 @@ defmodule Babylon.MCP.Tools.AnswerAsk do
       {:ok, ask} -> ok(frame, %{id: ask.id, answer: ask.answer})
       {:error, reason} -> fail(frame, reason)
     end
+  end
+end
+
+defmodule Babylon.MCP.Tools.Inbox do
+  @moduledoc """
+  What babylon has to tell this session and it has not read: a ticket landed or sent back, the
+  answer to something you asked. Reading them marks them read. A line typed into this session
+  saying it has new ones is the cue to call this.
+  """
+  use Babylon.MCP.Tool
+
+  alias Babylon.Inbox
+
+  schema do
+  end
+
+  @impl true
+  def execute(_params, frame) do
+    with_pane(frame, fn pane ->
+      ok(frame, Enum.map(Inbox.take(pane), &%{text: &1.text, at: &1.inserted_at}))
+    end)
   end
 end
 

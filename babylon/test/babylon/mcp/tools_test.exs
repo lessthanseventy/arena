@@ -58,4 +58,10 @@ defmodule Babylon.MCP.ToolsTest do
     assert {:ok, %{"ask_id" => ask_id}} = call("ask_human", ask, "%999999")
     assert {:error, _} = call("answer_ask", %{id: ask_id, choice: 1})
   end
+
+  test "a session reads what babylon has for it once" do
+    Babylon.Inbox.send("%999999", "#1 landed")
+    assert {:ok, [%{"text" => "#1 landed"}]} = call("inbox", %{}, "%999999")
+    assert {:ok, []} = call("inbox", %{}, "%999999")
+  end
 end

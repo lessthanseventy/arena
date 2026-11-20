@@ -24,7 +24,7 @@ defmodule Babylon.Asks do
 
   @doc """
   Answer ask `id` with its option number `choice` (from 1), recorded only once `deliver` has handed
-  it to the pane that asked (by default, typed into it). An ask answered already is refused; one
+  it to the pane that asked (by default, kept in its inbox). An ask answered already is refused; one
   whose pane is gone is closed unanswered, as no one is left to tell; one that could not be handed
   over stays open.
   """
@@ -43,7 +43,7 @@ defmodule Babylon.Asks do
 
       ask ->
         picked = Enum.at(ask.options, choice - 1)
-        told = ~s(babylon: you asked about ##{ask.ticket_id}, "#{ask.question}" The answer: #{picked})
+        told = ~s(You asked about ##{ask.ticket_id}, "#{ask.question}" The answer: #{picked})
 
         case deliver.(ask.pane, told) do
           :ok -> {:ok, ask |> Ecto.Changeset.change(answer: picked, answered_at: now()) |> Repo.update!()}
@@ -57,6 +57,11 @@ defmodule Babylon.Asks do
   @spec open() :: [Ask.t()]
   def open, do: Repo.all(from a in Ask, where: is_nil(a.answered_at), order_by: [asc: a.id])
 
+  defp kept(pane, text) do
+    Babylon.Inbox.send(pane, text)
+    :ok
+  end
+
   defp now, do: DateTime.truncate(DateTime.utc_now(), :second)
 
   defp close(ask) do
@@ -67,7 +72,7 @@ defmodule Babylon.Asks do
   defp deliver(pane, text) do
     case Panes.claude() do
       :unknown -> {:error, "tmux cannot be reached to tell whether it is still there"}
-      live -> if MapSet.member?(live, pane), do: Panes.tell(pane, text), else: :gone
+      live -> if MapSet.member?(live, pane), do: kept(pane, text), else: :gone
     end
   end
 end

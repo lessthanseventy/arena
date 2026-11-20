@@ -22,6 +22,20 @@ defmodule Babylon.Panes do
   end
 
   @doc """
+  What `pane`'s Claude is doing, as arena's hook keeps it on the pane: `working`, `waiting` (on its
+  human: a permission or a question is open), `done`, or `""` when unknown.
+  """
+  @spec state(String.t()) :: String.t()
+  def state(pane) do
+    case System.cmd("tmux", ["show", "-pqv", "-t", pane, "@arena_claude"], stderr_to_stdout: true) do
+      {out, 0} -> String.trim(out)
+      _ -> ""
+    end
+  rescue
+    ErlangError -> ""
+  end
+
+  @doc """
   Type `text` into `pane` as one line and submit it, as if its human had: an idle Claude takes it
   as its next turn, a busy one queues it.
   """

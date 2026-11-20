@@ -45,9 +45,16 @@ reviews the diff and ends on a verdict: `approve`; `fix`, having made small mech
 itself in the gate's worktree (no edits outside it), which are committed on the branch and gated
 again, at most 60 changed lines, each named on a `FIXED:` line; or `request_changes`, its edits
 dropped. Then it is pushed as main's new head, which only a fast-forward passes; main having
-moved meanwhile means another rebase and gate first. How it went is typed into the holding session's pane: landed, the ticket is `done`;
+moved meanwhile means another rebase and gate first. How it went goes to the holding session's
+inbox: landed, the ticket is `done`;
 sent back, it is `doing` again with why in `stage_note`, or `todo` labelled `sent back` when that
 session is gone. There are no pull requests: the gate and the review are babylon's.
+
+babylon's word to a session (a ticket landed or sent back, an ask answered) is kept per pane until
+the session reads it with the `inbox` tool. What is typed into the pane is only a nudge to read it,
+held while the pane's Claude waits on its human (arena's hook marks the pane `waiting`, when a
+typed line would land in an open dialog), and repeated once a minute, four times at most, while
+it is unread.
 
 Served, it keeps the board arena draws in `$XDG_RUNTIME_DIR/babylon/board.json` (beside the database where there is no runtime
 dir, as on the Mac): every open
