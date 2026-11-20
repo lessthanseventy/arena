@@ -11,12 +11,25 @@ defmodule Babylon.PipelineTest do
 
   setup %{tmp_dir: tmp} do
     was = Application.fetch_env!(:babylon, :pipeline)
-    on_exit(fn -> Application.put_env(:babylon, :pipeline, was) end)
+    socket = "babylon-test-#{System.unique_integer([:positive])}"
+
+    on_exit(fn ->
+      System.cmd("tmux", ["-L", socket, "kill-server"], stderr_to_stdout: true)
+      Application.put_env(:babylon, :pipeline, was)
+    end)
+
+    Application.put_env(:babylon, :pipeline, Keyword.put(was, :tmux, ["-L", socket]))
     origin = Path.join(tmp, "origin.git")
     repo = Path.join(tmp, "projects/app")
 
     sh(tmp, "git init -q --bare -b main #{origin} && git clone -q #{origin} #{repo}")
-    sh(repo, "git checkout -q -b main && echo one > a && git add a && git commit -qm one && git push -q origin main")
+
+    sh(
+      repo,
+      "git checkout -q -b main && echo one > a && echo cache > .gitignore && git add a .gitignore && " <>
+        "git commit -qm one && git push -q origin main"
+    )
+
     sh(repo, "git checkout -q -b t1-work && echo two > b && git add b && git commit -qm two && git checkout -q main")
 
     gated(tmp, ["sh", "-c", "exit 0"], @approve)
@@ -35,6 +48,27 @@ defmodule Babylon.PipelineTest do
 
       assert sh(origin, "git rev-parse main") == sha
       for stage <- ~w(verifying reviewing landing), do: assert_received({:stage, ^stage})
+    end
+
+    test "runs the gate in a window of the babylon tmux session, kept open to be read", %{ticket: ticket} do
+      assert {:landed, _} = Run.run(ticket, fn _ -> :ok end)
+      [_, socket] = Application.fetch_env!(:babylon, :pipeline)[:tmux]
+
+      assert {"app\n", 0} =
+               System.cmd("tmux", ["-L", socket, "list-windows", "-t", "=babylon", "-F", "\#{window_name}"])
+    end
+
+    test "keeps one worktree a repo between runs: its ignored caches stay, the rest is reset",
+         %{tmp_dir: tmp, repo: repo, ticket: ticket} do
+      assert {:landed, _} = Run.run(ticket, fn _ -> :ok end)
+      warm = Path.join(tmp, "work/app")
+      File.write!(Path.join(warm, "cache"), "built")
+      File.write!(Path.join(warm, "stray"), "left")
+      sh(repo, "git checkout -q -b t2-more t1-work && echo four > d && git add d && git commit -qm four")
+
+      assert {:landed, _} = Run.run(%{ticket | id: 2, branch: "t2-more"}, fn _ -> :ok end)
+      assert File.read!(Path.join(warm, "cache")) == "built"
+      refute File.exists?(Path.join(warm, "stray"))
     end
 
     test "rebases onto a main that moved, keeping both", %{tmp_dir: tmp, origin: origin, ticket: ticket} do

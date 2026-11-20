@@ -36,8 +36,11 @@ A claimed ticket is `doing`, held by its pane while that pane runs Claude, with 
 gone goes back to `todo`, labelled `lapsed`, its branch kept for whoever picks it up.
 
 A submitted ticket is `review` and goes through the pipeline, one ticket at a time in the order
-submitted, in a throwaway worktree of its repo (`~/projects/<repo>`) under `~/.cache/babylon/work`:
-its branch is rebased onto `origin/main` and the repo's `mise run check` run (30 minutes at most),
+submitted, in one worktree a repo (`~/projects/<repo>`) kept warm under `~/.cache/babylon/work`
+(seeded once with what the repo's `.worktreeinclude` names, then reset to each branch): its branch
+is rebased onto `origin/main` and the repo's `mise run check` run (30 minutes at most) in a window
+of babylon's own tmux session `babylon`, there to watch and read after (arena leaves it out of the
+agents list), its output also kept in `~/.cache/babylon/logs`,
 then a headless `claude -p` reviews the diff and ends on a verdict, then it is pushed as main's
 new head, which only a fast-forward passes; main having moved meanwhile means another rebase and
 gate first. How it went is typed into the holding session's pane: landed, the ticket is `done`;

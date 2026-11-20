@@ -561,6 +561,8 @@ pub const App = struct {
     pub fn agents(app: *const App, out: []Agent) usize {
         var n: usize = 0;
         for (app.sessions.items, 0..) |s, si| for (s.wins.items) |win| {
+            // babylon's own session runs its gates, not anyone's Claudes
+            if (std.mem.eql(u8, s.name, "babylon")) break;
             if (!win.agent() or n == out.len) continue;
             out[n] = .{ .session = si, .win = win };
             n += 1;
@@ -2274,13 +2276,30 @@ test "a review state is read from its number, and what is not one is none" {
     try std.testing.expectEqual(Review.none, Review.of(5));
 }
 
+test "babylon's own session lists no agents, another's Claude is listed" {
+    var gate: Window = .{ .id = 1, .claude = .working };
+    var mine: Window = .{ .id = 2, .claude = .working };
+    var gates = [_]*Window{&gate};
+    var mines = [_]*Window{&mine};
+    var babylon: Session = .{ .id = 1, .name = @constCast("babylon") };
+    babylon.wins = .fromOwnedSlice(&gates);
+    var work: Session = .{ .id = 2, .name = @constCast("work") };
+    work.wins = .fromOwnedSlice(&mines);
+    var sessions = [_]*Session{ &babylon, &work };
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.sessions = .fromOwnedSlice(&sessions);
+    var found: [4]App.Agent = undefined;
+    try std.testing.expectEqual(@as(usize, 1), app.agents(&found));
+    try std.testing.expectEqual(@as(u32, 2), found[0].win.id);
+}
+
 test "a session shows the review state that most wants looking at" {
     var a: Window = .{ .id = 1 };
     var b: Window = .{ .id = 2 };
     var c: Window = .{ .id = 3 };
     var wins = [_]*Window{ &a, &b, &c };
     var s: Session = .{ .id = 1 };
-    s.wins = .{ .items = &wins, .capacity = wins.len };
+    s.wins = .fromOwnedSlice(&wins);
     try std.testing.expectEqual(Review.none, App.sessionReview(&s));
     a.review = .landed;
     try std.testing.expectEqual(Review.landed, App.sessionReview(&s));

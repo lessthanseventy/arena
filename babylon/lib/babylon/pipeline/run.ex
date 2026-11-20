@@ -16,29 +16,22 @@ defmodule Babylon.Pipeline.Run do
   @spec run(Ticket.t(), (String.t() -> :ok)) :: Babylon.Pipeline.outcome()
   def run(%Ticket{} = ticket, stage) do
     repo = Path.join(conf(:projects), ticket.repo)
-    dir = Path.join(conf(:work), "#{ticket.repo}-t#{ticket.id}")
+    dir = Path.join(conf(:work), ticket.repo)
 
-    try do
-      with :ok <- stage.("verifying"),
-           :ok <- checkout(repo, dir, ticket.branch),
-           :ok <- onto_main(dir),
-           :ok <- ahead(dir),
-           :ok <- gate(dir, ticket),
-           :ok <- stage.("reviewing"),
-           :ok <- review(dir, ticket),
-           :ok <- stage.("landing") do
-        land(dir, ticket, 3)
-      end
-    after
-      git(repo, ["worktree", "remove", "--force", dir])
+    with :ok <- stage.("verifying"),
+         :ok <- checkout(repo, dir, ticket.branch),
+         :ok <- onto_main(dir),
+         :ok <- ahead(dir),
+         :ok <- gate(dir, ticket),
+         :ok <- stage.("reviewing"),
+         :ok <- review(dir, ticket),
+         :ok <- stage.("landing") do
+      land(dir, ticket, 3)
     end
   end
 
+  # one worktree a repo, kept between runs so its builds and deps stay warm
   defp checkout(repo, dir, branch) do
-    git(repo, ["worktree", "remove", "--force", dir])
-    File.rm_rf!(dir)
-    git(repo, ["worktree", "prune"])
-
     cond do
       not File.dir?(repo) ->
         {:failed, "there is no checkout of it at #{repo}"}
@@ -46,10 +39,30 @@ defmodule Babylon.Pipeline.Run do
       not match?({_, 0}, git(repo, ["rev-parse", "--verify", "--quiet", "refs/heads/#{branch}"])) ->
         {:failed, "there is no branch #{branch} in #{repo}: commit the work on it first"}
 
+      match?({_, 0}, git(dir, ["rev-parse", "--git-dir"])) and File.exists?(Path.join(dir, ".git")) ->
+        git(dir, ["rebase", "--abort"])
+
+        with :ok <- ok(git(dir, ["checkout", "-q", "--force", "--detach", branch]), "could not check it out") do
+          ok(git(dir, ["clean", "-fdq"]), "could not clean its worktree")
+        end
+
       true ->
+        File.rm_rf!(dir)
+        git(repo, ["worktree", "prune"])
         File.mkdir_p!(Path.dirname(dir))
-        ok(git(repo, ["worktree", "add", "-q", "--detach", dir, branch]), "could not check it out")
+
+        with :ok <- ok(git(repo, ["worktree", "add", "-q", "--detach", dir, branch]), "could not check it out") do
+          seed(dir)
+        end
     end
+  end
+
+  # the main checkout's builds and deps its .worktreeinclude names, so even the first gate is not cold
+  defp seed(dir) do
+    if System.find_executable("wt"),
+      do: System.cmd("wt", ["-C", dir, "step", "copy-ignored", "--require-include"], stderr_to_stdout: true)
+
+    :ok
   end
 
   defp onto_main(dir) do
@@ -75,10 +88,8 @@ defmodule Babylon.Pipeline.Run do
 
   defp gate(dir, ticket) do
     minutes = div(conf(:gate_timeout), 60)
-    {out, code} = cmd(conf(:gate), dir, timeout: conf(:gate_timeout), env: [{"MISE_TRUSTED_CONFIG_PATHS", dir}])
     log = Path.join([Path.dirname(conf(:work)), "logs", "#{ticket.repo}-t#{ticket.id}.log"])
-    File.mkdir_p!(Path.dirname(log))
-    File.write!(log, out)
+    {out, code} = in_window(dir, ticket, log)
 
     case code do
       0 -> :ok
@@ -86,6 +97,49 @@ defmodule Babylon.Pipeline.Run do
       _ -> {:failed, "the gate is red (exit #{code}); its whole output is in #{log}\n" <> failing(out)}
     end
   end
+
+  # The gate runs in a window of babylon's own tmux session, to be watched as it goes and read after;
+  # its exit and output come back through files, and its end through a tmux wait-for channel.
+  defp in_window(dir, ticket, log) do
+    exit_file = log <> ".exit"
+    File.mkdir_p!(Path.dirname(log))
+    File.rm(exit_file)
+    File.write!(log, "")
+    channel = "babylon-#{ticket.repo}-#{ticket.id}-#{System.unique_integer([:positive])}"
+    gate = Enum.map_join(["timeout", "#{conf(:gate_timeout)}" | conf(:gate)], " ", &sh_quote/1)
+
+    script =
+      "(#{gate}; echo $? > #{sh_quote(exit_file)}) 2>&1 | tee #{sh_quote(log)}; " <>
+        "tmux #{Enum.map_join(conf(:tmux), " ", &sh_quote/1)} wait-for -S #{channel}; read _"
+
+    name = ticket.repo
+    opened = ["-d", "-n", name, "-c", dir, "-e", "MISE_TRUSTED_CONFIG_PATHS=#{dir}", "sh", "-c", script]
+
+    # the repo's last window goes once the new one is open, as the session ends with its last window
+    case tmux(["list-windows", "-t", "=babylon", "-F", "\#{window_id} \#{window_name}"]) do
+      {listed, 0} ->
+        tmux(["new-window", "-t", "=babylon:" | opened])
+
+        for [id, ^name] <- Enum.map(String.split(listed, "\n", trim: true), &String.split(&1, " ", parts: 2)),
+            do: tmux(["kill-window", "-t", id])
+
+      _ ->
+        tmux(["new-session", "-s", "babylon" | opened])
+    end
+
+    tmux(["wait-for", channel], conf(:gate_timeout) + 60)
+
+    case File.read(exit_file) do
+      {:ok, code} -> {File.read!(log), code |> String.trim() |> String.to_integer()}
+      {:error, _} -> {File.read!(log) <> "\nthe gate's window closed before it finished", 1}
+    end
+  end
+
+  defp tmux(args, timeout \\ 10) do
+    System.cmd("timeout", ["#{timeout}", "tmux" | conf(:tmux) ++ args], stderr_to_stdout: true, env: clean_env())
+  end
+
+  defp sh_quote(word), do: "'" <> String.replace(word, "'", ~S('\'')) <> "'"
 
   # what failed first, as a gate's own summary can come long after it
   defp failing(out) do

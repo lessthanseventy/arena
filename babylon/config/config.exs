@@ -24,6 +24,7 @@ config :babylon, :pipeline,
     "--setting-sources",
     "user"
   ],
-  review_timeout: 900
+  review_timeout: 900,
+  tmux: []
 
 import_config "#{config_env()}.exs"
