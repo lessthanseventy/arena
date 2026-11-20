@@ -10,8 +10,8 @@ defmodule Babylon.Repo.Migrations.Tickets do
 
       add :status, :text,
         null: false,
-        default: "backlog",
-        check: %{name: "status", expr: "status in ('backlog', 'todo', 'doing', 'done')"}
+        default: "todo",
+        check: %{name: "status", expr: "status in ('todo', 'doing', 'review', 'done')"}
 
       add :priority, :text,
         null: false,

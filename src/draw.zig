@@ -970,7 +970,7 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
                 const card = cards[at];
                 const picked = c == view.col and at == view.row;
                 const text = if (second) cardDetail(app, card, repo == null, &buf) else std.fmt.bufPrint(&buf, "#{d} {s}", .{ card.id, card.title }) catch card.title;
-                try pen.set(w, if (picked) chip(app) else if (second) dim else .{}, null);
+                try pen.set(w, if (picked) chip(app) else if (second or card.blocked_by.len > 0) dim else .{}, null);
                 try w.writeAll(" ");
                 try fitted(w, text, inner -| 1);
             }

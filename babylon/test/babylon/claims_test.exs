@@ -81,6 +81,6 @@ defmodule Babylon.ClaimsTest do
     assert Tickets.get(epic.id).status == "doing"
 
     {:ok, _} = Claims.release(ticket.id, "%1")
-    assert Tickets.get(epic.id).status == "backlog"
+    assert Tickets.get(epic.id).status == "todo"
   end
 end

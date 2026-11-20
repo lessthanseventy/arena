@@ -9,12 +9,12 @@ defmodule Babylon.TicketsTest do
   end
 
   describe "file/2" do
-    test "files into the backlog at the bottom of its repo, stamped with the filing session" do
+    test "files into to do at the bottom of its repo, stamped with the filing session" do
       first = file!(%{repo: "arena", title: "one"}, filed_by: "s-1")
       second = file!(%{repo: "arena", title: "two"})
       elsewhere = file!(%{repo: "tlon", title: "three"})
 
-      assert %{status: "backlog", priority: "med", filed_by: "s-1", labels: []} = first
+      assert %{status: "todo", priority: "med", filed_by: "s-1", labels: []} = first
       assert second.sort == first.sort + 1
       assert elsewhere.sort == 1
     end
@@ -57,8 +57,8 @@ defmodule Babylon.TicketsTest do
       {:ok, _} = Tickets.update(a, %{status: "doing"})
 
       assert ["a", "b"] == Enum.map(Tickets.list(repo: "arena"), & &1.title)
-      assert ["b"] == Enum.map(Tickets.list(repo: "arena", status: "backlog"), & &1.title)
-      assert ["a", "b"] == Enum.map(Tickets.list(repo: "arena", status: ~w(backlog doing)), & &1.title)
+      assert ["b"] == Enum.map(Tickets.list(repo: "arena", status: "todo"), & &1.title)
+      assert ["a", "b"] == Enum.map(Tickets.list(repo: "arena", status: ~w(todo doing)), & &1.title)
       assert b.id in Enum.map(Tickets.list(), & &1.id)
     end
   end
@@ -80,7 +80,7 @@ defmodule Babylon.TicketsTest do
       two = file!(%{title: "two", epic_id: epic.id})
 
       {:ok, _} = Tickets.update(epic, %{status: "done"})
-      assert Tickets.get(epic.id).status == "backlog"
+      assert Tickets.get(epic.id).status == "todo"
 
       {:ok, _} = Tickets.update(one, %{status: "doing"})
       assert Tickets.get(epic.id).status == "doing"
@@ -91,7 +91,7 @@ defmodule Babylon.TicketsTest do
 
       {:ok, _} = Tickets.remove(Tickets.get(two.id))
       {:ok, _} = Tickets.update(Tickets.get(one.id), %{status: "todo"})
-      assert Tickets.get(epic.id).status == "backlog"
+      assert Tickets.get(epic.id).status == "todo"
     end
   end
 

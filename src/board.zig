@@ -1,8 +1,8 @@
 //! babylon's board, from the file it keeps: the tickets every Claude on the machine shares.
 const std = @import("std");
 
-pub const Status = enum { backlog, todo, doing, done };
-pub const statuses = [_]Status{ .backlog, .todo, .doing, .done };
+pub const Status = enum { todo, doing, review, done };
+pub const statuses = [_]Status{ .todo, .doing, .review, .done };
 
 pub const Card = struct {
     id: u32,
@@ -63,16 +63,16 @@ pub const Board = struct {
         return n;
     }
 
-    /// The cards in `status`'s column, of `repo` alone when given, in board order, as many as fit
-    /// in `out`; the count of them all.
+    /// The cards in `status`'s column, of `repo` alone when given, in board order with those
+    /// waiting on others last, as many as fit in `out`; the count of them all.
     pub fn column(b: *const Board, status: Status, repo: ?[]const u8, out: []*const Card) usize {
         var n: usize = 0;
-        for (b.cards()) |*card| {
-            if (card.status != status) continue;
+        for ([_]bool{ false, true }) |waiting| for (b.cards()) |*card| {
+            if (card.status != status or (card.blocked_by.len > 0) != waiting) continue;
             if (repo) |only| if (!std.mem.eql(u8, card.repo orelse "", only)) continue;
             if (n < out.len) out[n] = card;
             n += 1;
-        }
+        };
         return n;
     }
 };
@@ -95,12 +95,13 @@ test "the board parses babylon's file, fields it does not draw left out" {
     try std.testing.expectEqualSlices(u32, &.{1}, b.cards()[2].blocked_by);
 }
 
-test "a column is narrowed to one repo, in board order" {
+test "a column is narrowed to one repo, in board order, those waiting last" {
     var b = try Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var out: [8]*const Card = undefined;
     try std.testing.expectEqual(@as(usize, 3), b.column(.todo, null, &out));
     try std.testing.expectEqual(@as(u32, 3), out[0].id);
+    try std.testing.expectEqual(@as(u32, 2), out[2].id);
     try std.testing.expectEqual(@as(usize, 1), b.column(.todo, "arena", &out));
     try std.testing.expectEqual(@as(u32, 2), out[0].id);
     try std.testing.expectEqual(@as(usize, 0), b.column(.done, null, &out));

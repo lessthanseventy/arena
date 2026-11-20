@@ -7,7 +7,7 @@ defmodule Babylon.MCP.ToolsTest do
   end
 
   test "file, list, get, update and link, through the HTTP plug" do
-    assert {:ok, %{"id" => blocker, "status" => "backlog", "repo" => "arena"}} =
+    assert {:ok, %{"id" => blocker, "status" => "todo", "repo" => "arena"}} =
              call("file_ticket", %{title: "blocker", repo: "arena"})
 
     assert {:ok, %{"id" => blocked}} =

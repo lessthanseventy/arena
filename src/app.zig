@@ -287,7 +287,7 @@ const Pending = union(enum) {
 
 pub const BoardView = struct {
     /// The column and the card in it picked.
-    col: usize = 1,
+    col: usize = 0,
     row: usize = 0,
     /// The repo it is narrowed to: 0 for every one, else its place in the board's repos from 1.
     repo: usize = 0,
@@ -1346,7 +1346,7 @@ pub const App = struct {
     /// The board's four columns side by side under a row of its own; in each, a card is two
     /// rows with one between, from the second row inside its border.
     pub fn boardColW(app: *const App) u16 {
-        return app.view_w / 4;
+        return app.view_w / @as(u16, tickets.statuses.len);
     }
 
     pub fn boardShown(app: *const App) usize {

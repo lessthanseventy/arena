@@ -9,7 +9,7 @@ defmodule Babylon.Tickets do
   @type link_view :: %{kind: String.t(), direction: :in | :out, ticket_id: pos_integer()}
 
   @doc """
-  File a ticket at the bottom of its repo's backlog. With `epic_id` in `attrs` it is filed under
+  File a ticket at the bottom of its repo's to-do list. With `epic_id` in `attrs` it is filed under
   that epic, and with `blocked_by` (ticket ids) it waits on those, all in one transaction, so a
   refused parent or blocker files nothing. `opts[:filed_by]` is the filing session's id.
   """

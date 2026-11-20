@@ -37,11 +37,11 @@ defmodule Babylon.BoardTest do
 
     pid = start_supervised!({Board, path})
     :sys.get_state(pid)
-    assert %{"tickets" => [%{"title" => "Seen", "status" => "backlog"}]} = JSON.decode!(File.read!(path))
+    assert %{"tickets" => [%{"title" => "Seen", "status" => "todo"}]} = JSON.decode!(File.read!(path))
 
-    {:ok, _} = Tickets.update(ticket, %{status: "todo"})
+    {:ok, _} = Tickets.update(ticket, %{status: "doing"})
     send(pid, :write)
     :sys.get_state(pid)
-    assert %{"tickets" => [%{"status" => "todo"}]} = JSON.decode!(File.read!(path))
+    assert %{"tickets" => [%{"status" => "doing"}]} = JSON.decode!(File.read!(path))
   end
 end

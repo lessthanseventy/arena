@@ -41,7 +41,7 @@ a second of a change.
 
 ```sh
 babylon file "Claim with a lease" --priority high
-babylon list --repo babylon --status backlog,doing
+babylon list --repo babylon --status todo,doing
 babylon link 2 blocks 3
 babylon claim 3
 ```

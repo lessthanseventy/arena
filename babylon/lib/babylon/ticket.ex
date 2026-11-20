@@ -10,7 +10,7 @@ defmodule Babylon.Ticket do
 
   @type t :: %__MODULE__{}
 
-  @statuses ~w(backlog todo doing done)
+  @statuses ~w(todo doing review done)
   @priorities ~w(low med high)
   @kinds ~w(ticket epic)
   @mutable [:repo, :title, :body, :status, :priority, :labels, :sort]
@@ -20,7 +20,7 @@ defmodule Babylon.Ticket do
     field :title, :string
     field :body, :string, default: ""
     field :kind, :string, default: "ticket"
-    field :status, :string, default: "backlog"
+    field :status, :string, default: "todo"
     field :priority, :string, default: "med"
     field :labels, {:array, :string}, default: []
     field :filed_by, :string
@@ -58,15 +58,15 @@ defmodule Babylon.Ticket do
   @spec derive_changeset(t(), String.t()) :: Ecto.Changeset.t()
   def derive_changeset(%__MODULE__{kind: "epic"} = epic, status), do: epic |> change(status: status) |> stamp_closed()
 
-  @doc "An epic's status from its tickets': `done` when all are, `doing` once one has started, else `backlog`."
+  @doc "An epic's status from its tickets': `done` when all are, `doing` once one has started, else `todo`."
   @spec epic_status([String.t()]) :: String.t()
-  def epic_status([]), do: "backlog"
+  def epic_status([]), do: "todo"
 
   def epic_status(statuses) do
     cond do
       Enum.all?(statuses, &(&1 == "done")) -> "done"
-      Enum.any?(statuses, &(&1 in ~w(doing done))) -> "doing"
-      true -> "backlog"
+      Enum.any?(statuses, &(&1 in ~w(doing review done))) -> "doing"
+      true -> "todo"
     end
   end
 

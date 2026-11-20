@@ -10,7 +10,7 @@ defmodule Babylon.MCP.Server do
     instructions: """
     babylon holds the tickets every Claude session on this machine shares, across repos.
 
-    - Work you notice but will not do now (a follow-up, a bug outside the task, a plan's next step): file_ticket it with its repo, rather than leaving it in chat. Status todo when it is ready to pick up, backlog while it still waits on a decision.
+    - Work you notice but will not do now (a follow-up, a bug outside the task, a plan's next step): file_ticket it with its repo, rather than leaving it in chat.
     - Before working a ticket, claim_ticket it. The claim belongs to this session's tmux pane for as long as the session runs; run the `start` command its answer gives, which puts you on the ticket's own branch with wt.
     - Finished: update_ticket to done. Stopping short: write where it stands into its body, then release_ticket so another session can pick it up.
     - Work that has to wait on other work: file it with blocked_by, or link_tickets with blocks. A blocked ticket cannot be claimed.

@@ -1,7 +1,7 @@
 defmodule Babylon.MCP.Tools.FileTicket do
   @moduledoc """
   File a ticket: work you or another session could pick up later. It joins the bottom of its
-  repo's backlog. Give `repo` (the repository's directory name) unless it is tied to none.
+  repo's to-do list. Give `repo` (the repository's directory name) unless it is tied to none.
   """
   use Babylon.MCP.Tool
 
@@ -30,7 +30,7 @@ defmodule Babylon.MCP.Tools.ListTickets do
 
   schema do
     field :repo, :string, description: "Only this repository's"
-    field :status, {:list, {:enum, ~w(backlog todo doing done)}}, description: "Only these statuses"
+    field :status, {:list, {:enum, ~w(todo doing review done)}}, description: "Only these statuses"
     field :mine, :boolean, description: "Only the tickets your pane holds"
   end
 
@@ -80,7 +80,7 @@ defmodule Babylon.MCP.Tools.UpdateTicket do
     field :title, :string
     field :body, :string
     field :repo, :string
-    field :status, :enum, values: ~w(backlog todo doing done)
+    field :status, :enum, values: ~w(todo doing review done)
     field :priority, :enum, values: ~w(low med high)
     field :labels, {:list, :string}
   end
