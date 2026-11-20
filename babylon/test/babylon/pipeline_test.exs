@@ -22,7 +22,8 @@ defmodule Babylon.PipelineTest do
     origin = Path.join(tmp, "origin.git")
     repo = Path.join(tmp, "projects/app")
 
-    sh(tmp, "git init -q --bare -b main #{origin} && git clone -q #{origin} #{repo}")
+    {_, 0} = System.cmd("git", ["init", "-q", "--bare", "-b", "main", origin])
+    {_, 0} = System.cmd("git", ["clone", "-q", origin, repo], stderr_to_stdout: true)
 
     sh(
       repo,
@@ -111,6 +112,36 @@ defmodule Babylon.PipelineTest do
                Run.run(ticket, fn _ -> :ok end)
     end
 
+    test "lands the review's own small fixes, committed on the branch and gated again",
+         %{tmp_dir: tmp, origin: origin, ticket: ticket} do
+      fixer = ["sh", "-c", "cat >/dev/null; echo three > b; echo 'FIXED: b:1 two is three'; echo 'VERDICT: fix'"]
+      gated(tmp, ["sh", "-c", "echo ran >> ../gates"], fixer)
+
+      assert {:landed, sha, "b:1 two is three"} = Run.run(ticket, fn _ -> :ok end)
+      assert sh(origin, "git rev-parse main") == sha
+      assert sh(origin, "git show main:b") == "three"
+      assert sh(origin, "git log -1 --format=%B main") == "Review fixes for #1\n\n- b:1 two is three"
+      assert File.read!(Path.join(tmp, "work/gates")) == "ran\nran\n"
+    end
+
+    test "drops what the review edited when it does not say fix", %{tmp_dir: tmp, origin: origin, ticket: ticket} do
+      stray = ["sh", "-c", "cat >/dev/null; echo three > b; echo new > c; echo 'VERDICT: approve'"]
+      gated(tmp, ["sh", "-c", "exit 0"], stray)
+
+      assert {:landed, _} = Run.run(ticket, fn _ -> :ok end)
+      assert sh(origin, "git show main:b") == "two"
+      assert sh(origin, "git ls-tree --name-only main") == ".gitignore\na\nb"
+    end
+
+    test "sends back fixes too big to be one, with the review's findings", %{tmp_dir: tmp, ticket: ticket} do
+      big = ["sh", "-c", "cat >/dev/null; seq 100 > b; echo 'FIXED: b rewritten'; echo 'VERDICT: fix'"]
+      gated(tmp, ["sh", "-c", "exit 0"], big)
+
+      assert {:failed,
+              "the review's fixes ran to 101 lines, more than a fix; its findings:\nFIXED: b rewritten\nVERDICT: fix"} =
+               Run.run(ticket, fn _ -> :ok end)
+    end
+
     test "hands the reviewer the diff", %{tmp_dir: tmp, ticket: ticket} do
       seen = Path.join(tmp, "seen")
 
@@ -161,6 +192,11 @@ defmodule Babylon.PipelineTest do
     test "landed, it is done", %{held: held} do
       assert %Ticket{status: "done", stage: "landed", stage_note: "landed on main as abc"} =
                Pipeline.finish(held.id, {:landed, "abc"}, MapSet.new([@nobody]))
+    end
+
+    test "landed with the review's fixes, it says which", %{held: held} do
+      assert %Ticket{status: "done", stage_note: "landed on main as abc, with the review's fixes: b:1 typo"} =
+               Pipeline.finish(held.id, {:landed, "abc", "b:1 typo"}, MapSet.new([@nobody]))
     end
 
     test "sent back, its session keeps it, or it goes back to the list", %{held: held} do

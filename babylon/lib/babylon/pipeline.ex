@@ -19,7 +19,7 @@ defmodule Babylon.Pipeline do
 
   @running ~w(verifying reviewing landing)
 
-  @type outcome :: {:landed, String.t()} | {:failed, String.t()}
+  @type outcome :: {:landed, String.t()} | {:landed, String.t(), String.t()} | {:failed, String.t()}
 
   @doc false
   def start_link(_opts), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -39,12 +39,8 @@ defmodule Babylon.Pipeline do
   Claude (`Babylon.Panes.claude/0`): a ticket sent back to a pane not among them goes to `todo`.
   """
   @spec finish(pos_integer(), outcome(), Babylon.Claims.panes()) :: Ticket.t()
-  def finish(id, {:landed, sha}, _panes) do
-    {:ok, ticket} = Tickets.update(Repo.get!(Ticket, id), %{status: "done"})
-    done = ticket |> Ecto.Changeset.change(stage: "landed", stage_note: "landed on main as #{sha}") |> Repo.update!()
-    tell(done, "##{id} landed on main as #{String.slice(sha, 0, 7)}. Its worktree can go: wt remove #{done.branch}")
-    done
-  end
+  def finish(id, {:landed, sha}, _panes), do: landed(id, sha, "")
+  def finish(id, {:landed, sha, fixed}, _panes), do: landed(id, sha, ", with the review's fixes: #{fixed}")
 
   def finish(id, {:failed, why}, panes) do
     ticket = Repo.get!(Ticket, id)
@@ -132,6 +128,15 @@ defmodule Babylon.Pipeline do
 
     if pid = GenServer.whereis(__MODULE__), do: send(pid, :next)
     {:ok, queued}
+  end
+
+  defp landed(id, sha, fixed) do
+    {:ok, ticket} = Tickets.update(Repo.get!(Ticket, id), %{status: "done"})
+    note = "landed on main as #{sha}#{fixed}"
+    done = ticket |> Ecto.Changeset.change(stage: "landed", stage_note: note) |> Repo.update!()
+    short = String.slice(sha, 0, 7)
+    tell(done, "##{id} landed on main as #{short}#{fixed}. Its worktree can go: wt remove #{done.branch}")
+    done
   end
 
   defp tell(%Ticket{claimed_by: nil}, _text), do: :ok

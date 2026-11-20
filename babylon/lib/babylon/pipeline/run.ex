@@ -8,6 +8,7 @@ defmodule Babylon.Pipeline.Run do
 
   @diff_limit 200_000
   @tail_lines 40
+  @fix_limit 60
 
   @doc """
   Take `ticket` through, calling `stage` with each stage as it starts. `{:landed, sha}`, or
@@ -24,9 +25,10 @@ defmodule Babylon.Pipeline.Run do
          :ok <- ahead(dir),
          :ok <- gate(dir, ticket),
          :ok <- stage.("reviewing"),
-         :ok <- review(dir, ticket),
-         :ok <- stage.("landing") do
-      land(dir, ticket, 3)
+         {:ok, fixed} <- review(dir, ticket),
+         :ok <- stage.("landing"),
+         {:landed, sha} <- land(dir, ticket, 3) do
+      if fixed == [], do: {:landed, sha}, else: {:landed, sha, Enum.join(fixed, "; ")}
     end
   end
 
@@ -161,7 +163,7 @@ defmodule Babylon.Pipeline.Run do
       named = conf(:reviewer) ++ ["--name", "babylon review · #{ticket.repo} ##{ticket.id}"]
 
       case cmd(named, dir, timeout: conf(:review_timeout), stdin: prompt) do
-        {out, 0} -> verdict(out)
+        {out, 0} -> out |> verdict() |> kept(dir, ticket, out)
         {_, 124} -> {:failed, "the review ran past #{div(conf(:review_timeout), 60)} minutes"}
         {out, code} -> {:failed, "the reviewer failed (exit #{code}).\n" <> tail(out)}
       end
@@ -171,17 +173,60 @@ defmodule Babylon.Pipeline.Run do
   end
 
   defp verdict(out) do
-    case Regex.scan(~r/^VERDICT: (approve|request_changes)\s*$/m, out) do
+    case Regex.scan(~r/^VERDICT: (approve|fix|request_changes)\s*$/m, out) do
       [] ->
         {:failed, "the review gave no verdict.\n" <> tail(out)}
 
       found ->
         case List.last(found) do
-          [_, "approve"] -> :ok
+          [_, "approve"] -> {:ok, []}
+          [_, "fix"] -> {:ok, for([_, line] <- Regex.scan(~r/^FIXED: (.+?)\s*$/m, out), do: line)}
           [_, "request_changes"] -> {:failed, "the review asked for changes.\n" <> String.trim(out)}
         end
     end
   end
+
+  # The reviewer's own edits are kept only with a fix verdict, small enough to be one, committed
+  # and gated again; any other verdict leaves the branch as it came.
+  defp kept({:ok, [_ | _] = fixed}, dir, ticket, out) do
+    git(dir, ["add", "-A"])
+    {stat, 0} = git(dir, ["diff", "--cached", "--numstat"])
+
+    changed =
+      for line <- String.split(stat, "\n", trim: true),
+          [added, removed | _] = String.split(line, "\t"),
+          reduce: 0,
+          do: (acc -> acc + count(added) + count(removed))
+
+    cond do
+      changed == 0 ->
+        {:ok, []}
+
+      changed > @fix_limit ->
+        discard(dir)
+        {:failed, "the review's fixes ran to #{changed} lines, more than a fix; its findings:\n" <> String.trim(out)}
+
+      true ->
+        message = "Review fixes for ##{ticket.id}\n\n" <> Enum.map_join(fixed, "\n", &("- " <> &1))
+
+        with :ok <- ok(git(dir, ["commit", "-q", "-m", message]), "could not commit the review's fixes"),
+             :ok <- gate(dir, ticket),
+             do: {:ok, fixed}
+    end
+  end
+
+  defp kept(verdict, dir, _ticket, _out) do
+    discard(dir)
+    verdict
+  end
+
+  defp discard(dir) do
+    git(dir, ["reset", "-q", "--hard"])
+    git(dir, ["clean", "-fdq"])
+  end
+
+  defp count("-"), do: 1
+  defp count(n), do: String.to_integer(n)
 
   defp review_prompt(ticket, diff) do
     """
@@ -192,11 +237,20 @@ defmodule Babylon.Pipeline.Run do
     #{ticket.body}
 
     Look for what would make this wrong to land: a correctness bug, a broken behaviour, a test that
-    does not test what it claims, a rule in the repo's AGENTS.md or CLAUDE.md it breaks. Ask for
-    changes only for those, not for style or taste. Say each finding with its file and line and
-    why it is wrong.
+    does not test what it claims, a rule in the repo's AGENTS.md or CLAUDE.md it breaks. Not style
+    or taste. Say each finding with its file and line and why it is wrong.
 
-    End with one line, exactly `VERDICT: approve` or `VERDICT: request_changes`.
+    A finding that is small and mechanical (a typo, a missing separator, a stray blank line, a
+    stale comment or name, a wrong string in a test) fix yourself with Edit in this checkout, and
+    say each as one line `FIXED: <file>:<line> <what>`. All your fixes together stay under
+    #{@fix_limit} changed lines. They are committed and gated again, not reviewed again. Anything
+    that changes behaviour, an interface, or what a test means is not yours to fix: ask for
+    changes, and leave the files alone.
+
+    End with one line, exactly one of:
+    - `VERDICT: approve`: nothing to change.
+    - `VERDICT: fix`: you fixed every finding yourself.
+    - `VERDICT: request_changes`: a finding is not yours to fix (any fixes you made are dropped).
 
     The diff against main:
 
