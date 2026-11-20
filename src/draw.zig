@@ -950,7 +950,8 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     try pen.set(w, heading(app), null);
     try w.writeAll(title);
     try pen.set(w, dim, null);
-    try fitted(w, "  hjkl pick · ⏎ go to its Claude · r repo · esc close", app.view_w -| cellCount(title));
+    const hint = if (app.gateSession() != null) "  hjkl pick · ⏎ go to its Claude · r repo · g gate · esc close" else "  hjkl pick · ⏎ go to its Claude · r repo · esc close";
+    try fitted(w, hint, app.view_w -| cellCount(title));
 
     for (tickets.statuses, 0..) |status, c| {
         const x = ox + c * cw;

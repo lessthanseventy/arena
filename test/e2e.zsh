@@ -705,6 +705,12 @@ mouse 0 3 2 M
 check "a click on its row in the rail opens the board again" see ' board · '
 mouse 0 3 2 M
 check "and another closes it" gone ' board · '
+inner new-session -d -s babylon -n gate sh
+key M-b
+check "with babylon's gate session there, the board offers it" see 'r repo · g gate · esc close'
+check "and the rail does not list it" gone '│ babylon '
+key g
+check "g on the board shows the gate" see '╭─ 1 gate '
 print -r -- '{"tickets":[{"id":9,"repo":"arena","title":"Pipe","kind":"ticket","status":"review","priority":"med","blocked_by":[],"stage":"reviewing"}]}' \
   >$tmp/run/babylon/board.json
 check "while babylon works a ticket toward main, the board's row says which and how far" see '^│ ▤ board +◐ #9 reviewing │'

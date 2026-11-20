@@ -271,6 +271,12 @@ pub const Session = struct {
     /// Columns take the whole view, with no neighbour peeking.
     full: bool = false,
 
+    /// babylon's own session, where its pipeline runs gates: kept last, off the rail and the
+    /// agents, and reached from the board.
+    pub fn gate(s: *const Session) bool {
+        return std.mem.eql(u8, s.name, "babylon");
+    }
+
     pub fn focused(s: *const Session) ?*Window {
         return if (s.focus < s.wins.items.len) s.wins.items[s.focus] else null;
     }
@@ -561,8 +567,7 @@ pub const App = struct {
     pub fn agents(app: *const App, out: []Agent) usize {
         var n: usize = 0;
         for (app.sessions.items, 0..) |s, si| for (s.wins.items) |win| {
-            // babylon's own session runs its gates, not anyone's Claudes
-            if (std.mem.eql(u8, s.name, "babylon")) break;
+            if (s.gate()) break;
             if (!win.agent() or n == out.len) continue;
             out[n] = .{ .session = si, .win = win };
             n += 1;
@@ -949,6 +954,7 @@ pub const App = struct {
         for (old.items) |s| app.destroySession(s);
         std.sort.insertion(*Session, app.sessions.items, {}, struct {
             fn before(_: void, a: *Session, b: *Session) bool {
+                if (a.gate() != b.gate()) return b.gate();
                 // tmux lists sessions by name: with no place of their own, the oldest first
                 return a.order < b.order or (a.order == b.order and a.id < b.id);
             }
@@ -1131,7 +1137,7 @@ pub const App = struct {
     fn sessionBy(app: *App, delta: i32) !void {
         const at = app.sessionIndex(app.current) orelse return;
         const next = @as(i32, @intCast(at)) + delta;
-        if (next < 0 or next >= app.sessions.items.len) return;
+        if (next < 0 or next >= app.railSessions()) return;
         try app.sessionTo(@intCast(next));
     }
 
@@ -1246,7 +1252,7 @@ pub const App = struct {
         const block = thumb_h + 1;
         const shown: usize = @max(1, app.view_h / block);
         const first = if (spot.session >= shown) spot.session - shown + 1 else 0;
-        if (session < first or session >= first + shown) return null;
+        if (session < first or session >= first + shown or session >= app.railSessions()) return null;
         return @intCast((session - first) * block);
     }
 
@@ -1280,7 +1286,7 @@ pub const App = struct {
     /// Escape and q close.
     fn overviewKey(app: *App, key: []const u8) !void {
         app.dirty = true;
-        const count = app.sessions.items.len;
+        const count = app.railSessions();
         if (count == 0) {
             app.overview = null;
             return;
@@ -1412,6 +1418,10 @@ pub const App = struct {
         view.row = @min(view.row, app.boardColumn(view.col, &.{}) -| 1);
         if (is(key, &.{ "\x1b", "q" })) app.board_view = null;
         if (is(key, &.{"\r"})) try app.goCard();
+        if (is(key, &.{"g"})) if (app.gateSession()) |at| {
+            app.board_view = null;
+            try app.sessionTo(at);
+        };
     }
 
     /// The mouse on the board: a click on a card picks it, and on the card picked goes to the
@@ -1632,7 +1642,19 @@ pub const App = struct {
     /// How many sessions fit above the rule, with a row free under the last.
     pub fn railShown(app: *const App) usize {
         const room = app.railRuleRow() -| 1;
-        return @min(app.sessions.items.len, room -| 2);
+        return @min(app.railSessions(), room -| 2);
+    }
+
+    /// The sessions the rail and the overview list: all but babylon's, which sorts last.
+    pub fn railSessions(app: *const App) usize {
+        const n = app.sessions.items.len;
+        return if (n > 0 and app.sessions.items[n - 1].gate()) n - 1 else n;
+    }
+
+    /// Where babylon's session is, when it is there.
+    pub fn gateSession(app: *const App) ?usize {
+        const n = app.railSessions();
+        return if (n < app.sessions.items.len) n else null;
     }
 
     /// The rule over the rail's agents, a row free under the last session, and the rows they can
@@ -1712,7 +1734,7 @@ pub const App = struct {
     fn sessionSwapBy(app: *App, delta: i32) !void {
         const at = app.sessionIndex(app.current) orelse return;
         const next = @as(i32, @intCast(at)) + delta;
-        if (next < 0 or next >= app.sessions.items.len) return;
+        if (at >= app.railSessions() or next < 0 or next >= app.railSessions()) return;
         try app.moveSession(at, @intCast(next));
     }
 
@@ -2276,7 +2298,7 @@ test "a review state is read from its number, and what is not one is none" {
     try std.testing.expectEqual(Review.none, Review.of(5));
 }
 
-test "babylon's own session lists no agents, another's Claude is listed" {
+test "babylon's own session, sorted last, is off the list and lists no agents" {
     var gate: Window = .{ .id = 1, .claude = .working };
     var mine: Window = .{ .id = 2, .claude = .working };
     var gates = [_]*Window{&gate};
@@ -2285,9 +2307,11 @@ test "babylon's own session lists no agents, another's Claude is listed" {
     babylon.wins = .fromOwnedSlice(&gates);
     var work: Session = .{ .id = 2, .name = @constCast("work") };
     work.wins = .fromOwnedSlice(&mines);
-    var sessions = [_]*Session{ &babylon, &work };
+    var sessions = [_]*Session{ &work, &babylon };
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     app.sessions = .fromOwnedSlice(&sessions);
+    try std.testing.expectEqual(@as(usize, 1), app.railSessions());
+    try std.testing.expectEqual(@as(?usize, 1), app.gateSession());
     var found: [4]App.Agent = undefined;
     try std.testing.expectEqual(@as(usize, 1), app.agents(&found));
     try std.testing.expectEqual(@as(u32, 2), found[0].win.id);
