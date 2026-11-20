@@ -1,6 +1,11 @@
 defmodule Babylon.MCP.ToolsTest do
   use Babylon.MCPCase
 
+  test "a session learns when to file and claim from the server's instructions" do
+    assert %{"result" => %{"instructions" => instructions}} = rpc("server/discover", %{})
+    assert instructions =~ "claim_ticket"
+  end
+
   test "file, list, get, update and link, through the HTTP plug" do
     assert {:ok, %{"id" => blocker, "status" => "backlog", "repo" => "arena"}} =
              call("file_ticket", %{title: "blocker", repo: "arena"})

@@ -28,35 +28,36 @@ defmodule Babylon.MCPCase do
   """
   @spec call(String.t(), map(), String.t() | nil) :: {:ok, term()} | {:error, String.t()}
   def call(tool, args, pane \\ nil) do
-    body = %{
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/call",
-      params: %{
-        name: tool,
-        arguments: args,
-        _meta: %{
-          "io.modelcontextprotocol/protocolVersion" => @version,
-          "io.modelcontextprotocol/clientCapabilities" => %{}
-        }
-      }
-    }
+    headers = [{"mcp-name", tool}] ++ if(pane, do: [{"x-babylon-pane", pane}], else: [])
 
-    conn =
-      :post
-      |> conn("/", JSON.encode!(body))
-      |> put_req_header("content-type", "application/json")
-      |> put_req_header("accept", "application/json, text/event-stream")
-      |> put_req_header("mcp-protocol-version", @version)
-      |> put_req_header("mcp-method", "tools/call")
-      |> put_req_header("mcp-name", tool)
-      |> then(&if(pane, do: put_req_header(&1, "x-babylon-pane", pane), else: &1))
-      |> Transport.call(Transport.init(server: Babylon.MCP.Server))
-
-    case JSON.decode!(conn.resp_body) do
+    case rpc("tools/call", %{name: tool, arguments: args}, headers) do
       %{"result" => %{"isError" => true, "content" => [%{"text" => message}]}} -> {:error, message}
       %{"result" => %{"content" => [%{"text" => text}]}} -> {:ok, JSON.decode!(text)}
       other -> flunk("not a tool result: #{inspect(other)}")
     end
+  end
+
+  @doc "Send one stateless JSON-RPC request for `method` and return the decoded reply."
+  @spec rpc(String.t(), map(), [{String.t(), String.t()}]) :: map()
+  def rpc(method, params, headers \\ []) do
+    meta = %{
+      "io.modelcontextprotocol/protocolVersion" => @version,
+      "io.modelcontextprotocol/clientCapabilities" => %{}
+    }
+
+    body = %{jsonrpc: "2.0", id: 1, method: method, params: Map.put(params, :_meta, meta)}
+
+    conn =
+      Enum.reduce(
+        [{"mcp-protocol-version", @version}, {"mcp-method", method} | headers],
+        :post
+        |> conn("/", JSON.encode!(body))
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("accept", "application/json, text/event-stream"),
+        fn {key, value}, conn -> put_req_header(conn, key, value) end
+      )
+      |> Transport.call(Transport.init(server: Babylon.MCP.Server))
+
+    JSON.decode!(conn.resp_body)
   end
 end
