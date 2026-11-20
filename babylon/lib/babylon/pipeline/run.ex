@@ -155,6 +155,8 @@ defmodule Babylon.Pipeline.Run do
   end
 
   defp review(dir, ticket) do
+    # what the gate left behind is not the reviewer's to commit
+    discard(dir)
     {diff, 0} = git(dir, ["diff", "origin/main...HEAD"])
     prompt = dir <> ".review"
     File.write!(prompt, review_prompt(ticket, String.slice(diff, 0, @diff_limit)))
@@ -180,7 +182,7 @@ defmodule Babylon.Pipeline.Run do
       found ->
         case List.last(found) do
           [_, "approve"] -> {:ok, []}
-          [_, "fix"] -> {:ok, for([_, line] <- Regex.scan(~r/^FIXED: (.+?)\s*$/m, out), do: line)}
+          [_, "fix"] -> {:fix, for([_, line] <- Regex.scan(~r/^FIXED: (.+?)\s*$/m, out), do: line)}
           [_, "request_changes"] -> {:failed, "the review asked for changes.\n" <> String.trim(out)}
         end
     end
@@ -188,7 +190,12 @@ defmodule Babylon.Pipeline.Run do
 
   # The reviewer's own edits are kept only with a fix verdict, small enough to be one, committed
   # and gated again; any other verdict leaves the branch as it came.
-  defp kept({:ok, [_ | _] = fixed}, dir, ticket, out) do
+  defp kept({:fix, []}, dir, _ticket, out) do
+    discard(dir)
+    {:failed, "the review said fix but named no FIXED line; its findings:\n" <> String.trim(out)}
+  end
+
+  defp kept({:fix, fixed}, dir, ticket, out) do
     git(dir, ["add", "-A"])
     {stat, 0} = git(dir, ["diff", "--cached", "--numstat"])
 
@@ -200,7 +207,7 @@ defmodule Babylon.Pipeline.Run do
 
     cond do
       changed == 0 ->
-        {:ok, []}
+        {:failed, "the review said it fixed its findings but changed nothing; its findings:\n" <> String.trim(out)}
 
       changed > @fix_limit ->
         discard(dir)

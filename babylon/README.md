@@ -40,12 +40,12 @@ submitted, in one worktree a repo (`~/projects/<repo>`) kept warm under `~/.cach
 (seeded once with what the repo's `.worktreeinclude` names, then reset to each branch): its branch
 is rebased onto `origin/main` and the repo's `mise run check` run (30 minutes at most) in a window
 of babylon's own tmux session `babylon`, there to watch and read after (arena leaves it out of the
-agents list), its output also kept in `~/.cache/babylon/logs`,
-then a headless `claude -p` reviews the diff and ends on a verdict: `approve`; `fix`, having
-made small mechanical fixes itself in the gate's worktree (no edits outside it), which are
-committed on the branch and gated again, at most 60 changed lines; or `request_changes`, its
-edits dropped. Then it is pushed as main's new head, which only a fast-forward passes; main having moved meanwhile means another rebase and
-gate first. How it went is typed into the holding session's pane: landed, the ticket is `done`;
+agents list), its output also kept in `~/.cache/babylon/logs`; then a headless `claude -p`
+reviews the diff and ends on a verdict: `approve`; `fix`, having made small mechanical fixes
+itself in the gate's worktree (no edits outside it), which are committed on the branch and gated
+again, at most 60 changed lines, each named on a `FIXED:` line; or `request_changes`, its edits
+dropped. Then it is pushed as main's new head, which only a fast-forward passes; main having
+moved meanwhile means another rebase and gate first. How it went is typed into the holding session's pane: landed, the ticket is `done`;
 sent back, it is `doing` again with why in `stage_note`, or `todo` labelled `sent back` when that
 session is gone. There are no pull requests: the gate and the review are babylon's.
 

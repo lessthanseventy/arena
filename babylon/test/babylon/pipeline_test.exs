@@ -142,6 +142,34 @@ defmodule Babylon.PipelineTest do
                Run.run(ticket, fn _ -> :ok end)
     end
 
+    test "sends back a fix that names no fix, or that changed nothing", %{tmp_dir: tmp, origin: origin, ticket: ticket} do
+      unnamed = ["sh", "-c", "cat >/dev/null; echo three > b; echo 'VERDICT: fix'"]
+      gated(tmp, ["sh", "-c", "exit 0"], unnamed)
+
+      assert {:failed, "the review said fix but named no FIXED line; its findings:\nVERDICT: fix"} =
+               Run.run(ticket, fn _ -> :ok end)
+
+      idle = ["sh", "-c", "cat >/dev/null; echo 'FIXED: b:1 typo'; echo 'VERDICT: fix'"]
+      gated(tmp, ["sh", "-c", "exit 0"], idle)
+
+      assert {:failed, "the review said it fixed its findings but changed nothing" <> _} =
+               Run.run(ticket, fn _ -> :ok end)
+
+      assert sh(origin, "git ls-tree --name-only main") == ".gitignore\na"
+    end
+
+    test "commits only the review's edits, not what the gate left behind", %{
+      tmp_dir: tmp,
+      origin: origin,
+      ticket: ticket
+    } do
+      fixer = ["sh", "-c", "cat >/dev/null; echo three > b; echo 'FIXED: b:1 typo'; echo 'VERDICT: fix'"]
+      gated(tmp, ["sh", "-c", "echo junk > left"], fixer)
+
+      assert {:landed, _, _} = Run.run(ticket, fn _ -> :ok end)
+      assert sh(origin, "git ls-tree --name-only main") == ".gitignore\na\nb"
+    end
+
     test "hands the reviewer the diff", %{tmp_dir: tmp, ticket: ticket} do
       seen = Path.join(tmp, "seen")
 
