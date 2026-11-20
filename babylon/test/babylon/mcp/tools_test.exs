@@ -49,13 +49,13 @@ defmodule Babylon.MCP.ToolsTest do
     assert {:error, "to_id a ticket cannot link to itself"} = call("link_tickets", %{from: id, to: id, kind: "relates"})
   end
 
-  test "a session asks its human, and the board's answer is recorded" do
+  test "a session asks its human, and an answer that cannot reach it is refused" do
     {:ok, %{"id" => id}} = call("file_ticket", %{title: "Ask about me"})
     ask = %{ticket_id: id, question: "Which?", options: ["this", "that"]}
 
     assert {:error, "this session sent no pane" <> _} = call("ask_human", ask)
     assert {:error, "options should have at least 2 item(s)"} = call("ask_human", %{ask | options: ["x"]}, "%999999")
     assert {:ok, %{"ask_id" => ask_id}} = call("ask_human", ask, "%999999")
-    assert {:error, "the session that asked #" <> _} = call("answer_ask", %{id: ask_id, choice: 1})
+    assert {:error, _} = call("answer_ask", %{id: ask_id, choice: 1})
   end
 end

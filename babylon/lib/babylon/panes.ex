@@ -25,13 +25,17 @@ defmodule Babylon.Panes do
   Type `text` into `pane` as one line and submit it, as if its human had: an idle Claude takes it
   as its next turn, a busy one queues it.
   """
-  @spec tell(String.t(), String.t()) :: :ok
+  @spec tell(String.t(), String.t()) :: :ok | {:error, String.t()}
   def tell(pane, text) do
     line = String.replace(text, ~r/\s*\n\s*/, " ")
-    _ = System.cmd("tmux", ["send-keys", "-t", pane, "-l", line], stderr_to_stdout: true)
-    _ = System.cmd("tmux", ["send-keys", "-t", pane, "Enter"], stderr_to_stdout: true)
-    :ok
+
+    with {_, 0} <- System.cmd("tmux", ["send-keys", "-t", pane, "-l", line], stderr_to_stdout: true),
+         {_, 0} <- System.cmd("tmux", ["send-keys", "-t", pane, "Enter"], stderr_to_stdout: true) do
+      :ok
+    else
+      {out, _} -> {:error, "tmux would not type into #{pane}: #{String.trim(out)}"}
+    end
   rescue
-    ErlangError -> :ok
+    ErlangError -> {:error, "there is no tmux to type into #{pane}"}
   end
 end

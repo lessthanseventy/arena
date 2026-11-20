@@ -19,14 +19,18 @@ defmodule Babylon.Asks do
     end
   end
 
+  @typedoc "How handing an answer to the pane that asked went: `:gone` when it no longer runs Claude."
+  @type delivery :: :ok | :gone | {:error, String.t()}
+
   @doc """
-  Answer ask `id` with its option number `choice` (from 1), and type the answer into the pane that
-  asked. An ask answered already is refused; so is one whose pane no longer runs Claude (by
-  `live`, the panes that do), which is closed unanswered, as no one is left to tell.
+  Answer ask `id` with its option number `choice` (from 1), recorded only once `deliver` has handed
+  it to the pane that asked (by default, typed into it). An ask answered already is refused; one
+  whose pane is gone is closed unanswered, as no one is left to tell; one that could not be handed
+  over stays open.
   """
-  @spec answer(pos_integer(), pos_integer(), MapSet.t(String.t()) | :unknown) ::
+  @spec answer(pos_integer(), pos_integer(), (String.t(), String.t() -> delivery())) ::
           {:ok, Ask.t()} | {:error, String.t()}
-  def answer(id, choice, live \\ Panes.claude()) do
+  def answer(id, choice, deliver \\ &deliver/2) do
     case Repo.get(Ask, id) do
       nil ->
         {:error, "no ask ##{id}"}
@@ -38,7 +42,14 @@ defmodule Babylon.Asks do
         {:error, "ask ##{id} has options 1 to #{length(options)}"}
 
       ask ->
-        if live == :unknown or MapSet.member?(live, ask.pane), do: give(ask, choice), else: close(ask)
+        picked = Enum.at(ask.options, choice - 1)
+        told = ~s(babylon: you asked about ##{ask.ticket_id}, "#{ask.question}" The answer: #{picked})
+
+        case deliver.(ask.pane, told) do
+          :ok -> {:ok, ask |> Ecto.Changeset.change(answer: picked, answered_at: now()) |> Repo.update!()}
+          :gone -> close(ask)
+          {:error, why} -> {:error, "ask ##{id} stays open, as its answer did not reach its session: #{why}"}
+        end
     end
   end
 
@@ -53,10 +64,10 @@ defmodule Babylon.Asks do
     {:error, "the session that asked ##{ask.id} is gone (pane #{ask.pane}): closed unanswered"}
   end
 
-  defp give(ask, choice) do
-    picked = Enum.at(ask.options, choice - 1)
-    answered = ask |> Ecto.Changeset.change(answer: picked, answered_at: now()) |> Repo.update!()
-    Panes.tell(ask.pane, ~s(babylon: you asked about ##{ask.ticket_id}, "#{ask.question}" The answer: #{picked}))
-    {:ok, answered}
+  defp deliver(pane, text) do
+    case Panes.claude() do
+      :unknown -> {:error, "tmux cannot be reached to tell whether it is still there"}
+      live -> if MapSet.member?(live, pane), do: Panes.tell(pane, text), else: :gone
+    end
   end
 end
