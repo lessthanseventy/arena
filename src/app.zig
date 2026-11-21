@@ -297,6 +297,8 @@ pub const BoardView = struct {
     row: usize = 0,
     /// The repo it is narrowed to: 0 for every one, else its place in the board's repos from 1.
     repo: usize = 0,
+    /// The backlog shown as the one column, in place of the four.
+    backlog: bool = false,
     /// The picked card's question shown over the board, waiting on its answer's number.
     answering: bool = false,
     /// The ticket whose whole detail is shown over the board, and how far down it is scrolled.
@@ -1340,7 +1342,7 @@ pub const App = struct {
     /// The repo the open board is narrowed to; null for every one.
     pub fn boardRepo(app: *const App) ?[]const u8 {
         const view = app.board_view orelse return null;
-        if (view.repo == 0) return null;
+        if (view.repo == 0 or view.backlog) return null;
         const b = if (app.board) |*b| b else return null;
         var repos: [max_repos][]const u8 = undefined;
         const n = b.repos(&repos);
@@ -1365,7 +1367,23 @@ pub const App = struct {
     /// count of them all.
     pub fn boardColumn(app: *const App, col: usize, out: []*const tickets.Card) usize {
         const b = if (app.board) |*b| b else return 0;
+        if (app.boardBacklog()) {
+            for (b.backlog(), 0..) |*card, i| if (i < out.len) {
+                out[i] = card;
+            };
+            return b.backlog().len;
+        }
         return b.column(tickets.statuses[col], app.boardRepo(), out);
+    }
+
+    fn boardBacklog(app: *const App) bool {
+        const view = app.board_view orelse return false;
+        return view.backlog;
+    }
+
+    /// The columns the open board shows: the four statuses, or the backlog alone.
+    pub fn boardCols(app: *const App) usize {
+        return if (app.boardBacklog()) 1 else tickets.statuses.len;
     }
 
     /// The cards in `status` on the whole board, whatever it is narrowed to.
@@ -1383,7 +1401,7 @@ pub const App = struct {
     /// The board's four columns side by side under a row of its own; in each, a card is two
     /// rows with one between, from the second row inside its border.
     pub fn boardColW(app: *const App) u16 {
-        return app.view_w / @as(u16, tickets.statuses.len);
+        return app.view_w / @as(u16, @intCast(app.boardCols()));
     }
 
     pub fn boardShown(app: *const App) usize {
@@ -1402,7 +1420,7 @@ pub const App = struct {
         if (x < ox or y < 2) return null;
         const col: usize = (x - ox) / @max(1, app.boardColW());
         const k: usize = (y - 2) / 3;
-        if (col >= tickets.statuses.len or (y - 2) % 3 == 2 or k >= app.boardShown()) return null;
+        if (col >= app.boardCols() or (y - 2) % 3 == 2 or k >= app.boardShown()) return null;
         const row = app.boardFirst(col) + k;
         return if (row < app.boardColumn(col, &.{})) .{ .col = col, .row = row } else null;
     }
@@ -1463,13 +1481,19 @@ pub const App = struct {
         }
         if (is(key, &.{"a"})) return app.act(.answer);
         if (is(key, &.{ "h", "\x1b[D", "\x1bOD" })) view.col -|= 1;
-        if (is(key, &.{ "l", "\x1b[C", "\x1bOC" }) and view.col + 1 < tickets.statuses.len) view.col += 1;
+        if (is(key, &.{ "l", "\x1b[C", "\x1bOC" }) and view.col + 1 < app.boardCols()) view.col += 1;
         if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.row -|= 1;
         if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) view.row += 1;
         if (is(key, &.{"r"})) {
             var repos: [max_repos][]const u8 = undefined;
             const n = if (app.board) |*b| b.repos(&repos) else 0;
-            view.repo = (view.repo + 1) % (n + 1);
+            if (view.backlog) {
+                view.backlog = false;
+                view.repo = 0;
+            } else if (view.repo == n) {
+                view.backlog = true;
+                view.col = 0;
+            } else view.repo += 1;
             view.row = 0;
         }
         view.row = @min(view.row, app.boardColumn(view.col, &.{}) -| 1);
@@ -1478,7 +1502,7 @@ pub const App = struct {
         if (is(key, &.{"n"})) return app.newTicket();
         const keyed = [_]struct { []const u8, CardAction }{
             .{ "\r", .go },    .{ "e", .edit }, .{ "p", .priority }, .{ ">", .close },
-            .{ "<", .reopen }, .{ "J", .down }, .{ "K", .up },
+            .{ "<", .reopen }, .{ "J", .down }, .{ "K", .up },       .{ "t", .to_todo },
         };
         for (keyed) |pair| if (std.mem.eql(u8, key, pair[0])) return app.act(pair[1]);
     }
@@ -1503,6 +1527,7 @@ pub const App = struct {
         priority,
         close,
         reopen,
+        to_todo,
         up,
         down,
 
@@ -1514,6 +1539,7 @@ pub const App = struct {
                 .priority => "priority",
                 .close => "close",
                 .reopen => "reopen",
+                .to_todo => "to todo",
                 .up => "↑",
                 .down => "↓",
             };
@@ -1521,13 +1547,14 @@ pub const App = struct {
     };
 
     /// The actions `card` has: go while a Claude holds it, answer while it asks, close while still to
-    /// do and reopen once done, and edit, priority and moving it along its column always.
+    /// do and reopen once done, to todo while in the backlog, and edit and priority always, and
+    /// moving it along its column but in the backlog.
     pub fn cardActions(card: *const tickets.Card, out: *[8]CardAction) []CardAction {
         var n: usize = 0;
         const all = [_]struct { CardAction, bool }{
-            .{ .go, card.holder() != null }, .{ .answer, card.ask != null },    .{ .edit, true },
-            .{ .priority, true },            .{ .close, card.status == .todo }, .{ .reopen, card.status == .done },
-            .{ .up, true },                  .{ .down, true },
+            .{ .go, card.holder() != null },        .{ .answer, card.ask != null },    .{ .edit, true },
+            .{ .priority, true },                   .{ .close, card.status == .todo }, .{ .reopen, card.status == .done },
+            .{ .to_todo, card.status == .backlog }, .{ .up, card.status != .backlog }, .{ .down, card.status != .backlog },
         };
         for (all) |pair| if (pair[1]) {
             out[n] = pair[0];
@@ -1557,7 +1584,7 @@ pub const App = struct {
                 try app.send(.ignore, "run-shell -b \"babylon update {d} --priority {s}\"", .{ card.id, next });
             },
             .close => try app.send(.ignore, "run-shell -b \"babylon update {d} --status done\"", .{card.id}),
-            .reopen => try app.send(.ignore, "run-shell -b \"babylon update {d} --status todo\"", .{card.id}),
+            .reopen, .to_todo => try app.send(.ignore, "run-shell -b \"babylon update {d} --status todo\"", .{card.id}),
             .up, .down => {
                 const down = action == .down;
                 try app.send(.ignore, "run-shell -b \"babylon move {d} {s}{s}\"", .{ card.id, if (down) "down" else "up", narrowed });
@@ -1568,7 +1595,7 @@ pub const App = struct {
 
     /// A button on the board, where it is drawn and clicked: 0-based, as the mouse has it.
     pub const Button = struct {
-        what: union(enum) { repo: usize, gate, new, card: CardAction },
+        what: union(enum) { repo: usize, backlog, gate, new, card: CardAction },
         x: u16,
         y: u16,
         w: u16,
@@ -1582,6 +1609,7 @@ pub const App = struct {
                 const n = if (app.board) |*b| b.repos(&repos) else 0;
                 break :blk if (i <= n) std.fmt.bufPrint(buf, " {s} ", .{repos[i - 1]}) catch " ? " else " ? ";
             },
+            .backlog => " backlog ",
             .gate => " gate ",
             .new => " + ",
             .card => |action| std.fmt.bufPrint(buf, " {s} ", .{action.label()}) catch " ? ",
@@ -1603,8 +1631,8 @@ pub const App = struct {
         const count = if (app.board) |*b| b.repos(&repos) else 0;
         var x: u16 = ox + @as(u16, @intCast(cellCount(board_title))) + 1;
         const right = ox + app.view_w;
-        for (0..count + 2) |i| {
-            const what: @FieldType(Button, "what") = if (i <= count) .{ .repo = i } else .gate;
+        for (0..count + 3) |i| {
+            const what: @FieldType(Button, "what") = if (i <= count) .{ .repo = i } else if (i == count + 1) .backlog else .gate;
             if (what == .gate and app.gateSession() == null) break;
             const w: u16 = @intCast(cellCount(app.buttonLabel(what, &buf)));
             if (what == .gate) x += 2;
@@ -1638,6 +1666,12 @@ pub const App = struct {
         switch (button.what) {
             .repo => |i| {
                 view.repo = i;
+                view.backlog = false;
+                view.row = 0;
+            },
+            .backlog => {
+                view.backlog = true;
+                view.col = 0;
                 view.row = 0;
             },
             .gate => try app.toGate(),
@@ -1700,7 +1734,7 @@ pub const App = struct {
         view.answering = false;
         if (view.col == at.col and view.row == at.row) {
             try app.goCard();
-        } else view.* = .{ .col = at.col, .row = at.row, .repo = view.repo };
+        } else view.* = .{ .col = at.col, .row = at.row, .repo = view.repo, .backlog = view.backlog };
         return true;
     }
 

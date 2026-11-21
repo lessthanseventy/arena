@@ -687,7 +687,8 @@ one=$(inner display -p -t alpha:one '#{pane_id}')
 mkdir -p $tmp/run/babylon
 print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[],"stage":"failed",'\
 '"ask":{"id":5,"question":"Which colour?","options":["red","blue"]}},'\
-'{"id":8,"repo":"arena","title":"Board","kind":"ticket","status":"doing","priority":"high","claimed_by":"'$one'","blocked_by":[7]}]}' \
+'{"id":8,"repo":"arena","title":"Board","kind":"ticket","status":"doing","priority":"high","claimed_by":"'$one'","blocked_by":[7]}],'\
+'"backlog":[{"id":12,"repo":"arena","title":"Someday","kind":"ticket","status":"backlog","priority":"med","blocked_by":[]}]}' \
   >$tmp/run/babylon/board.json
 check "babylon's board has a row atop the rail, with its counts" see '^│ ▤ board +1 todo  1 doing │'
 key M-b
@@ -751,6 +752,17 @@ check "a click while the keys are shown only puts them away" tablit arena
 mouse 0 $(tabcol tlon) $(tabrow) M
 check "a click on a tab narrows it to that repo" see '#7 Lights'
 check "and only that" gone '#8 Board'
+check "the four columns do not show the backlog" gone '#12 Someday'
+key r
+check "r from the last repo goes to the backlog tab, lit" await tablit backlog
+check "which shows its cards in place of the columns" see '#12 Someday'
+check "and not the four columns" gone '╭─ doing '
+told() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == 'update 12 --status todo' ]] }
+key t
+check "t moves a backlog card to todo through babylon" await told
+key r
+check "r from the backlog goes back to every repo" gone '#12 Someday'
+key r r
 key r
 key r
 key l

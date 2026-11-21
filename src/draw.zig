@@ -951,12 +951,13 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     try pen.set(w, .{}, null);
     try fitted(w, "", app.view_w -| cellCount(App.board_title));
 
-    for (tickets.statuses, 0..) |status, c| {
+    for (0..app.boardCols()) |c| {
+        const name = if (view.backlog) "backlog" else @tagName(tickets.statuses[c]);
         const x = ox + c * cw;
         const inner = cw -| 2;
         var cards: [app_mod.max_cards]*const tickets.Card = undefined;
         const n = app.boardColumn(c, &cards);
-        const label = std.fmt.bufPrint(&buf, " {s} {d} ", .{ @tagName(status), n }) catch "";
+        const label = std.fmt.bufPrint(&buf, " {s} {d} ", .{ name, n }) catch "";
         try pen.set(w, edge, null);
         try w.print("\x1b[2;{d}H╭─", .{x + 1});
         try pen.set(w, dim, null);
@@ -1048,7 +1049,8 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     var end: u16 = 0;
     for (shown) |button| {
         const style: vt.Style = switch (button.what) {
-            .repo => |i| if (i == view.repo) chip(app) else ink(app, "dim", 8),
+            .repo => |i| if (i == view.repo and !view.backlog) chip(app) else ink(app, "dim", 8),
+            .backlog => if (view.backlog) chip(app) else ink(app, "dim", 8),
             .gate => ink(app, "violet", 5),
             .new => heading(app),
             .card => blk: {
@@ -1080,7 +1082,8 @@ const board_keys = [_][2][]const u8{
     .{ "> <", "close a ticket to do, reopen a done one" },
     .{ "J K", "move it down or up its column" },
     .{ "n, +", "file a ticket" },
-    .{ "r, a tab", "the next repo, or the one clicked" },
+    .{ "r, a tab", "the next repo, the backlog, or the one clicked" },
+    .{ "t", "move a backlog card to todo" },
     .{ "g", "babylon's gate, while it runs one" },
     .{ "esc, q", "close the board" },
 };

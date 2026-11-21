@@ -1,7 +1,7 @@
 //! babylon's board, from the file it keeps: the tickets every Claude on the machine shares.
 const std = @import("std");
 
-pub const Status = enum { todo, doing, review, done };
+pub const Status = enum { todo, doing, review, done, backlog };
 pub const statuses = [_]Status{ .todo, .doing, .review, .done };
 
 /// A decision a session is waiting on its human for.
@@ -37,7 +37,7 @@ pub const Card = struct {
     }
 };
 
-const File = struct { tickets: []const Card };
+const File = struct { tickets: []const Card, backlog: []const Card = &.{} };
 
 pub const Board = struct {
     parsed: std.json.Parsed(File),
@@ -52,6 +52,11 @@ pub const Board = struct {
 
     pub fn cards(b: *const Board) []const Card {
         return b.parsed.value.tickets;
+    }
+
+    /// The cards waiting to be put on the board, by repo then board order.
+    pub fn backlog(b: *const Board) []const Card {
+        return b.parsed.value.backlog;
     }
 
     /// The card babylon's pipeline is working on now (verifying, reviewing or landing), if any.
@@ -125,6 +130,21 @@ test "a column is narrowed to one repo, in board order, those waiting last" {
     try std.testing.expectEqual(@as(usize, 1), b.column(.todo, "arena", &out));
     try std.testing.expectEqual(@as(u32, 2), out[0].id);
     try std.testing.expectEqual(@as(usize, 0), b.column(.done, null, &out));
+}
+
+test "the backlog is its own list: the columns leave it out, and a file without one parses" {
+    const gpa = std.testing.allocator;
+    var b = try Board.parse(gpa,
+        \\{"tickets":[{"id":1,"title":"a","status":"todo"}],"backlog":[{"id":7,"repo":"arena","title":"later","status":"backlog"}]}
+    );
+    defer b.deinit();
+    try std.testing.expectEqual(@as(usize, 1), b.backlog().len);
+    try std.testing.expectEqual(Status.backlog, b.backlog()[0].status);
+    var out: [4]*const Card = undefined;
+    for (statuses) |status| try std.testing.expectEqual(@as(usize, if (status == .todo) 1 else 0), b.column(status, null, &out));
+    var old = try Board.parse(gpa, sample);
+    defer old.deinit();
+    try std.testing.expectEqual(@as(usize, 0), old.backlog().len);
 }
 
 test "the card the pipeline is working on is the one verifying, reviewing or landing" {
