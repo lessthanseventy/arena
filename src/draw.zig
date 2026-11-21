@@ -939,8 +939,9 @@ fn overview(app: *App, w: *Writer, spot: App.Spot) !void {
 }
 
 /// babylon's board in place of the strip: a row naming the repo it is narrowed to and its keys,
-/// then a column a status, each a box of its cards: the ticket's number and title, and under it
-/// what else is so of it, the picked one lit.
+/// then a column a status, each a box of its cards, a card a box of its own: the ticket's number
+/// and title on two rows, a footer of what else is so of it, its left edge its priority, and
+/// the picked one's border lit.
 fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     const ox = app.term_w - app.view_w;
     const cw = app.boardColW();
@@ -976,19 +977,39 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
             try w.print("\x1b[{d};{d}H", .{ y + 1, x + 1 });
             try pen.set(w, edge, null);
             try w.writeAll("│");
-            const k: usize = (y - 2) / 3;
-            const at = first + k;
-            const second = (y - 2) % 3 == 1;
-            if ((y - 2) % 3 == 2 or at >= @min(n, cards.len)) {
+            const slot = App.cardRowAt(y).?;
+            const at = first + slot.k;
+            if (at >= @min(n, cards.len) or inner < 4) {
                 try pen.set(w, .{}, null);
                 try fitted(w, "", inner);
             } else {
                 const card = cards[at];
                 const picked = c == view.col and at == view.row;
-                const text = if (second) cardDetail(app, card, repo == null, &buf) else std.fmt.bufPrint(&buf, "#{d} {s}", .{ card.id, card.title }) catch card.title;
-                try pen.set(w, if (picked) chip(app) else if (second or card.blocked_by.len > 0) dim else .{}, null);
-                try w.writeAll(" ");
-                try fitted(w, text, inner -| 1);
+                const border: vt.Style = if (picked) heading(app) else .{};
+                const left: vt.Style = if (picked) border else if (std.mem.eql(u8, card.priority, "high")) ink(app, "amber", 4) else if (std.mem.eql(u8, card.priority, "low")) dim else border;
+                const ends: [2][]const u8 = switch (slot.part) {
+                    .top => .{ "╭", "╮" },
+                    .bottom => .{ "╰", "╯" },
+                    else => .{ "│", "│" },
+                };
+                try pen.set(w, left, null);
+                try w.writeAll(ends[0]);
+                switch (slot.part) {
+                    .top, .bottom => {
+                        try pen.set(w, border, null);
+                        for (0..inner - 2) |_| try w.writeAll("─");
+                    },
+                    .title, .title_more => {
+                        const title = std.fmt.bufPrint(&buf, "#{d} {s}", .{ card.id, card.title }) catch card.title;
+                        const lines = app_mod.titleLines(title, inner - 3);
+                        try pen.set(w, if (card.blocked_by.len > 0) dim else .{}, null);
+                        try w.writeAll(" ");
+                        try fitted(w, lines[@intFromBool(slot.part == .title_more)], inner - 3);
+                    },
+                    .footer => try cardFooter(app, w, &pen, card, repo == null, inner - 2),
+                }
+                try pen.set(w, border, null);
+                try w.writeAll(ends[1]);
             }
             try pen.set(w, edge, null);
             try w.writeAll("│");
@@ -1189,20 +1210,64 @@ fn boxLine(w: *Writer, pen: *Pen, edge: vt.Style, style: vt.Style, x: u16, y: u1
     try w.writeAll(" │");
 }
 
+/// A card's footer in `width` cells, a space either side: a question waiting on the human, then
+/// where the pipeline has it as a glyph in its colour, then the rest of what is so of it.
+fn cardFooter(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, with_repo: bool, width: usize) !void {
+    var buf: [160]u8 = undefined;
+    var spun: [32]u8 = undefined;
+    const dim = ink(app, "dim", 8);
+    const amber = ink(app, "amber", 4);
+    const eql = std.mem.eql;
+    const stage: struct { vt.Style, []const u8 } = if (card.stage) |s|
+        (if (eql(u8, s, "failed"))
+            .{ ink(app, "emberdim", 1), "✗ sent back" }
+        else if (eql(u8, s, "landed"))
+            .{ amber, "◆ landed" }
+        else if (eql(u8, s, "queued"))
+            .{ ink(app, "violet", 5), "» queued" }
+        else if (eql(u8, s, "verifying") or eql(u8, s, "reviewing"))
+            .{ amber, std.fmt.bufPrint(&spun, "{u} {s}", .{ glyph(app, .working), s }) catch s }
+        else
+            .{ dim, s })
+    else
+        .{ dim, "" };
+    const parts = [_]struct { vt.Style, []const u8 }{
+        .{ amber, if (card.ask != null) "? asks" else "" },
+        stage,
+        .{ dim, cardDetail(app, card, with_repo, &buf) },
+    };
+    var left = width -| 2;
+    try pen.set(w, .{}, null);
+    try w.writeAll(" ");
+    var first = true;
+    for (parts) |part| {
+        if (part[1].len == 0) continue;
+        if (!first) {
+            const sep = clip(" · ", left);
+            try pen.set(w, dim, null);
+            try w.writeAll(sep);
+            left -= cellCount(sep);
+        }
+        first = false;
+        const cut = cellCount(part[1]) > left;
+        const shown = clip(part[1], if (cut) left -| 1 else left);
+        try pen.set(w, part[0], null);
+        try w.writeAll(shown);
+        left -= cellCount(shown);
+        if (cut and left > 0) {
+            try w.writeAll("…");
+            left -= 1;
+        }
+    }
+    try pen.set(w, .{}, null);
+    for (0..left + 1) |_| try w.writeAll(" ");
+}
+
 /// What else is so of a card, joined: its repo when the board shows every one, the Claude
 /// holding it, the tickets it waits on, that it is an epic, a priority not the usual one.
 fn cardDetail(app: *const App, card: *const tickets.Card, with_repo: bool, buf: []u8) []const u8 {
     var out: Writer = .fixed(buf);
     var sep: []const u8 = "";
-    if (card.ask != null) {
-        out.writeAll("? asks") catch {};
-        sep = " · ";
-    }
-    if (card.stage) |stage| {
-        const shown = if (std.mem.eql(u8, stage, "failed")) "✗ sent back" else if (std.mem.eql(u8, stage, "landed")) "◆ landed" else if (std.mem.eql(u8, stage, "queued")) "» queued" else stage;
-        out.print("{s}{s}", .{ sep, shown }) catch {};
-        sep = " · ";
-    }
     if (with_repo) {
         out.print("{s}{s}", .{ sep, card.repo orelse "no repo" }) catch {};
         sep = " · ";

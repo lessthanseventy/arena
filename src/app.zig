@@ -1417,14 +1417,30 @@ pub const App = struct {
         return if (row < @min(n, max_cards)) out[row] else null;
     }
 
-    /// The board's four columns side by side under a row of its own; in each, a card is two
-    /// rows with one between, from the second row inside its border.
+    /// The board's four columns side by side under a row of its own; in each, cards stacked from
+    /// the second row inside its border.
     pub fn boardColW(app: *const App) u16 {
         return app.view_w / @as(u16, @intCast(app.boardCols()));
     }
 
+    /// A card is a box: its top edge, its title on two rows, a footer of what else is so of it,
+    /// and its bottom edge, where the picked card's actions go.
+    pub const CardRow = enum(u3) { top, title, title_more, footer, bottom };
+    pub const card_rows = std.enums.values(CardRow).len;
+
+    /// The screen row card `k` of those shown starts on.
+    pub fn cardTop(k: usize) u16 {
+        return @intCast(2 + card_rows * k);
+    }
+
+    /// Which card of those shown screen row `y` is in, and which of its rows.
+    pub fn cardRowAt(y: u16) ?struct { k: usize, part: CardRow } {
+        if (y < 2) return null;
+        return .{ .k = (y - 2) / card_rows, .part = @fromBackingInt(@intCast((y - 2) % card_rows)) };
+    }
+
     pub fn boardShown(app: *const App) usize {
-        return @max(1, (app.view_h -| 2) / 3);
+        return @max(1, (app.view_h -| 3) / card_rows);
     }
 
     /// The first card column `col` shows: the picked card's column scrolls to keep it in view.
@@ -1436,11 +1452,11 @@ pub const App = struct {
 
     fn boardCardAt(app: *const App, x: u16, y: u16) ?struct { col: usize, row: usize } {
         const ox = app.term_w - app.view_w;
-        if (x < ox or y < 2) return null;
+        if (x < ox or y + 1 >= app.view_h) return null;
+        const at = cardRowAt(y) orelse return null;
         const col: usize = (x - ox) / @max(1, app.boardColW());
-        const k: usize = (y - 2) / 3;
-        if (col >= app.boardCols() or (y - 2) % 3 == 2 or k >= app.boardShown()) return null;
-        const row = app.boardFirst(col) + k;
+        if (col >= app.boardCols() or at.k >= app.boardShown()) return null;
+        const row = app.boardFirst(col) + at.k;
         return if (row < app.boardColumn(col, &.{})) .{ .col = col, .row = row } else null;
     }
 
@@ -1689,7 +1705,7 @@ pub const App = struct {
             n += 1;
         }
         const card = app.boardCard(view.col, view.row) orelse return out[0..n];
-        const y: u16 = @intCast(2 + 3 * (view.row - app.boardFirst(view.col)) + 2);
+        const y = cardTop(view.row - app.boardFirst(view.col)) + @backingInt(CardRow.bottom);
         if (y + 1 >= app.view_h) return out[0..n];
         var have: [8]CardAction = undefined;
         x = ox + @as(u16, @intCast(view.col)) * cw + 2;
@@ -2644,6 +2660,17 @@ pub fn detailWidth(view_w: u16) struct { box: u16, inner: u16 } {
     return .{ .box = box, .inner = box -| 4 };
 }
 
+/// A card's title on two rows of `width`: the first cut at its last space that fits, the second
+/// the rest, for the drawing to cut.
+pub fn titleLines(title: []const u8, width: usize) [2][]const u8 {
+    var it = std.unicode.Utf8View.initUnchecked(title).iterator();
+    var n: usize = 0;
+    while (n < width) : (n += 1) _ = it.nextCodepointSlice() orelse return .{ title, "" };
+    if (it.i == title.len) return .{ title, "" };
+    const cut = if (title[it.i] == ' ') it.i else std.mem.lastIndexOfScalar(u8, title[0..it.i], ' ') orelse it.i;
+    return .{ std.mem.trimEnd(u8, title[0..cut], " "), std.mem.trimStart(u8, title[cut..], " ") };
+}
+
 /// A card's detail as the box shows it: each of its lines cut to `inner` characters and run on
 /// under one another, the space at a cut dropped.
 pub const DetailLines = struct {
@@ -2763,6 +2790,22 @@ test "text to draw loses its escapes and controls, and a byte not UTF-8 is a ?" 
     defer out.deinit(std.testing.allocator);
     try appendClean(&out, std.testing.allocator, "\x1b[31mred\x1b[0m\tok\x07\n\xff é \x1b]0;title\x07end\xe2\x82");
     try std.testing.expectEqualStrings("red ok\n? é end??", out.items);
+}
+
+test "a card's title wraps at a space onto its second row" {
+    const eql = std.testing.expectEqualStrings;
+    const short = titleLines("#3 Lights", 12);
+    try eql("#3 Lights", short[0]);
+    try eql("", short[1]);
+    const long = titleLines("#3 Board cards look like cards", 12);
+    try eql("#3 Board", long[0]);
+    try eql("cards look like cards", long[1]);
+    const at_space = titleLines("#3 Board cards", 8);
+    try eql("#3 Board", at_space[0]);
+    try eql("cards", at_space[1]);
+    const one_word = titleLines("#3Boardcards", 8);
+    try eql("#3Boardc", one_word[0]);
+    try eql("ards", one_word[1]);
 }
 
 test "a card's detail runs its long lines on, cut at the box's width" {
