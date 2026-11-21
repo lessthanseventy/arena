@@ -28,8 +28,8 @@ header names the session's tmux pane, which is what holds a claim. The server's 
 session when to file a ticket and when to claim one.
 
 Its tools are `file_ticket`, `list_tickets`, `get_ticket`, `update_ticket`, `move_ticket`,
-`link_tickets`, `unlink_tickets`, `claim_ticket`, `release_ticket`, `submit_ticket`, `ask_human`,
-`answer_ask` and `inbox`. `bin/babylon` is the same tools from a shell (`babylon` alone for its
+`link_tickets`, `unlink_tickets`, `claim_ticket`, `release_ticket`, `submit_ticket`, `bump_ticket`,
+`ask_human`, `answer_ask` and `inbox`. `bin/babylon` is the same tools from a shell (`babylon` alone for its
 usage), and `babylon new` and `babylon edit N` write a ticket's title, repo and body in `$EDITOR`;
 it needs `curl` and `jq`.
 
