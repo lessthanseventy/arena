@@ -436,7 +436,7 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
         .background => |a| {
             try w.writeAll("   ");
             try pen.set(w, ink(app, "amber", 4), null);
-            try put(w, '◔');
+            try put(w, if (a.win.stirring) glyph(app, .working) else '◔');
             try pen.set(w, dim, null);
             try w.writeAll(" ");
             try fitted(w, a.win.text(.background), inner - 6);

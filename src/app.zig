@@ -178,6 +178,8 @@ pub const Window = struct {
     /// The most pressing state of the Claudes in its panes, the one it had at the list before,
     /// null for a window new to arena, and the pane of the Claude it is marked by.
     claude: Mark = .none,
+    /// A subagent of its did something in the last `stir_s`.
+    stirring: bool = false,
     was: ?Mark = null,
     agent_pane: u32 = 0,
     review: Review = .none,
@@ -799,7 +801,7 @@ pub const App = struct {
 
     /// Whether a Claude is working in any window, its mark spinning.
     pub fn working(app: *const App) bool {
-        for (app.sessions.items) |s| for (s.wins.items) |win| if (win.claude == .working) return true;
+        for (app.sessions.items) |s| for (s.wins.items) |win| if (win.claude == .working or win.stirring) return true;
         return false;
     }
 
@@ -1091,6 +1093,7 @@ pub const App = struct {
                     win.cell_h = @intCast(n[13]);
                     win.claude = .none;
                     win.review = .none;
+                    win.stirring = false;
                     win.alert = @fromBackingInt(@intCast(@min(n[22], @backingInt(Alert.bell))));
                     try win.know(app.gpa, 0, 0, 0, 0, 0, "");
                     // Read once: after that arena's own is the newer, and a list asked for
@@ -1108,7 +1111,9 @@ pub const App = struct {
                 pane.y = @intCast(n[6]);
                 const said: Mark = @fromBackingInt(@intCast(@min(n[11], @backingInt(Mark.waiting))));
                 // between turns with a subagent of its at work is working: only a shell left running is not
-                const claude: Mark = if (said == .background and n[21] != 0 and app.epoch - n[21] < stir_s) .working else said;
+                const stirring = n[21] != 0 and app.epoch - n[21] < stir_s;
+                if (stirring) win.stirring = true;
+                const claude: Mark = if (said == .background and stirring) .working else said;
                 const agent = n[16] != 0 or claude != .none;
                 if (agent and (!win.agent() or @backingInt(claude) > @backingInt(win.claude))) {
                     try win.know(app.gpa, n[16], n[17], n[18], n[19], n[20], info);

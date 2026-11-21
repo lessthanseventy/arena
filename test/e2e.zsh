@@ -517,6 +517,7 @@ claude alpha:one tool '{"agent_id": "a1", "agent_type": "Explore", "tool_name": 
 check "a subagent's tool leaves the session as it was" [ "$(opt doing)" = '' -a "$(inner show -pqv -t alpha:one @arena_claude)" = background ]
 check "and what runs as it was" is_opt background '1 agent, 1 shell: Explore the rail · sleep 9'
 check "but with its agent at work it is drawn working" see '│ ◐ Named By Hand '
+check "and what runs in the background with it" see '│   ◐ 1 agent, 1 shell: Explore t… │'
 claude alpha:one prompt '{"prompt": "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>"}'
 check "a shell's notice that it finished takes it off" is_opt background '1 agent: Explore the rail'
 check "and is not taken for a prompt" is_opt prompt 'p'
