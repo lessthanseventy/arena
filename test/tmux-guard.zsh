@@ -24,6 +24,7 @@ check "with -S too" let_by 'tmux -S /tmp/probe.sock kill-server'
 check "one of two that names none is still refused" refused 'tmux -L probe kill-server; tmux kill-server'
 check "other tmux commands are let by" let_by 'tmux list-sessions; tmux kill-window -t t1'
 check "so is the word in prose" let_by 'git commit -m "refuse a tmux kill-server that names no socket"'
+check "but not where it opens a quote, as a shell's own command does" refused 'echo "tmux kill-server"'
 check "and a call that is not tmux" let_by 'ls'
 
 exit $fails
