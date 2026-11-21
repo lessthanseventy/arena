@@ -74,6 +74,8 @@ defmodule Babylon.Panes do
   @spec mark_named(String.t(), String.t()) :: :ok
   def mark_named(pane, name) do
     System.cmd("tmux", ["set", "-p", "-t", pane, "@babylon_named", name], stderr_to_stdout: true)
+    # the rail's title, which arena's hook would read only once the turn ends
+    System.cmd("tmux", ["set", "-p", "-t", pane, "@arena_claude_title", name], stderr_to_stdout: true)
     :ok
   rescue
     ErlangError -> :ok
@@ -94,18 +96,44 @@ defmodule Babylon.Panes do
   Type `text` into `pane` as one line and submit it, as if its human had: an idle Claude takes it
   as its next turn, a busy one queues it.
   """
-  @spec tell(String.t(), String.t()) :: :ok | {:error, String.t()}
+  @spec tell(String.t(), String.t()) :: :ok | :typing | {:error, String.t()}
   def tell(pane, text) do
     line = String.replace(text, ~r/\s*\n\s*/, " ")
 
-    with {_, 0} <- System.cmd("tmux", ["send-keys", "-t", pane, "-l", line], stderr_to_stdout: true),
+    with :empty <- box(pane),
+         {_, 0} <- System.cmd("tmux", ["send-keys", "-t", pane, "-l", line], stderr_to_stdout: true),
          {_, 0} <- System.cmd("tmux", ["send-keys", "-t", pane, "Enter"], stderr_to_stdout: true) do
       submitted(pane, line, 4)
     else
+      :typing -> :typing
       {out, _} -> {:error, "tmux would not type into #{pane}: #{String.trim(out)}"}
     end
   rescue
     ErlangError -> {:error, "there is no tmux to type into #{pane}"}
+  end
+
+  @doc """
+  Whether the input box of the Claude drawn in `screen` (with its escapes, as `capture-pane -e`
+  gives it) holds text typed there: the plain text after its last `❯`, a suggestion drawn dim or
+  grey not counted.
+  """
+  @spec typed?(String.t()) :: boolean()
+  def typed?(screen) do
+    case screen |> String.split("\n") |> Enum.filter(&String.contains?(&1, "❯")) |> List.last() do
+      nil ->
+        false
+
+      line ->
+        [_, after_prompt] = String.split(line, "❯", parts: 2)
+
+        ~r/\e\[([0-9;]*)m/
+        |> Regex.split(after_prompt, include_captures: true)
+        |> Enum.reduce({false, ""}, &plain/2)
+        |> elem(1)
+        |> String.replace(" ", " ")
+        |> String.trim()
+        |> Kernel.!=("")
+    end
   end
 
   @doc """
@@ -154,4 +182,23 @@ defmodule Babylon.Panes do
       _ -> nil
     end
   end
+
+  # its human may be typing in it: nothing is typed over that
+  defp box(pane) do
+    case System.cmd("tmux", ["capture-pane", "-ep", "-t", pane], stderr_to_stdout: true) do
+      {screen, 0} -> if typed?(screen), do: :typing, else: :empty
+      _ -> :empty
+    end
+  end
+
+  defp plain("\e[" <> sgr, {_faint, kept}) do
+    params = sgr |> String.trim_trailing("m") |> String.split(";")
+    {faint?(params), kept}
+  end
+
+  defp plain(text, {true, kept}), do: {true, kept <> String.duplicate(" ", String.length(text))}
+  defp plain(text, {false, kept}), do: {false, kept <> text}
+
+  defp faint?(["38", "5", n | _]), do: String.to_integer(n) == 8 or String.to_integer(n) in 232..250
+  defp faint?(params), do: "2" in params or "90" in params
 end

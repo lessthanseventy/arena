@@ -62,6 +62,9 @@ defmodule Babylon.Inbox do
         Repo.update_all(them, set: [nudged_at: now()])
         true
 
+      :typing ->
+        false
+
       {:error, _} ->
         Repo.update_all(them, inc: [nudges: 1])
         false

@@ -22,6 +22,15 @@ defmodule Babylon.PanesTest do
     assert Panes.pending?(screen, "babylon: #32 landed on main as d9a7b5e")
   end
 
+  test "text typed in the box is its human's, an empty box or a suggestion drawn grey is not" do
+    rule = "\e[2m─────\e[0m\n"
+    assert Panes.typed?(rule <> "\e[39m❯ typed by me\n" <> rule)
+    refute Panes.typed?(rule <> "\e[39m❯ \n" <> rule)
+    refute Panes.typed?(rule <> "\e[39m❯ \e[2mreply with the word ok\e[0m\n" <> rule)
+    refute Panes.typed?(rule <> "\e[39m❯ \e[38;5;245mtry fixing the tests\e[39m\n" <> rule)
+    refute Panes.typed?("no prompt here")
+  end
+
   test "a line submitted, shown above an empty box, is not" do
     screen = """
     ❯ babylon: #33 landed on main as d9a7b5e; arena's checkout is on it, its install
@@ -42,7 +51,8 @@ defmodule Babylon.PanesTest do
     echo "$*" >> #{dir}/calls
     case "$1" in
       capture-pane)
-        n=$(grep -c '^capture-pane' #{dir}/calls)
+        [ "$2" = -ep ] && { cat #{dir}/typing 2>/dev/null || cat #{dir}/clear; exit 0; }
+        n=$(grep -c '^capture-pane -p' #{dir}/calls)
         if [ "$n" -le #{stuck} ]; then cat #{dir}/stuck; else cat #{dir}/clear; fi ;;
     esac
     """)
@@ -64,6 +74,14 @@ defmodule Babylon.PanesTest do
     fake_tmux(dir, 2)
     assert Panes.tell("%1", @line) == :ok
     assert enters(dir) == 3
+  end
+
+  @tag :tmp_dir
+  test "nothing is typed over what its human is typing", %{tmp_dir: dir} do
+    fake_tmux(dir, 0)
+    File.write!(Path.join(dir, "typing"), "\e[39m❯ half a thought\n────\n")
+    assert Panes.tell("%1", @line) == :typing
+    refute File.read!(Path.join(dir, "calls")) =~ "send-keys"
   end
 
   @tag :tmp_dir
