@@ -231,7 +231,7 @@ defmodule Babylon.PipelineTest do
       fixer = ["sh", "-c", "cat >/dev/null; echo three > b; echo 'FIXED: b:1 two is three'; echo 'VERDICT: fix'"]
       gated(tmp, ["sh", "-c", "echo ran >> ../gates"], fixer)
 
-      assert {:landed, sha, "b:1 two is three"} = Run.run(ticket, fn _ -> :ok end)
+      assert {:landed, sha, [fixed: "b:1 two is three"]} = Run.run(ticket, fn _ -> :ok end)
       assert sh(origin, "git rev-parse main") == sha
       assert sh(origin, "git show main:b") == "three"
       assert sh(origin, "git log -1 --format=%B main") == "Review fixes for #1\n\n- b:1 two is three"
@@ -258,15 +258,12 @@ defmodule Babylon.PipelineTest do
 
       gated(tmp, ["sh", "-c", "exit 0"], later)
 
-      assert {:landed, sha, "follow-up #" <> filed} = Run.run(ticket, fn _ -> :ok end)
+      assert {:landed, sha, [followup: "Test the empty case — b:1 has no test for empty"]} =
+               Run.run(ticket, fn _ -> :ok end)
+
       assert sh(origin, "git rev-parse main") == sha
       assert sh(origin, "git show main:b") == "two"
-      [id, "Test the empty case"] = String.split(filed, " ", parts: 2)
-
-      assert %Ticket{repo: "app", labels: ["follow-up"], body: "Found by babylon's review of #1" <> body} =
-               Repo.get!(Ticket, String.to_integer(id))
-
-      assert body =~ "b:1 has no test for empty"
+      assert Repo.all(Ticket) == []
     end
 
     test "sends back fixes too big to be one, with the review's findings", %{tmp_dir: tmp, ticket: ticket} do
@@ -364,12 +361,25 @@ defmodule Babylon.PipelineTest do
       assert File.read!(shown) == "##{held.id} landed on main: Work\n"
     end
 
+    test "landed with follow-ups, each is filed then as a ticket of its own, and named", %{held: held} do
+      notes = [followup: "Test the empty case — b:1 has no test for empty", followup: " — no title"]
+      done = Pipeline.finish(held.id, {:landed, "abc", notes}, MapSet.new([@nobody]), "")
+
+      assert [filed] = Ticket |> Repo.all() |> Enum.filter(&("follow-up" in &1.labels))
+      assert %Ticket{repo: "app", title: "Test the empty case", body: "Found by babylon's review of #" <> body} = filed
+      assert body =~ "b:1 has no test for empty"
+
+      assert done.stage_note ==
+               "landed on main as abc; follow-ups filed: ##{filed.id} Test the empty case; " <>
+                 "not filed, as written:  — no title"
+    end
+
     test "landed with the review's fixes, it says which", %{held: held} do
       assert %Ticket{
                status: "done",
-               stage_note: "landed on main as abc, with the review's fixes or follow-ups: b:1 typo"
+               stage_note: "landed on main as abc, with the review's fixes: b:1 typo"
              } =
-               Pipeline.finish(held.id, {:landed, "abc", "b:1 typo"}, MapSet.new([@nobody]))
+               Pipeline.finish(held.id, {:landed, "abc", [fixed: "b:1 typo"]}, MapSet.new([@nobody]), "")
     end
 
     test "next is the first submitted in a repo not already running one" do

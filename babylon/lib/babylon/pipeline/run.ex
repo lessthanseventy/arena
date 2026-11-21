@@ -32,7 +32,7 @@ defmodule Babylon.Pipeline.Run do
          :ok <- regate(dir, ticket, fixed),
          :ok <- stage.("landing"),
          {:landed, sha} <- land(dir, ticket, 3) do
-      with_fixes({:landed, sha}, fixed ++ followed)
+      with_fixes({:landed, sha}, notes(fixed, followed))
     end
   end
 
@@ -123,7 +123,7 @@ defmodule Babylon.Pipeline.Run do
       with :ok <- onto_main(dir, ticket),
            :ok <- ahead(dir),
            {:ok, fixed, followed} <- review(dir, ticket) do
-        {:ok, {rev(dir, "origin/main"), rev(dir, "HEAD")}, fixed ++ followed}
+        {:ok, {rev(dir, "origin/main"), rev(dir, "HEAD")}, notes(fixed, followed)}
       end
 
     {ticket, result}
@@ -233,8 +233,11 @@ defmodule Babylon.Pipeline.Run do
     end
   end
 
-  defp with_fixes({:landed, sha}, [_ | _] = fixed), do: {:landed, sha, Enum.join(fixed, "; ")}
-  defp with_fixes(outcome, _fixed), do: outcome
+  defp with_fixes({:landed, sha}, [_ | _] = notes), do: {:landed, sha, notes}
+  defp with_fixes(outcome, _notes), do: outcome
+
+  # follow-ups go with the outcome, to be filed once it has landed
+  defp notes(fixed, followed), do: Enum.map(fixed, &{:fixed, &1}) ++ Enum.map(followed, &{:followup, &1})
 
   # one worktree a repo, kept between runs so its builds and deps stay warm
   defp checkout(repo, dir, branch) do
@@ -593,28 +596,14 @@ defmodule Babylon.Pipeline.Run do
     {:failed, "the review said follow-ups but named no FOLLOWUP line; its findings:\n" <> String.trim(out)}
   end
 
-  defp kept({:followups, found}, dir, ticket, _out) do
+  defp kept({:followups, found}, dir, _ticket, _out) do
     discard(dir)
-    {:ok, [], Enum.map(found, &follow_up(ticket, &1))}
+    {:ok, [], found}
   end
 
   defp kept(verdict, dir, _ticket, _out) do
     discard(dir)
     verdict
-  end
-
-  defp follow_up(ticket, line) do
-    [title | what] = String.split(line, ~r/\s+—\s+/, parts: 2)
-
-    {:ok, filed} =
-      Babylon.Tickets.file(%{
-        title: title,
-        repo: ticket.repo,
-        labels: ["follow-up"],
-        body: "Found by babylon's review of ##{ticket.id}, which landed without it. #{Enum.join(what)}"
-      })
-
-    "follow-up ##{filed.id} #{title}"
   end
 
   # a lone ticket was gated before its review: the review's fixes are gated again

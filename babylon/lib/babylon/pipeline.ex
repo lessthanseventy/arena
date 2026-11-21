@@ -21,7 +21,8 @@ defmodule Babylon.Pipeline do
 
   @running ~w(verifying reviewing landing)
 
-  @type outcome :: {:landed, String.t()} | {:landed, String.t(), String.t()} | {:failed, String.t()}
+  @type note :: {:fixed, String.t()} | {:followup, String.t()}
+  @type outcome :: {:landed, String.t()} | {:landed, String.t(), [note()]} | {:failed, String.t()}
 
   @doc false
   def start_link(_opts), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -60,10 +61,9 @@ defmodule Babylon.Pipeline do
   """
   @spec finish(pos_integer(), outcome(), Babylon.Claims.panes(), String.t() | nil) :: Ticket.t()
   def finish(id, outcome, panes, installed \\ nil)
-  def finish(id, {:landed, sha}, _panes, installed), do: landed(id, sha, "", installed)
+  def finish(id, {:landed, sha}, _panes, installed), do: landed(id, sha, [], installed)
 
-  def finish(id, {:landed, sha, fixed}, _panes, installed),
-    do: landed(id, sha, ", with the review's fixes or follow-ups: #{fixed}", installed)
+  def finish(id, {:landed, sha, notes}, _panes, installed), do: landed(id, sha, notes, installed)
 
   def finish(id, {:failed, why}, panes, _installed) do
     ticket = Repo.get!(Ticket, id)
@@ -175,8 +175,9 @@ defmodule Babylon.Pipeline do
     {:ok, queued}
   end
 
-  defp landed(id, sha, fixed, installed) do
+  defp landed(id, sha, notes, installed) do
     {:ok, ticket} = Tickets.update(Repo.get!(Ticket, id), %{status: "done"})
+    fixed = said(ticket, notes)
     note = "landed on main as #{sha}#{fixed}"
     done = ticket |> Ecto.Changeset.change(stage: "landed", stage_note: note) |> Repo.update!()
     short = String.slice(sha, 0, 7)
@@ -206,6 +207,29 @@ defmodule Babylon.Pipeline do
     |> Repo.all()
     |> Enum.filter(&(Run.tidy(&1.repo, &1.branch, paths) == :removed))
     |> Enum.map(& &1.branch)
+  end
+
+  defp said(ticket, notes) do
+    fixed = for {:fixed, line} <- notes, do: line
+    followed = for {:followup, line} <- notes, do: follow_up(ticket, line)
+    part(", with the review's fixes: ", fixed) <> part("; follow-ups filed: ", followed)
+  end
+
+  defp part(_lead, []), do: ""
+  defp part(lead, items), do: lead <> Enum.join(items, "; ")
+
+  defp follow_up(ticket, line) do
+    [title | what] = String.split(line, ~r/\s+—\s+/, parts: 2)
+
+    case Tickets.file(%{
+           title: title,
+           repo: ticket.repo,
+           labels: ["follow-up"],
+           body: "Found by babylon's review of ##{ticket.id}, which landed without it. #{Enum.join(what)}"
+         }) do
+      {:ok, filed} -> "##{filed.id} #{title}"
+      {:error, _} -> "not filed, as written: #{line}"
+    end
   end
 
   defp install(repo) do
