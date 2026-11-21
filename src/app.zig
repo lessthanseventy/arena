@@ -1767,13 +1767,15 @@ pub const App = struct {
 
     /// The actions `card` has: go while a Claude holds it, answer while it asks, close while still to
     /// do and reopen once done, to todo while in the backlog, and edit and priority always, and
-    /// moving it along its column but in the backlog.
+    /// moving it along its column but in the backlog or with no repo, babylon having no move
+    /// among the cards of none alone.
     pub fn cardActions(card: *const tickets.Card, out: *[8]CardAction) []CardAction {
         var n: usize = 0;
+        const movable = card.status != .backlog and card.repo != null;
         const all = [_]struct { CardAction, bool }{
             .{ .go, card.holder() != null or startable(card) }, .{ .answer, card.ask != null },    .{ .edit, true },
             .{ .priority, true },                               .{ .close, card.status == .todo }, .{ .reopen, card.status == .done },
-            .{ .to_todo, card.status == .backlog },             .{ .up, card.status != .backlog }, .{ .down, card.status != .backlog },
+            .{ .to_todo, card.status == .backlog },             .{ .up, movable },                 .{ .down, movable },
         };
         for (all) |pair| if (pair[1]) {
             out[n] = pair[0];
@@ -3004,6 +3006,18 @@ test "the every view's lanes: their lines, the pick stepping across them, and th
     try eq(@as(?u32, 4), picked(&app));
     try app.boardKey("j");
     try eq(@as(?u32, 4), picked(&app));
+}
+
+test "a card moves along its column only with a repo, out of the backlog" {
+    var have: [8]App.CardAction = undefined;
+    const has = struct {
+        fn up(card: tickets.Card, out: *[8]App.CardAction) bool {
+            return std.mem.indexOfScalar(App.CardAction, App.cardActions(&card, out), .up) != null;
+        }
+    }.up;
+    try std.testing.expect(has(.{ .id = 1, .repo = "arena", .title = "a", .status = .todo }, &have));
+    try std.testing.expect(!has(.{ .id = 2, .title = "b", .status = .todo }, &have));
+    try std.testing.expect(!has(.{ .id = 3, .repo = "arena", .title = "c", .status = .backlog }, &have));
 }
 
 test "a card's title wraps at a space onto its second row" {
