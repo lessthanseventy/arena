@@ -22,6 +22,8 @@ check() {
 fake '[{"text":"#4 landed"},{"text":"#5 sent back"}]'
 check "after a tool call, held messages are context for the turn" \
   test "$(hook tool | jq -r .hookSpecificOutput.additionalContext)" = $'babylon: #4 landed\nbabylon: #5 sent back'
+check "and the human sees them in the conversation too" \
+  test "$(hook tool | jq -r .systemMessage)" = $'babylon: #4 landed\nbabylon: #5 sent back'
 check "at a stop, they keep it going" test "$(hook stop | jq -r '.decision + " " + .reason')" = $'block babylon: #4 landed\nbabylon: #5 sent back'
 check "another pane's are not its" test -z "$(hook tool '{}' %8)"
 check "a subagent's tool call takes none: they wait for the session" test -z "$(hook tool '{"agent_id":"a1"}')"

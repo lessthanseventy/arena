@@ -9,7 +9,7 @@ cli="${CLAUDE_PLUGIN_ROOT:-$(dirname "$0")/..}/babylon/bin/babylon"
 msgs=$("$cli" call inbox '{}' 2>/dev/null | jq -r '.[] | "babylon: " + .text' 2>/dev/null)
 [ -n "$msgs" ] || exit 0
 case "$1" in
-tool) jq -nc --arg m "$msgs" '{hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $m}}' ;;
-stop) jq -nc --arg m "$msgs" '{decision: "block", reason: $m}' ;;
+tool) jq -nc --arg m "$msgs" '{systemMessage: $m, hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $m}}' ;;
+stop) jq -nc --arg m "$msgs" '{systemMessage: $m, decision: "block", reason: $m}' ;;
 esac
 exit 0
