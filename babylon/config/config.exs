@@ -10,6 +10,12 @@ config :babylon, notify: ~w(notify-send -a babylon --)
 config :babylon, :pipeline,
   gates: 2,
   train: 4,
+  unstarted: [
+    "Unchecked dependencies",
+    ": command not found",
+    "is not trusted",
+    "could not compile dependency"
+  ],
   gate: ~w(mise run check),
   gate_timeout: 1800,
   reviewer: [

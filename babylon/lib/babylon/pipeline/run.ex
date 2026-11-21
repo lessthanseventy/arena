@@ -387,11 +387,27 @@ defmodule Babylon.Pipeline.Run do
     log = Path.join([Path.dirname(conf(:work)), "logs", "#{ticket.repo}-t#{ticket.id}.log"])
     {out, code} = in_window(dir, ticket, log)
 
-    case code do
-      0 -> :ok
-      124 -> {:failed, "the gate ran past #{minutes} minutes; its output is in #{log}"}
-      _ -> {:failed, "the gate is red (exit #{code}); its whole output is in #{log}\n" <> failing(out)}
+    case {code, unstarted(out)} do
+      {0, _} ->
+        :ok
+
+      {124, _} ->
+        {:failed, "the gate ran past #{minutes} minutes; its output is in #{log}"}
+
+      {_, nil} ->
+        {:failed, "the gate is red (exit #{code}); its whole output is in #{log}\n" <> failing(out)}
+
+      {_, line} ->
+        {:failed,
+         "the gate could not start in babylon's worktree, before it reached this change: " <>
+           "#{String.trim(line)}. That is the repo's setup to fix (see babylon's README, Join it), " <>
+           "not this ticket's; its whole output is in #{log}"}
     end
+  end
+
+  # a line saying the gate's tools or deps were missing, not that the change failed
+  defp unstarted(out) do
+    Enum.find(String.split(out, "\n"), &String.contains?(&1, conf(:unstarted)))
   end
 
   # The gate runs in a window of babylon's own tmux session, to be watched as it goes and read after;

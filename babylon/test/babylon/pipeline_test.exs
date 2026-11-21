@@ -143,6 +143,15 @@ defmodule Babylon.PipelineTest do
       assert sh(origin, "git log --format=%s main") == "two\nthree\none"
     end
 
+    test "a gate that never reached the change says so, as the repo's setup to fix", %{tmp_dir: tmp, ticket: ticket} do
+      gated(tmp, ["sh", "-c", "echo 'Unchecked dependencies for environment dev:'; exit 1"], @approve)
+
+      assert {:failed, "the gate could not start in babylon's worktree, before it reached this change: " <> why} =
+               Run.run(ticket, fn _ -> :ok end)
+
+      assert why =~ "Unchecked dependencies for environment dev:. That is the repo's setup to fix"
+    end
+
     test "stops on a red gate, with its output, and lands nothing", %{tmp_dir: tmp, origin: origin, ticket: ticket} do
       before = sh(origin, "git rev-parse main")
       gated(tmp, ["sh", "-c", "echo boom; exit 3"], @approve)
