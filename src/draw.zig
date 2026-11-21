@@ -980,9 +980,12 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
 
     try w.print("\x1b[1;{d}H", .{ox + 1});
     try pen.set(w, heading(app), null);
+    const header = app.boardTitle(&buf);
     try w.writeAll(App.board_title);
+    try pen.set(w, autoOn(app), null);
+    try w.writeAll(header[@min(header.len, App.board_title.len)..]);
     try pen.set(w, .{}, null);
-    try fitted(w, "", app.boardW() -| cellCount(App.board_title));
+    try fitted(w, "", app.boardW() -| cellCount(header));
 
     const lanes = app.boardLanes();
     if (lanes) try laneNames(app, w, &pen);

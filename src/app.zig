@@ -2145,18 +2145,23 @@ pub const App = struct {
 
     pub const board_title = " board ";
 
-    /// The board's buttons: the repos as tabs and the gate and auto's switch beside them on its first row, a + on
-    /// the to-do column's top edge, and the picked card's actions on its bottom edge, or in the
-    /// every view its column's, each kept to the room it has.
-    pub fn boardButtons(app: *const App, out: []Button) []Button {
-        const view = app.board_view orelse return out[0..0];
-        const ox = app.boardX();
-        const cw = app.boardColW();
+    /// The board's header title: auto's state after its name while auto is on, unless a
+    /// button of its row would have no room beside it.
+    pub fn boardTitle(app: *const App, buf: []u8) []const u8 {
+        const state = app.auto() orelse return board_title;
+        const long = std.fmt.bufPrint(buf, " board auto {d}/{d} ", .{ state.working, state.cap }) catch return board_title;
+        var row: [max_repos + 5]Button = undefined;
+        return if (app.tabRow(&row, cellCount(long)) < app.tabRow(&row, cellCount(board_title))) board_title else long;
+    }
+
+    /// The buttons of the board's first row, after a title `title_w` cells wide: how many fit.
+    fn tabRow(app: *const App, out: []Button, title_w: usize) usize {
         var n: usize = 0;
         var buf: [64]u8 = undefined;
         var repos: [max_repos][]const u8 = undefined;
         const count = if (app.board) |*b| b.repos(&repos) else 0;
-        var x: u16 = ox + @as(u16, @intCast(cellCount(board_title))) + 1;
+        const ox = app.boardX();
+        var x: u16 = ox + @as(u16, @intCast(title_w)) + 1;
         const right = ox + app.boardW();
         for (0..count + 5) |i| {
             const what: @FieldType(Button, "what") = if (i <= count) .{ .repo = i } else if (i == count + 1) .backlog else if (i == count + 2) .gate else if (i == count + 3) .orchestrator else .auto;
@@ -2168,6 +2173,17 @@ pub const App = struct {
             n += 1;
             x += w + 1;
         }
+        return n;
+    }
+
+    /// The board's buttons: the repos as tabs and the gate and auto's switch beside them on its first row, a + on
+    /// the to-do column's top edge, and the picked card's actions on its bottom edge, or in the
+    /// every view its column's, each kept to the room it has.
+    pub fn boardButtons(app: *const App, out: []Button) []Button {
+        const view = app.board_view orelse return out[0..0];
+        const cw = app.boardColW();
+        var buf: [64]u8 = undefined;
+        var n = app.tabRow(out, cellCount(app.boardTitle(&buf)));
         if (cw >= 12 and n < out.len) {
             out[n] = .{ .what = .new, .x = app.boardColX(0) + cw - 4, .y = 1, .w = 3 };
             n += 1;
@@ -2177,7 +2193,7 @@ pub const App = struct {
         const y = if (app.boardLanes()) app.view_h -| 1 else cardTop(view.row - app.boardFirst(view.col)) + @backingInt(CardRow.bottom);
         if (!app.boardLanes() and y + 1 >= app.view_h) return out[0..n];
         var have: [8]CardAction = undefined;
-        x = app.boardColX(view.col) + 2;
+        var x: u16 = app.boardColX(view.col) + 2;
         const edge = app.boardColX(view.col) + cw -| 2;
         for (cardActions(card, &have)) |action| {
             const w: u16 = @intCast(cellCount(app.buttonLabel(.{ .card = action }, &buf)));

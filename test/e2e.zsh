@@ -842,8 +842,9 @@ key A
 check "A turns babylon's auto mode on" await last 'auto on'
 cp $tmp/run/babylon/board.json $tmp/board.noauto
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":2,"working":1}}' >$tmp/run/babylon/board.json
-check "on, the switch beside the tabs says how many work of the cap" see ' backlog .* auto 1/2 '
+check "on, the switch beside the tabs says how many work of the cap" see ' backlog .* auto 1/2( |$)'
 check "and so does the board's row atop the rail" see '^│ ▤ board auto 1/2 '
+check "and the board's own header, after its name" see ' board auto 1/2   every '
 key A
 check "and A turns it off" await last 'auto off'
 cp $tmp/board.noauto $tmp/run/babylon/board.json
@@ -1063,6 +1064,14 @@ tab_dim() { [[ $(tabline) == *$'\e[38;5;8m '$1' '* ]] }
 tab_lit() { ! tab_dim $1 }
 check "and its tab is dim" tab_dim menard
 check "where one with work is not" tab_lit arena
+cp $tmp/run/babylon/board.json $tmp/board.lanes
+print -r -- "${$(<$tmp/board.lanes)%\}}"',"auto":{"on":true,"cap":2,"working":1}}' >$tmp/run/babylon/board.json
+check "with room, the header says auto beside every button" see ' board auto 1/2   every .* gate .* auto 1/2( |$)'
+outer resize-window -t o -x 113
+check "a header with no room for auto beside every button leaves it to the switch" see ' board   every .* auto 1/2( |$)'
+outer resize-window -t o -x 121
+cp $tmp/board.lanes $tmp/run/babylon/board.json
+check "and off, it is gone again" gone 'auto [0-9]'
 check "not the rest" gone 'Done 22'
 key r
 check "and so in one repo's view" see '│ 2 more +│'

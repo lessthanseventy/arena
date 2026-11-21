@@ -56,7 +56,7 @@ always did; arena draws them and leaves them running when it quits.
   runs one, and `?` shows every key. The `orch` button, as `o`, goes to the orchestrator: lit
   while it runs, dim while it does not, and `orch off` while babylon does not keep it running. `A`, or the `auto` button beside the tabs, turns babylon's
   auto mode on and off: while it is on, babylon starts a Claude on each free todo card, up to its
-  cap of Claudes working, and the button and the board's row atop the rail say `auto 1/2`, one
+  cap of Claudes working, and the button, the board's header and its row atop the rail say `auto 1/2`, one
   working of a cap of two. A `+` on the to-do column files a ticket, and the picked card
   shows what can be done to it as chips under it, each run by a click. Enter, or a second click,
   on a card goes to the Claude holding it. `n` files a ticket and `e` edits the picked one, its
