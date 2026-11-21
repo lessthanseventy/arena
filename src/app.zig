@@ -1767,11 +1767,11 @@ pub const App = struct {
 
     /// The actions `card` has: go while a Claude holds it, answer while it asks, close while still to
     /// do and reopen once done, to todo while in the backlog, and edit and priority always, and
-    /// moving it along its column but in the backlog or with no repo, babylon having no move
-    /// among the cards of none alone.
+    /// moving it along its column but in the backlog or without a repo the move can be narrowed
+    /// to, babylon having no move among the cards of none alone.
     pub fn cardActions(card: *const tickets.Card, out: *[8]CardAction) []CardAction {
         var n: usize = 0;
-        const movable = card.status != .backlog and card.repo != null;
+        const movable = card.status != .backlog and plainName(card.repo orelse "");
         const all = [_]struct { CardAction, bool }{
             .{ .go, card.holder() != null or startable(card) }, .{ .answer, card.ask != null },    .{ .edit, true },
             .{ .priority, true },                               .{ .close, card.status == .todo }, .{ .reopen, card.status == .done },
@@ -1807,6 +1807,8 @@ pub const App = struct {
             .close => try app.send(.ignore, "run-shell -b \"babylon update {d} --status done\"", .{card.id}),
             .reopen, .to_todo => try app.send(.ignore, "run-shell -b \"babylon update {d} --status todo\"", .{card.id}),
             .up, .down => {
+                // a move babylon could not be narrowed to the repo shown would order every repo's cards
+                if (app.pickRepo() != null and narrowed.len == 0) return;
                 const down = action == .down;
                 try app.send(.ignore, "run-shell -b \"babylon move {d} {s}{s}\"", .{ card.id, if (down) "down" else "up", narrowed });
                 view.row = if (down) @min(view.row + 1, app.boardColumn(view.col, &.{}) -| 1) else view.row -| 1;
@@ -3017,6 +3019,7 @@ test "a card moves along its column only with a repo, out of the backlog" {
     }.up;
     try std.testing.expect(has(.{ .id = 1, .repo = "arena", .title = "a", .status = .todo }, &have));
     try std.testing.expect(!has(.{ .id = 2, .title = "b", .status = .todo }, &have));
+    try std.testing.expect(!has(.{ .id = 4, .repo = "two words", .title = "d", .status = .todo }, &have));
     try std.testing.expect(!has(.{ .id = 3, .repo = "arena", .title = "c", .status = .backlog }, &have));
 }
 
