@@ -11,7 +11,8 @@ fake() {
   chmod +x $tmp/babylon
 }
 
-hook() { print -r -- ${2:-'{}'} | BABYLON_CLI=$tmp/babylon TMUX_PANE=${3:-%7} sh $root/hooks/babylon-inbox.sh $1 }
+server=${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/default
+hook() { print -r -- ${2:-'{}'} | BABYLON_CLI=$tmp/babylon TMUX=${4:-$server},1,0 TMUX_PANE=${3:-%7} sh $root/hooks/babylon-inbox.sh $1 }
 
 check() {
   local name=$1; shift
@@ -25,6 +26,7 @@ check "and the human sees them in the conversation too" \
   test "$(hook tool | jq -r .systemMessage)" = $'babylon: #4 landed\nbabylon: #5 sent back'
 check "at a stop, they keep it going" test "$(hook stop | jq -r '.decision + " " + .reason')" = $'block babylon: #4 landed\nbabylon: #5 sent back'
 check "another pane's are not its" test -z "$(hook tool '{}' %8)"
+check "nor the same pane id's on another tmux server" test -z "$(hook tool '{}' %7 ${server:h}/tlon-workspace-1)"
 check "a subagent's tool call takes none: they wait for the session" test -z "$(hook tool '{"agent_id":"a1"}')"
 
 fake '[]'
