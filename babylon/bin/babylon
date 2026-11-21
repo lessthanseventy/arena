@@ -21,6 +21,7 @@ usage: babylon file TITLE [--repo R] [--body B] [--priority low|med|high] [--epi
        babylon move N up|down [--repo R]
        babylon link FROM blocks|relates|duplicates|parent TO
        babylon unlink FROM KIND TO
+       babylon orchestrator             (start the orchestrator's tmux session, if it is not running)
        babylon call TOOL JSON
 A ticket's repo defaults to the git repository you are in. A claim is held by this tmux pane.
 USAGE
@@ -168,5 +169,15 @@ case $command in
     call "${command}_tickets" "{\"from\": $1, \"kind\": \"$2\", \"to\": $3}" | jq -c .
     ;;
   call) (($# == 2)) || usage; call "$1" "$2" ;;
+  orchestrator)
+    if tmux has-session -t =orchestrator 2>/dev/null; then
+      echo "orchestrator: running"
+    else
+      tmux new-session -d -s orchestrator -c "$HOME/projects" claude -n orchestrator --model claude-opus-5-5 \
+        --append-system-prompt "$(cat "$(dirname "$(readlink -f "$0")")/../orchestrator.md")" \
+        "Read the board and every session with /brief, then say what is stuck and what should start next."
+      echo "orchestrator: started"
+    fi
+    ;;
   *) usage ;;
 esac
