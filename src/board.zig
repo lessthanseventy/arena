@@ -37,7 +37,10 @@ pub const Card = struct {
     }
 };
 
-const File = struct { tickets: []const Card, backlog: []const Card = &.{} };
+/// babylon's auto mode: while on, it starts a Claude on each free todo card until `cap` are working.
+pub const Auto = struct { on: bool = false, cap: u32 = 0, working: u32 = 0 };
+
+const File = struct { tickets: []const Card, backlog: []const Card = &.{}, auto: ?Auto = null };
 
 pub const Board = struct {
     parsed: std.json.Parsed(File),
@@ -52,6 +55,12 @@ pub const Board = struct {
 
     pub fn cards(b: *const Board) []const Card {
         return b.parsed.value.tickets;
+    }
+
+    /// Auto mode's cap and the Claudes working, while it is on.
+    pub fn auto(b: *const Board) ?Auto {
+        const state = b.parsed.value.auto orelse return null;
+        return if (state.on) state else null;
     }
 
     /// The cards waiting to be put on the board, by repo then board order.
@@ -150,6 +159,24 @@ test "the backlog is its own list: the columns leave it out, and a file without 
     var old = try Board.parse(gpa, sample);
     defer old.deinit();
     try std.testing.expectEqual(@as(usize, 0), old.backlog().len);
+}
+
+test "auto mode is read while on, and a file without it or with it off has none" {
+    const gpa = std.testing.allocator;
+    var on = try Board.parse(gpa,
+        \\{"tickets":[],"auto":{"on":true,"cap":2,"working":1}}
+    );
+    defer on.deinit();
+    try std.testing.expectEqual(@as(u32, 2), on.auto().?.cap);
+    try std.testing.expectEqual(@as(u32, 1), on.auto().?.working);
+    var off = try Board.parse(gpa,
+        \\{"tickets":[],"auto":{"on":false,"cap":2,"working":0}}
+    );
+    defer off.deinit();
+    try std.testing.expectEqual(@as(?Auto, null), off.auto());
+    var old = try Board.parse(gpa, sample);
+    defer old.deinit();
+    try std.testing.expectEqual(@as(?Auto, null), old.auto());
 }
 
 test "the cards the pipeline is working on are those verifying, reviewing or landing" {

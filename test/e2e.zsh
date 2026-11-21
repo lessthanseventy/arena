@@ -760,6 +760,20 @@ key M-b
 last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
 key p
 check "p raises the picked card's priority through babylon" await last 'update 7 --priority high'
+check "with no auto in babylon's file, the board says nothing of it" hides 'auto [0-9]'
+key A
+check "A turns babylon's auto mode on" await last 'auto on'
+cp $tmp/run/babylon/board.json $tmp/board.noauto
+print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":2,"working":1}}' >$tmp/run/babylon/board.json
+check "on, the switch beside the tabs says how many work of the cap" see ' backlog .* auto 1/2 '
+check "and so does the board's row atop the rail" see '^│ ▤ board auto 1/2 '
+key A
+check "and A turns it off" await last 'auto off'
+cp $tmp/board.noauto $tmp/run/babylon/board.json
+check "off, the state is gone" gone 'auto [0-9]'
+autocol() { local l=$(screen | grep -m1 ' board   every'); local p=${l%% auto *}; print $(( ${#p} + 2 )) }
+mouse 0 $(autocol) $(screen | grep -n -m1 ' board   every' | cut -d: -f1) M
+check "a click on the switch turns it on as A does" await last 'auto on'
 key J
 check "J moves it down its column, among its lane's" await last 'move 7 down --repo tlon'
 key '>'

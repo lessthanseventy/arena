@@ -1856,6 +1856,7 @@ pub const App = struct {
         };
         if (is(key, &.{"g"})) return app.toGate();
         if (is(key, &.{"o"})) return app.toOrchestrator();
+        if (is(key, &.{"A"})) return app.toggleAuto();
         if (is(key, &.{"n"})) return app.newTicket();
         const keyed = [_]struct { []const u8, CardAction }{
             .{ "\r", .go },    .{ "e", .edit }, .{ "p", .priority }, .{ ">", .close },
@@ -1892,6 +1893,15 @@ pub const App = struct {
         try app.hideSide(false);
         app.orchestrating = true;
         try app.send(.ignore, "run-shell -b \"babylon orchestrator\"", .{});
+    }
+
+    /// babylon's auto mode, while it is on.
+    pub fn auto(app: *const App) ?tickets.Auto {
+        return if (app.board) |*b| b.auto() else null;
+    }
+
+    fn toggleAuto(app: *App) !void {
+        try app.send(.ignore, "run-shell -b \"babylon auto {s}\"", .{if (app.auto() == null) "on" else "off"});
     }
 
     fn newTicket(app: *App) !void {
@@ -1980,7 +1990,7 @@ pub const App = struct {
 
     /// A button on the board, where it is drawn and clicked: 0-based, as the mouse has it.
     pub const Button = struct {
-        what: union(enum) { repo: usize, backlog, gate, orchestrator, new, card: CardAction },
+        what: union(enum) { repo: usize, backlog, gate, orchestrator, auto, new, card: CardAction },
         x: u16,
         y: u16,
         w: u16,
@@ -1997,6 +2007,7 @@ pub const App = struct {
             .backlog => " backlog ",
             .gate => " gate ",
             .orchestrator => " orch ",
+            .auto => if (app.auto()) |state| std.fmt.bufPrint(buf, " auto {d}/{d} ", .{ state.working, state.cap }) catch " auto " else " auto ",
             .new => " + ",
             .card => |action| std.fmt.bufPrint(buf, " {s} ", .{action.label()}) catch " ? ",
         };
@@ -2004,7 +2015,7 @@ pub const App = struct {
 
     pub const board_title = " board ";
 
-    /// The board's buttons: the repos as tabs and the gate beside them on its first row, a + on
+    /// The board's buttons: the repos as tabs and the gate and auto's switch beside them on its first row, a + on
     /// the to-do column's top edge, and the picked card's actions on its bottom edge, or in the
     /// every view its column's, each kept to the room it has.
     pub fn boardButtons(app: *const App, out: []Button) []Button {
@@ -2017,8 +2028,8 @@ pub const App = struct {
         const count = if (app.board) |*b| b.repos(&repos) else 0;
         var x: u16 = ox + @as(u16, @intCast(cellCount(board_title))) + 1;
         const right = ox + app.boardW();
-        for (0..count + 4) |i| {
-            const what: @FieldType(Button, "what") = if (i <= count) .{ .repo = i } else if (i == count + 1) .backlog else if (i == count + 2) .gate else .orchestrator;
+        for (0..count + 5) |i| {
+            const what: @FieldType(Button, "what") = if (i <= count) .{ .repo = i } else if (i == count + 1) .backlog else if (i == count + 2) .gate else if (i == count + 3) .orchestrator else .auto;
             if (what == .gate and app.gateSession() == null) continue;
             const w: u16 = @intCast(cellCount(app.buttonLabel(what, &buf)));
             if (what == .gate or (what == .orchestrator and app.gateSession() == null)) x += 2;
@@ -2064,6 +2075,7 @@ pub const App = struct {
             },
             .gate => try app.toGate(),
             .orchestrator => try app.toOrchestrator(),
+            .auto => try app.toggleAuto(),
             .new => try app.newTicket(),
             .card => |action| try app.act(action),
         }

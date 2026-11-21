@@ -49,7 +49,10 @@ always did; arena draws them and leaves them running when it quits.
   `a` shows the question and its options, and an option's number answers it, typed into that
   Claude by babylon. One that waits is dimmed, at the foot of its column. Its first row has the repos as tabs, the one shown lit: a click on one narrows the board to it,
   and `r` goes to the next, then every one again; the gate is a button beside them while babylon
-  runs one, and `?` shows every key. A `+` on the to-do column files a ticket, and the picked card
+  runs one, and `?` shows every key. `A`, or the `auto` button beside the tabs, turns babylon's
+  auto mode on and off: while it is on, babylon starts a Claude on each free todo card, up to its
+  cap of Claudes working, and the button and the board's row atop the rail say `auto 1/2`, one
+  working of a cap of two. A `+` on the to-do column files a ticket, and the picked card
   shows what can be done to it as chips under it, each run by a click. Enter, or a second click,
   on a card goes to the Claude holding it. `n` files a ticket and `e` edits the picked one, its
   title, repo and body in `$EDITOR` in a window of their own; `p` raises its priority, from high

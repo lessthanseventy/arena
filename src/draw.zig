@@ -317,10 +317,18 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
             else
                 std.fmt.bufPrint(&buf, "{d} todo  {d} doing ", .{ todo, doing }) catch "";
             try w.writeAll(" ▤ board");
+            var auto_buf: [32]u8 = undefined;
+            const auto = if (app.auto()) |state| std.fmt.bufPrint(&auto_buf, " auto {d}/{d}", .{ state.working, state.cap }) catch "" else "";
+            // auto's state gives way to the counts on a rail too narrow for both
+            const head = 8 + if (8 + cellCount(auto) + 1 + cellCount(counts) <= inner) cellCount(auto) else 0;
+            if (head > 8) {
+                if (!open) try pen.set(w, autoOn(app), null);
+                try w.writeAll(auto);
+            }
             try pen.set(w, if (open) chip(app) else ink(app, "dim", 8), null);
-            try fitted(w, "", inner -| 8 -| cellCount(counts));
+            try fitted(w, "", inner -| head -| cellCount(counts));
             try w.writeAll(counts);
-            filled = 8 + (inner -| 8 -| cellCount(counts)) + cellCount(counts);
+            filled = head + (inner -| head -| cellCount(counts)) + cellCount(counts);
         } else {
             var spun: [8]u8 = undefined;
             const mark = spun[0 .. std.unicode.utf8Encode(glyph(app, .working), &spun) catch 0];
@@ -628,6 +636,13 @@ const rule = blk: {
     for (0..menu.width - 8) |_| text = text ++ "─";
     break :blk text;
 };
+
+/// Bold violet: auto mode while it is on.
+fn autoOn(app: *const App) vt.Style {
+    var style = ink(app, "violet", 5);
+    style.flags.bold = true;
+    return style;
+}
 
 fn heading(app: *const App) vt.Style {
     var style = ink(app, "amber", 4);
@@ -1087,6 +1102,7 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
             .repo => |i| if (i == view.repo and !view.backlog) chip(app) else if (app.tabLive(i)) .{} else ink(app, "dim", 8),
             .backlog => if (view.backlog) chip(app) else ink(app, "dim", 8),
             .gate, .orchestrator => ink(app, "violet", 5),
+            .auto => if (app.auto() != null) autoOn(app) else ink(app, "dim", 8),
             .new => heading(app),
             .card => blk: {
                 var lit = ink(app, "amber", 4);
@@ -1121,6 +1137,7 @@ const board_keys = [_][2][]const u8{
     .{ "t", "move a backlog card to todo" },
     .{ "g", "babylon's gate, while it runs one" },
     .{ "o", "the orchestrator, started if it is not running" },
+    .{ "A", "babylon's auto mode, on or off" },
     .{ "`", "fold the orchestrator's window beside it, or unfold" },
     .{ "tab", "keys to that window and back to the board" },
     .{ "esc, q", "close the board" },
@@ -1133,7 +1150,7 @@ fn helpBox(app: *App, w: *Writer) !void {
     const x = app.boardX() + (app.boardW() -| bw) / 2;
     const edge = ink(app, "amber", 4);
     var pen: Pen = .{};
-    var y: u16 = 4;
+    var y: u16 = 3;
     if (y + board_keys.len + 3 > app.view_h or bw < 32) return;
     try pen.set(w, edge, null);
     try w.print("\x1b[{d};{d}H╭─", .{ y, x + 1 });
