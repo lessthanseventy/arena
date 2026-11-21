@@ -27,7 +27,7 @@ defmodule Babylon.Lapse do
       ids -> Logger.info("claims lapsed: #{Enum.map_join(ids, ", ", &"##{&1}")}")
     end
 
-    Babylon.Inbox.renudge()
+    Babylon.Inbox.deliver_held()
     Process.send_after(self(), :sweep, @every)
     {:noreply, state}
   end

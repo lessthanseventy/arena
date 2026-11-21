@@ -15,7 +15,7 @@ defmodule Babylon.MCP.Server do
     - While working, run only the tests of what you change; do not run the repo's whole gate (`mise run check`) yourself: submit_ticket is the gate, run once by babylon, so you do not wait on it.
     - Finished: commit the work on the ticket's branch, then submit_ticket. babylon rebases it onto main, runs the repo's gate, has it reviewed and lands it on main, and tells this session how it went (see inbox): landed (the ticket is done) or sent back with why. Work with nothing to land: update_ticket to done. Stopping short: write where it stands into its body, then release_ticket so another session can pick it up.
     - A decision about a ticket you need from your human: ask_human with the options; it shows on their board, and the answer comes to this session's inbox.
-    - A line typed into this session saying babylon has new messages for it: call inbox, and act on what it says.
+    - A line typed into this session starting `babylon:` is babylon's word to it (a landing, a send-back, an answer): act on what it says. inbox reads any still held.
     - Work that has to wait on other work: file it with blocked_by, or link_tickets with blocks. A blocked ticket cannot be claimed.
     - list_tickets with mine shows what this session holds; with repo, one repo's tickets.
     """,

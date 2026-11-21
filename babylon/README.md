@@ -54,11 +54,11 @@ session is gone. There are no pull requests: the gate and the review are babylon
 repo's own checkout, when it is on main with nothing changed, is fast-forwarded and its `install`
 task (if it has one) started in a window of babylon's session, so what runs is what landed.
 
-babylon's word to a session (a ticket landed or sent back, an ask answered) is kept per pane until
-the session reads it with the `inbox` tool. What is typed into the pane is only a nudge to read it,
-held while the pane's Claude waits on its human (arena's hook marks the pane `waiting`, when a
-typed line would land in an open dialog), and repeated once a minute, four times at most, while
-it is unread.
+babylon's word to a session (a ticket landed or sent back, an ask answered) is typed into its pane
+whole, and is read once tmux has typed it. While the pane's Claude waits on its human (arena's hook
+marks the pane `waiting`, when a typed line would land in an open dialog) it is held, and typed on
+a sweep once a minute after; one tmux cannot type is tried again, four times in all. The `inbox`
+tool reads what is still held.
 
 Served, it keeps the board arena draws in `$XDG_RUNTIME_DIR/babylon/board.json` (beside the database where there is no runtime
 dir, as on the Mac): every open

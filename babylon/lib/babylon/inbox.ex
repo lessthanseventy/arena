@@ -1,24 +1,22 @@
 defmodule Babylon.Inbox do
   @moduledoc """
-  babylon's word to a session: kept per pane until the session reads it with the `inbox` tool.
-  What is typed into the pane is only a nudge to read it, so a line lost to an open dialog loses
-  nothing; an unread message is nudged again, a few times, while its pane is not waiting on its
-  human.
+  babylon's word to a session, typed into its pane whole and marked read once tmux has typed it.
+  While the pane's Claude waits on its human a typed line would land in the open dialog and be
+  lost, so it is held then, and typed on a later sweep; one tmux could not type is tried again,
+  a few times. The `inbox` tool reads what is still held.
   """
   import Ecto.Query
 
   alias Babylon.Message
-  alias Babylon.Panes
   alias Babylon.Repo
 
-  @renudge_after 60
-  @nudges 4
+  @tries 4
 
-  @doc "Keep `text` for `pane`, and nudge it."
+  @doc "Keep `text` for `pane`, and type it in unless the pane is waiting."
   @spec send(String.t(), String.t()) :: Message.t()
   def send(pane, text) do
     message = Repo.insert!(%Message{pane: pane, text: text})
-    nudge(pane)
+    deliver(pane)
     message
   end
 
@@ -30,37 +28,35 @@ defmodule Babylon.Inbox do
     unread
   end
 
-  @doc "Nudge every pane with a message still unread long after its last nudge, up to a few times."
-  @spec renudge() :: [String.t()]
-  def renudge do
-    before = DateTime.add(now(), -@renudge_after, :second)
-
-    from(m in Message,
-      where: is_nil(m.read_at) and m.nudges < @nudges and (is_nil(m.nudged_at) or m.nudged_at < ^before),
-      distinct: true,
-      select: m.pane
-    )
+  @doc "Type in what is held for every pane, those still waiting on their human left; the panes typed into."
+  @spec deliver_held() :: [String.t()]
+  def deliver_held do
+    from(m in Message, where: is_nil(m.read_at) and m.nudges < @tries, distinct: true, select: m.pane)
     |> Repo.all()
-    |> Enum.filter(&nudge/1)
+    |> Enum.filter(&(deliver(&1) > 0))
   end
 
-  # held while the pane's Claude waits on its human: a line typed into an open dialog is lost
-  defp nudge(pane) do
-    unread = from(m in Message, where: m.pane == ^pane and is_nil(m.read_at))
+  # oldest first, stopping at the first tmux will not type, which keeps its turn
+  defp deliver(pane) do
+    held =
+      Repo.all(from m in Message, where: m.pane == ^pane and is_nil(m.read_at) and m.nudges < @tries, order_by: m.id)
 
-    case {Panes.state(pane), Repo.aggregate(unread, :count)} do
-      {_, 0} ->
-        false
+    if panes().state(pane) == "waiting", do: 0, else: Enum.reduce_while(held, 0, &type_in(pane, &1, &2))
+  end
 
-      {"waiting", _} ->
-        false
+  defp type_in(pane, message, typed) do
+    case panes().tell(pane, "babylon: " <> message.text) do
+      :ok ->
+        message |> Ecto.Changeset.change(read_at: now()) |> Repo.update!()
+        {:cont, typed + 1}
 
-      {_, n} ->
-        Panes.tell(pane, "babylon: #{n} new for this session: call babylon's inbox tool to read them.")
-        Repo.update_all(unread, set: [nudged_at: now()], inc: [nudges: 1])
-        true
+      {:error, _} ->
+        message |> Ecto.Changeset.change(nudged_at: now(), nudges: message.nudges + 1) |> Repo.update!()
+        {:halt, typed}
     end
   end
+
+  defp panes, do: Application.get_env(:babylon, :panes, Babylon.Panes)
 
   defp now, do: DateTime.truncate(DateTime.utc_now(), :second)
 end

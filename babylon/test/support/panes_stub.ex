@@ -1,0 +1,21 @@
+defmodule Babylon.PanesStub do
+  @moduledoc """
+  tmux's panes in tests: a pane in `:live_panes` is typed into (said to the process in
+  `:told_to`), one in `:waiting_panes` waits on its human, and any other cannot be typed into.
+  """
+
+  @doc "What the pane's Claude is doing."
+  @spec state(String.t()) :: String.t()
+  def state(pane), do: if(pane in Application.get_env(:babylon, :waiting_panes, []), do: "waiting", else: "working")
+
+  @doc "Type `text` into a live pane."
+  @spec tell(String.t(), String.t()) :: :ok | {:error, String.t()}
+  def tell(pane, text) do
+    if pane in Application.get_env(:babylon, :live_panes, []) do
+      send(Application.fetch_env!(:babylon, :told_to), {:told, pane, text})
+      :ok
+    else
+      {:error, "no pane #{pane}"}
+    end
+  end
+end
