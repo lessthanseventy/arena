@@ -773,6 +773,13 @@ check "which does not show the backlog" gone '#12 Someday'
 started() { [[ $(inner list-panes -t '=tlon:t7' -F '#{pane_start_command}' 2>/dev/null) == *'Claim ticket #7 with claim_ticket'* ]] }
 key Enter
 check "Enter on a free todo card starts a Claude on it, in its repo's session" await started
+key M-b
+check "the board opens again" await tablit every
+key Enter
+# nothing to wait on for what must not happen: a second for its run-shell to be done
+zselect -t 100
+check "and a second go before the claim shows starts no second one" \
+  test "$(inner list-windows -t '=tlon' -F '#{window_name}' | grep -cx t7)" = 1
 inner kill-session -t '=tlon'
 key M-b
 check "and the board opens again on every repo" await tablit every

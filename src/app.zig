@@ -1454,9 +1454,14 @@ pub const App = struct {
         const card = app.boardCard(view.col, view.row) orelse return;
         const pane = card.holder() orelse {
             if (!startable(card)) return;
-            // tmux reads # as a format in run-shell's command: ## is one #
+            const repo = card.repo.?;
+            var named: [64]u8 = undefined;
+            const session = sessionNamed(repo, &named);
+            // tmux reads # as a format in run-shell's command: ## is one #. A second go before the
+            // claim shows finds the window the first made
             try app.send(.ignore, "run-shell -b \"tmux has-session -t ={s} 2>/dev/null || tmux new-session -d -s {s} -c $HOME/projects/{s}; " ++
-                "tmux new-window -t ={s}: -n t{d} -c $HOME/projects/{s} claude 'Claim ticket ##{d} with claim_ticket, run the start command its answer gives, and work it to submit_ticket.'\"", .{ card.repo.?, card.repo.?, card.repo.?, card.repo.?, card.id, card.repo.?, card.id });
+                "tmux list-windows -t ={s} -F '##{{window_name}}' | grep -qx t{d} || " ++
+                "tmux new-window -t ={s}: -n t{d} -c $HOME/projects/{s} claude 'Claim ticket ##{d} with claim_ticket, run the start command its answer gives, and work it to submit_ticket.'\"", .{ session, session, repo, session, card.id, session, card.id, repo, card.id });
             app.board_view = null;
             app.dirty = true;
             return;
@@ -2721,6 +2726,19 @@ test "a Claude is started only on a free todo card of a plain repo" {
     c = free;
     c.repo = null;
     try std.testing.expect(!startable(&c));
+}
+
+/// The tmux session named for `repo`: tmux makes a . in a session name a _.
+fn sessionNamed(repo: []const u8, buf: []u8) []const u8 {
+    const out = buf[0..@min(repo.len, buf.len)];
+    for (out, repo[0..out.len]) |*to, from| to.* = if (from == '.') '_' else from;
+    return out;
+}
+
+test "a repo's session is named as tmux would have it, a dot a _" {
+    var buf: [16]u8 = undefined;
+    try std.testing.expectEqualStrings("a_b-c", sessionNamed("a.b-c", &buf));
+    try std.testing.expectEqualStrings("tlon", sessionNamed("tlon", &buf));
 }
 
 fn plainName(name: []const u8) bool {
