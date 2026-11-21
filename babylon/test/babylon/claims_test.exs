@@ -46,6 +46,13 @@ defmodule Babylon.ClaimsTest do
     assert {:error, "no ticket #0"} = Claims.claim(0, "%1", panes([]))
   end
 
+  test "refuses a ticket in the backlog, which stays off the board" do
+    idea = file!(title: "Someday", status: "backlog")
+    assert {:error, "ticket #" <> rest} = Claims.claim(idea.id, "%1", panes(["%1"]))
+    assert rest =~ "is in the backlog"
+    refute Enum.any?(Babylon.Board.build().tickets, &(&1.id == idea.id))
+  end
+
   test "release gives it back to todo with its branch; only its pane can" do
     ticket = file!(title: "t")
     {:ok, claimed, :new} = Claims.claim(ticket.id, "%1", panes(["%1"]))

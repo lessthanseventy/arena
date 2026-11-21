@@ -14,6 +14,11 @@ defmodule Babylon.MCP.Tools.FileTicket do
     field :priority, :enum, values: ~w(low med high), description: "med when left out"
     field :labels, {:list, :string}
     field :kind, :enum, values: ~w(ticket epic), description: "an epic holds tickets and is never worked itself"
+
+    field :status, :enum,
+      values: ~w(todo backlog),
+      description: "backlog for an idea or a maybe-later, kept off the board and not claimable; todo when left out"
+
     field :epic_id, :integer, description: "File it under this epic"
     field :blocked_by, {:list, :integer}, description: "Ids of the tickets it waits on"
   end
@@ -30,7 +35,7 @@ defmodule Babylon.MCP.Tools.ListTickets do
 
   schema do
     field :repo, :string, description: "Only this repository's"
-    field :status, {:list, {:enum, ~w(todo doing review done)}}, description: "Only these statuses"
+    field :status, {:list, {:enum, ~w(backlog todo doing review done)}}, description: "Only these statuses"
     field :mine, :boolean, description: "Only the tickets your pane holds"
   end
 
@@ -80,7 +85,7 @@ defmodule Babylon.MCP.Tools.UpdateTicket do
     field :title, :string
     field :body, :string
     field :repo, :string
-    field :status, :enum, values: ~w(todo doing review done)
+    field :status, :enum, values: ~w(backlog todo doing review done)
     field :priority, :enum, values: ~w(low med high)
     field :labels, {:list, :string}
   end

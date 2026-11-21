@@ -29,7 +29,7 @@ defmodule Babylon.Board do
     tickets =
       Repo.all(
         from t in Ticket,
-          where: t.status != "done" or t.closed_at > ^since,
+          where: t.status not in ["done", "backlog"] or t.closed_at > ^since,
           order_by: [asc: t.sort, asc: t.id]
       )
 

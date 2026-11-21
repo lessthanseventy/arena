@@ -63,6 +63,10 @@ defmodule Babylon.Claims do
   defp claimable(nil, id, _pane, _panes), do: {:error, "no ticket ##{id}"}
   defp claimable(%Ticket{kind: "epic"}, id, _, _), do: {:error, "##{id} is an epic: claim one of its tickets"}
   defp claimable(%Ticket{status: "done"}, id, _, _), do: {:error, "ticket ##{id} is done"}
+
+  defp claimable(%Ticket{status: "backlog"}, id, _, _),
+    do: {:error, "ticket ##{id} is in the backlog: it is worked once the human moves it to todo"}
+
   defp claimable(%Ticket{claimed_by: pane} = ticket, _id, pane, _panes), do: {:held, ticket}
 
   defp claimable(%Ticket{claimed_by: other}, id, _pane, panes) when is_binary(other) do

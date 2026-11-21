@@ -10,7 +10,7 @@ defmodule Babylon.Ticket do
 
   @type t :: %__MODULE__{}
 
-  @statuses ~w(todo doing review done)
+  @statuses ~w(backlog todo doing review done)
   @priorities ~w(low med high)
   @kinds ~w(ticket epic)
   @mutable [:repo, :title, :body, :status, :priority, :labels, :sort]
