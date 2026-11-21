@@ -909,6 +909,29 @@ check "arena in its session to have it live" await in_session orchestrator
 key Tab
 key 'echo side' Enter
 check "Tab gives the keys to it" see '│side +│'
+cp $tmp/run/babylon/board.json $tmp/board.sided
+print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[],'\
+'"ask":{"id":5,"question":"Which colour?","options":["red","blue"]}}]}' >$tmp/run/babylon/board.json
+see '#7 L'
+: >$tmp/babylon
+key Tab
+key a
+see '│ Which colour\? +│'
+mouse 0 100 10 M
+mouse 0 100 10 m
+shown_cursor() { [[ $(outer display -p -t o '#{cursor_flag}') == $1 ]] }
+# nothing to wait on for a cursor that must not show: a second for the click to be drawn
+zselect -t 100
+check "a card's question over the board, the keys given to the pane beside it, has the cursor in no pane" shown_cursor 0
+key 1
+answered_one() { [[ $(<$tmp/babylon) == 'answer 5 1' ]] }
+check "and its number answers it" await answered_one
+untyped() { ! inner capture-pane -p -t orchestrator:orch | grep -q 1 }
+check "the pane getting none of it" untyped
+check "put away, the keys are the pane's again" await shown_cursor 1
+key 'echo back' Enter
+check "as they were" see '│back +│'
+cp $tmp/board.sided $tmp/run/babylon/board.json
 key Tab
 key '`'
 check "and back to the board, where \` folds it away" gone '╭─ 1 orch ─'

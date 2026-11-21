@@ -1476,7 +1476,7 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
         // the orchestrator's window beside it, once arena is in its session
         if (app.side) |side| if (app.cur()) |s| if (s.orchestrator()) {
             const at = try strip(app, w, s, 0, what);
-            if (side.pane_keys) cursor = at;
+            if (side.pane_keys and !view.boxed()) cursor = at;
         };
     } else {
         if (app.yoff != 0) if (app.sessionById(app.prev)) |leaving| {

@@ -329,6 +329,11 @@ pub const BoardView = struct {
     detail_scroll: usize = 0,
     /// The board's keys shown over it, until the next key.
     help: bool = false,
+
+    /// Whether a box lies over the board, the keys its own whatever holds them under it.
+    pub fn boxed(view: BoardView) bool {
+        return view.help or view.detail != null or view.answering or view.giving != null;
+    }
 };
 
 /// The cards a column of the board can hold, and the repos it can be narrowed to.
@@ -2157,7 +2162,7 @@ pub const App = struct {
         app.dirty = true;
         const open = &app.board_view.?;
         // a box over the board takes the click, as a key would, so nothing hidden under it is pressed
-        if (open.help or open.detail != null or open.answering or open.giving != null) {
+        if (open.boxed()) {
             open.help = false;
             open.detail = null;
             open.answering = false;
@@ -2793,7 +2798,7 @@ pub const App = struct {
 
     fn menuKeys(app: *App, text: []const u8) !void {
         // with the keys on the orchestrator's pane, all but a Tab is typed into it
-        if (app.board_view != null) if (app.side) |*side| if (side.pane_keys) {
+        if (app.board_view) |view| if (!view.boxed()) if (app.side) |*side| if (side.pane_keys) {
             const tab = std.mem.indexOfScalar(u8, text, '\t') orelse return app.forward(text);
             try app.forward(text[0..tab]);
             side.pane_keys = false;
@@ -2810,6 +2815,8 @@ pub const App = struct {
                 try app.overviewKey(key);
             } else if (app.board_view != null) {
                 try app.boardKey(key);
+                // a key that put a box away leaves the rest to whatever had the keys under it
+                return app.menuKeys(text[i..]);
             } else if (app.prompt) |*prompt| {
                 app.dirty = true;
                 switch (prompt.press(key)) {
