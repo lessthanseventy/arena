@@ -92,6 +92,28 @@ defmodule Babylon.MCP.Tools.UpdateTicket do
   end
 end
 
+defmodule Babylon.MCP.Tools.MoveTicket do
+  @moduledoc """
+  Move a ticket one place up or down its column on the board. With `repo`, past the next ticket
+  of that repo, as a board narrowed to it shows the column.
+  """
+  use Babylon.MCP.Tool
+
+  alias Babylon.Tickets
+
+  schema do
+    field :id, :integer, required: true
+    field :by, :enum, values: ~w(up down), required: true
+    field :repo, :string
+  end
+
+  @impl true
+  def execute(%{id: id, by: by} = params, frame) do
+    by = if by == "up", do: :up, else: :down
+    with_ticket(frame, id, fn ticket -> reply(frame, Tickets.move(ticket, by, params[:repo]), &render/1) end)
+  end
+end
+
 defmodule Babylon.MCP.Tools.LinkTickets do
   @moduledoc """
   Link two tickets: `from` blocks `to`, relates to it, duplicates it, or is its epic (`parent`).

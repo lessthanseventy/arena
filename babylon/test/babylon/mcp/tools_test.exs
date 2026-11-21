@@ -59,6 +59,13 @@ defmodule Babylon.MCP.ToolsTest do
     assert {:error, _} = call("answer_ask", %{id: ask_id, choice: 1})
   end
 
+  test "a ticket moves down its column" do
+    {:ok, %{"id" => one}} = call("file_ticket", %{title: "One", repo: "x"})
+    {:ok, %{"id" => _}} = call("file_ticket", %{title: "Two", repo: "x"})
+    assert {:ok, %{"id" => ^one}} = call("move_ticket", %{id: one, by: "down"})
+    assert ["Two", "One"] == Enum.map(Babylon.Tickets.list(repo: "x"), & &1.title)
+  end
+
   test "a session reads what babylon has for it once" do
     Babylon.Inbox.send("%999999", "#1 landed")
     assert {:ok, [%{"text" => "#1 landed"}]} = call("inbox", %{}, "%999999")

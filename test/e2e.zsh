@@ -706,6 +706,19 @@ key 2
 checked() { [[ -f $tmp/babylon && $(<$tmp/babylon) == 'answer 5 2' ]] }
 check "and a number answers it through babylon" await checked
 check "and puts it away" gone 'Which colour'
+last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
+key p
+check "p raises the picked card's priority through babylon" await last 'update 7 --priority high'
+key J
+check "J moves it down its column" await last 'move 7 down'
+key '>'
+check "> closes a ticket still to do" await last 'update 7 --status done'
+key e
+check "e edits it in a window of its own" await last 'edit 7'
+key M-b
+key n
+check "n files one, from every repo with the repo asked" await last 'new'
+key M-b
 key r
 check "r narrows it to one repo" see ' board · arena '
 check "and to its cards" gone '#7 Lights'

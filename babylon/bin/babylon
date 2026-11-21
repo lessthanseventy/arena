@@ -15,6 +15,9 @@ usage: babylon file TITLE [--repo R] [--body B] [--priority low|med|high] [--epi
        babylon submit N
        babylon answer ASK CHOICE
        babylon update N [--title T] [--body B] [--repo R] [--status S] [--priority P]
+       babylon new [--repo R]           (title, repo and body in $EDITOR)
+       babylon edit N                   (its title, repo and body in $EDITOR)
+       babylon move N up|down [--repo R]
        babylon link FROM blocks|relates|duplicates|parent TO
        babylon unlink FROM KIND TO
        babylon call TOOL JSON
@@ -66,6 +69,21 @@ flags() {
   printf '%s' "$json"
 }
 
+# A ticket as text in $EDITOR: its title on the first line, `repo: R` on the second, then a blank
+# line and its body. Sets title, repo and body; false when the title is left empty.
+compose() {
+  "${EDITOR:-vi}" "$1" || return 1
+  title=$(sed -n 1p "$1")
+  repo=$(sed -n 's/^repo: *//p' "$1" | head -1)
+  body=$(sed 1,2d "$1" | sed '/[^[:space:]]/,$!d')
+  [[ -n ${title//[[:space:]]/} ]]
+}
+
+# the fields compose read, as JSON, a repo left empty left out
+fields() {
+  jq -nc --arg t "$title" --arg r "$repo" --arg b "$body" '{title: $t, body: $b} + if $r == "" then {} else {repo: $r} end'
+}
+
 lines() { jq -r '.[] | "#\(.id)\t\(.status)\t\(.priority)\t\(.repo // "-")\t\(.claimed_by // "")\t\(.title)"'; }
 
 (($#)) || usage
@@ -80,6 +98,30 @@ case $command in
       args=$(jq -c --arg r "$(basename "$top")" '. + {repo: $r}' <<<"$args")
     fi
     call file_ticket "$(jq -c --arg t "$title" '. + {title: $t}' <<<"$args")" | jq -r '"#\(.id) \(.title)"'
+    ;;
+  new)
+    repo=
+    case $# in 0) ;; 2) [[ $1 == --repo ]] || usage; repo=$2 ;; *) usage ;; esac
+    draft=$(mktemp); trap 'rm -f "$draft"' EXIT
+    printf '\nrepo: %s\n\n' "$repo" >"$draft"
+    compose "$draft" || { echo "babylon: no title, nothing filed" >&2; exit 1; }
+    call file_ticket "$(fields)" | jq -r '"#\(.id) \(.title)"'
+    ;;
+  edit)
+    (($# == 1)) || usage
+    draft=$(mktemp); trap 'rm -f "$draft"' EXIT
+    call get_ticket "{\"id\": $1}" | jq -r '"\(.title)\nrepo: \(.repo // "")\n\n\(.body // "")"' >"$draft"
+    compose "$draft" || { echo "babylon: no title, #$1 left as it was" >&2; exit 1; }
+    call update_ticket "$(fields | jq -c --argjson id "$1" '. + {id: $id}')" | jq -r '"#\(.id) \(.title)"'
+    ;;
+  move)
+    (($# == 2 || $# == 4)) && [[ $2 == up || $2 == down ]] || usage
+    args=$(jq -nc --argjson id "$1" --arg by "$2" '{id: $id, by: $by}')
+    if (($# == 4)); then
+      [[ $3 == --repo ]] || usage
+      args=$(jq -c --arg r "$4" '. + {repo: $r}' <<<"$args")
+    fi
+    call move_ticket "$args" | jq -r '"#\(.id) \(.title)"'
     ;;
   list) call list_tickets "$(flags "$@")" | lines ;;
   show) (($# == 1)) || usage; call get_ticket "{\"id\": $1}" | jq . ;;

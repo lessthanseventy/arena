@@ -59,6 +59,27 @@ defmodule Babylon.Tickets do
     end
   end
 
+  @doc """
+  Move a ticket one place up or down its column, past the next ticket in it (of `repo` alone when
+  given, as a board narrowed to one shows it). At the column's end it stays.
+  """
+  @spec move(Ticket.t(), :up | :down, String.t() | nil) :: {:ok, Ticket.t()}
+  def move(%Ticket{} = ticket, by, repo \\ nil) do
+    column = list(status: ticket.status)
+    shown = if repo, do: Enum.filter(column, &(&1.repo == repo)), else: column
+    at = Enum.find_index(shown, &(&1.id == ticket.id))
+    next = if by == :up, do: at - 1, else: at + 1
+
+    case next >= 0 and Enum.at(shown, next) do
+      %Ticket{} = past ->
+        Repo.transaction(fn -> swap(column, ticket, past) end)
+        {:ok, get(ticket.id)}
+
+      _ ->
+        {:ok, ticket}
+    end
+  end
+
   @doc "Delete a ticket and its links; its epic's status follows."
   @spec remove(Ticket.t()) :: {:ok, Ticket.t()} | {:error, Ecto.Changeset.t()}
   def remove(%Ticket{} = ticket) do
@@ -145,6 +166,13 @@ defmodule Babylon.Tickets do
     end
 
     :ok
+  end
+
+  # the column numbered afresh in its order, with the two traded
+  defp swap(column, one, other) do
+    sorts = column |> Enum.with_index(1) |> Map.new(fn {t, i} -> {t.id, i} end)
+    sorts = %{sorts | one.id => sorts[other.id], other.id => sorts[one.id]}
+    for t <- column, do: t |> Ecto.Changeset.change(sort: sorts[t.id]) |> Repo.update!()
   end
 
   # a new ticket joins the bottom of its repo's column: what was filed first is taken first

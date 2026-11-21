@@ -1,3 +1,39 @@
+defmodule Babylon.TicketsTest.Move do
+  use Babylon.DataCase
+
+  alias Babylon.Tickets
+
+  setup do
+    filed = for {title, repo} <- [a: "x", b: "y", c: "x"], do: file!(Atom.to_string(title), repo)
+    %{filed: filed}
+  end
+
+  test "a ticket moves one place up or down its column, and stays at its ends", %{filed: [a, b, c]} do
+    {:ok, _} = Tickets.move(c, :up)
+    assert titles() == ~w(a c b)
+    {:ok, _} = Tickets.move(a, :up)
+    assert titles() == ~w(a c b)
+    {:ok, _} = Tickets.move(a, :down)
+    assert titles() == ~w(c a b)
+    {:ok, _} = Tickets.move(b, :down)
+    assert titles() == ~w(c a b)
+  end
+
+  test "narrowed to a repo, it moves past that repo's next ticket", %{filed: [a, _b, _c]} do
+    {:ok, _} = Tickets.move(a, :down, "x")
+    assert titles() == ~w(c b a)
+    {:ok, _} = Tickets.move(a, :up, "x")
+    assert titles() == ~w(a b c)
+  end
+
+  defp file!(title, repo) do
+    {:ok, ticket} = Tickets.file(%{title: title, repo: repo})
+    ticket
+  end
+
+  defp titles, do: Enum.map(Tickets.list(status: "todo"), & &1.title)
+end
+
 defmodule Babylon.TicketsTest do
   use Babylon.DataCase
 
