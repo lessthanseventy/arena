@@ -144,7 +144,10 @@ defmodule Babylon.Pipeline do
   defp start(running) do
     gates = conf(:gates)
 
-    case map_size(running) < gates and not release_pending?() and next_up(for {_, {_, repo}} <- running, do: repo) do
+    # held, it looks again in a while: nothing else would wake it when the release is done
+    if release_pending?(), do: Process.send_after(self(), :next, 10_000)
+
+    case map_size(running) < gates and next_up(for {_, {_, repo}} <- running, do: repo) do
       %Ticket{} = ticket ->
         train = [ticket | riders(ticket, conf(:train) - 1)]
         task = Task.Supervisor.async_nolink(Babylon.Tasks, fn -> ride(train) end)
@@ -155,15 +158,13 @@ defmodule Babylon.Pipeline do
     end
   end
 
-  @doc "The ticket to run next: the first submitted of those queued in a repo not in `busy`."
+  @doc """
+  The ticket to run next: the first submitted of those queued in a repo not in `busy`; none while a
+  release waits to restart babylon.
+  """
   @spec next_up([String.t()]) :: Ticket.t() | nil
   def next_up(busy) do
-    Repo.one(
-      from t in Ticket,
-        where: t.stage == "queued" and t.repo not in ^busy and t.submitted_at <= ^now(),
-        order_by: [asc: t.submitted_at, asc: t.id],
-        limit: 1
-    )
+    if release_pending?(), do: nil, else: first_queued(busy)
   end
 
   defp stage(id, stage) do
@@ -284,4 +285,13 @@ defmodule Babylon.Pipeline do
   defp conf(key), do: :babylon |> Application.fetch_env!(:pipeline) |> Keyword.fetch!(key)
 
   defp later, do: DateTime.add(now(), @retry_after)
+
+  defp first_queued(busy) do
+    Repo.one(
+      from t in Ticket,
+        where: t.stage == "queued" and t.repo not in ^busy and t.submitted_at <= ^now(),
+        order_by: [asc: t.submitted_at, asc: t.id],
+        limit: 1
+    )
+  end
 end

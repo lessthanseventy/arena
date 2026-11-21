@@ -37,6 +37,7 @@ for _ in $(seq 180); do
   echo "babylon: waiting on $running running gate(s) before restarting"
   sleep 10
 done
+rm -f "$pending"
 if command -v systemctl >/dev/null && systemctl --user cat babylon.service >/dev/null 2>&1; then
   systemctl --user restart babylon.service
   echo "babylon: service restarted"
