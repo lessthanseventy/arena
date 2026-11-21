@@ -10,6 +10,7 @@ usage() {
 usage: babylon file TITLE [--repo R] [--body B] [--priority low|med|high] [--epic N] [--blocked-by N,N]
        babylon list [--repo R] [--status S,S] [--mine]
        babylon show N
+       babylon detail N                 (as text: links, stage, body, the gate's last lines)
        babylon claim N
        babylon release N
        babylon submit N
@@ -125,6 +126,29 @@ case $command in
     ;;
   list) call list_tickets "$(flags "$@")" | lines ;;
   show) (($# == 1)) || usage; call get_ticket "{\"id\": $1}" | jq . ;;
+  detail)
+    (($# == 1)) || usage
+    ticket=$(call get_ticket "{\"id\": $1}")
+    jq -r '
+      def link: {in: {blocks: "blocked by", parent: "in epic", relates: "relates to", duplicates: "duplicated by"},
+                 out: {blocks: "blocks", parent: "holds", relates: "relates to", duplicates: "duplicates"}}
+                [.direction][.kind] + " #\(.ticket_id)";
+      "#\(.id) \(.title)",
+      ([.repo // "no repo", .status, .priority]
+        + (if .claimed_by then ["held by \(.claimed_by)"] else [] end)
+        + (if .branch then [.branch] else [] end) | join(" · ")),
+      (if (.labels | length) > 0 then "labels: " + (.labels | join(", ")) else empty end),
+      (if (.links | length) > 0 then (.links | map(link) | join(", ")) else empty end),
+      (if (.blocked_by | length) > 0 then "waits on " + (.blocked_by | map("#\(.)") | join(", ")) else empty end),
+      (if .stage then "", "stage: \(.stage)", (.stage_note // "" | select(. != "")) else empty end),
+      (if (.body // "") != "" then "", .body else empty end)
+    ' <<<"$ticket"
+    log=${XDG_CACHE_HOME:-$HOME/.cache}/babylon/logs/$(jq -r '.repo // ""' <<<"$ticket")-t$1.log
+    if [[ -s $log ]]; then
+      printf '\nthe gate'"'"'s last lines (%s):\n' "$log"
+      tail -n 15 "$log"
+    fi
+    ;;
   update)
     (($#)) || usage
     id=$1; shift

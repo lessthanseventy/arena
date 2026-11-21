@@ -22,7 +22,7 @@ chmod +x $tmp/bin/claude
 print -r -- $'#!/bin/sh\nprintf "%s|" "$@" >>'$tmp$'/notified\necho >>'$tmp$'/notified' >$tmp/bin/notify-send
 chmod +x $tmp/bin/notify-send
 # stands in for babylon's command line: it says what the board answered
-print -r -- $'#!/bin/sh\necho "$@" >>'$tmp$'/babylon' >$tmp/bin/babylon
+print -r -- $'#!/bin/sh\necho "$@" >>'$tmp$'/babylon\n[ "$1" = detail ] && printf \'#%s Lights\\n\\nthe whole of it\\n\' "$2"\nexit 0' >$tmp/bin/babylon
 chmod +x $tmp/bin/babylon
 export PATH=$tmp/bin:$PATH
 
@@ -706,6 +706,10 @@ key 2
 checked() { [[ -f $tmp/babylon && $(<$tmp/babylon) == 'answer 5 2' ]] }
 check "and a number answers it through babylon" await checked
 check "and puts it away" gone 'Which colour'
+key ' '
+check "Space shows the picked card's whole ticket, as babylon tells it" see '│ the whole of it '
+key Escape
+check "and Escape puts it away" gone 'the whole of it'
 last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
 key p
 check "p raises the picked card's priority through babylon" await last 'update 7 --priority high'

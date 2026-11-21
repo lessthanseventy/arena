@@ -101,6 +101,21 @@ const BoardFile = struct {
         app.setBoard(text);
     }
 
+    /// The detail of the card the board shows, once babylon has written it beside the board.
+    fn checkDetail(file: *BoardFile, app: *App) void {
+        const view = app.board_view orelse return;
+        const id = view.detail orelse return;
+        const dir = std.fs.path.dirname(file.path orelse return) orelse return;
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const path = std.fmt.bufPrint(&buf, "{s}/detail-{d}.txt", .{ dir, id }) catch return;
+        const text = std.Io.Dir.cwd().readFileAlloc(app.io, path, app.gpa, .limited(1 << 20)) catch return;
+        defer app.gpa.free(text);
+        if (std.mem.eql(u8, text, app.detail.items)) return;
+        app.detail.clearRetainingCapacity();
+        app.detail.appendSlice(app.gpa, text) catch return;
+        app.dirty = true;
+    }
+
     fn deinit(file: *BoardFile, app: *App) void {
         if (file.text) |was| app.gpa.free(was);
         if (file.path) |path| app.gpa.free(path);
@@ -213,6 +228,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) 
         .path = try boardPath(gpa, init.environ_map),
     };
     defer board_file.deinit(&app);
+    app.board_dir = if (board_file.path) |path| std.fs.path.dirname(path) else null;
     winch.store(true, .release);
     try tty.writeStreamingAll(io, color.Palette.query);
 
@@ -245,6 +261,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) 
             theme_checked = now;
             try theme_file.check(&app, tty);
             board_file.check(&app);
+            board_file.checkDetail(&app);
         }
         if (app.want_list and !app.listing) try app.requestList();
 

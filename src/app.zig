@@ -299,6 +299,9 @@ pub const BoardView = struct {
     repo: usize = 0,
     /// The picked card's question shown over the board, waiting on its answer's number.
     answering: bool = false,
+    /// The ticket whose whole detail is shown over the board, and how far down it is scrolled.
+    detail: ?u32 = null,
+    detail_scroll: usize = 0,
 };
 
 /// The cards a column of the board can hold, and the repos it can be narrowed to.
@@ -359,6 +362,10 @@ pub const App = struct {
     /// commands it ran itself for the client, as the attach, which answer nothing pending.
     block_mine: bool = false,
     block: std.ArrayList(u8) = .empty,
+    /// The text of the ticket the board shows the detail of, as babylon gave it.
+    detail: std.ArrayList(u8) = .empty,
+    /// Where babylon keeps its board file, and where a card's detail is written to be read.
+    board_dir: ?[]const u8 = null,
     want_list: bool = true,
     listing: bool = false,
     listed: bool = false,
@@ -416,6 +423,7 @@ pub const App = struct {
         app.sessions.deinit(app.gpa);
         app.pending.deinit(app.gpa);
         app.block.deinit(app.gpa);
+        app.detail.deinit(app.gpa);
         app.guard.deinit(app.gpa);
         app.out.deinit(app.gpa);
         app.plain.deinit(app.gpa);
@@ -1408,6 +1416,23 @@ pub const App = struct {
         const view = &app.board_view.?;
         const is = anyKey;
         if (view.answering) return app.answerKey(key);
+        if (view.detail != null) {
+            if (is(key, &.{ "\x1b", "q", " " })) view.detail = null;
+            if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) view.detail_scroll += 1;
+            if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.detail_scroll -|= 1;
+            return;
+        }
+        if (is(key, &.{" "})) if (app.boardCard(view.col, view.row)) |card| if (app.board_dir) |dir| {
+            // tmux gives a control client run-shell's output outside its reply, so it comes by a file
+            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            const path = std.fmt.bufPrint(&buf, "{s}/detail-{d}.txt", .{ dir, card.id }) catch return;
+            std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
+            view.detail = card.id;
+            view.detail_scroll = 0;
+            app.detail.clearRetainingCapacity();
+            try app.send(.ignore, "run-shell -b \"babylon detail {d} >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ card.id, path, path, path });
+            return;
+        };
         if (is(key, &.{"a"})) {
             if (app.boardCard(view.col, view.row)) |card| view.answering = card.ask != null;
             return;

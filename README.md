@@ -51,7 +51,8 @@ always did; arena draws them and leaves them running when it quits.
   on a card goes to the Claude holding it. `n` files a ticket and `e` edits the picked one, its
   title, repo and body in `$EDITOR` in a window of their own; `p` raises its priority, from high
   back to low; `>` closes a ticket still to do and `<` opens a closed one again; `J` and `K` move it
-  down or up its column. Its row atop the rail counts what is to do and being
+  down or up its column. Space shows the picked card's whole ticket over the board: its body, links,
+  stage and the note on it, and the last of its gate's log. Its row atop the rail counts what is to do and being
   done, and a click there opens it; it is there while babylon keeps its file.
 - **Jump** to any window in any session by typing part of its name.
 - **A menu** for everything, for when you would rather click.
