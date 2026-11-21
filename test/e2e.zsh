@@ -816,6 +816,20 @@ check "with babylon's gate session there, the board offers it" see ' gate .*\? k
 check "and the rail does not list it" gone '│ babylon '
 key g
 check "g on the board shows the gate" see '╭─ 1 gate '
+cp $tmp/run/babylon/board.json $tmp/board.kept
+print -r -- '{"tickets":[{"id":13,"repo":"babylon","title":"Gatekeeping","kind":"ticket","status":"todo","priority":"med","blocked_by":[]}]}' \
+  >$tmp/run/babylon/board.json
+inner new-session -d -s work/babylon -n w sh
+key M-b
+await see '#13 Gatekeeping'
+key Enter
+started_in() { [[ $(inner list-panes -t "=${1}:t13" -F '#{pane_start_command}' 2>/dev/null) == *'Claim ticket #13 with claim_ticket'* ]] }
+check "a babylon card's Claude starts in the rail's session holding babylon among others" await started_in work/babylon
+
+not_started_in() { ! started_in $1 }
+check "not in babylon's own, off the rail" not_started_in babylon
+inner kill-session -t '=work/babylon'
+cp $tmp/board.kept $tmp/run/babylon/board.json
 key M-b
 key o
 starting() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == orchestrator ]] }
