@@ -60,6 +60,22 @@ defmodule Babylon.ClaimsTest do
     refute Enum.any?(Babylon.Board.build().tickets, &(&1.id == idea.id))
   end
 
+  test "a session is named after the ticket it claimed last, and how many more it holds" do
+    Application.put_env(:babylon, :told_to, self())
+    Application.put_env(:babylon, :live_panes, ["%1"])
+    on_exit(fn -> for key <- [:told_to, :live_panes], do: Application.delete_env(:babylon, key) end)
+
+    first = file!(title: "Rail shows the ticket")
+    second = file!(title: "A session is named after the ticket it claims from babylon")
+    {:ok, _, :new} = Claims.claim(first.id, "%1", panes(["%1"]))
+    {:ok, _, :new} = Claims.claim(second.id, "%1", panes(["%1"]))
+    Repo.update!(Ecto.Changeset.change(Repo.get!(Babylon.Ticket, second.id), claimed_at: ~U[2099-01-01 00:00:00Z]))
+
+    assert Claims.name_session("%1") == :ok
+    assert_received {:told, "%1", "/rename #" <> name}
+    assert name == "#{second.id} A session is named after the tic +1"
+  end
+
   test "release gives it back to todo with its branch; only its pane can" do
     ticket = file!(title: "t")
     {:ok, claimed, :new} = Claims.claim(ticket.id, "%1", panes(["%1"]))

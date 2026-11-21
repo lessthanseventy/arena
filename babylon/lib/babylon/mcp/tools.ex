@@ -160,8 +160,12 @@ defmodule Babylon.MCP.Tools.ClaimTicket do
   def execute(%{id: id}, frame) do
     with_pane(frame, fn pane ->
       case Claims.claim(id, pane, Panes.claude()) do
-        {:ok, ticket, how} -> ok(frame, Map.put(render(ticket), :start, start(ticket.branch, how)))
-        {:error, reason} -> fail(frame, reason)
+        {:ok, ticket, how} ->
+          Claims.name_session(pane)
+          ok(frame, Map.put(render(ticket), :start, start(ticket.branch, how)))
+
+        {:error, reason} ->
+          fail(frame, reason)
       end
     end)
   end

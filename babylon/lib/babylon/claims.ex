@@ -60,6 +60,31 @@ defmodule Babylon.Claims do
     end
   end
 
+  @doc """
+  Name `pane`'s session after the ticket it claimed last, and how many more it holds, by typing
+  `/rename` into it; left as it is while its Claude waits on its human.
+  """
+  @spec name_session(String.t()) :: :ok | :waiting | {:error, String.t()}
+  def name_session(pane) do
+    held =
+      Repo.all(
+        from t in Ticket,
+          where: t.claimed_by == ^pane and t.status in ["doing", "review"],
+          order_by: [desc: t.claimed_at, desc: t.id]
+      )
+
+    case {held, panes().state(pane)} do
+      {[], _} -> :ok
+      {_, "waiting"} -> :waiting
+      {[last | rest], _} -> panes().tell(pane, "/rename ##{last.id} #{String.slice(last.title, 0, 32)}#{more(rest)}")
+    end
+  end
+
+  defp more([]), do: ""
+  defp more(rest), do: " +#{length(rest)}"
+
+  defp panes, do: Application.get_env(:babylon, :panes, Babylon.Panes)
+
   defp claimable(nil, id, _pane, _panes), do: {:error, "no ticket ##{id}"}
   defp claimable(%Ticket{kind: "epic"}, id, _, _), do: {:error, "##{id} is an epic: claim one of its tickets"}
   defp claimable(%Ticket{status: "done"}, id, _, _), do: {:error, "ticket ##{id} is done"}
