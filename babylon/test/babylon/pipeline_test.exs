@@ -351,6 +351,15 @@ defmodule Babylon.PipelineTest do
       %{held: ticket}
     end
 
+    test "a release waiting to restart holds the queue, unless it is over 35 minutes old" do
+      flag = Path.join(Path.dirname(Application.fetch_env!(:babylon, :pipeline)[:work]), "release-pending")
+      refute Pipeline.release_pending?()
+      File.touch!(flag)
+      assert Pipeline.release_pending?()
+      File.touch!(flag, System.os_time(:second) - 36 * 60)
+      refute Pipeline.release_pending?()
+    end
+
     test "a ticket its pane holds goes to review, queued, and others are refused", %{held: held} do
       assert {:error, "ticket #" <> _} = Pipeline.submit(held.id, "%999998")
       assert {:ok, %Ticket{status: "review", stage: "queued"}} = Pipeline.submit(held.id, @nobody)

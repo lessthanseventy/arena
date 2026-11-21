@@ -25,7 +25,11 @@ cd "$build/babylon"
 MIX_ENV=prod mix deps.get --only prod >/dev/null
 MIX_ENV=prod mix release --overwrite --path "$dest" >/dev/null
 echo "babylon: $(git rev-parse --short HEAD) released to $dest"
-# a restart mid-gate orphans the gate's processes: let running gates finish first, up to 30 minutes
+# a restart mid-gate orphans the gate's processes: babylon starts no new gate while this file is
+# there, and the running ones get up to 30 minutes to finish
+pending=${XDG_CACHE_HOME:-$HOME/.cache}/babylon/release-pending
+mkdir -p "$(dirname "$pending")" && touch "$pending"
+trap 'rm -f "$pending"; git worktree remove --force "$build"' EXIT
 for _ in $(seq 180); do
   running=$(babylon call list_tickets '{"status":["review"]}' 2>/dev/null |
     jq '[.[] | select(.stage == "verifying" or .stage == "reviewing" or .stage == "landing")] | length' || echo 0)

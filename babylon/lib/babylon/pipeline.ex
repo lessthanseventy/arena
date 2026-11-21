@@ -144,7 +144,7 @@ defmodule Babylon.Pipeline do
   defp start(running) do
     gates = conf(:gates)
 
-    case map_size(running) < gates and next_up(for {_, {_, repo}} <- running, do: repo) do
+    case map_size(running) < gates and not release_pending?() and next_up(for {_, {_, repo}} <- running, do: repo) do
       %Ticket{} = ticket ->
         train = [ticket | riders(ticket, conf(:train) - 1)]
         task = Task.Supervisor.async_nolink(Babylon.Tasks, fn -> ride(train) end)
@@ -172,6 +172,18 @@ defmodule Babylon.Pipeline do
   end
 
   defp now, do: DateTime.truncate(DateTime.utc_now(), :second)
+
+  @doc """
+  Whether a release is waiting to restart babylon: its file beside the work directory, younger than
+  35 minutes (one older is a release that died, and no longer holds the queue).
+  """
+  @spec release_pending?() :: boolean()
+  def release_pending? do
+    case File.stat(Path.join(Path.dirname(conf(:work)), "release-pending"), time: :posix) do
+      {:ok, %{mtime: at}} -> System.os_time(:second) - at < 35 * 60
+      {:error, _} -> false
+    end
+  end
 
   defp queue(%Ticket{status: "review", id: id}), do: {:error, "ticket ##{id} is in the pipeline already"}
   defp queue(%Ticket{repo: nil, id: id}), do: {:error, "ticket ##{id} has no repo to land in"}
