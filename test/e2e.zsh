@@ -708,6 +708,8 @@ check "and a number answers it through babylon" await checked
 check "and puts it away" gone 'Which colour'
 key ' '
 check "Space shows the picked card's whole ticket, as babylon tells it" see '│ the whole of it '
+key j j j j j
+check "and j scrolls it no further than its last line" see '│ the whole of it '
 key Escape
 check "and Escape puts it away" gone 'the whole of it'
 last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }

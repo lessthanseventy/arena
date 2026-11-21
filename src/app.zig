@@ -1344,6 +1344,14 @@ pub const App = struct {
 
     /// The cards of the board's column `col` as it is narrowed, as many as fit in `out`; the
     /// count of them all.
+    /// The rows the card's detail takes in its box.
+    pub fn detailRows(app: *const App) usize {
+        var lines = DetailLines.init(if (app.detail.items.len > 0) app.detail.items else "…", detailWidth(app.view_w).inner);
+        var n: usize = 0;
+        while (lines.next()) |_| n += 1;
+        return n;
+    }
+
     pub fn boardColumn(app: *const App, col: usize, out: []*const tickets.Card) usize {
         const b = if (app.board) |*b| b else return 0;
         return b.column(tickets.statuses[col], app.boardRepo(), out);
@@ -1418,7 +1426,7 @@ pub const App = struct {
         if (view.answering) return app.answerKey(key);
         if (view.detail != null) {
             if (is(key, &.{ "\x1b", "q", " " })) view.detail = null;
-            if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) view.detail_scroll += 1;
+            if (is(key, &.{ "j", "\x1b[B", "\x1bOB" }) and view.detail_scroll + 1 < app.detailRows()) view.detail_scroll += 1;
             if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.detail_scroll -|= 1;
             return;
         }
@@ -2372,9 +2380,45 @@ pub const App = struct {
 };
 
 /// A repo's name safe in a tmux command unquoted, as directory names are.
+/// The detail box's width, and the text's within its border.
+pub fn detailWidth(view_w: u16) struct { box: u16, inner: u16 } {
+    const box = @min(view_w -| 4, 100);
+    return .{ .box = box, .inner = box -| 4 };
+}
+
+/// A card's detail as the box shows it: each of its lines cut to `inner` characters and run on
+/// under one another, the space at a cut dropped.
+pub const DetailLines = struct {
+    lines: std.mem.SplitIterator(u8, .scalar),
+    rest: ?[]const u8 = null,
+    inner: usize,
+
+    pub fn init(text: []const u8, inner: usize) DetailLines {
+        return .{ .lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, text, "\n"), '\n'), .inner = inner };
+    }
+
+    pub fn next(it: *DetailLines) ?[]const u8 {
+        const rest = it.rest orelse it.lines.next() orelse return null;
+        var cut = std.unicode.Utf8View.initUnchecked(rest).iterator();
+        var n: usize = 0;
+        while (n < it.inner) : (n += 1) _ = cut.nextCodepointSlice() orelse break;
+        const line = rest[0..cut.i];
+        const after = std.mem.trimStart(u8, rest[cut.i..], " ");
+        it.rest = if (after.len > 0 and line.len > 0) after else null;
+        return line;
+    }
+};
+
 fn plainName(name: []const u8) bool {
     for (name) |c| if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_' and c != '.') return false;
     return name.len > 0;
+}
+
+test "a card's detail runs its long lines on, cut at the box's width" {
+    var lines = DetailLines.init("#3 Title\n\none two three four\n", 8);
+    const want = [_][]const u8{ "#3 Title", "", "one two ", "three fo", "ur" };
+    for (want) |line| try std.testing.expectEqualStrings(line, lines.next().?);
+    try std.testing.expectEqual(null, lines.next());
 }
 
 test "a review state is read from its number, and what is not one is none" {

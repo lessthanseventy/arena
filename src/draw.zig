@@ -1000,17 +1000,18 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
 /// A ticket's whole detail over the board, as babylon gave it, its lines cut to the box's width
 /// and run on under one another, scrolled `scroll` rows down.
 fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
-    const bw: u16 = @min(app.view_w -| 4, 100);
-    const inner = bw -| 4;
+    const width = app_mod.detailWidth(app.view_w);
+    const bw = width.box;
+    const inner = width.inner;
     const x = app.term_w - app.view_w + (app.view_w -| bw) / 2;
     const top: u16 = 3;
     const bottom: u16 = app.view_h -| 1;
-    if (bottom < top + 3 or inner == 0) return;
+    var buf: [24]u8 = undefined;
+    const title = std.fmt.bufPrint(&buf, " #{d} ", .{id}) catch " detail ";
+    if (bottom < top + 3 or inner == 0 or bw < cellCount(title) + 3) return;
     const edge = ink(app, "amber", 4);
     var pen: Pen = .{};
-    var buf: [24]u8 = undefined;
 
-    const title = std.fmt.bufPrint(&buf, " #{d} ", .{id}) catch " detail ";
     try pen.set(w, edge, null);
     try w.print("\x1b[{d};{d}H╭─", .{ top, x + 1 });
     try pen.set(w, heading(app), null);
@@ -1022,19 +1023,11 @@ fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
     const text = if (app.detail.items.len > 0) app.detail.items else "…";
     var y = top + 1;
     var row: usize = 0;
-    var lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, text, "\n"), '\n');
-    while (lines.next()) |whole| {
-        var rest = whole;
-        while (true) {
-            const line = clip(rest, inner);
-            if (row >= scroll and y < bottom - 1) {
-                try boxLine(w, &pen, edge, .{}, x, y, line, inner);
-                y += 1;
-            }
-            row += 1;
-            rest = std.mem.trimStart(u8, rest[line.len..], " ");
-            if (rest.len == 0 or line.len == 0) break;
-        }
+    var lines = app_mod.DetailLines.init(text, inner);
+    while (lines.next()) |line| : (row += 1) {
+        if (row < scroll or y >= bottom - 1) continue;
+        try boxLine(w, &pen, edge, .{}, x, y, line, inner);
+        y += 1;
     }
     while (y < bottom - 1) : (y += 1) try boxLine(w, &pen, edge, .{}, x, y, "", inner);
     try boxLine(w, &pen, edge, ink(app, "dim", 8), x, y, "jk scroll · esc puts it away", inner);
