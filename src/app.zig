@@ -302,6 +302,8 @@ pub const BoardView = struct {
     /// The ticket whose whole detail is shown over the board, and how far down it is scrolled.
     detail: ?u32 = null,
     detail_scroll: usize = 0,
+    /// The board's keys shown over it, until the next key.
+    help: bool = false,
 };
 
 /// The cards a column of the board can hold, and the repos it can be narrowed to.
@@ -1433,6 +1435,10 @@ pub const App = struct {
         const view = &app.board_view.?;
         const is = anyKey;
         if (view.answering) return app.answerKey(key);
+        if (view.help) {
+            view.help = false;
+            return;
+        }
         if (view.detail != null) {
             if (is(key, &.{ "\x1b", "q", " " })) view.detail = null;
             if (is(key, &.{ "j", "\x1b[B", "\x1bOB" }) and view.detail_scroll + 1 < app.detailRows()) view.detail_scroll += 1;
@@ -1451,10 +1457,11 @@ pub const App = struct {
             try app.send(.ignore, "run-shell -b \"babylon detail {d} >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ card.id, path, path, path });
             return;
         };
-        if (is(key, &.{"a"})) {
-            if (app.boardCard(view.col, view.row)) |card| view.answering = card.ask != null;
+        if (is(key, &.{"?"})) {
+            view.help = true;
             return;
         }
+        if (is(key, &.{"a"})) return app.act(.answer);
         if (is(key, &.{ "h", "\x1b[D", "\x1bOD" })) view.col -|= 1;
         if (is(key, &.{ "l", "\x1b[C", "\x1bOC" }) and view.col + 1 < tickets.statuses.len) view.col += 1;
         if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.row -|= 1;
@@ -1467,12 +1474,176 @@ pub const App = struct {
         }
         view.row = @min(view.row, app.boardColumn(view.col, &.{}) -| 1);
         if (is(key, &.{ "\x1b", "q" })) app.board_view = null;
-        if (is(key, &.{"\r"})) try app.goCard();
-        try app.boardChange(key);
-        if (is(key, &.{"g"})) if (app.gateSession()) |at| {
-            app.board_view = null;
-            try app.sessionTo(at);
+        if (is(key, &.{"g"})) return app.toGate();
+        if (is(key, &.{"n"})) return app.newTicket();
+        const keyed = [_]struct { []const u8, CardAction }{
+            .{ "\r", .go },    .{ "e", .edit }, .{ "p", .priority }, .{ ">", .close },
+            .{ "<", .reopen }, .{ "J", .down }, .{ "K", .up },
         };
+        for (keyed) |pair| if (std.mem.eql(u8, key, pair[0])) return app.act(pair[1]);
+    }
+
+    fn toGate(app: *App) !void {
+        const at = app.gateSession() orelse return;
+        app.board_view = null;
+        try app.sessionTo(at);
+    }
+
+    fn newTicket(app: *App) !void {
+        var buf: [80]u8 = undefined;
+        const narrowed = if (app.boardRepo()) |r| (if (plainName(r)) std.fmt.bufPrint(&buf, " --repo {s}", .{r}) catch "" else "") else "";
+        try app.ticketWindow("babylon new{s}", .{narrowed});
+    }
+
+    /// What can be done to a card from the board, by its key or its chip.
+    pub const CardAction = enum {
+        go,
+        answer,
+        edit,
+        priority,
+        close,
+        reopen,
+        up,
+        down,
+
+        pub fn label(action: CardAction) []const u8 {
+            return switch (action) {
+                .go => "go",
+                .answer => "answer",
+                .edit => "edit",
+                .priority => "priority",
+                .close => "close",
+                .reopen => "reopen",
+                .up => "↑",
+                .down => "↓",
+            };
+        }
+    };
+
+    /// The actions `card` has: go while a Claude holds it, answer while it asks, close while still to
+    /// do and reopen once done, and edit, priority and moving it along its column always.
+    pub fn cardActions(card: *const tickets.Card, out: *[8]CardAction) []CardAction {
+        var n: usize = 0;
+        const all = [_]struct { CardAction, bool }{
+            .{ .go, card.holder() != null }, .{ .answer, card.ask != null },    .{ .edit, true },
+            .{ .priority, true },            .{ .close, card.status == .todo }, .{ .reopen, card.status == .done },
+            .{ .up, true },                  .{ .down, true },
+        };
+        for (all) |pair| if (pair[1]) {
+            out[n] = pair[0];
+            n += 1;
+        };
+        return out[0..n];
+    }
+
+    /// Edit opens $EDITOR in a window of its own; priority goes from low up to high and round;
+    /// close and reopen move a ticket between to do and done, the columns between being a claim's
+    /// and the pipeline's; up and down move it along its column, the pick going with it. Each
+    /// through babylon's command line. An action the picked card has not does nothing.
+    fn act(app: *App, action: CardAction) !void {
+        const view = if (app.board_view) |*open| open else return;
+        const card = app.boardCard(view.col, view.row) orelse return;
+        var have: [8]CardAction = undefined;
+        if (std.mem.indexOfScalar(CardAction, cardActions(card, &have), action) == null) return;
+        var buf: [80]u8 = undefined;
+        const narrowed = if (app.boardRepo()) |r| (if (plainName(r)) std.fmt.bufPrint(&buf, " --repo {s}", .{r}) catch "" else "") else "";
+        switch (action) {
+            .go => try app.goCard(),
+            .answer => view.answering = true,
+            .edit => try app.ticketWindow("babylon edit {d}", .{card.id}),
+            .priority => {
+                const eql = std.mem.eql;
+                const next = if (eql(u8, card.priority, "low")) "med" else if (eql(u8, card.priority, "med")) "high" else "low";
+                try app.send(.ignore, "run-shell -b \"babylon update {d} --priority {s}\"", .{ card.id, next });
+            },
+            .close => try app.send(.ignore, "run-shell -b \"babylon update {d} --status done\"", .{card.id}),
+            .reopen => try app.send(.ignore, "run-shell -b \"babylon update {d} --status todo\"", .{card.id}),
+            .up, .down => {
+                const down = action == .down;
+                try app.send(.ignore, "run-shell -b \"babylon move {d} {s}{s}\"", .{ card.id, if (down) "down" else "up", narrowed });
+                view.row = if (down) @min(view.row + 1, app.boardColumn(view.col, &.{}) -| 1) else view.row -| 1;
+            },
+        }
+    }
+
+    /// A button on the board, where it is drawn and clicked: 0-based, as the mouse has it.
+    pub const Button = struct {
+        what: union(enum) { repo: usize, gate, new, card: CardAction },
+        x: u16,
+        y: u16,
+        w: u16,
+    };
+
+    pub fn buttonLabel(app: *const App, what: @FieldType(Button, "what"), buf: []u8) []const u8 {
+        return switch (what) {
+            .repo => |i| blk: {
+                if (i == 0) break :blk " every ";
+                var repos: [max_repos][]const u8 = undefined;
+                const n = if (app.board) |*b| b.repos(&repos) else 0;
+                break :blk if (i <= n) std.fmt.bufPrint(buf, " {s} ", .{repos[i - 1]}) catch " ? " else " ? ";
+            },
+            .gate => " gate ",
+            .new => " + ",
+            .card => |action| std.fmt.bufPrint(buf, " {s} ", .{action.label()}) catch " ? ",
+        };
+    }
+
+    pub const board_title = " board ";
+
+    /// The board's buttons: the repos as tabs and the gate beside them on its first row, a + on
+    /// the to-do column's top edge, and the picked card's actions on the row under it, each kept
+    /// to the room it has.
+    pub fn boardButtons(app: *const App, out: []Button) []Button {
+        const view = app.board_view orelse return out[0..0];
+        const ox = app.term_w - app.view_w;
+        const cw = app.boardColW();
+        var n: usize = 0;
+        var buf: [64]u8 = undefined;
+        var repos: [max_repos][]const u8 = undefined;
+        const count = if (app.board) |*b| b.repos(&repos) else 0;
+        var x: u16 = ox + @as(u16, @intCast(cellCount(board_title))) + 1;
+        const right = ox + app.view_w;
+        for (0..count + 2) |i| {
+            const what: @FieldType(Button, "what") = if (i <= count) .{ .repo = i } else .gate;
+            if (what == .gate and app.gateSession() == null) break;
+            const w: u16 = @intCast(cellCount(app.buttonLabel(what, &buf)));
+            if (what == .gate) x += 2;
+            if (x + w > right or n == out.len) break;
+            out[n] = .{ .what = what, .x = x, .y = 0, .w = w };
+            n += 1;
+            x += w + 1;
+        }
+        if (cw >= 12 and n < out.len) {
+            out[n] = .{ .what = .new, .x = ox + cw - 4, .y = 1, .w = 3 };
+            n += 1;
+        }
+        const card = app.boardCard(view.col, view.row) orelse return out[0..n];
+        const y: u16 = @intCast(2 + 3 * (view.row - app.boardFirst(view.col)) + 2);
+        if (y + 1 >= app.view_h) return out[0..n];
+        var have: [8]CardAction = undefined;
+        x = ox + @as(u16, @intCast(view.col)) * cw + 2;
+        const edge = ox + @as(u16, @intCast(view.col + 1)) * cw -| 1;
+        for (cardActions(card, &have)) |action| {
+            const w: u16 = @intCast(cellCount(app.buttonLabel(.{ .card = action }, &buf)));
+            if (x + w > edge or n == out.len) break;
+            out[n] = .{ .what = .{ .card = action }, .x = x, .y = y, .w = w };
+            n += 1;
+            x += w + 1;
+        }
+        return out[0..n];
+    }
+
+    fn pressButton(app: *App, button: Button) !void {
+        const view = &app.board_view.?;
+        switch (button.what) {
+            .repo => |i| {
+                view.repo = i;
+                view.row = 0;
+            },
+            .gate => try app.toGate(),
+            .new => try app.newTicket(),
+            .card => |action| try app.act(action),
+        }
     }
 
     /// n files a ticket and e edits the one picked, each in a window of their own; p raises its
@@ -1537,9 +1708,14 @@ pub const App = struct {
             return true;
         }
         if (!m.leftPress()) return true;
+        app.dirty = true;
+        var buttons: [48]Button = undefined;
+        for (app.boardButtons(&buttons)) |button| if (m.y == button.y and m.x >= button.x and m.x < button.x + button.w) {
+            try app.pressButton(button);
+            return true;
+        };
         const at = app.boardCardAt(m.x, m.y) orelse return true;
         const view = &app.board_view.?;
-        app.dirty = true;
         view.answering = false;
         if (view.col == at.col and view.row == at.row) {
             try app.goCard();
@@ -2457,6 +2633,11 @@ pub fn appendClean(out: *std.ArrayList(u8), gpa: Allocator, text: []const u8) !v
 }
 
 /// A repo's name safe in a tmux command unquoted, as directory names are.
+/// The cells `text` takes, a character a cell.
+pub fn cellCount(text: []const u8) usize {
+    return std.unicode.utf8CountCodepoints(text) catch text.len;
+}
+
 fn plainName(name: []const u8) bool {
     for (name) |c| if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_' and c != '.') return false;
     return name.len > 0;

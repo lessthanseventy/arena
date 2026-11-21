@@ -946,12 +946,10 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     var buf: [160]u8 = undefined;
 
     try w.print("\x1b[1;{d}H", .{ox + 1});
-    const title = std.fmt.bufPrint(&buf, " board · {s} ", .{repo orelse "every repo"}) catch " board ";
     try pen.set(w, heading(app), null);
-    try w.writeAll(title);
-    try pen.set(w, dim, null);
-    const hint = if (app.gateSession() != null) "  hjkl pick · ⏎ go to its Claude · a answer · r repo · g gate · esc close" else "  hjkl pick · ⏎ go to its Claude · a answer · r repo · esc close";
-    try fitted(w, hint, app.view_w -| cellCount(title));
+    try w.writeAll(App.board_title);
+    try pen.set(w, .{}, null);
+    try fitted(w, "", app.view_w -| cellCount(App.board_title));
 
     for (tickets.statuses, 0..) |status, c| {
         const x = ox + c * cw;
@@ -993,8 +991,10 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         for (0..inner) |_| try w.writeAll("─");
         try w.writeAll("╯");
     }
+    try boardButtons(app, w, view);
     if (view.answering) if (app.boardCard(view.col, view.row)) |card| if (card.ask) |ask| try askBox(app, w, card.id, ask);
     if (view.detail) |id| try detailBox(app, w, id, view.detail_scroll);
+    if (view.help) try helpBox(app, w);
 }
 
 /// A ticket's whole detail over the board, as babylon gave it, its lines cut to the box's width
@@ -1033,6 +1033,90 @@ fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
     try boxLine(w, &pen, edge, ink(app, "dim", 8), x, y, "jk scroll · esc puts it away", inner);
     try pen.set(w, edge, null);
     try w.print("\x1b[{d};{d}H╰", .{ bottom, x + 1 });
+    for (0..bw - 2) |_| try w.writeAll("─");
+    try w.writeAll("╯");
+}
+
+/// The board's buttons over what is drawn under them: the repo tabs, the one shown lit, and the
+/// gate; the + on the to-do column; the picked card's actions as chips; and, at the first row's
+/// end, where its keys are.
+fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
+    var pen: Pen = .{};
+    var buf: [64]u8 = undefined;
+    var buttons: [48]App.Button = undefined;
+    const shown = app.boardButtons(&buttons);
+    var end: u16 = 0;
+    for (shown) |button| {
+        const style: vt.Style = switch (button.what) {
+            .repo => |i| if (i == view.repo) chip(app) else ink(app, "dim", 8),
+            .gate => ink(app, "violet", 5),
+            .new => heading(app),
+            .card => blk: {
+                var lit = ink(app, "amber", 4);
+                lit.flags.inverse = true;
+                break :blk lit;
+            },
+        };
+        try pen.set(w, style, null);
+        try w.print("\x1b[{d};{d}H{s}", .{ button.y + 1, button.x + 1, app.buttonLabel(button.what, &buf) });
+        if (button.y == 0) end = button.x + button.w;
+    }
+    const hint = "? keys · esc close";
+    const right = app.term_w;
+    if (end + 2 + cellCount(hint) + 1 <= right) {
+        try pen.set(w, ink(app, "dim", 8), null);
+        try w.print("\x1b[1;{d}H{s}", .{ right - cellCount(hint), hint });
+    }
+    try pen.set(w, .{}, null);
+}
+
+const board_keys = [_][2][]const u8{
+    .{ "hjkl, arrows", "pick a card" },
+    .{ "⏎, click it", "go to the Claude holding it" },
+    .{ "space", "its whole ticket: body, links, gate log" },
+    .{ "a", "answer the question it asks" },
+    .{ "e", "edit its title, repo and body" },
+    .{ "p", "raise its priority, high back to low" },
+    .{ "> <", "close a ticket to do, reopen a done one" },
+    .{ "J K", "move it down or up its column" },
+    .{ "n, +", "file a ticket" },
+    .{ "r, a tab", "the next repo, or the one clicked" },
+    .{ "g", "babylon's gate, while it runs one" },
+    .{ "esc, q", "close the board" },
+};
+
+/// The board's keys, boxed over its middle until the next key.
+fn helpBox(app: *App, w: *Writer) !void {
+    const bw: u16 = @min(app.view_w -| 4, 60);
+    const inner = bw -| 4;
+    const x = app.term_w - app.view_w + (app.view_w -| bw) / 2;
+    const edge = ink(app, "amber", 4);
+    var pen: Pen = .{};
+    var y: u16 = 4;
+    if (y + board_keys.len + 3 > app.view_h) return;
+    try pen.set(w, edge, null);
+    try w.print("\x1b[{d};{d}H╭─", .{ y, x + 1 });
+    try pen.set(w, heading(app), null);
+    try w.writeAll(" the board's keys ");
+    try pen.set(w, edge, null);
+    for (cellCount(" the board's keys ") + 1..bw - 2) |_| try w.writeAll("─");
+    try w.writeAll("╮");
+    for (board_keys) |pair| {
+        y += 1;
+        try pen.set(w, edge, null);
+        try w.print("\x1b[{d};{d}H│ ", .{ y, x + 1 });
+        try pen.set(w, heading(app), null);
+        try fitted(w, pair[0], 14);
+        try pen.set(w, .{}, null);
+        try fitted(w, pair[1], inner -| 14);
+        try pen.set(w, edge, null);
+        try w.writeAll(" │");
+    }
+    y += 1;
+    try boxLine(w, &pen, edge, ink(app, "dim", 8), x, y, "any key puts this away", inner);
+    y += 1;
+    try pen.set(w, edge, null);
+    try w.print("\x1b[{d};{d}H╰", .{ y, x + 1 });
     for (0..bw - 2) |_| try w.writeAll("─");
     try w.writeAll("╯");
 }

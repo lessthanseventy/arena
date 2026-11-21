@@ -47,7 +47,10 @@ always did; arena draws them and leaves them running when it quits.
   holding it, what it waits on, where it is on babylon's way to main (queued, verifying, reviewing,
   landing, `✗ sent back`, `◆ landed`) and `? asks` when its Claude waits on a decision from you:
   `a` shows the question and its options, and an option's number answers it, typed into that
-  Claude by babylon. One that waits is dimmed, at the foot of its column. `r` narrows it to one repo, then the next, then every one again; Enter, or a second click,
+  Claude by babylon. One that waits is dimmed, at the foot of its column. Its first row has the repos as tabs, the one shown lit: a click on one narrows the board to it,
+  and `r` goes to the next, then every one again; the gate is a button beside them while babylon
+  runs one, and `?` shows every key. A `+` on the to-do column files a ticket, and the picked card
+  shows what can be done to it as chips under it, each run by a click. Enter, or a second click,
   on a card goes to the Claude holding it. `n` files a ticket and `e` edits the picked one, its
   title, repo and body in `$EDITOR` in a window of their own; `p` raises its priority, from high
   back to low; `>` closes a ticket still to do and `<` opens a closed one again; `J` and `K` move it

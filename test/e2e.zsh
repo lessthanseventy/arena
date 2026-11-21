@@ -691,7 +691,13 @@ print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket",
   >$tmp/run/babylon/board.json
 check "babylon's board has a row atop the rail, with its counts" see '^│ ▤ board +1 todo  1 doing │'
 key M-b
-check "Alt+b opens it in place of the strip" see ' board · every repo '
+check "Alt+b opens it in place of the strip, its repos as tabs" see ' board   every   arena   tlon '
+check "and where its keys are" see '\? keys · esc close'
+check "the picked card's actions as chips under it" see '│  answer   edit '
+key '?'
+check "? shows the board's keys" see "the board's keys"
+key x
+check "and any key puts them away" gone "the board's keys"
 check "a column a status, with its count" see '╭─ doing 1 ─'
 railed() { local l=$(inked $1); print -r -- "${${l#*│}%%│*}" }
 alone() { [[ $(railed 2) == *$'\e[1;7m'* && $(railed 3)$(railed 4)$(railed 5) != *$'\e[1;7m'* ]] }
@@ -733,18 +739,26 @@ key n
 check "n files one, from every repo with the repo asked" await last 'new'
 key M-b
 key r
-check "r narrows it to one repo" see ' board · arena '
+tablit() { [[ $(outer capture-pane -ep -t o) =~ $'\e\\[1;7m(\e\\[[0-9;]*m)* '$1' ' ]] }
+check "r narrows it to one repo, its tab lit" tablit arena
 check "and to its cards" gone '#7 Lights'
+tabrow() { screen | grep -n -m1 ' board   every' | cut -d: -f1 }
+tabcol() { local l=$(screen | grep -m1 ' board   every'); local p=${l%%" $1 "*}; print $(( ${#p} + 2 )) }
+mouse 0 $(tabcol tlon) $(tabrow) M
+check "a click on a tab narrows it to that repo" see '#7 Lights'
+check "and only that" gone '#8 Board'
+key r
+key r
 key l
 key Enter
 check "Enter on a card goes to the Claude holding it" see '╭─ 1 one '
 mouse 0 3 2 M
-check "a click on its row in the rail opens the board again" see ' board · '
+check "a click on its row in the rail opens the board again" see ' board   every'
 mouse 0 3 2 M
-check "and another closes it" gone ' board · '
+check "and another closes it" gone ' board   every'
 inner new-session -d -s babylon -n gate sh
 key M-b
-check "with babylon's gate session there, the board offers it" see 'r repo · g gate'
+check "with babylon's gate session there, the board offers it" see ' gate .*\? keys'
 check "and the rail does not list it" gone '│ babylon '
 key g
 check "g on the board shows the gate" see '╭─ 1 gate '
