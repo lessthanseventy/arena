@@ -78,3 +78,23 @@ babylon list --repo babylon --status todo,doing
 babylon link 2 blocks 3
 babylon claim 3
 ```
+
+## Join it
+
+A repo lands through babylon once it has:
+
+- **A gate that runs from a clean checkout:** `mise run check`, the repo's real gate (what CI would
+  run), fetching its own deps (`mix deps.get`, `zig build`'s packages). babylon runs it as it is
+  and knows nothing of the repo's language.
+- **A `.worktreeinclude`** naming its deps and build directories (`deps`, `_build`, `.zig-cache`).
+  babylon gates in one worktree a repo, `~/.cache/babylon/work/<repo>`, kept between runs; it is
+  reset to each branch with `git clean -fdq`, which leaves ignored files, so builds stay warm. A new
+  one is seeded once from the main checkout with `wt step copy-ignored --require-include`, which
+  copies what that file names, so even the first gate is not cold.
+- **Optionally an `install` task,** run after a landing in the main checkout (when it is on main
+  with nothing changed), so what is installed is what landed.
+
+A gate's whole output is in `~/.cache/babylon/logs/<repo>-t<id>.log`, and runs in a window of the
+`babylon` tmux session, to be watched as it goes. A send-back saying the gate is red means the
+ticket's change failed it; one where the gate never got to the change (deps missing, a tool not
+installed) is the repo's setup to fix, not the ticket's.
