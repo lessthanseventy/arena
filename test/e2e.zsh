@@ -849,10 +849,31 @@ print -r -- '{"tickets":[{"id":9,"repo":"arena","title":"Pipe","kind":"ticket","
   >$tmp/run/babylon/board.json
 check "and with two going, the first and how many more" see '^│ ▤ board +◐ #9 reviewing \+1 │'
 
+in_session() { [[ $(inner list-clients -F '#{session_name}') == $1 ]] }
+mouse 0 5 3 M
+mouse 0 5 3 m
+await in_session alpha
+key M-b
+check "with the orchestrator running, the board has its window beside it" see '╭─ 1 orch ─'
+check "arena in its session to have it live" await in_session orchestrator
+key Tab
+key 'echo side' Enter
+check "Tab gives the keys to it" see '│side +│'
+key Tab
+key '`'
+check "and back to the board, where \` folds it away" gone '╭─ 1 orch ─'
+check "going back to the session the human was in" await in_session alpha
+key '`'
+check "and unfolds it" see '╭─ 1 orch ─'
+key Escape
+check "closing the board goes back to the session the human was in" await in_session alpha
+check "the strip its whole width again" see '╭─ 1 one ─'
+
 done_card() { print -r -- '{"id":'$1',"repo":"arena","title":"Done '$1'","kind":"ticket","status":"done","priority":"med","blocked_by":[]}' }
 print -r -- '{"tickets":[{"id":20,"repo":"arena","title":"Next","kind":"ticket","status":"todo","priority":"med","blocked_by":[]},'\
 "$(done_card 25),$(done_card 24),$(done_card 23),$(done_card 22),$(done_card 21)]}" >$tmp/run/babylon/board.json
 key M-b
+key '`'
 check "done shows its last few closed in a lane" see '│ #23 Done 23 +│'
 check "then how many more it has" see '│ 2 more +│'
 check "and its count is all of them" see '─ done 5 ─'

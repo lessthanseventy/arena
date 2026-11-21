@@ -300,6 +300,13 @@ const Pending = union(enum) {
     cursor: u32,
 };
 
+/// The orchestrator's window beside the open board, arena in its session to have it live: the
+/// session the human was in, gone back to when it is put away, and whether keys go to its pane.
+pub const Side = struct {
+    back: ?u32,
+    pane_keys: bool = false,
+};
+
 pub const BoardView = struct {
     /// The column and the card in it picked, and in the every view the lane it is in.
     col: usize = 0,
@@ -351,6 +358,9 @@ pub const App = struct {
     /// The orchestrator was asked to start: gone to as soon as its session shows, unless the human
     /// has gone somewhere else first.
     orchestrating: bool = false,
+    side: ?Side = null,
+    /// The side was folded away: the board opens without it until it is unfolded.
+    side_folded: bool = false,
     rail: enum { wide, narrow } = .wide,
     /// The narrow rail drawn wide over the strip, while the pointer is on it.
     peek: bool = false,
@@ -827,9 +837,25 @@ pub const App = struct {
         return if (app.peek and app.railW() > 0) app.railWideW() else app.railW();
     }
 
+    /// The strip's width, or with the orchestrator beside the board, its window's.
     pub fn fit(app: *App) void {
+        const full = app.fullW();
+        app.view_w = if (app.side != null) full * 2 / 5 else full;
+    }
+
+    /// The width right of the rail, the strip's or the board's and its side's.
+    pub fn fullW(app: *const App) u16 {
         const rail = app.railW();
-        app.view_w = app.term_w - if (rail > 0) rail + 1 else 0;
+        return app.term_w - if (rail > 0) rail + 1 else 0;
+    }
+
+    /// The board's left edge and width: right of the rail, and left of the side when it shows.
+    pub fn boardX(app: *const App) u16 {
+        return app.term_w - app.fullW();
+    }
+
+    pub fn boardW(app: *const App) u16 {
+        return if (app.side != null) app.fullW() -| app.view_w -| 1 else app.view_w;
     }
 
     /// A new terminal size, with its cells' in pixels when the terminal says (0 when not):
@@ -989,6 +1015,7 @@ pub const App = struct {
                 return a.order < b.order or (a.order == b.order and a.id < b.id);
             }
         }.before);
+        if (app.side != null and app.orchestratorSession() == null) app.side = null;
         app.fit();
         if (app.orchestrating) if (app.orchestratorSession()) |at| {
             app.orchestrating = false;
@@ -1346,10 +1373,10 @@ pub const App = struct {
 
     /// The board file's text as read now: the board it holds takes the place of the one before;
     /// there is none when there is no file or it does not parse.
-    pub fn setBoard(app: *App, text: ?[]const u8) void {
+    pub fn setBoard(app: *App, text: ?[]const u8) !void {
         if (app.board) |*b| b.deinit();
         app.board = if (text) |t| tickets.Board.parse(app.gpa, t) catch null else null;
-        if (app.board == null) app.board_view = null;
+        if (app.board == null) try app.closeBoard();
         if (app.board_view) |*view| {
             var repos: [max_repos + 1][]const u8 = undefined;
             view.lane = @min(view.lane, app.laneRepos(&repos) -| 1);
@@ -1357,9 +1384,45 @@ pub const App = struct {
         app.dirty = true;
     }
 
-    fn toggleBoard(app: *App) void {
+    fn toggleBoard(app: *App) !void {
         app.orchestrating = false;
-        app.board_view = if (app.board_view != null or app.board == null) null else .{ .lane = app.firstLane() };
+        app.dirty = true;
+        if (app.board_view != null) return app.closeBoard();
+        if (app.board == null) return;
+        app.board_view = .{ .lane = app.firstLane() };
+        if (!app.side_folded) try app.showSide();
+    }
+
+    /// The board put away, and the side with it, back in the session the human was in.
+    fn closeBoard(app: *App) !void {
+        app.board_view = null;
+        app.dirty = true;
+        try app.hideSide(false);
+    }
+
+    /// The orchestrator's window beside the board, when it is running: arena goes to its session.
+    fn showSide(app: *App) !void {
+        const at = app.orchestratorSession() orelse return;
+        app.side = .{ .back = app.current };
+        try app.send(.ignore, "switch-client -t '${d}'", .{app.sessions.items[at].id});
+        app.reflow();
+    }
+
+    /// The side put away, the strip its full width again; back in the session the human was in
+    /// unless `stay`.
+    fn hideSide(app: *App, stay: bool) !void {
+        const side = app.side orelse return;
+        app.side = null;
+        app.reflow();
+        if (stay) return;
+        if (side.back) |id| if (id != app.current) try app.send(.ignore, "switch-client -t '${d}'", .{id});
+    }
+
+    /// The windows sized again to the strip's width now, once tmux has listed them.
+    fn reflow(app: *App) void {
+        app.fit();
+        for (app.sessions.items) |s| s.placed = false;
+        app.want_list = true;
         app.dirty = true;
     }
 
@@ -1375,7 +1438,7 @@ pub const App = struct {
 
     /// The rows the card's detail takes in its box.
     pub fn detailRows(app: *const App) usize {
-        var lines = DetailLines.init(if (app.detail.items.len > 0) app.detail.items else "…", detailWidth(app.view_w).inner);
+        var lines = DetailLines.init(if (app.detail.items.len > 0) app.detail.items else "…", detailWidth(app.boardW()).inner);
         var n: usize = 0;
         while (lines.next()) |_| n += 1;
         return n;
@@ -1537,15 +1600,15 @@ pub const App = struct {
     /// The board's four columns side by side under a row of its own, right of the lanes' names
     /// in the every view; in each, cards stacked from the second row inside its border.
     pub fn boardColW(app: *const App) u16 {
-        return (app.view_w - app.laneLabelW()) / @as(u16, @intCast(app.boardCols()));
+        return (app.boardW() - app.laneLabelW()) / @as(u16, @intCast(app.boardCols()));
     }
 
     pub fn boardColX(app: *const App, col: usize) u16 {
-        return app.term_w - app.view_w + app.laneLabelW() + @as(u16, @intCast(col)) * app.boardColW();
+        return app.boardX() + app.laneLabelW() + @as(u16, @intCast(col)) * app.boardColW();
     }
 
     pub fn laneLabelW(app: *const App) u16 {
-        return if (app.boardLanes()) @min(14, app.view_w / 6) else 0;
+        return if (app.boardLanes()) @min(14, app.boardW() / 6) else 0;
     }
 
     /// A card is a box: its top edge, its title on two rows, a footer of what else is so of it,
@@ -1613,13 +1676,10 @@ pub const App = struct {
             try app.send(.ignore, "run-shell -b \"tmux has-session -t ={s} 2>/dev/null || tmux new-session -d -s {s} -c $HOME/projects/{s}; " ++
                 "tmux list-windows -t ={s} -F '##{{window_name}}' | grep -qx t{d} || " ++
                 "tmux new-window -t ={s}: -n t{d} -c $HOME/projects/{s} claude 'Claim ticket ##{d} with claim_ticket, run the start command its answer gives, and work it to submit_ticket.'\"", .{ session, session, repo, session, card.id, session, card.id, repo, card.id });
-            app.board_view = null;
-            app.dirty = true;
-            return;
+            return app.closeBoard();
         };
         const at = app.paneWindow(pane) orelse return;
-        app.board_view = null;
-        app.dirty = true;
+        try app.closeBoard();
         try app.send(.ignore, "select-pane -t %{d}", .{pane});
         try app.jumpTo(at.session, at.index);
     }
@@ -1706,7 +1766,12 @@ pub const App = struct {
             view.lane = app.firstLane();
         }
         view.row = @min(view.row, app.boardColumn(view.col, &.{}) -| 1);
-        if (is(key, &.{ "\x1b", "q" })) app.board_view = null;
+        if (is(key, &.{ "\x1b", "q" })) return app.closeBoard();
+        if (is(key, &.{"`"})) return app.foldSide();
+        if (is(key, &.{"\t"})) if (app.side) |*side| {
+            side.pane_keys = true;
+            return;
+        };
         if (is(key, &.{"g"})) return app.toGate();
         if (is(key, &.{"o"})) return app.toOrchestrator();
         if (is(key, &.{"n"})) return app.newTicket();
@@ -1717,9 +1782,20 @@ pub const App = struct {
         for (keyed) |pair| if (std.mem.eql(u8, key, pair[0])) return app.act(pair[1]);
     }
 
+    /// The side folded away, or back beside the board; the board opens so from then on.
+    fn foldSide(app: *App) !void {
+        app.dirty = true;
+        if (app.side != null) {
+            app.side_folded = true;
+            return app.hideSide(false);
+        }
+        app.side_folded = false;
+        try app.showSide();
+    }
+
     fn toGate(app: *App) !void {
         const at = app.gateSession() orelse return;
-        app.board_view = null;
+        try app.closeBoard();
         try app.sessionTo(at);
     }
 
@@ -1727,7 +1803,11 @@ pub const App = struct {
     fn toOrchestrator(app: *App) !void {
         app.board_view = null;
         app.dirty = true;
-        if (app.orchestratorSession()) |at| return app.sessionTo(at);
+        if (app.orchestratorSession()) |at| {
+            try app.hideSide(true);
+            return app.sessionTo(at);
+        }
+        try app.hideSide(false);
         app.orchestrating = true;
         try app.send(.ignore, "run-shell -b \"babylon orchestrator\"", .{});
     }
@@ -1847,14 +1927,14 @@ pub const App = struct {
     /// every view its column's, each kept to the room it has.
     pub fn boardButtons(app: *const App, out: []Button) []Button {
         const view = app.board_view orelse return out[0..0];
-        const ox = app.term_w - app.view_w;
+        const ox = app.boardX();
         const cw = app.boardColW();
         var n: usize = 0;
         var buf: [64]u8 = undefined;
         var repos: [max_repos][]const u8 = undefined;
         const count = if (app.board) |*b| b.repos(&repos) else 0;
         var x: u16 = ox + @as(u16, @intCast(cellCount(board_title))) + 1;
-        const right = ox + app.view_w;
+        const right = ox + app.boardW();
         for (0..count + 4) |i| {
             const what: @FieldType(Button, "what") = if (i <= count) .{ .repo = i } else if (i == count + 1) .backlog else if (i == count + 2) .gate else .orchestrator;
             if (what == .gate and app.gateSession() == null) continue;
@@ -1910,7 +1990,7 @@ pub const App = struct {
     /// A command over a ticket that wants the terminal, as $EDITOR does: in a window by the
     /// focused one, kept open on a refusal to be read.
     fn ticketWindow(app: *App, comptime cmd: []const u8, args: anytype) !void {
-        app.board_view = null;
+        try app.closeBoard();
         try app.send(.ignore, "new-window -a -n ticket \"" ++ cmd ++ " || read _\"", args);
     }
 
@@ -1934,11 +2014,16 @@ pub const App = struct {
     /// Claude holding it; the wheel moves along the column. Whether it was the board's: on the
     /// rail it is the rail's, and closes the board but for its own row there.
     fn boardMouse(app: *App, m: keys.Mouse) !bool {
-        if (m.x < app.term_w - app.view_w) {
-            if (m.leftPress() and m.y != 1) app.board_view = null;
+        if (m.x < app.boardX()) {
+            if (m.leftPress() and m.y != 1) try app.closeBoard();
             app.dirty = true;
             return false;
         }
+        if (app.side) |*side| if (m.x >= app.boardX() + app.boardW()) {
+            if (m.leftPress()) side.pane_keys = true;
+            app.dirty = true;
+            return true;
+        };
         if (m.wheel()) {
             if (app.navStep()) try app.boardKey(if (m.code & 1 == 0) "k" else "j");
             return true;
@@ -2416,7 +2501,7 @@ pub const App = struct {
                 return true;
             }
             if (m.y == 1 and app.board != null) {
-                app.toggleBoard();
+                try app.toggleBoard();
                 return true;
             }
             if (m.y == app.railMenuRow()) app.openMenu(&menu.main);
@@ -2581,6 +2666,14 @@ pub const App = struct {
     }
 
     fn menuKeys(app: *App, text: []const u8) !void {
+        // with the keys on the orchestrator's pane, all but a Tab is typed into it
+        if (app.board_view != null) if (app.side) |*side| if (side.pane_keys) {
+            const tab = std.mem.indexOfScalar(u8, text, '\t') orelse return app.forward(text);
+            try app.forward(text[0..tab]);
+            side.pane_keys = false;
+            app.dirty = true;
+            return app.menuKeys(text[tab + 1 ..]);
+        };
         var i: usize = 0;
         while (i < text.len) {
             // an arrow is ESC and two more; anything else is a key a byte
@@ -2660,7 +2753,7 @@ pub const App = struct {
                     .full_width => app.toggleFull(),
                     .jump => app.prompt = .{ .what = .jump },
                     .overview => app.openOverview(),
-                    .board => app.toggleBoard(),
+                    .board => try app.toggleBoard(),
                     .rail_width => app.toggleRail(),
                     .split_right => try app.send(.ignore, "split-window -h -c '#{{pane_current_path}}'", .{}),
                     .split_below => try app.send(.ignore, "split-window -v -c '#{{pane_current_path}}'", .{}),
@@ -2713,7 +2806,7 @@ pub const App = struct {
             app.menu = null;
             app.prompt = null;
             app.overview = null;
-            app.board_view = null;
+            if (app.board_view != null) try app.closeBoard();
             app.dirty = true;
             return;
         }
@@ -2733,7 +2826,7 @@ pub const App = struct {
             ';' => try app.widenBy(-share_step),
             '\'' => try app.widenBy(share_step),
             'o' => app.openOverview(),
-            'b' => app.toggleBoard(),
+            'b' => try app.toggleBoard(),
             'w' => app.toggleRail(),
             'n' => try app.stepAgent(1),
             'N' => try app.stepAgent(-1),

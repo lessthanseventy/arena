@@ -57,7 +57,10 @@ always did; arena draws them and leaves them running when it quits.
   down or up its column among its repo's cards; one with no repo, or a repo whose name is not
   plain, stays where it is. Space shows the picked card's whole ticket over the board: its body, links,
   stage and the note on it, and the last of its gate's log. The board's row atop the rail counts what is to do and being
-  done, and a click there opens it; it is there while babylon keeps its file.
+  done, and a click there opens it; it is there while babylon keeps its file. While the
+  orchestrator runs, its window shows beside the board, arena in its session to have it live:
+  Tab, or a click on it, gives it the keys and Tab gives them back; `` ` `` folds it away, and the
+  board opens so until it is unfolded. Closing the board goes back to the session you were in.
 - **Jump** to any window in any session by typing part of its name.
 - **A menu** for everything, for when you would rather click.
 - **Mouse throughout**: click, wheel, drag to select and copy (shift-drag over a program that takes

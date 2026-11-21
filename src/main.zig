@@ -89,7 +89,7 @@ const BoardFile = struct {
     path: ?[]u8,
     text: ?[]u8 = null,
 
-    fn check(file: *BoardFile, app: *App) void {
+    fn check(file: *BoardFile, app: *App) !void {
         const path = file.path orelse return;
         const text = std.Io.Dir.cwd().readFileAlloc(app.io, path, app.gpa, .limited(1 << 22)) catch null;
         const same = if (text) |now| (if (file.text) |was| std.mem.eql(u8, now, was) else false) else file.text == null;
@@ -99,7 +99,7 @@ const BoardFile = struct {
         }
         if (file.text) |was| app.gpa.free(was);
         file.text = text;
-        app.setBoard(text);
+        try app.setBoard(text);
     }
 
     /// The detail of the card the board shows, once babylon has written it beside the board.
@@ -283,7 +283,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) 
         if (now - theme_checked >= theme_check_ms) {
             theme_checked = now;
             try theme_file.check(&app, tty);
-            board_file.check(&app);
+            try board_file.check(&app);
             board_file.checkDetail(&app);
         }
         if (app.want_list and !app.listing) try app.requestList();

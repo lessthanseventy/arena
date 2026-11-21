@@ -943,7 +943,7 @@ fn overview(app: *App, w: *Writer, spot: App.Spot) !void {
 /// and title on two rows, a footer of what else is so of it, its left edge its priority, and
 /// the picked one's border lit.
 fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
-    const ox = app.term_w - app.view_w;
+    const ox = app.boardX();
     const cw = app.boardColW();
     const dim = ink(app, "dim", 8);
     const edge: vt.Style = .{ .fg_color = .palette(8) };
@@ -955,7 +955,7 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     try pen.set(w, heading(app), null);
     try w.writeAll(App.board_title);
     try pen.set(w, .{}, null);
-    try fitted(w, "", app.view_w -| cellCount(App.board_title));
+    try fitted(w, "", app.boardW() -| cellCount(App.board_title));
 
     const lanes = app.boardLanes();
     if (lanes) try laneNames(app, w, &pen);
@@ -970,9 +970,10 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         try pen.set(w, edge, null);
         try w.print("\x1b[2;{d}H╭─", .{x + 1});
         try pen.set(w, dim, null);
-        try w.writeAll(label);
+        const shown = clip(label, inner -| 1);
+        try w.writeAll(shown);
         try pen.set(w, edge, null);
-        for (cellCount(label) + 1..inner) |_| try w.writeAll("─");
+        for (@min(cellCount(shown) + 1, inner)..inner) |_| try w.writeAll("─");
         try w.writeAll("╮");
         const first = app.boardFirst(c);
         var y: u16 = 2;
@@ -1035,10 +1036,10 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
 /// A ticket's whole detail over the board, as babylon gave it, its lines cut to the box's width
 /// and run on under one another, scrolled `scroll` rows down.
 fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
-    const width = app_mod.detailWidth(app.view_w);
+    const width = app_mod.detailWidth(app.boardW());
     const bw = width.box;
     const inner = width.inner;
-    const x = app.term_w - app.view_w + (app.view_w -| bw) / 2;
+    const x = app.boardX() + (app.boardW() -| bw) / 2;
     const top: u16 = 3;
     const bottom: u16 = app.view_h -| 1;
     var buf: [24]u8 = undefined;
@@ -1098,7 +1099,7 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         if (button.y == 0) end = button.x + button.w;
     }
     const hint = "? keys · esc close";
-    const right = app.term_w;
+    const right = app.boardX() + app.boardW();
     if (end + 2 + cellCount(hint) + 1 <= right) {
         try pen.set(w, ink(app, "dim", 8), null);
         try w.print("\x1b[1;{d}H{s}", .{ right - cellCount(hint), hint });
@@ -1120,14 +1121,16 @@ const board_keys = [_][2][]const u8{
     .{ "t", "move a backlog card to todo" },
     .{ "g", "babylon's gate, while it runs one" },
     .{ "o", "the orchestrator, started if it is not running" },
+    .{ "`", "fold the orchestrator's window beside it, or unfold" },
+    .{ "tab", "keys to that window and back to the board" },
     .{ "esc, q", "close the board" },
 };
 
 /// The board's keys, boxed over its middle until the next key.
 fn helpBox(app: *App, w: *Writer) !void {
-    const bw: u16 = @min(app.view_w -| 4, 60);
+    const bw: u16 = @min(app.boardW() -| 4, 60);
     const inner = bw -| 4;
-    const x = app.term_w - app.view_w + (app.view_w -| bw) / 2;
+    const x = app.boardX() + (app.boardW() -| bw) / 2;
     const edge = ink(app, "amber", 4);
     var pen: Pen = .{};
     var y: u16 = 4;
@@ -1162,9 +1165,9 @@ fn helpBox(app: *App, w: *Writer) !void {
 /// The question a card waits on, boxed over the middle of the board: the question wrapped to the
 /// box, then each option by its number.
 fn askBox(app: *App, w: *Writer, id: u32, ask: tickets.Ask) !void {
-    const bw: u16 = @min(app.view_w -| 4, 64);
+    const bw: u16 = @min(app.boardW() -| 4, 64);
     const inner = bw -| 4;
-    const x = app.term_w - app.view_w + (app.view_w -| bw) / 2;
+    const x = app.boardX() + (app.boardW() -| bw) / 2;
     const edge = ink(app, "amber", 4);
     var pen: Pen = .{};
     var buf: [48]u8 = undefined;
@@ -1221,7 +1224,7 @@ fn boxLine(w: *Writer, pen: *Pen, edge: vt.Style, style: vt.Style, x: u16, y: u1
 /// The every view's lane names down the board's left, each with its cards' count a column
 /// under it, a rule between lanes as between their cards.
 fn laneNames(app: *const App, w: *Writer, pen: *Pen) !void {
-    const ox = app.term_w - app.view_w;
+    const ox = app.boardX();
     const lw = app.laneLabelW();
     const view = app.board_view.?;
     const scroll = app.laneScroll();
@@ -1416,6 +1419,11 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
         try overview(app, w, spot);
     } else if (app.board_view) |view| {
         try boardView(app, w, view);
+        // the orchestrator's window beside it, once arena is in its session
+        if (app.side) |side| if (app.cur()) |s| if (s.orchestrator()) {
+            const at = try strip(app, w, s, 0, what);
+            if (side.pane_keys) cursor = at;
+        };
     } else {
         if (app.yoff != 0) if (app.sessionById(app.prev)) |leaving| {
             const way: i32 = if (app.yoff > 0) 1 else -1;
