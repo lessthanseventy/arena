@@ -2,6 +2,7 @@ const std = @import("std");
 const layout = @import("layout.zig");
 const color = @import("color.zig");
 const draw = @import("draw.zig");
+const keys = @import("keys.zig");
 const Theme = @import("theme.zig").Theme;
 const App = @import("app.zig").App;
 const posix = std.posix;
@@ -258,6 +259,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) 
         .{ .fd = child.stdout.?.handle, .events = posix.POLL.IN, .revents = 0 },
     };
     var typed: std.ArrayList(u8) = .empty;
+    var held_at: i64 = 0;
     defer typed.deinit(gpa);
     var line: std.ArrayList(u8) = .empty;
     defer line.deinit(gpa);
@@ -326,7 +328,8 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) 
             @max(1, spin_frame_ms - (now - last_spin))
         else
             idle_ms;
-        _ = try posix.poll(&fds, @intCast(@min(wait_ms, idle_ms, @max(1, app.dwell()))));
+        const lone = keys.lone(typed.items);
+        _ = try posix.poll(&fds, @intCast(@min(wait_ms, idle_ms, @max(1, app.dwell()), if (lone) @as(i64, keys.lone_wait_ms) else idle_ms)));
 
         if (fds[0].revents & posix.POLL.IN != 0) {
             const n = try posix.read(posix.STDIN_FILENO, &buf);
@@ -335,6 +338,10 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) 
             const held = try app.onInput(typed.items);
             std.mem.copyForwards(u8, typed.items[0..held], typed.items[typed.items.len - held ..]);
             typed.items.len = held;
+            if (held > 0) held_at = std.Io.Timestamp.now(io, .awake).toMilliseconds();
+        } else if (lone and std.Io.Timestamp.now(io, .awake).toMilliseconds() - held_at >= keys.lone_wait_ms) {
+            try app.typedAlone(typed.items);
+            typed.items.len = 0;
         }
         if (fds[1].revents & (posix.POLL.IN | posix.POLL.HUP) != 0) {
             const n = try posix.read(fds[1].fd, &buf);

@@ -67,7 +67,9 @@ pub fn next(bytes: []const u8) Part {
     var i: usize = 0;
     while (std.mem.indexOfScalarPos(u8, bytes, i, 0x1b)) |esc| : (i = esc + 1) {
         const after = bytes[esc + 1 ..];
-        if (after.len == 0) break;
+        if (after.len == 0 or std.mem.eql(u8, after, "[")) {
+            return .{ .text = bytes[0..esc], .event = null, .rest = &.{}, .held = bytes[esc..] };
+        }
         if (std.mem.indexOfScalar(u8, chords, after[0]) != null) {
             return .{ .text = bytes[0..esc], .event = .{ .chord = after[0] }, .rest = after[1..] };
         }
@@ -98,6 +100,14 @@ pub fn next(bytes: []const u8) Part {
     return .{ .text = bytes, .event = null, .rest = &.{} };
 }
 
+/// Held bytes that may be all there is, a lone Escape (or Alt+[): typed as they are once nothing
+/// more has come for `lone_wait_ms`.
+pub fn lone(held: []const u8) bool {
+    return std.mem.eql(u8, held, "\x1b") or std.mem.eql(u8, held, "\x1b[");
+}
+
+pub const lone_wait_ms = 30;
+
 /// `[<code;x;y` then `M` for a press or motion, `m` for a release; x and y from 1.
 fn mouse(after: []const u8) ?struct { mouse: Mouse, len: usize } {
     if (!std.mem.startsWith(u8, after, "[<")) return null;
@@ -121,8 +131,8 @@ test "Alt+Enter is a chord" {
     try std.testing.expectEqual(@as(u8, '\r'), next("\x1b\r").event.?.chord);
 }
 
-test "other escape sequences and a trailing escape are the window's" {
-    for ([_][]const u8{ "\x1b[A", "\x1bOP", "\x1b~", "abc\x1b", "\x1b[<0;0;1M", "" }) |bytes| {
+test "other escape sequences are the window's" {
+    for ([_][]const u8{ "\x1b[A", "\x1bOP", "\x1b~", "\x1b[<0;0;1M", "" }) |bytes| {
         const part = next(bytes);
         try std.testing.expectEqualStrings(bytes, part.text);
         try std.testing.expectEqual(@as(?Event, null), part.event);
@@ -153,6 +163,13 @@ test "a report or reply cut off by the read is held, not typed" {
         try std.testing.expectEqualStrings(cut, part.held);
     }
     try std.testing.expectEqualStrings("x", next("x\x1b[<0;1").text);
+    for ([_][]const u8{ "x\x1b", "x\x1b[" }) |cut| {
+        const part = next(cut);
+        try std.testing.expectEqualStrings("x", part.text);
+        try std.testing.expectEqualStrings(cut[1..], part.held);
+        try std.testing.expect(lone(part.held));
+    }
+    try std.testing.expect(!lone("\x1b[<0;1"));
     try std.testing.expectEqualStrings("\x1b]", next("\x1b]").text);
 }
 

@@ -2355,6 +2355,11 @@ pub const App = struct {
         return 0;
     }
 
+    /// Held input that turned out to be all there was, typed as it is.
+    pub fn typedAlone(app: *App, bytes: []const u8) !void {
+        if (app.overlay()) try app.menuKeys(bytes) else try app.forward(bytes);
+    }
+
     fn forward(app: *App, bytes: []const u8) !void {
         const s = app.cur() orelse return;
         const win = s.focused() orelse return;
