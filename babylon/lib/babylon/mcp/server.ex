@@ -19,7 +19,8 @@ defmodule Babylon.MCP.Server do
     - A line typed into this session starting `babylon:` is babylon's word to it (a landing, a send-back, an answer): act on what it says. inbox reads any still held.
     - Work that has to wait on other work: file it with blocked_by, or link_tickets with blocks. A blocked ticket cannot be claimed.
     - list_tickets with mine shows what this session holds; with repo, one repo's tickets.
-    - Work that touches another session or repo, a question of what should go next, or being stuck on another session: message the orchestrator (SendMessage to `orchestrator`, the standing Claude over every session and the board); it files and links the tickets. Your own follow-ups you still file yourself.
+    - Work another repo should take (a setting, a fix, a change your work needs there): file_ticket it with that repo yourself, and link it to your ticket when yours waits on it. Do not hand it to your human to pass on.
+    - A question of what should go next, or being stuck on another session: message the orchestrator (SendMessage to `orchestrator`, the standing Claude over every session and the board).
     """,
     protocol_versions: ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26"]
 

@@ -83,7 +83,8 @@ defmodule Babylon.Pipeline do
       tell(
         sent,
         "##{id} was sent back: #{first} get_ticket #{id} has the whole of it in stage_note. " <>
-          "Fix it on #{sent.branch}, commit, and submit_ticket #{id} again."
+          "Fix it on #{sent.branch}, commit, and submit_ticket #{id} again. If the fix goes past what " <>
+          "the ticket's body says, update_ticket the body first: the review reads the ticket."
       )
     end
 
