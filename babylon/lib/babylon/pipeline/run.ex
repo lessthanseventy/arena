@@ -463,7 +463,6 @@ defmodule Babylon.Pipeline.Run do
     end
   end
 
-  # the last window of that name goes once the new one is open, as the session ends with its last window
   # a gate left running in the warm worktree, as by a babylon restarted under it, would race this
   # one there: it goes first, with every process of its pane's session
   defp stop_gate(name) do
@@ -479,6 +478,7 @@ defmodule Babylon.Pipeline.Run do
     end
   end
 
+  # the last window of that name goes once the new one is open, as the session ends with its last window
   defp open_window(name, opened) do
     opened = ["-n", name | opened]
 
