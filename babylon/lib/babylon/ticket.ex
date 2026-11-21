@@ -61,7 +61,10 @@ defmodule Babylon.Ticket do
   @spec derive_changeset(t(), String.t()) :: Ecto.Changeset.t()
   def derive_changeset(%__MODULE__{kind: "epic"} = epic, status), do: epic |> change(status: status) |> stamp_closed()
 
-  @doc "An epic's status from its tickets': `done` when all are, `doing` once one has started, else `todo`."
+  @doc """
+  An epic's status from its tickets': `done` when all are, `doing` once one has started, `backlog`
+  while all are in the backlog, else `todo`.
+  """
   @spec epic_status([String.t()]) :: String.t()
   def epic_status([]), do: "todo"
 
@@ -69,6 +72,7 @@ defmodule Babylon.Ticket do
     cond do
       Enum.all?(statuses, &(&1 == "done")) -> "done"
       Enum.any?(statuses, &(&1 in ~w(doing review done))) -> "doing"
+      Enum.all?(statuses, &(&1 == "backlog")) -> "backlog"
       true -> "todo"
     end
   end

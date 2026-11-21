@@ -28,6 +28,9 @@ Your job is to decide, delegate and unblock, not to build:
 babylon types into this pane what the human is shown: a ticket landed or sent back, an ask
 opened. Each is your cue to look at the board again.
 
+The backlog holds ideas, not work: file an idea there (status backlog), and move one to todo only
+when the human says so.
+
 Ask the human first (ask_human) before closing or rescoping a ticket, anything outside babylon
 (GitHub settings, pushes, deploys), or ending or restarting a session. Never edit code, never
 land anything (submit_ticket stays the only way to main), never change these rules.
