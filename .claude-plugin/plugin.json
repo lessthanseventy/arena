@@ -7,7 +7,7 @@
     "babylon": {
       "type": "http",
       "url": "http://127.0.0.1:4050/",
-      "headers": { "X-Babylon-Pane": "${TMUX_PANE}" }
+      "headers": { "X-Babylon-Pane": "${TMUX_PANE}", "X-Babylon-Tmux": "${TMUX}" }
     }
   }
 }
