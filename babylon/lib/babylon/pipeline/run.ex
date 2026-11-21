@@ -28,11 +28,11 @@ defmodule Babylon.Pipeline.Run do
          :ok <- ahead(dir),
          :ok <- gate(dir, ticket),
          :ok <- stage.("reviewing"),
-         {:ok, fixed} <- review(dir, ticket),
+         {:ok, fixed, followed} <- review(dir, ticket),
          :ok <- regate(dir, ticket, fixed),
          :ok <- stage.("landing"),
          {:landed, sha} <- land(dir, ticket, 3) do
-      if fixed == [], do: {:landed, sha}, else: {:landed, sha, Enum.join(fixed, "; ")}
+      with_fixes({:landed, sha}, fixed ++ followed)
     end
   end
 
@@ -122,8 +122,8 @@ defmodule Babylon.Pipeline.Run do
     result =
       with :ok <- onto_main(dir, ticket),
            :ok <- ahead(dir),
-           {:ok, fixed} <- review(dir, ticket) do
-        {:ok, {rev(dir, "origin/main"), rev(dir, "HEAD")}, fixed}
+           {:ok, fixed, followed} <- review(dir, ticket) do
+        {:ok, {rev(dir, "origin/main"), rev(dir, "HEAD")}, fixed ++ followed}
       end
 
     {ticket, result}
@@ -534,15 +534,23 @@ defmodule Babylon.Pipeline.Run do
   end
 
   defp verdict(out) do
-    case Regex.scan(~r/^VERDICT: (approve|fix|request_changes)\s*$/m, out) do
+    case Regex.scan(~r/^VERDICT: (approve_with_followups|approve|fix|request_changes)\s*$/m, out) do
       [] ->
         {:failed, "the review gave no verdict.\n" <> tail(out)}
 
       found ->
         case List.last(found) do
-          [_, "approve"] -> {:ok, []}
-          [_, "fix"] -> {:fix, for([_, line] <- Regex.scan(~r/^FIXED: (.+?)\s*$/m, out), do: line)}
-          [_, "request_changes"] -> {:failed, "the review asked for changes.\n" <> String.trim(out)}
+          [_, "approve"] ->
+            {:ok, [], []}
+
+          [_, "approve_with_followups"] ->
+            {:followups, for([_, line] <- Regex.scan(~r/^FOLLOWUP: (.+?)\s*$/m, out), do: line)}
+
+          [_, "fix"] ->
+            {:fix, for([_, line] <- Regex.scan(~r/^FIXED: (.+?)\s*$/m, out), do: line)}
+
+          [_, "request_changes"] ->
+            {:failed, "the review asked for changes.\n" <> String.trim(out)}
         end
     end
   end
@@ -576,13 +584,37 @@ defmodule Babylon.Pipeline.Run do
         message = "Review fixes for ##{ticket.id}\n\n" <> Enum.map_join(fixed, "\n", &("- " <> &1))
 
         with :ok <- ok(git(dir, ["commit", "-q", "-m", message]), "could not commit the review's fixes"),
-             do: {:ok, fixed}
+             do: {:ok, fixed, []}
     end
+  end
+
+  defp kept({:followups, []}, dir, _ticket, out) do
+    discard(dir)
+    {:failed, "the review said follow-ups but named no FOLLOWUP line; its findings:\n" <> String.trim(out)}
+  end
+
+  defp kept({:followups, found}, dir, ticket, _out) do
+    discard(dir)
+    {:ok, [], Enum.map(found, &follow_up(ticket, &1))}
   end
 
   defp kept(verdict, dir, _ticket, _out) do
     discard(dir)
     verdict
+  end
+
+  defp follow_up(ticket, line) do
+    [title | what] = String.split(line, ~r/\s+—\s+/, parts: 2)
+
+    {:ok, filed} =
+      Babylon.Tickets.file(%{
+        title: title,
+        repo: ticket.repo,
+        labels: ["follow-up"],
+        body: "Found by babylon's review of ##{ticket.id}, which landed without it. #{Enum.join(what)}"
+      })
+
+    "follow-up ##{filed.id} #{title}"
   end
 
   # a lone ticket was gated before its review: the review's fixes are gated again
@@ -616,10 +648,18 @@ defmodule Babylon.Pipeline.Run do
     that changes behaviour, an interface, or what a test means is not yours to fix: ask for
     changes, and leave the files alone.
 
+    A finding that needs doing but does not make this wrong to land (a missing test case for a
+    path that works, a gap in docs or a prompt, a smaller edge case, a part of the ticket that can
+    come after) can follow it: say each as one line `FOLLOWUP: <title> — <what, with file and
+    line>`, and it is filed as a ticket of its own. A bug this change adds, a broken behaviour, or a
+    test that does not test what it claims cannot follow: ask for changes.
+
     End with one line, exactly one of:
     - `VERDICT: approve`: nothing to change.
     - `VERDICT: fix`: you fixed every finding yourself.
-    - `VERDICT: request_changes`: a finding is not yours to fix (any fixes you made are dropped).
+    - `VERDICT: approve_with_followups`: every finding can follow (any fixes you made are dropped).
+    - `VERDICT: request_changes`: a finding is not yours to fix and cannot follow (any fixes you
+      made are dropped).
 
     The diff against main:
 

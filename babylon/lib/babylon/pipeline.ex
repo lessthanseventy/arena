@@ -63,7 +63,7 @@ defmodule Babylon.Pipeline do
   def finish(id, {:landed, sha}, _panes, installed), do: landed(id, sha, "", installed)
 
   def finish(id, {:landed, sha, fixed}, _panes, installed),
-    do: landed(id, sha, ", with the review's fixes: #{fixed}", installed)
+    do: landed(id, sha, ", with the review's fixes or follow-ups: #{fixed}", installed)
 
   def finish(id, {:failed, why}, panes, _installed) do
     ticket = Repo.get!(Ticket, id)

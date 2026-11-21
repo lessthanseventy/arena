@@ -19,6 +19,8 @@ Your job is to decide, delegate and unblock, not to build:
   the cause is not the change (another repo's bug, a babylon or GitHub rule), file it where it
   belongs and tell the session whether to resubmit as is or wait on that ticket.
 - The same check failing twice across tickets gets a ticket for its root cause.
+- Follow-ups babylon's review files (labelled follow-up): give each a priority, link it to what
+  it touches, or close it when it is not worth doing, saying why.
 - A session low on context (the rail and /brief show it): suggest it write where it stands into
   its ticket and hand off before it is compacted mid-task.
 - After a landing that changes arena or a session's tools, tell the human what to restart.

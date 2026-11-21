@@ -247,6 +247,28 @@ defmodule Babylon.PipelineTest do
       assert sh(origin, "git ls-tree --name-only main") == ".gitignore\na\nb"
     end
 
+    test "lands a change whose findings can follow, each filed as a ticket of its own",
+         %{tmp_dir: tmp, origin: origin, ticket: ticket} do
+      later = [
+        "sh",
+        "-c",
+        "cat >/dev/null; echo stray > b; echo 'FOLLOWUP: Test the empty case — b:1 has no test for empty'; " <>
+          "echo 'VERDICT: approve_with_followups'"
+      ]
+
+      gated(tmp, ["sh", "-c", "exit 0"], later)
+
+      assert {:landed, sha, "follow-up #" <> filed} = Run.run(ticket, fn _ -> :ok end)
+      assert sh(origin, "git rev-parse main") == sha
+      assert sh(origin, "git show main:b") == "two"
+      [id, "Test the empty case"] = String.split(filed, " ", parts: 2)
+
+      assert %Ticket{repo: "app", labels: ["follow-up"], body: "Found by babylon's review of #1" <> body} =
+               Repo.get!(Ticket, String.to_integer(id))
+
+      assert body =~ "b:1 has no test for empty"
+    end
+
     test "sends back fixes too big to be one, with the review's findings", %{tmp_dir: tmp, ticket: ticket} do
       big = ["sh", "-c", "cat >/dev/null; seq 100 > b; echo 'FIXED: b rewritten'; echo 'VERDICT: fix'"]
       gated(tmp, ["sh", "-c", "exit 0"], big)
@@ -343,7 +365,10 @@ defmodule Babylon.PipelineTest do
     end
 
     test "landed with the review's fixes, it says which", %{held: held} do
-      assert %Ticket{status: "done", stage_note: "landed on main as abc, with the review's fixes: b:1 typo"} =
+      assert %Ticket{
+               status: "done",
+               stage_note: "landed on main as abc, with the review's fixes or follow-ups: b:1 typo"
+             } =
                Pipeline.finish(held.id, {:landed, "abc", "b:1 typo"}, MapSet.new([@nobody]))
     end
 
