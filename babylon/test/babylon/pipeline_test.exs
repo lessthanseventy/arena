@@ -9,6 +9,22 @@ defmodule Babylon.PipelineTest do
   @nobody "%999999"
   @approve ["sh", "-c", "cat >/dev/null; echo fine; echo 'VERDICT: approve'"]
 
+  # a conflict's resolver that keeps both sides, as its markers dropped; a review it approves
+  @keep_both [
+    "sh",
+    "-c",
+    ~S"""
+    case "$(cat)" in
+      *"stopped on a conflict"*)
+        for f in $(git diff --name-only --diff-filter=U); do
+          grep -vE '^(<<<<<<<|=======|>>>>>>>)( |$)' "$f" > "$f.kept"; mv "$f.kept" "$f"
+        done
+        echo RESOLVED ;;
+      *) echo 'VERDICT: approve' ;;
+    esac
+    """
+  ]
+
   setup %{tmp_dir: tmp} do
     was = Application.fetch_env!(:babylon, :pipeline)
     socket = "babylon-test-#{System.unique_integer([:positive])}"
@@ -70,6 +86,31 @@ defmodule Babylon.PipelineTest do
       assert {:landed, _} = Run.run(%{ticket | id: 2, branch: "t2-more"}, fn _ -> :ok end)
       assert File.read!(Path.join(warm, "cache")) == "built"
       refute File.exists?(Path.join(warm, "stray"))
+    end
+
+    test "a conflict with a main that moved is resolved, said in the commit, and gated",
+         %{tmp_dir: tmp, repo: repo, origin: origin, ticket: ticket} do
+      runs = Path.join(tmp, "runs")
+      sh(repo, "git checkout -q -b t6-a main && echo mine >> a && git commit -qam mine && git checkout -q main")
+      sh(repo, "echo theirs >> a && git commit -qam theirs && git push -q origin main")
+      gated(tmp, ["sh", "-c", "cat a >> #{runs}"], @keep_both)
+
+      assert {:landed, _} = Run.run(%{ticket | id: 6, branch: "t6-a"}, fn _ -> :ok end)
+      assert sh(origin, "git show main:a") == "one\ntheirs\nmine"
+      assert sh(origin, "git log -1 --format=%B main") =~ "mine\n\nConflict resolved for #6: a"
+      assert File.read!(runs) =~ "theirs\nmine"
+    end
+
+    test "a resolver that leaves a marker is not trusted: the ticket goes back",
+         %{tmp_dir: tmp, repo: repo, origin: origin, ticket: ticket} do
+      sh(repo, "git checkout -q -b t6-a main && echo mine >> a && git commit -qam mine && git checkout -q main")
+      sh(repo, "echo theirs >> a && git commit -qam theirs && git push -q origin main")
+      gated(tmp, ["sh", "-c", "exit 0"], ["sh", "-c", "cat >/dev/null; echo RESOLVED"])
+
+      assert {:failed, "it does not rebase onto main cleanly; conflicts in: a"} =
+               Run.run(%{ticket | id: 6, branch: "t6-a"}, fn _ -> :ok end)
+
+      assert sh(origin, "git log --format=%s main") == "theirs\none"
     end
 
     test "rebases onto a main that moved, keeping both", %{tmp_dir: tmp, origin: origin, ticket: ticket} do
@@ -337,6 +378,23 @@ defmodule Babylon.PipelineTest do
                cars |> Run.train(fn _, _ -> :ok end) |> Enum.sort()
 
       assert sh(origin, "git log --format=%s main") == "x\none"
+    end
+
+    test "one that conflicts with another is stacked once the resolver keeps both",
+         %{tmp_dir: tmp, repo: repo, origin: origin, ticket: ticket} do
+      for {branch, text} <- [{"t4-x", "x"}, {"t5-y", "y"}] do
+        sh(
+          repo,
+          "git checkout -q -b #{branch} main && echo #{text} > a && git commit -qam #{text} && git checkout -q main"
+        )
+      end
+
+      gated(tmp, ["sh", "-c", "exit 0"], @keep_both)
+      cars = [%{ticket | id: 4, branch: "t4-x"}, %{ticket | id: 5, branch: "t5-y"}]
+
+      assert [{4, {:landed, sha}}, {5, {:landed, sha}}] = cars |> Run.train(fn _, _ -> :ok end) |> Enum.sort()
+      assert sh(origin, "git show main:a") == "x\ny"
+      assert sh(origin, "git log -1 --format=%B main") =~ "Conflict resolved for #5: a"
     end
 
     test "a red train of four finds the one at fault in its back half, the rest landing",

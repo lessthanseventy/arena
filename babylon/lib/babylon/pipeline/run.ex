@@ -11,6 +11,8 @@ defmodule Babylon.Pipeline.Run do
   @tail_lines 40
   @fix_limit 60
 
+  @marker ~r/^(<{7}|={7}|>{7}|\|{7})( |$)/m
+
   @doc """
   Take `ticket` through, calling `stage` with each stage as it starts. `{:landed, sha}`, or
   `{:failed, why}` at the first step that refuses it.
@@ -22,7 +24,7 @@ defmodule Babylon.Pipeline.Run do
 
     with :ok <- stage.("verifying"),
          :ok <- checkout(repo, dir, ticket.branch),
-         :ok <- onto_main(dir),
+         :ok <- onto_main(dir, ticket),
          :ok <- ahead(dir),
          :ok <- gate(dir, ticket),
          :ok <- stage.("reviewing"),
@@ -96,7 +98,7 @@ defmodule Babylon.Pipeline.Run do
     stage.(ticket.id, "reviewing")
 
     result =
-      with :ok <- onto_main(dir),
+      with :ok <- onto_main(dir, ticket),
            :ok <- ahead(dir),
            {:ok, fixed} <- review(dir, ticket) do
         {:ok, {rev(dir, "origin/main"), rev(dir, "HEAD")}, fixed}
@@ -142,11 +144,17 @@ defmodule Babylon.Pipeline.Run do
 
   defp pick(dir, {ticket, {base, tip}, _} = car, {stacked, refused}) do
     # a commit the stack has already, as from a branch built on another in the train, picks empty
-    case git(dir, ["cherry-pick", "--empty=drop", "#{base}..#{tip}"]) do
-      {_, 0} ->
+    picked =
+      case git(dir, ["cherry-pick", "--empty=drop", "#{base}..#{tip}"]) do
+        {_, 0} -> :ok
+        _ -> resolved(dir, ticket, "cherry-pick")
+      end
+
+    case picked do
+      :ok ->
         {stacked ++ [car], refused}
 
-      _ ->
+      :error ->
         git(dir, ["cherry-pick", "--abort"])
         ahead = Enum.map_join(stacked, ", ", fn {t, _, _} -> "##{t.id}" end)
         {stacked, refused ++ [{ticket.id, {:failed, "it does not stack cleanly on main with #{ahead}"}}]}
@@ -241,18 +249,104 @@ defmodule Babylon.Pipeline.Run do
     :ok
   end
 
-  defp onto_main(dir) do
+  defp onto_main(dir, ticket) do
     with :ok <- ok(git(dir, ["fetch", "-q", "origin", "main"]), "could not fetch origin's main") do
       case git(dir, ["rebase", "-q", "origin/main"]) do
-        {_, 0} ->
-          :ok
-
-        _ ->
-          {conflicts, _} = git(dir, ["diff", "--name-only", "--diff-filter=U"])
-          git(dir, ["rebase", "--abort"])
-          {:failed, "it does not rebase onto main cleanly; conflicts in: " <> Enum.join(String.split(conflicts), ", ")}
+        {_, 0} -> :ok
+        _ -> rebase_resolved(dir, ticket, conflicted(dir))
       end
     end
+  end
+
+  defp rebase_resolved(dir, ticket, conflicts) do
+    with :error <- resolved(dir, ticket, "rebase") do
+      git(dir, ["rebase", "--abort"])
+      {:failed, "it does not rebase onto main cleanly; conflicts in: " <> Enum.join(conflicts, ", ")}
+    end
+  end
+
+  defp conflicted(dir) do
+    {out, _} = git(dir, ["diff", "--name-only", "--diff-filter=U"])
+    String.split(out)
+  end
+
+  # A rebase or cherry-pick stopped on a conflict is handed to the reviewer's command to resolve in
+  # place, a step at a time. Its resolution is kept only when it says RESOLVED, leaves no marker,
+  # and changes at most @fix_limit lines past dropping the markers; it is then gated as any change.
+  defp resolved(dir, ticket, op, steps \\ 5)
+  defp resolved(_dir, _ticket, _op, 0), do: :error
+
+  defp resolved(dir, ticket, op, steps) do
+    files = conflicted(dir)
+    marked = Map.new(files, &{&1, File.read!(Path.join(dir, &1))})
+    prompt = dir <> ".resolve"
+    File.write!(prompt, resolve_prompt(ticket, files))
+    named = conf(:reviewer) ++ ["--name", "babylon resolve · #{ticket.repo} ##{ticket.id}"]
+
+    try do
+      with {out, 0} <- cmd(named, dir, timeout: conf(:review_timeout), stdin: prompt),
+           true <- out =~ ~r/^RESOLVED\s*$/m,
+           true <- Enum.all?(marked, fn {file, _} -> not markers?(File.read!(Path.join(dir, file))) end),
+           true <-
+             Enum.sum(for {file, before} <- marked, do: changed(before, File.read!(Path.join(dir, file)))) <= @fix_limit,
+           :ok <- stage_resolution(dir, ticket, files) do
+        case git(dir, ["-c", "core.editor=true", op, "--continue"]) do
+          {_, 0} -> :ok
+          _ -> if conflicted(dir) == [], do: :error, else: resolved(dir, ticket, op, steps - 1)
+        end
+      else
+        _ -> :error
+      end
+    after
+      File.rm(prompt)
+    end
+  end
+
+  defp markers?(text), do: Regex.match?(@marker, text)
+
+  defp changed(before, now) do
+    kept = before |> String.split("\n") |> Enum.reject(&Regex.match?(@marker, &1))
+
+    for {op, lines} <- List.myers_difference(kept, String.split(now, "\n")), op != :eq, reduce: 0 do
+      acc -> acc + length(lines)
+    end
+  end
+
+  # the --continue that follows commits it, with the picked commit's message and a line saying so
+  # a cherry-pick takes it from MERGE_MSG, a rebase from rebase-merge/message
+  defp stage_resolution(dir, ticket, files) do
+    resolved = "Conflict resolved for ##{ticket.id}: #{Enum.join(files, ", ")}"
+
+    for name <- ["MERGE_MSG", "rebase-merge/message"],
+        {path, 0} = git(dir, ["rev-parse", "--git-path", name]),
+        msg = Path.expand(String.trim(path), dir),
+        File.exists?(msg) do
+      {was, _} = msg |> File.read!() |> String.split("\n") |> Enum.split_while(&(&1 != "# Conflicts:"))
+      File.write!(msg, String.trim(Enum.join(was, "\n")) <> "\n\n" <> resolved <> "\n")
+    end
+
+    ok(git(dir, ["add", "-A"]), "could not stage the resolution")
+  end
+
+  defp resolve_prompt(ticket, files) do
+    """
+    You are in a checkout stopped on a conflict while putting this ticket's branch onto main:
+
+    ##{ticket.id} #{ticket.title}
+    #{ticket.body}
+
+    The conflicted files, with git's markers in them: #{Enum.join(files, ", ")}. Resolve each with
+    Edit so both sides' intent is kept: main's change and the ticket's, as when both add an entry
+    in the same spot (keep both, in a sensible order). Remove every marker. Change nothing past
+    the conflicted hunks, and no more than #{@fix_limit} lines in all.
+
+    If both sides cannot be kept (they change the same thing different ways, or keeping both
+    needs a decision), edit nothing.
+
+    End with one line, exactly one of:
+    - `RESOLVED`: no marker is left and both sides are kept.
+    - `UNRESOLVED`: you could not, and changed nothing.
+    """
   end
 
   defp ahead(dir) do
@@ -467,7 +561,7 @@ defmodule Babylon.Pipeline.Run do
   defp caught_up(dir, ticket) do
     case git(dir, ["merge-base", "--is-ancestor", "origin/main", "HEAD"]) do
       {_, 0} -> :ok
-      _ -> with :ok <- onto_main(dir), do: gate(dir, ticket)
+      _ -> with :ok <- onto_main(dir, ticket), do: gate(dir, ticket)
     end
   end
 
