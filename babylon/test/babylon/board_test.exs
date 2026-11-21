@@ -30,6 +30,30 @@ defmodule Babylon.BoardTest do
     refute Map.has_key?(cards, old.id)
   end
 
+  test "each column puts first what wants attention, then the higher priority, then what is next" do
+    blocker = file!(title: "Blocker", priority: "low")
+    file!(title: "Blocked", priority: "high", blocked_by: [blocker.id])
+    file!(title: "High", priority: "high")
+
+    {:ok, _} = Tickets.update(file!(title: "Working", priority: "high"), %{status: "doing"})
+    {:ok, back} = Tickets.update(file!(title: "Back", priority: "low"), %{status: "doing"})
+    Repo.update!(Ecto.Changeset.change(back, stage: "failed"))
+
+    queued = fn title, stage, at ->
+      {:ok, t} = Tickets.update(file!(title: title), %{status: "doing"})
+      Repo.update!(Ecto.Changeset.change(t, status: "review", stage: stage, submitted_at: at))
+    end
+
+    queued.("Later", "queued", ~U[2026-01-01 00:00:02Z])
+    queued.("Sooner", "queued", ~U[2026-01-01 00:00:01Z])
+    queued.("Running", "verifying", ~U[2026-01-01 00:00:03Z])
+
+    titles = fn status -> for %{status: ^status, title: title} <- Board.build().tickets, do: title end
+    assert titles.("todo") == ["High", "Blocker", "Blocked"]
+    assert titles.("doing") == ["Back", "Working"]
+    assert titles.("review") == ["Running", "Sooner", "Later"]
+  end
+
   @tag :tmp_dir
   test "the board is written as JSON, and again when a ticket changes", %{tmp_dir: dir} do
     path = Path.join(dir, "board/board.json")

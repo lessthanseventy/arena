@@ -50,7 +50,9 @@ defmodule Babylon.Board do
 
     %{
       tickets:
-        Enum.map(tickets, fn t ->
+        tickets
+        |> Enum.sort_by(&rank(&1, Map.has_key?(blockers, &1.id)))
+        |> Enum.map(fn t ->
           t |> card(Map.get(blockers, t.id, []), epics[t.id]) |> Map.put(:ask, asks[t.id])
         end)
     }
@@ -79,6 +81,17 @@ defmodule Babylon.Board do
         {:noreply, {path, board}}
     end
   end
+
+  # within a column, what wants attention first; the order J and K set breaks ties
+  defp rank(%Ticket{status: "todo"} = t, blocked), do: {if(blocked, do: 1, else: 0), priority(t)}
+  defp rank(%Ticket{status: "doing"} = t, _), do: {if(t.stage == "failed", do: 0, else: 1), priority(t)}
+  defp rank(%Ticket{status: "review"} = t, _), do: {if(t.stage == "queued", do: 1, else: 0), unix(t.submitted_at)}
+  defp rank(%Ticket{} = t, _), do: {0, -unix(t.closed_at)}
+
+  defp priority(%Ticket{priority: priority}), do: Enum.find_index(~w(high med low), &(&1 == priority)) || 1
+
+  defp unix(nil), do: 0
+  defp unix(at), do: DateTime.to_unix(at)
 
   defp card(%Ticket{} = t, blocked_by, epic_id) do
     t
