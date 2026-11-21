@@ -10,11 +10,14 @@ config :babylon, notify: ~w(notify-send -a babylon --)
 config :babylon, :pipeline,
   gates: 2,
   train: 4,
+  # a line that starts with the first and holds the second: the gate's tools or deps were missing
   unstarted: [
-    "Unchecked dependencies",
-    ": command not found",
-    "is not trusted",
-    "could not compile dependency"
+    ["Unchecked dependencies for environment", ""],
+    ["** (Mix) Could not compile dependency", ""],
+    ["mise ERROR", "not trusted"],
+    ["sh: ", "command not found"],
+    ["bash: ", "command not found"],
+    ["zsh:", "command not found"]
   ],
   gate: ~w(mise run check),
   gate_timeout: 1800,

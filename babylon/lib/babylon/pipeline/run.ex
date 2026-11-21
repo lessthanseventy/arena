@@ -399,7 +399,7 @@ defmodule Babylon.Pipeline.Run do
 
       {_, line} ->
         {:failed,
-         "the gate could not start in babylon's worktree, before it reached this change: " <>
+         "the gate could not start in babylon's worktree: " <>
            "#{String.trim(line)}. That is the repo's setup to fix (see babylon's README, Join it), " <>
            "not this ticket's; its whole output is in #{log}"}
     end
@@ -407,7 +407,13 @@ defmodule Babylon.Pipeline.Run do
 
   # a line saying the gate's tools or deps were missing, not that the change failed
   defp unstarted(out) do
-    Enum.find(String.split(out, "\n"), &String.contains?(&1, conf(:unstarted)))
+    Enum.find(String.split(out, "\n"), fn line ->
+      bare = Regex.replace(~r/^\s*\[[^\]]*\]\s*/, line, "")
+
+      Enum.any?(conf(:unstarted), fn [start, within] ->
+        String.starts_with?(bare, start) and String.contains?(bare, within)
+      end)
+    end)
   end
 
   # The gate runs in a window of babylon's own tmux session, to be watched as it goes and read after;

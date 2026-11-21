@@ -144,12 +144,28 @@ defmodule Babylon.PipelineTest do
     end
 
     test "a gate that never reached the change says so, as the repo's setup to fix", %{tmp_dir: tmp, ticket: ticket} do
-      gated(tmp, ["sh", "-c", "echo 'Unchecked dependencies for environment dev:'; exit 1"], @approve)
+      for line <- [
+            "[babylon:check] Unchecked dependencies for environment test:",
+            "** (Mix) Could not compile dependency :exqlite",
+            "mise ERROR Config files in ~/x/mise.toml are not trusted.",
+            "sh: 1: mix: command not found",
+            "zsh:1: command not found: zig"
+          ] do
+        gated(tmp, ["sh", "-c", "echo '#{line}'; exit 1"], @approve)
 
-      assert {:failed, "the gate could not start in babylon's worktree, before it reached this change: " <> why} =
-               Run.run(ticket, fn _ -> :ok end)
+        assert {:failed, "the gate could not start in babylon's worktree: " <> why} = Run.run(ticket, fn _ -> :ok end)
+        assert why =~ "#{line}. That is the repo's setup to fix"
+      end
+    end
 
-      assert why =~ "Unchecked dependencies for environment dev:. That is the repo's setup to fix"
+    test "a red change whose output only mentions those lines is red", %{tmp_dir: tmp, ticket: ticket} do
+      for line <- [
+            ~s(  code: assert out =~ "Unchecked dependencies for environment"),
+            "  1) test prints sh: x: command not found back"
+          ] do
+        gated(tmp, ["sh", "-c", "echo '#{line}'; exit 1"], @approve)
+        assert {:failed, "the gate is red (exit 1)" <> _} = Run.run(ticket, fn _ -> :ok end)
+      end
     end
 
     test "stops on a red gate, with its output, and lands nothing", %{tmp_dir: tmp, origin: origin, ticket: ticket} do
