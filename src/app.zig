@@ -1432,8 +1432,6 @@ pub const App = struct {
         };
     }
 
-    /// A key while a question is shown: its option's number answers it through babylon, which
-    /// types the answer into the asking session; Esc puts it away unanswered.
     /// n files a ticket and e edits the one picked, each in a window of their own; p raises its
     /// priority, from high back to low; > closes a ticket still to do and < opens a closed one
     /// again, the columns between being a claim's and the pipeline's; J and K move it down or up
@@ -1468,6 +1466,8 @@ pub const App = struct {
         try app.send(.ignore, "new-window -a -n ticket \"" ++ cmd ++ " || read _\"", args);
     }
 
+    /// A key while a question is shown: its option's number answers it through babylon, which
+    /// types the answer into the asking session; Esc puts it away unanswered.
     fn answerKey(app: *App, key: []const u8) !void {
         const view = &app.board_view.?;
         if (anyKey(key, &.{ "\x1b", "q" })) view.answering = false;
