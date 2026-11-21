@@ -1,5 +1,5 @@
 defmodule Babylon.PanesTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Babylon.Panes
 
@@ -33,5 +33,43 @@ defmodule Babylon.PanesTest do
 
     refute Panes.pending?(screen, @line)
     refute Panes.pending?("no prompt here", @line)
+  end
+
+  # a tmux whose pane shows the text in its box for the first `stuck` reads, then an empty box
+  defp fake_tmux(dir, stuck) do
+    File.write!(Path.join(dir, "tmux"), """
+    #!/bin/sh
+    echo "$*" >> #{dir}/calls
+    case "$1" in
+      capture-pane)
+        n=$(grep -c '^capture-pane' #{dir}/calls)
+        if [ "$n" -le #{stuck} ]; then cat #{dir}/stuck; else cat #{dir}/clear; fi ;;
+    esac
+    """)
+
+    File.write!(Path.join(dir, "stuck"), "❯ #{@line}\n────\n")
+    File.write!(Path.join(dir, "clear"), "❯\n────\n")
+
+    File.chmod!(Path.join(dir, "tmux"), 0o755)
+    path = System.get_env("PATH")
+    System.put_env("PATH", dir <> ":" <> path)
+    on_exit(fn -> System.put_env("PATH", path) end)
+  end
+
+  defp enters(dir),
+    do: dir |> Path.join("calls") |> File.read!() |> String.split("\n") |> Enum.count(&(&1 == "send-keys -t %1 Enter"))
+
+  @tag :tmp_dir
+  test "Enter is pressed again while the text stays in the box, and no more once it has left", %{tmp_dir: dir} do
+    fake_tmux(dir, 2)
+    assert Panes.tell("%1", @line) == :ok
+    assert enters(dir) == 3
+  end
+
+  @tag :tmp_dir
+  test "a box that never clears is pressed four times more, then left", %{tmp_dir: dir} do
+    fake_tmux(dir, 99)
+    assert Panes.tell("%1", @line) == :ok
+    assert enters(dir) == 5
   end
 end
