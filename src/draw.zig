@@ -1084,7 +1084,7 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     var end: u16 = 0;
     for (shown) |button| {
         const style: vt.Style = switch (button.what) {
-            .repo => |i| if (i == view.repo and !view.backlog) chip(app) else ink(app, "dim", 8),
+            .repo => |i| if (i == view.repo and !view.backlog) chip(app) else if (app.tabLive(i)) .{} else ink(app, "dim", 8),
             .backlog => if (view.backlog) chip(app) else ink(app, "dim", 8),
             .gate, .orchestrator => ink(app, "violet", 5),
             .new => heading(app),
@@ -1221,15 +1221,12 @@ fn boxLine(w: *Writer, pen: *Pen, edge: vt.Style, style: vt.Style, x: u16, y: u1
     try w.writeAll(" │");
 }
 
-/// The every view's lane names down the board's left, each with its cards' count a column
-/// under it, a rule between lanes as between their cards.
+/// The every view's lane names down the board's left, a rule between lanes as between their cards.
 fn laneNames(app: *const App, w: *Writer, pen: *Pen) !void {
     const ox = app.boardX();
     const lw = app.laneLabelW();
     const view = app.board_view.?;
     const scroll = app.laneScroll();
-    const b = if (app.board) |*b| b else return;
-    var buf: [48]u8 = undefined;
     var y: u16 = 1;
     while (y < app.view_h) : (y += 1) {
         try w.print("\x1b[{d};{d}H", .{ y + 1, ox + 1 });
@@ -1245,23 +1242,9 @@ fn laneNames(app: *const App, w: *Writer, pen: *Pen) !void {
             continue;
         }
         const repo = app.laneRepo(line.lane).?;
-        const name = if (repo.len == 0) "no repo" else repo;
-        const counts = std.fmt.bufPrint(&buf, "{d}·{d}·{d}·{d}", .{
-            b.column(.todo, repo, &.{}), b.column(.doing, repo, &.{}), b.column(.review, repo, &.{}), b.column(.done, repo, &.{}),
-        }) catch "";
-        // a lane of one row has its counts beside its name, where they fit
-        const beside = line.row == 0 and app.laneRows(repo) == 1 and cellCount(name) + 1 + cellCount(counts) <= lw -| 1;
-        try pen.set(w, if (line.row != 0) ink(app, "dim", 8) else if (line.lane == view.lane) heading(app) else .{}, null);
+        try pen.set(w, if (line.lane == view.lane) heading(app) else .{}, null);
         try w.writeAll(" ");
-        if (beside) {
-            try fitted(w, name, lw -| 1 -| cellCount(counts));
-            try pen.set(w, ink(app, "dim", 8), null);
-            try w.writeAll(counts);
-        } else try fitted(w, switch (line.row) {
-            0 => name,
-            1 => counts,
-            else => "",
-        }, lw -| 1);
+        try fitted(w, if (line.row != 0) "" else if (repo.len == 0) "no repo" else repo, lw -| 1);
     }
 }
 

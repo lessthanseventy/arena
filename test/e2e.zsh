@@ -713,9 +713,11 @@ check "a column a status, with its count" see '╭─ doing 1 ─'
 railed() { local l=$(inked $1); print -r -- "${${l#*│}%%│*}" }
 alone() { [[ $(railed 2) == *$'\e[1;7m'* && $(railed 3)$(railed 4)$(railed 5) != *$'\e[1;7m'* ]] }
 check "and the board's row is the one lit, not the session's" alone
-check "every repo a lane, its name and counts at its left" see '│  arena 0·1·0·0│'
+check "every repo with work a lane, its name at its left" see '│  arena +│'
+rule_at() { screen | grep -n -m1 '├─' | cut -d: -f1 }
+check "the lanes share the board's height, the rule between them well under their cards" test "$(rule_at)" -gt 6
 check "its cards a row each, a high one marked at its left" see '│▌#8 Board '
-check "sent back and asking as glyphs before its number and title" see ' tlon  1·0·0·0│ ✗ \? #7 Lights │'
+check "sent back and asking as glyphs before its number and title" see ' tlon +│ ✗ \? #7 Lights │'
 cardrow() { local l; for l in "${(@f)$(outer capture-pane -ep -t o)}"; [[ $l == *$1* ]] && print -r -- $l }
 picked_lit() { [[ $(cardrow '#7 Lights') == *$'\e[1m\e[38;5;4m│\e[0m #7 Lights'* ]] }
 high_edge() { [[ $(cardrow '#8 Board') == *$'\e[38;5;4m│\e[38;5;8m #8 Board'* ]] }
@@ -895,12 +897,20 @@ check "folded, unfolded and closed before tmux has switched back, it comes back 
 
 done_card() { print -r -- '{"id":'$1',"repo":"arena","title":"Done '$1'","kind":"ticket","status":"done","priority":"med","blocked_by":[]}' }
 print -r -- '{"tickets":[{"id":20,"repo":"arena","title":"Next","kind":"ticket","status":"todo","priority":"med","blocked_by":[]},'\
-"$(done_card 25),$(done_card 24),$(done_card 23),$(done_card 22),$(done_card 21)]}" >$tmp/run/babylon/board.json
+"$(done_card 25),$(done_card 24),$(done_card 23),$(done_card 22),$(done_card 21),"\
+'{"id":30,"repo":"menard","title":"Old","kind":"ticket","status":"done","priority":"med","blocked_by":[]}]}' >$tmp/run/babylon/board.json
 key M-b
 key '`'
+
 check "done shows its last few closed in a lane" see '│ #23 Done 23 +│'
 check "then how many more it has" see '│ 2 more +│'
-check "and its count is all of them" see '─ done 5 ─'
+check "and its count is all of them" see '─ done 6 ─'
+check "a repo with only done cards has no lane" gone '│  menard '
+tabline() { local l; for l in "${(@f)$(outer capture-pane -ep -t o)}"; [[ $l == *' board '*' every '* ]] && print -r -- $l }
+tab_dim() { [[ $(tabline) == *$'\e[38;5;8m '$1' '* ]] }
+tab_lit() { ! tab_dim $1 }
+check "and its tab is dim" tab_dim menard
+check "where one with work is not" tab_lit arena
 check "not the rest" gone 'Done 22'
 key r
 check "and so in one repo's view" see '│ 2 more +│'

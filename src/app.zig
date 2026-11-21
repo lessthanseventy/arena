@@ -1530,16 +1530,36 @@ pub const App = struct {
         return view.repo == 0 and !view.backlog;
     }
 
-    /// The repos the every view has a lane for, in order of name, then "" for the cards of none.
+    /// The repos the every view has a lane for, those with a card to do, doing or in review, in
+    /// order of name, then "" for such cards of none.
     pub fn laneRepos(app: *const App, out: *[max_repos + 1][]const u8) usize {
         const b = if (app.board) |*b| b else return 0;
-        var n = b.repos(out[0..max_repos]);
-        for (b.cards()) |card| if (card.repo == null) {
+        var all: [max_repos][]const u8 = undefined;
+        var n: usize = 0;
+        for (all[0..b.repos(&all)]) |repo| if (app.live(repo)) {
+            out[n] = repo;
+            n += 1;
+        };
+        for (b.cards()) |card| if (card.repo == null and card.status != .done) {
             out[n] = "";
             n += 1;
             break;
         };
         return n;
+    }
+
+    /// Whether tab `i` has a card to do, doing or in review: every repo's, or one's.
+    pub fn tabLive(app: *const App, i: usize) bool {
+        if (i == 0) return true;
+        var repos: [max_repos][]const u8 = undefined;
+        const n = if (app.board) |*b| b.repos(&repos) else 0;
+        return i <= n and app.live(repos[i - 1]);
+    }
+
+    /// Whether `repo` has a card to do, doing or in review.
+    pub fn live(app: *const App, repo: []const u8) bool {
+        const b = if (app.board) |*b| b else return false;
+        return b.column(.todo, repo, &.{}) + b.column(.doing, repo, &.{}) + b.column(.review, repo, &.{}) > 0;
     }
 
     pub fn laneRepo(app: *const App, lane: usize) ?[]const u8 {
@@ -1561,18 +1581,42 @@ pub const App = struct {
         return most;
     }
 
+    /// The rows each lane is given: those it needs, and the lines under the last shared among
+    /// them as they need, so the lanes reach the board's foot.
+    pub fn laneHeights(app: *const App, out: *[max_repos + 1]usize) usize {
+        var repos: [max_repos + 1][]const u8 = undefined;
+        const n = app.laneRepos(&repos);
+        if (n == 0) return 0;
+        var rows: usize = 0;
+        for (repos[0..n], 0..) |repo, k| {
+            out[k] = app.laneRows(repo);
+            rows += out[k];
+        }
+        const need = rows + n - 1;
+        const room = app.view_h -| 3;
+        if (need >= room) return n;
+        const extra = room - need;
+        var given: usize = 0;
+        for (out[0..n]) |*h| {
+            const more = extra * h.* / rows;
+            h.* += more;
+            given += more;
+        }
+        out[n - 1] += extra - given;
+        return n;
+    }
+
     /// A line of the every view's lanes, counted from the first: lane `lane`'s row `row`, or the
-    /// rule under it.
+    /// rule under it, which the last has none of.
     pub const LaneLine = struct { lane: usize, row: usize, rule: bool };
 
     pub fn laneLineAt(app: *const App, line: usize) ?LaneLine {
-        var repos: [max_repos + 1][]const u8 = undefined;
-        const n = app.laneRepos(&repos);
+        var heights: [max_repos + 1]usize = undefined;
+        const n = app.laneHeights(&heights);
         var start: usize = 0;
-        for (repos[0..n], 0..) |repo, k| {
-            const rows = app.laneRows(repo);
+        for (heights[0..n], 0..) |rows, k| {
             if (line < start + rows) return .{ .lane = k, .row = line - start, .rule = false };
-            if (line == start + rows) return .{ .lane = k, .row = rows, .rule = true };
+            if (line == start + rows and k + 1 < n) return .{ .lane = k, .row = rows, .rule = true };
             start += rows + 1;
         }
         return null;
@@ -1582,10 +1626,10 @@ pub const App = struct {
     /// picked card in view.
     pub fn laneScroll(app: *const App) usize {
         const view = app.board_view orelse return 0;
-        var repos: [max_repos + 1][]const u8 = undefined;
-        const n = app.laneRepos(&repos);
+        var heights: [max_repos + 1]usize = undefined;
+        const n = app.laneHeights(&heights);
         var pick: usize = view.row;
-        for (repos[0..@min(view.lane, n)]) |repo| pick += app.laneRows(repo) + 1;
+        for (heights[0..@min(view.lane, n)]) |rows| pick += rows + 1;
         const shown = app.view_h -| 3;
         return if (pick >= shown) pick - shown + 1 else 0;
     }
