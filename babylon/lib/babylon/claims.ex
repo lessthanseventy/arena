@@ -38,9 +38,9 @@ defmodule Babylon.Claims do
 
   @doc """
   Tell of a `todo` ticket `pane` filed into a repo other than its own (or from a pane whose repo is
-  not known, or none): to the orchestrator, and to
-  a pane running Claude in the ticket's repo, its inbox holding it until that pane is between turns. `repos`
-  is each Claude pane's repo (`Babylon.Panes.claude_repos/1`). The panes told.
+  not known, or none): to the orchestrator, and to a pane running Claude in the ticket's repo, its
+  inbox holding it until that pane is between turns. `repos` is each Claude pane's repo
+  (`Babylon.Panes.claude_repos/1`). The panes told.
   """
   @spec offer(Ticket.t(), String.t() | nil, %{String.t() => String.t()} | :unknown) :: [String.t()]
   def offer(%Ticket{status: "todo", repo: repo} = ticket, pane, %{} = repos) when is_binary(repo) do
