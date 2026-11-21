@@ -3,16 +3,15 @@
 root=${0:A:h:h}
 tmp=$(mktemp -d)
 trap 'rm -rf $tmp' EXIT
-mkdir -p $tmp/babylon/bin
 fails=0
 
 fake() {
   print -r -- "#!/bin/sh
-[ \"\$1 \$2\" = 'call inbox' ] && [ \"\$TMUX_PANE\" = '%7' ] && printf '%s' '$1'" > $tmp/babylon/bin/babylon
-  chmod +x $tmp/babylon/bin/babylon
+[ \"\$1 \$2\" = 'call inbox' ] && [ \"\$TMUX_PANE\" = '%7' ] && printf '%s' '$1'" > $tmp/babylon
+  chmod +x $tmp/babylon
 }
 
-hook() { print -r -- ${2:-'{}'} | CLAUDE_PLUGIN_ROOT=$tmp TMUX_PANE=${3:-%7} sh $root/hooks/babylon-inbox.sh $1 }
+hook() { print -r -- ${2:-'{}'} | BABYLON_CLI=$tmp/babylon TMUX_PANE=${3:-%7} sh $root/hooks/babylon-inbox.sh $1 }
 
 check() {
   local name=$1; shift
@@ -31,7 +30,7 @@ check "a subagent's tool call takes none: they wait for the session" test -z "$(
 fake '[]'
 check "with none held, it says nothing" test -z "$(hook tool)$(hook stop)"
 
-rm $tmp/babylon/bin/babylon
+rm $tmp/babylon
 check "with no babylon, nothing, and no failure" test -z "$(hook stop)"
 
 exit $fails

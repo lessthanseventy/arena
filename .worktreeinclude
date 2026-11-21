@@ -1,4 +1,2 @@
 .zig-cache
 zig-pkg
-babylon/_build
-babylon/deps

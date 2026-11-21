@@ -5,8 +5,7 @@
 [ -n "$TMUX_PANE" ] || exit 0
 # a subagent's tool call shares the pane: what it is handed never reaches the session
 printf '%s' "$(cat)" | jq -e '.agent_id // empty' >/dev/null 2>&1 && exit 0
-cli="${CLAUDE_PLUGIN_ROOT:-$(dirname "$0")/..}/babylon/bin/babylon"
-msgs=$("$cli" call inbox '{}' 2>/dev/null | jq -r '.[] | "babylon: " + .text' 2>/dev/null)
+msgs=$("${BABYLON_CLI:-babylon}" call inbox '{}' 2>/dev/null | jq -r '.[] | "babylon: " + .text' 2>/dev/null)
 [ -n "$msgs" ] || exit 0
 case "$1" in
 tool) jq -nc --arg m "$msgs" '{systemMessage: $m, hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $m}}' ;;

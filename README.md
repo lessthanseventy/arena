@@ -42,7 +42,7 @@ always did; arena draws them and leaves them running when it quits.
   `reviewed` or `landed`; a session shows the one that most wants looking at.
 - **Panes**, drawn where tmux has them. Click one to select it, drag the line between two to resize.
 - **An overview** of every session's windows at once.
-- **The board**: the tickets every Claude on the machine shares, from [babylon](babylon/README.md),
+- **The board**: the tickets every Claude on the machine shares, from [babylon](https://github.com/lessthanseventy/babylon),
   in place of the strip, a column for each of todo, doing, review and done. A card has its number and title, and under them its repo, the window of the Claude
   holding it, what it waits on, where it is on babylon's way to main (queued, verifying, reviewing,
   landing, `✗ sent back`, `◆ landed`) and `? asks` when its Claude waits on a decision from you:
@@ -86,7 +86,7 @@ The binary is `zig-out/bin/arena`. Put it on your path however you like.
 
 The marks on windows running Claude Code come from its hooks, which the checkout is a plugin of:
 `claude --plugin-dir /path/to/arena`, or the path in `CLAUDE_CODE_PLUGIN_DIRS` (a `:` list) for
-every session. The plugin also gives each session [babylon](babylon/README.md)'s tickets, shared
+every session. The plugin also gives each session [babylon](https://github.com/lessthanseventy/babylon)'s tickets, shared
 by every Claude on the machine, over MCP.
 
 ## Use
