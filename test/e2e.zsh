@@ -694,7 +694,7 @@ check "babylon's board has a row atop the rail, with its counts" see '^│ ▤ b
 key M-b
 check "Alt+b opens it in place of the strip, its repos as tabs" see ' board   every   arena   tlon '
 check "and where its keys are" see '\? keys · esc close'
-check "the picked card's actions as chips under it" see '│  answer   edit '
+check "the picked card's actions as chips under it" see '│  go   answer  '
 key '?'
 check "? shows the board's keys" see "the board's keys"
 key x
@@ -763,6 +763,12 @@ check "t moves a backlog card to todo through babylon" await told
 key r
 check "r from the backlog goes back to every repo" await tablit every
 check "which does not show the backlog" gone '#12 Someday'
+started() { [[ $(inner list-panes -t '=tlon:t7' -F '#{pane_start_command}' 2>/dev/null) == *'Claim ticket #7 with claim_ticket'* ]] }
+key Enter
+check "Enter on a free todo card starts a Claude on it, in its repo's session" await started
+inner kill-session -t '=tlon'
+key M-b
+check "and the board opens again on every repo" await tablit every
 key r
 check "and r again narrows it to the first repo" await tablit arena
 key l

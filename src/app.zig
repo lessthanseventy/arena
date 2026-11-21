@@ -1437,7 +1437,15 @@ pub const App = struct {
     fn goCard(app: *App) !void {
         const view = app.board_view orelse return;
         const card = app.boardCard(view.col, view.row) orelse return;
-        const pane = card.holder() orelse return;
+        const pane = card.holder() orelse {
+            if (!startable(card)) return;
+            // tmux reads # as a format in run-shell's command: ## is one #
+            try app.send(.ignore, "run-shell -b \"tmux has-session -t ={s} 2>/dev/null || tmux new-session -d -s {s} -c $HOME/projects/{s}; " ++
+                "tmux new-window -t ={s}: -n t{d} -c $HOME/projects/{s} claude 'Claim ticket ##{d} with claim_ticket, run the start command its answer gives, and work it to submit_ticket.'\"", .{ card.repo.?, card.repo.?, card.repo.?, card.repo.?, card.id, card.repo.?, card.id });
+            app.board_view = null;
+            app.dirty = true;
+            return;
+        };
         const at = app.paneWindow(pane) orelse return;
         app.board_view = null;
         app.dirty = true;
@@ -1447,7 +1455,7 @@ pub const App = struct {
 
     /// A key on the board: h, l and the arrows go between columns, j and k along one, r narrows
     /// it to the next repo and from the last back to every one, Enter goes to the Claude holding
-    /// the card picked, Escape and q close.
+    /// the card picked or starts one on a free todo card, Escape and q close.
     fn boardKey(app: *App, key: []const u8) !void {
         app.dirty = true;
         const view = &app.board_view.?;
@@ -1552,9 +1560,9 @@ pub const App = struct {
     pub fn cardActions(card: *const tickets.Card, out: *[8]CardAction) []CardAction {
         var n: usize = 0;
         const all = [_]struct { CardAction, bool }{
-            .{ .go, card.holder() != null },        .{ .answer, card.ask != null },    .{ .edit, true },
-            .{ .priority, true },                   .{ .close, card.status == .todo }, .{ .reopen, card.status == .done },
-            .{ .to_todo, card.status == .backlog }, .{ .up, card.status != .backlog }, .{ .down, card.status != .backlog },
+            .{ .go, card.holder() != null or startable(card) }, .{ .answer, card.ask != null },    .{ .edit, true },
+            .{ .priority, true },                               .{ .close, card.status == .todo }, .{ .reopen, card.status == .done },
+            .{ .to_todo, card.status == .backlog },             .{ .up, card.status != .backlog }, .{ .down, card.status != .backlog },
         };
         for (all) |pair| if (pair[1]) {
             out[n] = pair[0];
@@ -2653,6 +2661,32 @@ pub fn cellCount(text: []const u8) usize {
 }
 
 /// A repo's name safe in a tmux command unquoted, as directory names are.
+/// A todo card no Claude holds, waiting on nothing, of a repo that can name a session and a folder.
+fn startable(card: *const tickets.Card) bool {
+    const repo = card.repo orelse return false;
+    return card.holder() == null and card.status == .todo and card.blocked_by.len == 0 and plainName(repo);
+}
+
+test "a Claude is started only on a free todo card of a plain repo" {
+    const free: tickets.Card = .{ .id = 1, .repo = "tlon", .title = "a", .status = .todo };
+    try std.testing.expect(startable(&free));
+    var c = free;
+    c.blocked_by = &.{2};
+    try std.testing.expect(!startable(&c));
+    c = free;
+    c.claimed_by = "%3";
+    try std.testing.expect(!startable(&c));
+    c = free;
+    c.status = .doing;
+    try std.testing.expect(!startable(&c));
+    c = free;
+    c.repo = "a b";
+    try std.testing.expect(!startable(&c));
+    c = free;
+    c.repo = null;
+    try std.testing.expect(!startable(&c));
+}
+
 fn plainName(name: []const u8) bool {
     for (name) |c| if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_' and c != '.') return false;
     return name.len > 0;

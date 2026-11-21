@@ -1074,7 +1074,7 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
 
 const board_keys = [_][2][]const u8{
     .{ "hjkl, arrows", "pick a card" },
-    .{ "⏎, click it", "go to the Claude holding it" },
+    .{ "⏎, click it", "go to the Claude holding it, or start one on a free todo card" },
     .{ "space", "its whole ticket: body, links, gate log" },
     .{ "a", "answer the question it asks" },
     .{ "e", "edit its title, repo and body" },
