@@ -47,7 +47,8 @@ const BOARD = {
   ],
 }
 
-type Start = { session: string; boards: object[] }
+// a board of `null` is a read that fails
+type Start = { session: string; boards: Array<object | null> }
 
 // The world an orchestrator's Claude starts in: tmux, the board file, and a watcher that
 // reports one change of the file each time `change` is called.
@@ -69,7 +70,10 @@ const world = (on: Parameters<Parameters<typeof test>[1]>[1], { session, boards 
   on('fs.read', (_, e) => {
     read.push(e.path)
 
-    return { value: JSON.stringify(boards[Math.min(board, boards.length - 1)]) }
+    const now = boards[Math.min(board, boards.length - 1)]
+    if (now === null) throw new Error('ENOENT')
+
+    return { value: JSON.stringify(now) }
   })
   on('process.run', (_, e) => ({
     value: {
@@ -83,6 +87,7 @@ const world = (on: Parameters<Parameters<typeof test>[1]>[1], { session, boards 
     },
   }))
   on('process.spawn', async function* () {
+    yield { stream: 'stderr' as const, text: 'Setting up watches.\nWatches established.\n' }
     for (;;) {
       await new Promise<void>(done => changes.push(done))
       board += 1
@@ -98,7 +103,7 @@ test('in the orchestrator, the pane shows asks, send-backs, work and landings', 
 
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   expect(opened).toEqual(['board-feed'])
-  expect(read).toEqual(['/run/user/1000/babylon/board.json'])
+  expect(read[0]).toBe('/run/user/1000/babylon/board.json')
 
   const ui = await $.ui.mount(PANE)
   const row = async (text: RegExp) => (await ui.find({ type: 'Text', text }))?.text
@@ -125,13 +130,30 @@ test('the pane is drawn again when the board file changes, and a wait grows by t
 
   await clock.advance(60_000)
   expect((await ui.find({ type: 'Text', text: /#16 asks/ }))?.text).toBe('#16 asks 13m Blue or green?')
-  expect(read.length).toBe(1)
+  expect(read.length).toBe(2)
 
   change()
   await clock.settle()
-  expect(read.length).toBe(2)
+  expect(read.length).toBe(3)
   expect((await ui.find({ type: 'Text', text: /#14/ }))?.text).toBe('#14 landed 1m A pane for the board')
   expect(await ui.find({ type: 'Text', text: /#16/ })).toBe(undefined)
+  await ui.unmount()
+})
+
+test('a read of the board that fails leaves the pane as it was, and the next change is read', async ($, on) => {
+  const landed = { tickets: [card(14, 'A pane for the board', 'done', { stage: 'landed' })] }
+  const { clock, change } = world(on, { session: 'orchestrator', boards: [BOARD, null, landed] })
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(PANE)
+
+  change()
+  await clock.settle()
+  expect((await ui.find({ type: 'Text', text: /#14/ }))?.text).toBe('#14 doing claudes:t14-a-pane A pane for the board')
+
+  change()
+  await clock.settle()
+  expect((await ui.find({ type: 'Text', text: /#14/ }))?.text).toBe('#14 landed A pane for the board')
   await ui.unmount()
 })
 

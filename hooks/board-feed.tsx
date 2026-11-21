@@ -95,19 +95,25 @@ export const register: Register = on => {
       await update($, now, () => read_at)
     }
 
-    await load().catch(error => $.ui.log(`board feed: ${error}`, { to: 'debug' }))
+    const say = (error: unknown) => $.ui.log(`board feed: ${error}`, { to: 'debug' })
+    const reload = () => load().catch(say)
+
+    await reload()
     void $.ui.open({ id: PANE, title: 'Board' })
     $.clock.every(60_000, () => void $.clock.now().then(at => update($, now, () => at)))
 
     void (async () => {
       // babylon writes the board beside itself and renames it into place
       const watch = $.process.spawn({
-        argv: ['inotifywait', '-m', '-q', '-e', 'moved_to', '-e', 'close_write', '--format', '%f', dir],
+        argv: ['inotifywait', '-m', '-e', 'moved_to', '-e', 'close_write', '--format', '%f', dir],
       })
       for await (const { stream, text } of watch) {
-        if (stream === 'stdout' && text.split('\n').includes('board.json')) await load()
+        // a board written before the watch was set up is read once it is
+        const isWatching = stream === 'stderr' && text.includes('Watches established')
+        const isChanged = stream === 'stdout' && text.split('\n').includes('board.json')
+        if (isWatching || isChanged) await reload()
       }
-    })().catch(error => $.ui.log(`board feed: ${error}`, { to: 'debug' }))
+    })().catch(say)
 
     return started
   })
