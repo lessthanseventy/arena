@@ -26,7 +26,7 @@ defmodule Babylon.PanesStub do
 
   @doc "The name last typed into the pane, from `:named`."
   @spec named(String.t()) :: String.t()
-  def named(pane), do: Map.get(Application.get_env(:babylon, :named, %{}), pane, "")
+  def named(pane), do: String.trim(Map.get(Application.get_env(:babylon, :named, %{}), pane, ""))
 
   @doc "Keep the name typed into the pane in `:named`."
   @spec mark_named(String.t(), String.t()) :: :ok
@@ -36,7 +36,7 @@ defmodule Babylon.PanesStub do
 
   @doc "The pane's title, from `:titles`."
   @spec title(String.t()) :: String.t()
-  def title(pane), do: Map.get(Application.get_env(:babylon, :titles, %{}), pane, "")
+  def title(pane), do: String.trim(Map.get(Application.get_env(:babylon, :titles, %{}), pane, ""))
 
   @doc "Type `text` into a live pane, unless its human is typing in it."
   @spec tell(String.t(), String.t()) :: :ok | :typing | {:error, String.t()}
