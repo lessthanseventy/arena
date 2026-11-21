@@ -761,10 +761,10 @@ told() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == 'update 12 --status to
 key t
 check "t moves a backlog card to todo through babylon" await told
 key r
-check "r from the backlog goes back to every repo" gone '#12 Someday'
-key r r
+check "r from the backlog goes back to every repo" await tablit every
+check "which does not show the backlog" gone '#12 Someday'
 key r
-key r
+check "and r again narrows it to the first repo" await tablit arena
 key l
 key Enter
 check "Enter on a card goes to the Claude holding it" see '╭─ 1 one '
