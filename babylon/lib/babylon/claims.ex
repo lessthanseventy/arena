@@ -37,22 +37,22 @@ defmodule Babylon.Claims do
   end
 
   @doc """
-  Tell of a `todo` ticket `pane` filed into a repo other than its own: to the orchestrator, and to
+  Tell of a `todo` ticket `pane` filed into a repo other than its own (or from a pane whose repo is
+  not known, or none): to the orchestrator, and to
   a pane running Claude in the ticket's repo, its inbox holding it until that pane is between turns. `repos`
   is each Claude pane's repo (`Babylon.Panes.claude_repos/1`). The panes told.
   """
   @spec offer(Ticket.t(), String.t() | nil, %{String.t() => String.t()} | :unknown) :: [String.t()]
-  def offer(%Ticket{status: "todo", repo: repo} = ticket, pane, %{} = repos)
-      when is_binary(repo) and is_binary(pane) do
-    if Map.get(repos, pane) in [nil, repo] do
+  def offer(%Ticket{status: "todo", repo: repo} = ticket, pane, %{} = repos) when is_binary(repo) do
+    if Map.get(repos, pane) == repo do
       []
     else
       text =
         "##{ticket.id} was filed for #{repo} from another repo: #{ticket.title}. claim_ticket #{ticket.id} when you are free."
 
-      Babylon.Orchestrator.tell(text)
+      if pane != Babylon.Orchestrator.pane(), do: Babylon.Orchestrator.tell(text)
 
-      there = for({p, ^repo} <- repos, do: p) |> Enum.sort() |> Enum.take(1)
+      there = for({p, ^repo} <- repos, p != pane, do: p) |> Enum.sort() |> Enum.take(1)
       Enum.each(there, &Babylon.Inbox.send(&1, text))
       there
     end

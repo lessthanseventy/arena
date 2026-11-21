@@ -7,9 +7,14 @@ defmodule Babylon.Orchestrator do
   @doc "Tell the orchestrator `text`, through its inbox; nothing when it is not running."
   @spec tell(String.t()) :: :ok
   def tell(text) do
-    session = Application.get_env(:babylon, :orchestrator_session, "orchestrator")
-    panes = Application.get_env(:babylon, :panes, Babylon.Panes)
-    with pane when is_binary(pane) <- panes.claude_in(session), do: Babylon.Inbox.send(pane, text)
+    with pane when is_binary(pane) <- pane(), do: Babylon.Inbox.send(pane, text)
     :ok
+  end
+
+  @doc "The orchestrator's pane, or nil when it is not running."
+  @spec pane() :: String.t() | nil
+  def pane do
+    session = Application.get_env(:babylon, :orchestrator_session, "orchestrator")
+    Application.get_env(:babylon, :panes, Babylon.Panes).claude_in(session)
   end
 end

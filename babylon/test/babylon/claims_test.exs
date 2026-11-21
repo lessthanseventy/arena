@@ -44,12 +44,23 @@ defmodule Babylon.ClaimsTest do
     assert Claims.offer(ticket, "%1", repos) == ["%2"]
     told = Babylon.Repo.all(Babylon.Message) |> Enum.map(& &1.pane) |> Enum.sort()
     assert told == ["%2", "%9"]
+    Babylon.Repo.delete_all(Babylon.Message)
     assert Claims.offer(ticket, "%1", %{"%1" => "tlon"}) == []
+    assert [%{pane: "%9"}] = Babylon.Repo.all(Babylon.Message)
+
+    Babylon.Repo.delete_all(Babylon.Message)
+    assert Claims.offer(ticket, "%9", repos) == ["%2"]
+    assert [%{pane: "%2"}] = Babylon.Repo.all(Babylon.Message)
+
+    Babylon.Repo.delete_all(Babylon.Message)
+    assert Claims.offer(ticket, "%8", repos) == ["%2"]
+    assert Claims.offer(ticket, nil, repos) == ["%2"]
+    assert Babylon.Repo.all(Babylon.Message) |> Enum.map(& &1.pane) |> Enum.sort() == ["%2", "%2", "%9", "%9"]
+    Babylon.Repo.delete_all(Babylon.Message)
 
     assert Claims.offer(ticket, "%3", repos) == []
     assert Claims.offer(%{ticket | status: "backlog"}, "%1", repos) == []
     assert Claims.offer(ticket, "%1", :unknown) == []
-    assert Claims.offer(ticket, "%8", repos) == []
   end
 
   test "refused while a live pane holds it, or anyone does when tmux cannot be asked" do
