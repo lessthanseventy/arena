@@ -17,13 +17,23 @@ defmodule Babylon.InboxTest do
     end)
   end
 
-  test "a message is typed into its pane whole, and so read" do
+  test "a pane between turns is nudged to call inbox, its message kept for it there" do
     Inbox.send(@live, "#1 landed")
-    assert_received {:told, @live, "babylon: #1 landed"}
-    assert Inbox.take(@live) == []
+    assert_received {:told, @live, "babylon: 1 new message for you: call inbox"}
+    assert [%Message{text: "#1 landed"}] = Inbox.take(@live)
   end
 
-  test "held while its pane waits on its human, then typed on the sweep after" do
+  test "nudged once for what came in, not on every sweep; a new one nudges again" do
+    Inbox.send(@live, "#1 landed")
+    assert_received {:told, @live, _}
+    assert Inbox.deliver_held() == []
+    refute_received {:told, _, _}
+
+    Inbox.send(@live, "#2 sent back")
+    assert_received {:told, @live, "babylon: 2 new messages for you: call inbox"}
+  end
+
+  test "held while its pane waits on its human, then nudged once on the sweep after" do
     Application.put_env(:babylon, :waiting_panes, [@live])
     Inbox.send(@live, "#1 landed")
     Inbox.send(@live, "#2 sent back")
@@ -32,8 +42,8 @@ defmodule Babylon.InboxTest do
 
     Application.put_env(:babylon, :waiting_panes, [])
     assert Inbox.deliver_held() == [@live]
-    assert_received {:told, @live, "babylon: #1 landed"}
-    assert_received {:told, @live, "babylon: #2 sent back"}
+    assert_received {:told, @live, "babylon: 2 new messages for you: call inbox"}
+    refute_received {:told, _, _}
     assert Inbox.deliver_held() == []
   end
 

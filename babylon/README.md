@@ -66,10 +66,10 @@ is installed.
 babylon's word to a session (a ticket landed or sent back, an ask answered) is held while the
 pane's Claude is mid-turn, and arena's hook (`hooks/babylon-inbox.sh`) hands it over without a
 key typed: as context after its next tool call, or as the reason to go on when it would stop. A
-pane between turns has it typed in whole, read once tmux has typed it; while its Claude waits on
-its human (a typed line would land in an open dialog) it is held, and typed on a sweep once a
-minute after. One tmux cannot type is tried again, four times in all. The `inbox` tool reads what
-is still held.
+pane between turns is typed a short nudge to call `inbox`, once for what came in since the last;
+while its Claude waits on its human (a typed line would land in an open dialog) the nudge waits,
+for a sweep once a minute after. One tmux cannot type is tried again, four times in all. The
+`inbox` tool reads what is held, and marks it read.
 
 Served, it keeps the board arena draws in `$XDG_RUNTIME_DIR/babylon/board.json` (beside the database where there is no runtime
 dir, as on the Mac): every open

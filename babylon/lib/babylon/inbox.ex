@@ -3,8 +3,8 @@ defmodule Babylon.Inbox do
   babylon's word to a session. While the pane's Claude is mid-turn it is held, and arena's hook
   hands it over at the next tool call or as the turn would end (the `inbox` tool, by the pane);
   while it waits on its human a typed line would land in the open dialog, so it is held then too.
-  A pane between turns has it typed in whole, marked read once tmux has typed it, on a later sweep
-  for those held; one tmux could not type is tried again, a few times.
+  A pane between turns is typed a short nudge to call `inbox`, once for what came in since the
+  last, the messages left for it to take; one tmux could not type is tried again, a few times.
   """
   import Ecto.Query
 
@@ -29,34 +29,42 @@ defmodule Babylon.Inbox do
     unread
   end
 
-  @doc "Type in what is held for every pane, those still waiting on their human left; the panes typed into."
+  @doc "Nudge every pane between turns with messages it has not been nudged for; the panes nudged."
   @spec deliver_held() :: [String.t()]
   def deliver_held do
-    from(m in Message, where: is_nil(m.read_at) and m.nudges < @tries, distinct: true, select: m.pane)
+    from(m in fresh(), distinct: true, select: m.pane)
     |> Repo.all()
-    |> Enum.filter(&(deliver(&1) > 0))
+    |> Enum.filter(&deliver/1)
   end
 
-  # oldest first, stopping at the first tmux will not type, which keeps its turn
-  defp deliver(pane) do
-    held =
-      Repo.all(from m in Message, where: m.pane == ^pane and is_nil(m.read_at) and m.nudges < @tries, order_by: m.id)
+  defp fresh, do: from(m in Message, where: is_nil(m.read_at) and is_nil(m.nudged_at) and m.nudges < @tries)
 
-    case panes().state(pane) do
-      state when state in ["waiting", "working"] -> 0
-      _ -> Enum.reduce_while(held, 0, &type_in(pane, &1, &2))
+  defp deliver(pane) do
+    fresh = Repo.all(from m in fresh(), where: m.pane == ^pane)
+
+    case {fresh, panes().state(pane)} do
+      {[], _} -> false
+      {_, state} when state in ["waiting", "working"] -> false
+      _ -> nudge(pane, Enum.map(fresh, & &1.id))
     end
   end
 
-  defp type_in(pane, message, typed) do
-    case panes().tell(pane, "babylon: " <> message.text) do
+  # once for what came in since the last nudge; one tmux will not type is tried again on the sweep
+  defp nudge(pane, ids) do
+    unread = Repo.aggregate(from(m in Message, where: m.pane == ^pane and is_nil(m.read_at)), :count)
+    them = from(m in Message, where: m.id in ^ids)
+
+    case panes().tell(
+           pane,
+           "babylon: #{unread} new #{if unread == 1, do: "message", else: "messages"} for you: call inbox"
+         ) do
       :ok ->
-        message |> Ecto.Changeset.change(read_at: now()) |> Repo.update!()
-        {:cont, typed + 1}
+        Repo.update_all(them, set: [nudged_at: now()])
+        true
 
       {:error, _} ->
-        message |> Ecto.Changeset.change(nudged_at: now(), nudges: message.nudges + 1) |> Repo.update!()
-        {:halt, typed}
+        Repo.update_all(them, inc: [nudges: 1])
+        false
     end
   end
 
