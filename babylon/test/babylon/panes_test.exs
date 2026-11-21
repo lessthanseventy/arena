@@ -29,6 +29,7 @@ defmodule Babylon.PanesTest do
     refute Panes.typed?(rule <> "\e[39m❯ \e[2mreply with the word ok\e[0m\n" <> rule)
     refute Panes.typed?(rule <> "\e[39m❯ \e[38;5;245mtry fixing the tests\e[39m\n" <> rule)
     refute Panes.typed?("no prompt here")
+    assert Panes.typed?(rule <> "\e[39m❯ \e[38;5;mstill typed\n" <> rule)
   end
 
   test "a line submitted, shown above an empty box, is not" do
@@ -48,12 +49,13 @@ defmodule Babylon.PanesTest do
   defp fake_tmux(dir, stuck) do
     File.write!(Path.join(dir, "tmux"), """
     #!/bin/sh
-    echo "$*" >> #{dir}/calls
+    d="#{dir}"
+    echo "$*" >> "$d/calls"
     case "$1" in
       capture-pane)
-        [ "$2" = -ep ] && { cat #{dir}/typing 2>/dev/null || cat #{dir}/clear; exit 0; }
-        n=$(grep -c '^capture-pane -p' #{dir}/calls)
-        if [ "$n" -le #{stuck} ]; then cat #{dir}/stuck; else cat #{dir}/clear; fi ;;
+        [ "$2" = -ep ] && { cat "$d/typing" 2>/dev/null || cat "$d/clear"; exit 0; }
+        n=$(grep -c '^capture-pane -p' "$d/calls")
+        if [ "$n" -le #{stuck} ]; then cat "$d/stuck"; else cat "$d/clear"; fi ;;
     esac
     """)
 
@@ -74,6 +76,15 @@ defmodule Babylon.PanesTest do
     fake_tmux(dir, 2)
     assert Panes.tell("%1", @line) == :ok
     assert enters(dir) == 3
+  end
+
+  @tag :tmp_dir
+  test "a name typed is kept on the pane, and is the rail's title at once", %{tmp_dir: dir} do
+    fake_tmux(dir, 0)
+    assert Panes.mark_named("%1", "#7 Lights") == :ok
+    calls = File.read!(Path.join(dir, "calls"))
+    assert calls =~ "set -p -t %1 @babylon_named #7 Lights"
+    assert calls =~ "set -p -t %1 @arena_claude_title #7 Lights"
   end
 
   @tag :tmp_dir

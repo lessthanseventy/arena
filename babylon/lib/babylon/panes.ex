@@ -199,6 +199,12 @@ defmodule Babylon.Panes do
   defp plain(text, {true, kept}), do: {true, kept <> String.duplicate(" ", String.length(text))}
   defp plain(text, {false, kept}), do: {false, kept <> text}
 
-  defp faint?(["38", "5", n | _]), do: String.to_integer(n) == 8 or String.to_integer(n) in 232..250
+  defp faint?(["38", "5", n | _]) do
+    case Integer.parse(n) do
+      {grey, ""} -> grey == 8 or grey in 232..250
+      _ -> false
+    end
+  end
+
   defp faint?(params), do: "2" in params or "90" in params
 end

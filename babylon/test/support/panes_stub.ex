@@ -1,7 +1,8 @@
 defmodule Babylon.PanesStub do
   @moduledoc """
   tmux's panes in tests: a pane in `:live_panes` is typed into (said to the process in
-  `:told_to`), one in `:waiting_panes` waits on its human, one in `:working_panes` is mid-turn,
+  `:told_to`), one in `:typing_panes` has its human typing in its box, one in `:waiting_panes`
+  waits on its human, one in `:working_panes` is mid-turn,
   and any other cannot be typed into. A pane in neither is done with its turn.
   """
 
@@ -36,11 +37,16 @@ defmodule Babylon.PanesStub do
   @doc "Type `text` into a live pane."
   @spec tell(String.t(), String.t()) :: :ok | {:error, String.t()}
   def tell(pane, text) do
-    if pane in Application.get_env(:babylon, :live_panes, []) do
-      send(Application.fetch_env!(:babylon, :told_to), {:told, pane, text})
-      :ok
-    else
-      {:error, "no pane #{pane}"}
+    cond do
+      pane in Application.get_env(:babylon, :typing_panes, []) ->
+        :typing
+
+      pane in Application.get_env(:babylon, :live_panes, []) ->
+        send(Application.fetch_env!(:babylon, :told_to), {:told, pane, text})
+        :ok
+
+      true ->
+        {:error, "no pane #{pane}"}
     end
   end
 end

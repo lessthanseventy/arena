@@ -55,6 +55,18 @@ defmodule Babylon.InboxTest do
     assert [%Message{text: "#1 landed"}] = Inbox.take(@live)
   end
 
+  test "a pane whose human is typing is not nudged, and that is not counted as a try" do
+    Application.put_env(:babylon, :typing_panes, [@live])
+    on_exit(fn -> Application.delete_env(:babylon, :typing_panes) end)
+    Inbox.send(@live, "#1 landed")
+    for _ <- 1..5, do: assert(Inbox.deliver_held() == [])
+    assert [%Message{nudges: 0}] = Repo.all(Message)
+
+    Application.put_env(:babylon, :typing_panes, [])
+    assert Inbox.deliver_held() == [@live]
+    assert_received {:told, @live, "babylon: 1 new message for you: call inbox"}
+  end
+
   test "one tmux cannot type is kept to be read, and tried four times in all" do
     Inbox.send(@nobody, "#1 landed")
     for _ <- 2..4, do: assert(Inbox.deliver_held() == [])

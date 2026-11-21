@@ -64,7 +64,7 @@ defmodule Babylon.Claims do
   Name `pane`'s session after the ticket it claimed last, and how many more it holds, by typing
   `/rename` into it; left as it is while its Claude waits on its human, for `name_sessions/0`.
   """
-  @spec name_session(String.t()) :: :ok | :waiting | {:error, String.t()}
+  @spec name_session(String.t()) :: :ok | :waiting | :typing | {:error, String.t()}
   def name_session(pane) do
     case {name(pane), panes().state(pane)} do
       {nil, _} -> :ok

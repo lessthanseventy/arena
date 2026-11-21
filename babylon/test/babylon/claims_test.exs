@@ -63,7 +63,7 @@ defmodule Babylon.ClaimsTest do
   test "a session is named after the ticket it claimed last, and how many more it holds" do
     Application.put_env(:babylon, :told_to, self())
     Application.put_env(:babylon, :live_panes, ["%1"])
-    on_exit(fn -> for key <- [:told_to, :live_panes], do: Application.delete_env(:babylon, key) end)
+    on_exit(fn -> for key <- [:told_to, :live_panes, :named], do: Application.delete_env(:babylon, key) end)
 
     first = file!(title: "Rail shows the ticket")
     second = file!(title: "A session is named after the ticket it claims from babylon")
@@ -101,6 +101,26 @@ defmodule Babylon.ClaimsTest do
     Application.put_env(:babylon, :named, %{})
     Application.put_env(:babylon, :titles, %{"%1" => "##{ticket.id} Lights"})
     assert Claims.name_sessions() == []
+  end
+
+  test "a session whose human is typing is not renamed over them, and is on the sweep after" do
+    Application.put_env(:babylon, :told_to, self())
+    Application.put_env(:babylon, :live_panes, ["%1"])
+    Application.put_env(:babylon, :typing_panes, ["%1"])
+    Application.delete_env(:babylon, :named)
+
+    on_exit(fn ->
+      for key <- [:told_to, :live_panes, :typing_panes, :named], do: Application.delete_env(:babylon, key)
+    end)
+
+    ticket = file!(title: "Lights")
+    {:ok, _, :new} = Claims.claim(ticket.id, "%1", panes(["%1"]))
+    assert Claims.name_session("%1") == :typing
+    assert Application.get_env(:babylon, :named, %{}) == %{}
+
+    Application.put_env(:babylon, :typing_panes, [])
+    assert Claims.name_sessions() == ["%1"]
+    assert_received {:told, "%1", "/rename #" <> _}
   end
 
   test "release gives it back to todo with its branch; only its pane can" do
