@@ -22,7 +22,7 @@ chmod +x $tmp/bin/claude
 print -r -- $'#!/bin/sh\nprintf "%s|" "$@" >>'$tmp$'/notified\necho >>'$tmp$'/notified' >$tmp/bin/notify-send
 chmod +x $tmp/bin/notify-send
 # stands in for babylon's command line: it says what the board answered
-print -r -- $'#!/bin/sh\necho "$@" >>'$tmp$'/babylon\n[ "$1" = answer ] && [ -e '$tmp$'/refuse ] && { echo "babylon: no session to answer" >&2; exit 1; }\n[ "$1" = detail ] && printf \'#%s Lights\\n\\nthe whole of it\\n\' "$2"\nexit 0' >$tmp/bin/babylon
+print -r -- $'#!/bin/sh\necho "$@" >>'$tmp$'/babylon\n[ "$1" = answer ] && [ -e '$tmp$'/refuse ] && { echo "babylon: no session to answer" >&2; exit 1; }\n[ "$1" = give ] && [ -e '$tmp$'/refuse ] && { echo "babylon: the Claude in $3 is mid-turn" >&2; exit 1; }\n[ "$1" = detail ] && printf \'#%s Lights\\n\\nthe whole of it\\n\' "$2"\nexit 0' >$tmp/bin/babylon
 chmod +x $tmp/bin/babylon
 export PATH=$tmp/bin:$PATH
 
@@ -844,6 +844,12 @@ key G
 key "$(screen | sed -n 's/.*│ \([1-9]\)  alpha · one .*/\1/p')"
 check "and a Claude's number gives it the card through babylon, by its pane" await last "give 7 $one"
 check "and puts them away" gone 'give #7 to'
+touch $tmp/refuse
+key G
+key "$(screen | sed -n 's/.*│ \([1-9]\)  alpha · one .*/\1/p')"
+unfit() { [[ $(<$tmp/notified) == *"babylon: the Claude in $one is mid-turn"* ]] }
+check "and refused by babylon, it says why, the pane whole" await unfit
+rm $tmp/refuse
 inner set -pu -t alpha:one @arena_claude_since
 check "with no auto in babylon's file, the board says nothing of it" hides 'auto [0-9]'
 key A
