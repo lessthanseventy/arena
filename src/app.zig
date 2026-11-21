@@ -301,7 +301,8 @@ const Pending = union(enum) {
 };
 
 /// The orchestrator's window beside the open board, arena in its session to have it live: the
-/// session the human was in, gone back to when it is put away, and whether keys go to its pane.
+/// session the human was in, gone back to when it is put away unless it was the orchestrator's,
+/// and whether keys go to its pane.
 pub const Side = struct {
     back: ?u32,
     pane_keys: bool = false,
@@ -1403,8 +1404,10 @@ pub const App = struct {
     /// The orchestrator's window beside the board, when it is running: arena goes to its session.
     fn showSide(app: *App) !void {
         const at = app.orchestratorSession() orelse return;
-        app.side = .{ .back = app.current };
-        try app.send(.ignore, "switch-client -t '${d}'", .{app.sessions.items[at].id});
+        const to = app.sessions.items[at].id;
+        // already there, there is nowhere to go back to
+        app.side = .{ .back = if (app.current == to) null else app.current };
+        try app.send(.ignore, "switch-client -t '${d}'", .{to});
         app.reflow();
     }
 
@@ -1415,7 +1418,8 @@ pub const App = struct {
         app.side = null;
         app.reflow();
         if (stay) return;
-        if (side.back) |id| if (id != app.current) try app.send(.ignore, "switch-client -t '${d}'", .{id});
+        // not by app.current, which is the orchestrator's only once tmux has said so
+        if (side.back) |id| try app.send(.ignore, "switch-client -t '${d}'", .{id});
     }
 
     /// The windows sized again to the strip's width now, once tmux has listed them.

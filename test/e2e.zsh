@@ -868,6 +868,10 @@ check "and unfolds it" see '╭─ 1 orch ─'
 key Escape
 check "closing the board goes back to the session the human was in" await in_session alpha
 check "the strip its whole width again" see '╭─ 1 one ─'
+key M-b q
+# nothing to wait on for a switch that must not stick: a second for tmux to have made it
+zselect -t 100
+check "opened and closed before tmux has switched, it comes back all the same" in_session alpha
 
 done_card() { print -r -- '{"id":'$1',"repo":"arena","title":"Done '$1'","kind":"ticket","status":"done","priority":"med","blocked_by":[]}' }
 print -r -- '{"tickets":[{"id":20,"repo":"arena","title":"Next","kind":"ticket","status":"todo","priority":"med","blocked_by":[]},'\
