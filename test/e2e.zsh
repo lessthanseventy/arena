@@ -791,6 +791,13 @@ check "with babylon's gate session there, the board offers it" see ' gate .*\? k
 check "and the rail does not list it" gone '│ babylon '
 key g
 check "g on the board shows the gate" see '╭─ 1 gate '
+key M-b
+key o
+starting() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == orchestrator ]] }
+check "o on the board starts the orchestrator when it is not running" await starting
+inner new-session -d -s orchestrator -n orch sh
+check "and goes to it once its session is there" see '╭─ 1 orch '
+check "which the rail does not list" gone '│ orchestrator '
 print -r -- '{"tickets":[{"id":9,"repo":"arena","title":"Pipe","kind":"ticket","status":"review","priority":"med","blocked_by":[],"stage":"reviewing"}]}' \
   >$tmp/run/babylon/board.json
 check "while babylon works a ticket toward main, the board's row says which and how far" see '^│ ▤ board +◐ #9 reviewing │'

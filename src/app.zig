@@ -277,6 +277,15 @@ pub const Session = struct {
         return std.mem.eql(u8, s.name, "babylon");
     }
 
+    /// The orchestrator's session (`babylon orchestrator` starts it): kept off the rail with the gate.
+    pub fn orchestrator(s: *const Session) bool {
+        return std.mem.eql(u8, s.name, "orchestrator");
+    }
+
+    pub fn offRail(s: *const Session) bool {
+        return s.gate() or s.orchestrator();
+    }
+
     pub fn focused(s: *const Session) ?*Window {
         return if (s.focus < s.wins.items.len) s.wins.items[s.focus] else null;
     }
@@ -338,6 +347,8 @@ pub const App = struct {
     board: ?tickets.Board = null,
     /// The board while it is open in place of the strip.
     board_view: ?BoardView = null,
+    /// The orchestrator was asked to start: gone to as soon as its session shows.
+    orchestrating: bool = false,
     rail: enum { wide, narrow } = .wide,
     /// The narrow rail drawn wide over the strip, while the pointer is on it.
     peek: bool = false,
@@ -584,7 +595,7 @@ pub const App = struct {
     pub fn agents(app: *const App, out: []Agent) usize {
         var n: usize = 0;
         for (app.sessions.items, 0..) |s, si| for (s.wins.items) |win| {
-            if (s.gate()) break;
+            if (s.offRail()) break;
             if (!win.agent() or n == out.len) continue;
             out[n] = .{ .session = si, .win = win };
             n += 1;
@@ -971,12 +982,16 @@ pub const App = struct {
         for (old.items) |s| app.destroySession(s);
         std.sort.insertion(*Session, app.sessions.items, {}, struct {
             fn before(_: void, a: *Session, b: *Session) bool {
-                if (a.gate() != b.gate()) return b.gate();
+                if (a.offRail() != b.offRail()) return b.offRail();
                 // tmux lists sessions by name: with no place of their own, the oldest first
                 return a.order < b.order or (a.order == b.order and a.id < b.id);
             }
         }.before);
         app.fit();
+        if (app.orchestrating) if (app.orchestratorSession()) |at| {
+            app.orchestrating = false;
+            try app.sessionTo(at);
+        };
     }
 
     /// Rebuilds every session's windows and panes from tmux's list, keeping the terminals of the
@@ -1507,6 +1522,7 @@ pub const App = struct {
         view.row = @min(view.row, app.boardColumn(view.col, &.{}) -| 1);
         if (is(key, &.{ "\x1b", "q" })) app.board_view = null;
         if (is(key, &.{"g"})) return app.toGate();
+        if (is(key, &.{"o"})) return app.toOrchestrator();
         if (is(key, &.{"n"})) return app.newTicket();
         const keyed = [_]struct { []const u8, CardAction }{
             .{ "\r", .go },    .{ "e", .edit }, .{ "p", .priority }, .{ ">", .close },
@@ -1519,6 +1535,15 @@ pub const App = struct {
         const at = app.gateSession() orelse return;
         app.board_view = null;
         try app.sessionTo(at);
+    }
+
+    /// To the orchestrator, started first when it is not running and gone to once its session shows.
+    fn toOrchestrator(app: *App) !void {
+        app.board_view = null;
+        app.dirty = true;
+        if (app.orchestratorSession()) |at| return app.sessionTo(at);
+        app.orchestrating = true;
+        try app.send(.ignore, "run-shell -b \"babylon orchestrator\"", .{});
     }
 
     fn newTicket(app: *App) !void {
@@ -1603,7 +1628,7 @@ pub const App = struct {
 
     /// A button on the board, where it is drawn and clicked: 0-based, as the mouse has it.
     pub const Button = struct {
-        what: union(enum) { repo: usize, backlog, gate, new, card: CardAction },
+        what: union(enum) { repo: usize, backlog, gate, orchestrator, new, card: CardAction },
         x: u16,
         y: u16,
         w: u16,
@@ -1619,6 +1644,7 @@ pub const App = struct {
             },
             .backlog => " backlog ",
             .gate => " gate ",
+            .orchestrator => " orch ",
             .new => " + ",
             .card => |action| std.fmt.bufPrint(buf, " {s} ", .{action.label()}) catch " ? ",
         };
@@ -1639,11 +1665,11 @@ pub const App = struct {
         const count = if (app.board) |*b| b.repos(&repos) else 0;
         var x: u16 = ox + @as(u16, @intCast(cellCount(board_title))) + 1;
         const right = ox + app.view_w;
-        for (0..count + 3) |i| {
-            const what: @FieldType(Button, "what") = if (i <= count) .{ .repo = i } else if (i == count + 1) .backlog else .gate;
-            if (what == .gate and app.gateSession() == null) break;
+        for (0..count + 4) |i| {
+            const what: @FieldType(Button, "what") = if (i <= count) .{ .repo = i } else if (i == count + 1) .backlog else if (i == count + 2) .gate else .orchestrator;
+            if (what == .gate and app.gateSession() == null) continue;
             const w: u16 = @intCast(cellCount(app.buttonLabel(what, &buf)));
-            if (what == .gate) x += 2;
+            if (what == .gate or (what == .orchestrator and app.gateSession() == null)) x += 2;
             if (x + w > right or n == out.len) break;
             out[n] = .{ .what = what, .x = x, .y = 0, .w = w };
             n += 1;
@@ -1683,6 +1709,7 @@ pub const App = struct {
                 view.row = 0;
             },
             .gate => try app.toGate(),
+            .orchestrator => try app.toOrchestrator(),
             .new => try app.newTicket(),
             .card => |action| try app.act(action),
         }
@@ -1948,14 +1975,21 @@ pub const App = struct {
 
     /// The sessions the rail and the overview list: all but babylon's, which sorts last.
     pub fn railSessions(app: *const App) usize {
-        const n = app.sessions.items.len;
-        return if (n > 0 and app.sessions.items[n - 1].gate()) n - 1 else n;
+        var n: usize = 0;
+        while (n < app.sessions.items.len and !app.sessions.items[n].offRail()) n += 1;
+        return n;
     }
 
     /// Where babylon's session is, when it is there.
     pub fn gateSession(app: *const App) ?usize {
-        const n = app.railSessions();
-        return if (n < app.sessions.items.len) n else null;
+        for (app.railSessions()..app.sessions.items.len) |i| if (app.sessions.items[i].gate()) return i;
+        return null;
+    }
+
+    /// Where the orchestrator's session is, when it is running.
+    pub fn orchestratorSession(app: *const App) ?usize {
+        for (app.railSessions()..app.sessions.items.len) |i| if (app.sessions.items[i].orchestrator()) return i;
+        return null;
     }
 
     /// The rule over the rail's agents, a row free under the last session, and the rows they can
@@ -2734,6 +2768,14 @@ test "babylon's own session, sorted last, is off the list and lists no agents" {
     var found: [4]App.Agent = undefined;
     try std.testing.expectEqual(@as(usize, 1), app.agents(&found));
     try std.testing.expectEqual(@as(u32, 2), found[0].win.id);
+    try std.testing.expectEqual(@as(?usize, null), app.orchestratorSession());
+
+    var orch: Session = .{ .id = 3, .name = @constCast("orchestrator") };
+    var three = [_]*Session{ &work, &babylon, &orch };
+    app.sessions = .fromOwnedSlice(&three);
+    try std.testing.expectEqual(@as(usize, 1), app.railSessions());
+    try std.testing.expectEqual(@as(?usize, 1), app.gateSession());
+    try std.testing.expectEqual(@as(?usize, 2), app.orchestratorSession());
 }
 
 test "a session shows the review state that most wants looking at" {

@@ -1056,7 +1056,7 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         const style: vt.Style = switch (button.what) {
             .repo => |i| if (i == view.repo and !view.backlog) chip(app) else ink(app, "dim", 8),
             .backlog => if (view.backlog) chip(app) else ink(app, "dim", 8),
-            .gate => ink(app, "violet", 5),
+            .gate, .orchestrator => ink(app, "violet", 5),
             .new => heading(app),
             .card => blk: {
                 var lit = ink(app, "amber", 4);
@@ -1090,6 +1090,7 @@ const board_keys = [_][2][]const u8{
     .{ "r, a tab", "the next repo, the backlog, or the one clicked" },
     .{ "t", "move a backlog card to todo" },
     .{ "g", "babylon's gate, while it runs one" },
+    .{ "o", "the orchestrator, started if it is not running" },
     .{ "esc, q", "close the board" },
 };
 
