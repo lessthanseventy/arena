@@ -67,7 +67,9 @@ always did; arena draws them and leaves them running when it quits.
   stage and the note on it, and the last of its gate's log. The board's row atop the rail counts what is to do and being
   done, and a click there opens it; it is there while babylon keeps its file. While the
   orchestrator runs, its window shows beside the board, arena in its session to have it live:
-  Tab, or a click on it, gives it the keys and Tab gives them back; `` ` `` folds it away, and the
+  a column like any other, with the board the one before it. Alt+l, or a click on it, focuses it,
+  and it is lit: what is typed, the wheel and the mouse are then its own. Alt+h, or a click on the
+  board, goes back to the board. `` ` `` folds it away, and the
   board opens so until it is unfolded. Closing the board goes back to the session you were in.
   The orchestrator's own Claude has a pane beside its chat, a feed of the board: the asks waiting
   on you and for how long, the tickets sent back and why, what is being done or in review with

@@ -321,15 +321,12 @@ const Pending = union(enum) {
     cursor: u32,
 };
 
-/// The orchestrator's window beside the open board, arena in its session to have it live: the
-/// session the human was in, gone back to when it is put away unless it was the orchestrator's,
-/// and whether keys go to its pane.
-pub const Side = struct {
-    back: ?u32,
-    pane_keys: bool = false,
-};
-
 pub const BoardView = struct {
+    /// Which has the keys and is lit: the board, or the orchestrator's column beside it.
+    focus: enum { board, orchestrator } = .board,
+    /// The session the human was in when arena went to the orchestrator's to have its window
+    /// live beside the board: gone back to when the board closes or the side is folded.
+    back: ?u32 = null,
     /// The column and the card in it picked, and in the every view the lane it is in.
     col: usize = 0,
     row: usize = 0,
@@ -348,7 +345,7 @@ pub const BoardView = struct {
     /// The board's keys shown over it, until the next key.
     help: bool = false,
 
-    /// Whether a box lies over the board, the keys its own whatever holds them under it.
+    /// Whether a box lies over the board, the keys its own.
     pub fn boxed(view: BoardView) bool {
         return view.help or view.detail != null or view.answering or view.giving != null;
     }
@@ -393,8 +390,7 @@ pub const App = struct {
     /// switches tmux has yet to answer.
     heading: ?u32 = null,
     switches: u32 = 0,
-    side: ?Side = null,
-    /// The side was folded away: the board opens without it until it is unfolded.
+    /// The orchestrator's column was folded away: the board opens without it until it is unfolded.
     side_folded: bool = false,
     rail: enum { wide, narrow } = .wide,
     /// The narrow rail drawn wide over the strip, while the pointer is on it.
@@ -948,7 +944,26 @@ pub const App = struct {
     /// The strip's width, or with the orchestrator beside the board, its window's.
     pub fn fit(app: *App) void {
         const full = app.fullW();
-        app.view_w = if (app.side != null) full * 2 / 5 else full;
+        app.view_w = if (app.sided()) full * 2 / 5 else full;
+    }
+
+    /// Whether the orchestrator's window has a place beside the open board: it runs, and the
+    /// side is not folded.
+    pub fn sided(app: *const App) bool {
+        return app.board_view != null and !app.side_folded and app.orchestratorSession() != null;
+    }
+
+    /// Whether it is drawn there, arena in its session.
+    pub fn sideShown(app: *const App) bool {
+        const s = app.cur() orelse return false;
+        return app.sided() and s.orchestrator();
+    }
+
+    /// Whether its column is the one focused: the keys and the mouse are then its own, as any
+    /// window's.
+    pub fn sideFocused(app: *const App) bool {
+        const view = app.board_view orelse return false;
+        return view.focus == .orchestrator and !view.boxed() and app.sideShown();
     }
 
     /// The width right of the rail, the strip's or the board's and its side's.
@@ -963,7 +978,7 @@ pub const App = struct {
     }
 
     pub fn boardW(app: *const App) u16 {
-        return if (app.side != null) app.fullW() -| app.view_w -| 1 else app.view_w;
+        return if (app.sided()) app.fullW() -| app.view_w -| 1 else app.view_w;
     }
 
     /// A new terminal size, with its cells' in pixels when the terminal says (0 when not):
@@ -1131,8 +1146,10 @@ pub const App = struct {
                 return a.order < b.order or (a.order == b.order and a.id < b.id);
             }
         }.before);
-        if (app.side != null and app.orchestratorSession() == null) app.side = null;
-        app.fit();
+        if (app.board_view) |*view| if (app.orchestratorSession() == null) {
+            view.focus = .board;
+        };
+        try app.toSide();
         if (app.orchestrating) if (app.orchestratorSession()) |at| {
             app.orchestrating = false;
             try app.sessionTo(at);
@@ -1529,40 +1546,37 @@ pub const App = struct {
         if (app.board_view != null) return app.closeBoard();
         if (app.board == null) return;
         app.board_view = .{ .lane = app.firstLane() };
-        if (!app.side_folded) try app.showSide();
+        try app.toSide();
     }
 
     /// The board put away, and the side with it, back in the session the human was in.
     fn closeBoard(app: *App) !void {
+        const view = app.board_view orelse return;
         app.board_view = null;
         app.dirty = true;
-        try app.hideSide(false);
+        app.reflow();
+        if (view.back) |id| try app.switchTo(id);
     }
 
-    /// The orchestrator's window beside the board, when it is running: arena goes to its session.
-    fn showSide(app: *App) !void {
-        const at = app.orchestratorSession() orelse return;
-        const to = app.sessions.items[at].id;
+    /// With the board open, the orchestrator running and the side not folded, arena goes to the
+    /// orchestrator's session, to have its window live beside the board.
+    fn toSide(app: *App) !void {
+        app.reflow();
+        if (!app.sided()) return;
+        const view = &app.board_view.?;
+        const to = app.sessions.items[app.orchestratorSession().?].id;
         const from = app.bound();
-        // already there, there is nowhere to go back to
-        app.side = .{ .back = if (from == to) null else from };
+        if (from == to) return;
+        if (view.back == null) view.back = from;
         try app.switchTo(to);
-        app.reflow();
     }
 
-    /// The side put away, the strip its full width again; back in the session the human was in
-    /// unless `stay`.
-    fn hideSide(app: *App, stay: bool) !void {
-        const side = app.side orelse return;
-        app.side = null;
-        app.reflow();
-        if (stay) return;
-        if (side.back) |id| try app.switchTo(id);
-    }
-
-    /// The windows sized again to the strip's width now, once tmux has listed them.
+    /// The strip's width as it is now, and where it changed the windows sized again to it, once
+    /// tmux has listed them.
     fn reflow(app: *App) void {
+        const was = app.view_w;
         app.fit();
+        if (app.view_w == was) return;
         for (app.sessions.items) |s| s.placed = false;
         app.want_list = true;
         app.dirty = true;
@@ -1955,10 +1969,6 @@ pub const App = struct {
         view.row = @min(view.row, app.boardColumn(view.col, &.{}) -| 1);
         if (is(key, &.{ "\x1b", "q" })) return app.closeBoard();
         if (is(key, &.{"`"})) return app.foldSide();
-        if (is(key, &.{"\t"})) if (app.side) |*side| {
-            side.pane_keys = true;
-            return;
-        };
         if (is(key, &.{"g"})) return app.toGate();
         if (is(key, &.{"o"})) return app.toOrchestrator();
         if (is(key, &.{"A"})) return app.toggleAuto();
@@ -1973,13 +1983,17 @@ pub const App = struct {
 
     /// The side folded away, or back beside the board; the board opens so from then on.
     fn foldSide(app: *App) !void {
+        const view = &app.board_view.?;
         app.dirty = true;
-        if (app.side != null) {
-            app.side_folded = true;
-            return app.hideSide(false);
+        if (!app.sided()) {
+            app.side_folded = false;
+            return app.toSide();
         }
-        app.side_folded = false;
-        try app.showSide();
+        app.side_folded = true;
+        view.focus = .board;
+        app.reflow();
+        if (view.back) |id| try app.switchTo(id);
+        view.back = null;
     }
 
     fn toGate(app: *App) !void {
@@ -1990,13 +2004,13 @@ pub const App = struct {
 
     /// To the orchestrator, started first when it is not running and gone to once its session shows.
     fn toOrchestrator(app: *App) !void {
-        app.board_view = null;
-        app.dirty = true;
         if (app.orchestratorSession()) |at| {
-            try app.hideSide(true);
+            app.board_view = null;
+            app.dirty = true;
+            app.reflow();
             return app.sessionTo(at);
         }
-        try app.hideSide(false);
+        try app.closeBoard();
         app.orchestrating = true;
         try app.send(.ignore, "run-shell -b \"babylon orchestrator\"", .{});
     }
@@ -2242,18 +2256,28 @@ pub const App = struct {
 
     /// The mouse on the board: a click on a card picks it, and on the card picked goes to the
     /// Claude holding it; the wheel moves along the column. Whether it was the board's: on the
-    /// rail it is the rail's, and closes the board but for its own row there.
+    /// rail it is the rail's, and closes the board but for its own row there; on the
+    /// orchestrator's column beside it a click focuses the column, as one on any window out of
+    /// focus, and the wheel, or anything once it is focused, is the column's.
     fn boardMouse(app: *App, m: keys.Mouse) !bool {
+        if (app.drag != .none) return false;
         if (m.x < app.boardX()) {
             if (m.leftPress() and m.y != 1) try app.closeBoard();
             app.dirty = true;
             return false;
         }
-        if (app.side) |*side| if (m.x >= app.boardX() + app.boardW()) {
-            if (m.leftPress()) side.pane_keys = true;
-            app.dirty = true;
+        const view = &app.board_view.?;
+        if (m.x >= app.boardX() + app.boardW() and app.sideShown() and !view.boxed()) {
+            if (m.y >= app.view_h) return true;
+            if (app.sideFocused() or m.wheel()) return false;
+            if (m.leftPress()) {
+                view.focus = .orchestrator;
+                app.drag = .focus;
+                app.dirty = true;
+            }
             return true;
-        };
+        }
+        if (m.leftPress()) view.focus = .board;
         if (m.wheel()) {
             if (app.navStep()) try app.boardKey(if (m.code & 1 == 0) "k" else "j");
             return true;
@@ -2275,11 +2299,10 @@ pub const App = struct {
             return true;
         };
         const at = app.boardCardAt(m.x, m.y) orelse return true;
-        const view = &app.board_view.?;
         view.answering = false;
         if (view.col == at.col and view.row == at.row and view.lane == at.lane) {
             try app.goCard();
-        } else view.* = .{ .col = at.col, .row = at.row, .lane = at.lane, .repo = view.repo, .backlog = view.backlog };
+        } else view.* = .{ .back = view.back, .col = at.col, .row = at.row, .lane = at.lane, .repo = view.repo, .backlog = view.backlog };
         return true;
     }
 
@@ -2897,15 +2920,13 @@ pub const App = struct {
         };
     }
 
+    /// Whether what is typed is the focused pane's: nothing lies over the strip, or the board
+    /// does with the orchestrator's column beside it focused.
+    fn typing(app: *const App) bool {
+        return app.menu == null and app.prompt == null and app.overview == null and (app.board_view == null or app.sideFocused());
+    }
+
     fn menuKeys(app: *App, text: []const u8) !void {
-        // with the keys on the orchestrator's pane, all but a Tab is typed into it
-        if (app.board_view) |view| if (!view.boxed()) if (app.side) |*side| if (side.pane_keys) {
-            const tab = std.mem.indexOfScalar(u8, text, '\t') orelse return app.forward(text);
-            try app.forward(text[0..tab]);
-            side.pane_keys = false;
-            app.dirty = true;
-            return app.menuKeys(text[tab + 1 ..]);
-        };
         var i: usize = 0;
         while (i < text.len) {
             // an arrow is ESC and two more; anything else is a key a byte
@@ -2914,10 +2935,8 @@ pub const App = struct {
             i += len;
             if (app.overview != null) {
                 try app.overviewKey(key);
-            } else if (app.board_view != null) {
+            } else if (app.board_view != null and !app.sideFocused()) {
                 try app.boardKey(key);
-                // a key that put a box away leaves the rest to whatever had the keys under it
-                return app.menuKeys(text[i..]);
             } else if (app.prompt) |*prompt| {
                 app.dirty = true;
                 switch (prompt.press(key)) {
@@ -3036,6 +3055,18 @@ pub const App = struct {
     }
 
     fn onChord(app: *App, letter: u8) !void {
+        if (app.menu == null and app.prompt == null and app.sideShown()) {
+            const view = &app.board_view.?;
+            const s = app.cur().?;
+            const at_board = view.focus == .board;
+            // the board is the column before the orchestrator's first
+            if (!view.boxed() and ((at_board and letter == 'l') or (!at_board and letter == 'h' and s.focus == 0))) {
+                view.focus = if (at_board) .orchestrator else .board;
+                app.dirty = true;
+                return;
+            }
+            if (app.sideFocused() and (letter == 'h' or letter == 'l')) return app.focusBy(if (letter == 'h') -1 else 1);
+        }
         if (app.overlay()) {
             app.menu = null;
             app.prompt = null;
@@ -3091,7 +3122,7 @@ pub const App = struct {
         while (rest.len > 0 and !app.quit) {
             const part = keys.next(rest);
             rest = part.rest;
-            if (app.overlay()) try app.menuKeys(part.text) else try app.forward(part.text);
+            if (app.typing()) try app.forward(part.text) else try app.menuKeys(part.text);
             switch (part.event orelse return part.held.len) {
                 .mouse => |m| try app.onMouse(m),
                 .chord => |letter| try app.onChord(letter),
@@ -3111,7 +3142,7 @@ pub const App = struct {
 
     /// Held input that turned out to be all there was, typed as it is.
     pub fn typedAlone(app: *App, bytes: []const u8) !void {
-        if (app.overlay()) try app.menuKeys(bytes) else try app.forward(bytes);
+        if (app.typing()) try app.forward(bytes) else try app.menuKeys(bytes);
     }
 
     fn forward(app: *App, bytes: []const u8) !void {

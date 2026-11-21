@@ -816,7 +816,7 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
     const drop = app.dropAt();
 
     for (s.wins.items, 0..) |win, i| {
-        const focused = i == s.focus;
+        const focused = i == s.focus and (app.board_view == null or app.sideFocused());
         if (what == .focused_border and !focused and app.mark(s, win) != .working) continue;
         const col_w = app.colW(s, win);
         const x0 = app.colX(s, i) - s.scroll;
@@ -1153,7 +1153,7 @@ const board_keys = [_][2][]const u8{
     .{ "o", "the orchestrator, started if it is not running" },
     .{ "A", "babylon's auto mode, on or off" },
     .{ "`", "fold the orchestrator's window beside it, or unfold" },
-    .{ "tab", "keys to that window and back to the board" },
+    .{ "alt+l", "to that window, and alt+h back to the board" },
     .{ "esc, q", "close the board" },
 };
 
@@ -1487,10 +1487,7 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
     } else if (app.board_view) |view| {
         try boardView(app, w, view);
         // the orchestrator's window beside it, once arena is in its session
-        if (app.side) |side| if (app.cur()) |s| if (s.orchestrator()) {
-            const at = try strip(app, w, s, 0, what);
-            if (side.pane_keys and !view.boxed()) cursor = at;
-        };
+        if (app.sideShown()) cursor = try strip(app, w, app.cur().?, 0, what);
     } else {
         if (app.yoff != 0) if (app.sessionById(app.prev)) |leaving| {
             const way: i32 = if (app.yoff > 0) 1 else -1;

@@ -983,35 +983,36 @@ await in_session alpha
 key M-b
 check "with the orchestrator running, the board has its window beside it" see '╭─ 1 orch ─'
 check "arena in its session to have it live" await in_session orchestrator
-key Tab
-key 'echo side' Enter
-check "Tab gives the keys to it" see '│side +│'
-cp $tmp/run/babylon/board.json $tmp/board.sided
-print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[],'\
-'"ask":{"id":5,"question":"Which colour?","options":["red","blue"]}}]}' >$tmp/run/babylon/board.json
-see '#7 L'
+orch_lit() { [[ $(outer capture-pane -ep -t o) =~ $'((\e\\[[0-9;]*m)+) 1 orch ' && $match[1] =~ '[[;]7[;m]' ]] }
+shown_cursor() { [[ $(outer display -p -t o '#{cursor_flag}') == $1 ]] }
+check "the board keeps the keys: its column is unlit, the cursor in no pane" eval '! orch_lit && shown_cursor 0'
 : >$tmp/babylon
-key Tab
-key a
-see '│ Which colour\? +│'
+key M-l
+check "Alt+l from the board focuses it, lit as the focused column" await orch_lit
+key 'echo side' Enter
+check "what is typed then reaches its pane" see '│side +│'
+check "and none of it the board, which stays open" eval '[[ ! -s $tmp/babylon ]] && shows " board   every"'
+inner send-keys -t orchestrator:orch "stty -echo -icanon; cat $tmp/clicks; timeout 2 cat -v; printf '\\033[?1006l\\033[?1000l'; stty sane" Enter
+await mousing orchestrator:orch
+mouse 64 100 10 M
+wheeled() { inner capture-pane -pJ -t orchestrator:orch | grep -qF '[<64;' }
+check "a wheel over it reaches its program" await wheeled
+await eval '! mousing orchestrator:orch'
+key M-h
+check "Alt+h goes back to the board" await eval '! orch_lit && shown_cursor 0'
+key '?'
+check "whose keys are its own again" see "the board's keys"
+key Escape
 mouse 0 100 10 M
 mouse 0 100 10 m
-shown_cursor() { [[ $(outer display -p -t o '#{cursor_flag}') == $1 ]] }
-# nothing to wait on for a cursor that must not show: a second for the click to be drawn
-zselect -t 100
-check "a card's question over the board, the keys given to the pane beside it, has the cursor in no pane" shown_cursor 0
-key 1
-answered_one() { [[ $(<$tmp/babylon) == 'answer 5 1' ]] }
-check "and its number answers it" await answered_one
-untyped() { ! inner capture-pane -p -t orchestrator:orch | grep -q 1 }
-check "the pane getting none of it" untyped
-check "put away, the keys are the pane's again" await shown_cursor 1
+check "a click on it focuses it too" await orch_lit
 key 'echo back' Enter
-check "as they were" see '│back +│'
-cp $tmp/board.sided $tmp/run/babylon/board.json
-key Tab
+check "and what is typed reaches its pane" see '│back +│'
+mouse 0 45 22 M
+mouse 0 45 22 m
+check "a click on the board gives the board the keys" await eval '! orch_lit'
 key '`'
-check "and back to the board, where \` folds it away" gone '╭─ 1 orch ─'
+check "where \` folds it away" gone '╭─ 1 orch ─'
 check "going back to the session the human was in" await in_session alpha
 key '`'
 check "and unfolds it" see '╭─ 1 orch ─'
@@ -1027,6 +1028,24 @@ await in_session orchestrator
 key '`' '`' q
 zselect -t 100
 check "folded, unfolded and closed before tmux has switched back, it comes back all the same" in_session alpha
+key M-b
+await in_session orchestrator
+key M-l
+await orch_lit
+inner kill-session -t '=orchestrator'
+check "its session ended while it is beside the board, arena goes elsewhere" see '╭─ 1 one ─'
+key M-b
+see ' board   every'
+inner new-session -d -s orchestrator -n orch sh
+check "an orchestrator that shows while the board is open goes beside it" see '╭─ 1 orch ─'
+check "the keys still the board's" eval '! orch_lit'
+key o
+check "o goes to it, the board put away" gone ' board   every'
+key 'echo whole' Enter
+check "and what is typed after o reaches its pane" see '│whole +│'
+mouse 0 5 3 M
+mouse 0 5 3 m
+await in_session alpha
 
 done_card() { print -r -- '{"id":'$1',"repo":"arena","title":"Done '$1'","kind":"ticket","status":"done","priority":"med","blocked_by":[]}' }
 print -r -- '{"tickets":[{"id":20,"repo":"arena","title":"Next","kind":"ticket","status":"todo","priority":"med","blocked_by":[]},'\
