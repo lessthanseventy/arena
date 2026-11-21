@@ -741,7 +741,7 @@ key M-b
 key r
 # how tmux spells the lit style varies with its terminal: any reverse-video SGR run just before the name
 tablit() { [[ $(outer capture-pane -ep -t o) =~ $'((\e\\[[0-9;]*m)+) '$1' ' && $match[1] =~ '[[;]7[;m]' ]] }
-check "r narrows it to one repo, its tab lit" tablit arena
+check "r narrows it to one repo, its tab lit" await tablit arena
 check "and to its cards" gone '#7 Lights'
 tabrow() { screen | grep -n -m1 ' board   every' | cut -d: -f1 }
 tabcol() { local l=$(screen | grep -m1 ' board   every'); local p=${l%%" $1 "*}; print $(( ${#p} + 2 )) }
