@@ -34,8 +34,8 @@ defmodule Babylon.PanesStub do
   @spec title(String.t()) :: String.t()
   def title(pane), do: Map.get(Application.get_env(:babylon, :titles, %{}), pane, "")
 
-  @doc "Type `text` into a live pane."
-  @spec tell(String.t(), String.t()) :: :ok | {:error, String.t()}
+  @doc "Type `text` into a live pane, unless its human is typing in it."
+  @spec tell(String.t(), String.t()) :: :ok | :typing | {:error, String.t()}
   def tell(pane, text) do
     cond do
       pane in Application.get_env(:babylon, :typing_panes, []) ->
