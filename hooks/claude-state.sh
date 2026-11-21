@@ -4,9 +4,9 @@
 # by, @arena_claude_since, when that last changed, and what it is about: @arena_claude_prompt, the
 # turn's prompt, @arena_claude_doing, the tool it is on or what it waits for,
 # @arena_claude_title, what the conversation is about, @arena_claude_said, the first line of its
-# last answer, @arena_claude_tokens, its context in tokens, @arena_claude_background, what its
-# subagents and shells in the background are doing, and @arena_claude_branch, the git branch it
-# works on. $1 is the
+# last answer, @arena_claude_tokens, its context in tokens, @arena_claude_agents, its subagents in
+# the background, @arena_claude_background, what its shells there are doing, and
+# @arena_claude_branch, the git branch it works on. $1 is the
 # event (prompt | tool | stop | waiting |
 # end), the hook's JSON is on stdin. A hook must never fail a turn: every miss is silent and the
 # exit is 0. Without jq the text is left out.
@@ -88,18 +88,19 @@ tokens() {
 tool_text='.tool_name + " " + (.tool_input | .command // (.file_path // .path // "" | split("/") | last) // .pattern // .description // .url // "" | tostring | split("\n")[0])'
 # What runs in the background is kept in @arena_claude_running, as JSON: an entry of id, type
 # and description for each shell and subagent started, until a notification says it finished or
-# a stop lists what runs. @arena_claude_background is that list as arena shows it.
+# a stop lists what runs. arena shows that list from @arena_claude_agents, the subagents'
+# descriptions with a unit separator between them, each as Claude Code's own list of agents names
+# it, and @arena_claude_background, the shells.
 running() {
 	r=$(tmux show -pqv -t "$pane" @arena_claude_running 2>/dev/null)
 	printf '%s' "${r:-[]}"
 }
 keep() {
 	opt @arena_claude_running "$1"
-	opt @arena_claude_background "$(json=$1 text 'if length == 0 then "" else
-		(map(select(.type == "subagent")) | length) as $a | (length - $a) as $s |
-		([if $a > 0 then "\($a) agent\(if $a > 1 then "s" else "" end)" else empty end,
-			if $s > 0 then "\($s) shell\(if $s > 1 then "s" else "" end)" else empty end] | join(", "))
-		+ ": " + (map(.description) | join(" · "))
+	opt @arena_claude_agents "$(printf '%s' "$1" | jq -r '[.[] | select(.type == "subagent") | .description // "" |
+		gsub("[\t\u001f]"; " ") | .[0:80] | select(length > 0)] | join("\u001f")' 2>/dev/null)"
+	opt @arena_claude_background "$(json=$1 text 'map(select(.type != "subagent")) | if length == 0 then "" else
+		"\(length) shell\(if length > 1 then "s" else "" end): " + (map(.description) | join(" · "))
 	end')"
 }
 # The JSON of `running` with $1, a jq filter on the hook's JSON, done to it as $list.
@@ -169,7 +170,8 @@ stop)
 	;;
 end)
 	for o in @arena_claude @arena_claude_since @arena_claude_prompt @arena_claude_doing @arena_claude_title \
-		@arena_claude_topic @arena_claude_prompts @arena_claude_said @arena_claude_tokens @arena_claude_background @arena_claude_running \
+		@arena_claude_topic @arena_claude_prompts @arena_claude_said @arena_claude_tokens @arena_claude_agents @arena_claude_background \
+		@arena_claude_running \
 		@arena_claude_branch @arena_claude_at @arena_claude_began @arena_claude_took @arena_claude_ctx \
 		@arena_claude_stirred; do
 		tmux set -pu -t "$pane" $o 2>/dev/null

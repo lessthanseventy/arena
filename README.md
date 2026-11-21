@@ -34,7 +34,9 @@ always did; arena draws them and leaves them running when it quits.
   nothing heard from it; under that its branch (or `no repo`, `detached` and the commit), its
   review and its context: the share of its budget, drawn to be seen past 80%, where your status
   line sets the pane option `@arena_claude_ctx` to it (hooks are not told the window's size),
-  else its tokens; and under that what it has running in the background. What a conversation is about is the name you gave it with `/rename`, else a topic Haiku
+  else its tokens; and under that a row for each subagent it has in the background, then its
+  shells there. A subagent's row is lit while its Claude shows that subagent, where the Claude
+  is in the session in view. What a conversation is about is the name you gave it with `/rename`, else a topic Haiku
   is asked for every fifth prompt (one small `claude -p` call, in the background), else the title
   Claude Code gave it at its start. The hook needs `jq` for all of that text.
 - **A mark for code review** beside it: `✗` when changes are asked for, `»` while queued to merge,
@@ -134,7 +136,9 @@ With the mouse:
   on the row of dots it has each window's number and name instead, to click, and the wheel there
   steps through the windows.
 - Click a Claude in the rail to go to its window, the rule over them to change their order, the
-  rail's top to narrow or widen it.
+  rail's top to narrow or widen it. Click a subagent's row under it and that Claude shows the
+  subagent too: arena types Down into it until its list of agents has the pointer, then to the
+  subagent's row, and Enter.
 - In the overview, drag a window's picture onto another to take its place, in its own session or
   any other, or onto the rest of a session's row to put it at that session's end.
 - Click a pane to select it; drag the line between panes to resize them: over it, the pointer

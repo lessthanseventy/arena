@@ -329,7 +329,8 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) 
         else
             idle_ms;
         const lone = keys.lone(typed.items);
-        _ = try posix.poll(&fds, @intCast(@min(wait_ms, idle_ms, @max(1, app.dwell()), if (lone) @as(i64, keys.lone_wait_ms) else idle_ms)));
+        const pick_ms = try app.pickStep();
+        _ = try posix.poll(&fds, @intCast(@min(wait_ms, idle_ms, @max(1, app.dwell()), @max(1, pick_ms), if (lone) @as(i64, keys.lone_wait_ms) else idle_ms)));
 
         if (fds[0].revents & posix.POLL.IN != 0) {
             const n = try posix.read(posix.STDIN_FILENO, &buf);

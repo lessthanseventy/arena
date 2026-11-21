@@ -20,6 +20,11 @@ const rail_narrow = 8;
 const dwell_ms = 300;
 const quiet_s = 600;
 const stir_s = 60;
+/// How long arena keeps trying to have a Claude show a subagent, how long it leaves a key to be
+/// drawn before it reads the screen again, and how many Downs it sends to reach the list.
+const pick_ms = 3000;
+const pick_key_ms = 150;
+const pick_downs = 3;
 pub const max_tabs = 32;
 pub const tab_name = 16;
 /// Wheel and swipe steps that move between windows or sessions are taken this far apart.
@@ -46,7 +51,7 @@ const pane_format = "#{{session_id}} #{{window_id}} #{{pane_id}} #{{window_width
     "#{{?@arena_claude_took,#{{@arena_claude_took}},0}} #{{?@arena_claude_ctx,#{{@arena_claude_ctx}},0}} " ++
     "#{{?@arena_claude_stirred,#{{@arena_claude_stirred}},0}} #{{?window_bell_flag,2,#{{?window_activity_flag,1,0}}}} " ++
     "#{{@arena_claude_doing}}\t#{{@arena_claude_prompt}}\t#{{@arena_claude_title}}\t#{{@arena_claude_said}}\t" ++
-    "#{{@arena_claude_branch}}\t#{{@arena_claude_background}}\t#{{window_name}}";
+    "#{{@arena_claude_branch}}\t#{{@arena_claude_background}}\t#{{@arena_claude_agents}}\t#{{window_name}}";
 
 /// The least and the most of the view a window's column is given, in hundredths, and how much
 /// one press of narrower or wider changes it.
@@ -196,11 +201,24 @@ pub const Window = struct {
     took: u32 = 0,
     info: []u8 = &.{},
 
-    pub const Info = enum { doing, prompt, title, said, branch, background };
+    pub const Info = enum { doing, prompt, title, said, branch, background, agents };
 
     pub fn text(win: *const Window, field: Info) []const u8 {
         var it = std.mem.splitScalar(u8, win.info, '\t');
         for (0..@backingInt(field)) |_| _ = it.next();
+        return it.next() orelse "";
+    }
+
+    /// How many subagents its Claude has in the background.
+    pub fn subs(win: *const Window) usize {
+        const all = win.text(.agents);
+        return if (all.len == 0) 0 else std.mem.countScalar(u8, all, '\x1f') + 1;
+    }
+
+    /// The description of the `index`th of them.
+    pub fn sub(win: *const Window, index: usize) []const u8 {
+        var it = std.mem.splitScalar(u8, win.text(.agents), '\x1f');
+        for (0..index) |_| _ = it.next();
         return it.next() orelse "";
     }
 
@@ -412,6 +430,8 @@ pub const App = struct {
     board_dir: ?[]const u8 = null,
     /// The tickets whose detail babylon was asked to write and arena has yet to take in.
     detail_asked: std.ArrayList(u32) = .empty,
+    /// The subagent a click on its row asked its Claude to show.
+    pick: ?Pick = null,
     want_list: bool = true,
     listing: bool = false,
     listed: bool = false,
@@ -666,10 +686,17 @@ pub const App = struct {
         return best;
     }
 
+    /// A subagent of a window's Claude, by its place among those in the background.
+    pub const Sub = struct { agent: Agent, index: usize };
+
     /// A row of a list of agents: a session's name over its own, a window with a Claude, its
-    /// `Window.detail`, its branch, review and context, what it has running in the background, or
-    /// how many more there are than rows.
-    pub const AgentLine = union(enum) { session: usize, agent: Agent, detail: Agent, meta: Agent, background: Agent, more: usize };
+    /// `Window.detail`, its branch, review and context, a subagent of its, what else it has
+    /// running in the background, or how many more there are than rows.
+    pub const AgentLine = union(enum) { session: usize, agent: Agent, detail: Agent, meta: Agent, sub: Sub, background: Agent, more: usize };
+
+    /// The pane of the Claude asked for a subagent and the subagent's description, when arena
+    /// stops trying, when it last sent a key, and how many Downs it has sent to reach the list.
+    const Pick = struct { pane: u32, name: [320]u8 = undefined, len: usize, until: i64, sent_at: i64 = 0, downs: u8 = 0 };
 
     /// The agents in at most `room` rows of `out`, as `agents` orders them, with each one's
     /// detail, its branch, review and context, and its background under it when `details`, where
@@ -686,6 +713,7 @@ pub const App = struct {
             // a Claude's rows go together: past the first, one they do not all fit is left to the count
             const rest = @as(usize, @intFromBool(details and a.win.detail().len > 0)) +
                 @intFromBool(details and (a.win.text(.branch).len > 0 or a.win.review != .none or a.win.tokens > 0)) +
+                (if (details) a.win.subs() else 0) +
                 @intFromBool(details and a.win.text(.background).len > 0);
             if (n > 0 and n + @intFromBool(last != a.session) + 1 + rest > rows) break;
             if (last != a.session) {
@@ -704,6 +732,11 @@ pub const App = struct {
                 out[n] = .{ .meta = a };
                 n += 1;
             }
+            if (details) for (0..a.win.subs()) |i| {
+                if (n == rows) break;
+                out[n] = .{ .sub = .{ .agent = a, .index = i } };
+                n += 1;
+            };
             if (details and n < rows and a.win.text(.background).len > 0) {
                 out[n] = .{ .background = a };
                 n += 1;
@@ -740,6 +773,64 @@ pub const App = struct {
         const s = app.sessions.items[a.session];
         const index = std.mem.indexOfScalar(*Window, s.wins.items, a.win) orelse return;
         try app.jumpTo(s, index);
+    }
+
+    /// Goes to a subagent's Claude and asks it to show the subagent.
+    fn goSub(app: *App, sub: Sub) !void {
+        try app.goAgent(sub.agent);
+        const name = sub.agent.win.sub(sub.index);
+        var pick: Pick = .{ .pane = sub.agent.win.agent_pane, .len = @min(name.len, 320), .until = app.now + pick_ms };
+        @memcpy(pick.name[0..pick.len], name[0..pick.len]);
+        app.pick = pick;
+    }
+
+    /// Whether `pane` is in the session in view with its screen taken in: tmux sends arena the
+    /// output of no other session's panes.
+    fn watched(app: *const App, pane: *const Pane) bool {
+        const s = app.cur() orelse return false;
+        for (s.wins.items) |win| if (std.mem.indexOfScalar(*Pane, win.panes.items, @constCast(pane)) != null) return pane.seed == .done;
+        return false;
+    }
+
+    /// Whether a subagent's Claude shows it now, as far as arena has its screen.
+    pub fn subShown(app: *const App, sub: Sub) bool {
+        const pane = @constCast(app).paneById(sub.agent.win.agent_pane) orelse return false;
+        if (!app.watched(pane)) return false;
+        const at = listedSub(pane, sub.agent.win.sub(sub.index)) orelse return false;
+        return at.shown;
+    }
+
+    /// Steps the Claude asked for a subagent toward showing it, by what its screen has: a Down
+    /// while its list of agents has no pointer, which the row of shells over the list may take
+    /// first, then from the pointer to the subagent's row, and Enter. Returns how long until the
+    /// next step.
+    pub fn pickStep(app: *App) !i64 {
+        const never = std.math.maxInt(i64);
+        const pick = if (app.pick) |*p| p else return never;
+        const pane = app.paneById(pick.pane);
+        if (pane == null or app.now >= pick.until) {
+            app.pick = null;
+            return never;
+        }
+        const wait = pick.sent_at + pick_key_ms - app.now;
+        if (wait > 0) return wait;
+        if (!app.watched(pane.?)) return pick_key_ms;
+        const at = listedSub(pane.?, pick.name[0..pick.len]) orelse return pick_key_ms;
+        if (at.below) |rows| if (!at.shown) {
+            var keys_buf: [3 * 32 + 1]u8 = undefined;
+            var typed: Writer = .fixed(&keys_buf);
+            for (0..@min(@abs(rows), 32)) |_| try typed.writeAll(if (rows > 0) "\x1b[B" else "\x1b[A");
+            try typed.writeAll("\r");
+            try app.sendKeys(pane.?, typed.buffered());
+        };
+        if (at.shown or at.below != null or pick.downs == pick_downs) {
+            app.pick = null;
+            return never;
+        }
+        try app.sendKeys(pane.?, "\x1b[B");
+        pick.downs += 1;
+        pick.sent_at = app.now;
+        return pick_key_ms;
     }
 
     /// Steps `by` through the Claudes waiting or done, the one that most wants looking at first:
@@ -2618,6 +2709,7 @@ pub const App = struct {
             if (app.railAgentAt(m.y)) |line| {
                 switch (line) {
                     .agent, .detail, .meta, .background => |a| try app.goAgent(a),
+                    .sub => |sub| try app.goSub(sub),
                     .session => |si| try app.sessionTo(si),
                     .more => {},
                 }
@@ -3046,6 +3138,61 @@ pub const App = struct {
         try app.send(.ignore, "{s}", .{cmd.written()});
     }
 };
+
+/// Where the list of agents Claude Code draws at the foot of its screen has a subagent: whether
+/// it is the one shown, and how many rows under the list's pointer it is, null while the list has
+/// no pointer.
+const Listed = struct { shown: bool, below: ?i32 };
+
+/// The row of `pane`'s list of agents for the subagent described `name`, null when it has none.
+/// A row has the pointer or two spaces, `●` for the one shown or `◯`, and the agent.
+fn listedSub(pane: *const Pane, name: []const u8) ?Listed {
+    const screen = pane.term.screens.active;
+    var buf: [1024]u8 = undefined;
+    var found: ?struct { y: i32, shown: bool } = null;
+    var pointer: ?i32 = null;
+    var in_list = false;
+    var y: i32 = pane.term.rows;
+    while (y > 0) {
+        y -= 1;
+        const start = screen.pages.pin(.{ .active = .{ .x = 0, .y = @intCast(y) } }) orelse break;
+        var end = start;
+        end.x = pane.term.cols - 1;
+        var row: Writer = .fixed(&buf);
+        screen.dumpString(&row, .{ .tl = start, .br = end, .unwrap = false }) catch {};
+        const text = std.mem.trimEnd(u8, row.buffered(), " \n");
+        if (text.len == 0 and !in_list) continue;
+        const pointed = std.mem.startsWith(u8, text, "❯ ");
+        const marked = if (pointed) text["❯ ".len..] else if (std.mem.startsWith(u8, text, "  ")) text[2..] else break;
+        const shown = std.mem.startsWith(u8, marked, "● ");
+        if (!shown and !std.mem.startsWith(u8, marked, "◯ ")) break;
+        in_list = true;
+        if (pointed) pointer = y;
+        if (rowNames(marked["● ".len..], name)) found = .{ .y = y, .shown = shown };
+    }
+    const at = found orelse return null;
+    return .{ .shown = at.shown, .below = if (pointer) |p| at.y - p else null };
+}
+
+/// Whether a row of Claude Code's list of agents, from its agent's type on, is of the subagent
+/// described `name`: the type, two spaces, the description, cut with an ellipsis where the pane
+/// is narrow, and how long it has run.
+fn rowNames(row: []const u8, name: []const u8) bool {
+    const gap = std.mem.indexOf(u8, row, "  ") orelse return false;
+    const rest = row[gap + 2 ..];
+    if (std.mem.startsWith(u8, rest, name)) return rest.len == name.len or std.mem.startsWith(u8, rest[name.len..], "  ");
+    const cut = std.mem.indexOf(u8, rest, "…") orelse return false;
+    return cut > 0 and std.mem.startsWith(u8, name, rest[0..cut]);
+}
+
+test "a row of Claude Code's list of agents is a subagent's by its description" {
+    try std.testing.expect(rowNames("general-purpose  Sleep ninety        8s · ↓ 54.0k tokens", "Sleep ninety"));
+    try std.testing.expect(rowNames("Explore  Sleep ninety", "Sleep ninety"));
+    try std.testing.expect(rowNames("general-purpose  Sleep… 43s · ↓ 58.1k tokens", "Sleep ninety"));
+    try std.testing.expect(!rowNames("general-purpose  Sleep ninety one  8s", "Sleep ninety"));
+    try std.testing.expect(!rowNames("general-purpose  Sleep eighty  8s · ↓ 5…", "Sleep ninety"));
+    try std.testing.expect(!rowNames("main", "main"));
+}
 
 /// The detail box's width, and the text's within its border.
 pub fn detailWidth(view_w: u16) struct { box: u16, inner: u16 } {

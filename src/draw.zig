@@ -441,10 +441,22 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
             }
             filled = inner - 1;
         },
+        .sub => |sub| {
+            const win = sub.agent.win;
+            try w.writeAll("   ");
+            try pen.set(w, ink(app, "amber", 4), null);
+            try put(w, if (win.stirring) glyph(app, .working) else '◔');
+            // lit as its Claude's title is in view, while that Claude shows it
+            try pen.set(w, if (app.subShown(sub)) ink(app, "amber", 4) else dim, null);
+            try w.writeAll(" ");
+            try fitted(w, win.sub(sub.index), inner - 6);
+            filled = inner - 1;
+        },
         .background => |a| {
             try w.writeAll("   ");
             try pen.set(w, ink(app, "amber", 4), null);
-            try put(w, if (a.win.stirring) glyph(app, .working) else '◔');
+            // its subagents' rows spin for them; with none listed, this row is a subagent's
+            try put(w, if (a.win.stirring and a.win.subs() == 0) glyph(app, .working) else '◔');
             try pen.set(w, dim, null);
             try w.writeAll(" ");
             try fitted(w, a.win.text(.background), inner - 6);

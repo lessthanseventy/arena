@@ -507,29 +507,31 @@ claude alpha:one stop '{"last_assistant_message": "## **Done.** It loads\nmore",
   "background_tasks": [{"id": "a1", "type": "subagent", "status": "running", "description": "Explore the rail"},
     {"id": "b1", "type": "shell", "status": "running", "command": "sleep 9\nmore"}, {"id": "b0", "type": "shell", "status": "done", "command": "x"}]}'
 check "a stop keeps the first line of its answer, plain" is_opt said 'Done. It loads'
-check "what still runs in the background" is_opt background '1 agent, 1 shell: Explore the rail · sleep 9'
+check "its subagents still in the background" is_opt agents 'Explore the rail'
+check "and the shells there" is_opt background '1 shell: sleep 9'
 check "the context its last answer was given" is_opt tokens 253190
 check "and the branch it works on" is_opt branch "$(worked_on | cut -c1-40)"
 check "the rail has its last words under it" see '│   Done. It loads '
-check "and what runs in the background at the foot" see '│   ◔ 1 agent, 1 shell: Explore t… │'
+check "and a row for each subagent in the background" see '│   ◔ Explore the rail +│'
+check "with its shells at the foot" see '│   ◔ 1 shell: sleep 9 +│'
 check "with a shell and nothing heard from its agent, its mark is still" see '│ ◔ Named By Hand '
 claude alpha:one tool '{"agent_id": "a1", "agent_type": "Explore", "tool_name": "Grep", "tool_input": {"pattern": "rail"}}'
 check "a subagent's tool leaves the session as it was" [ "$(opt doing)" = '' -a "$(inner show -pqv -t alpha:one @arena_claude)" = background ]
-check "and what runs as it was" is_opt background '1 agent, 1 shell: Explore the rail · sleep 9'
+check "and what runs as it was" [ "$(opt agents)" = 'Explore the rail' -a "$(opt background)" = '1 shell: sleep 9' ]
 check "but with its agent at work it is drawn working" see '│ ◐ Named By Hand '
-check "and what runs in the background with it" see '│   ◐ 1 agent, 1 shell: Explore t… │'
+check "and its subagent's row with it, its shells' still" await eval 'shows "│   ◐ Explore the rail +│" && shows "│   ◔ 1 shell: sleep 9 +│"'
 claude alpha:one prompt '{"prompt": "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>"}'
-check "a shell's notice that it finished takes it off" is_opt background '1 agent: Explore the rail'
+check "a shell's notice that it finished takes it off" [ "$(opt agents)" = 'Explore the rail' -a "$(opt background)" = '' ]
 check "and is not taken for a prompt" is_opt prompt 'p'
 claude alpha:one prompt '{"prompt": "<agent-message from=\"a1\">\ndone\n</agent-message>"}'
-check "nor is a subagent's, which takes it off too" is_opt background ''
+check "nor is a subagent's, which takes it off too" is_opt agents ''
 claude alpha:one stop '{"last_assistant_message": "Waiting", "background_tasks": [{"id": "a4", "type": "subagent", "status": "waiting", "description": "Hug it"},
   {"id": "b4", "type": "shell", "status": "completed", "command": "x"}]}'
-check "a subagent waiting on its own work at a stop is still what runs" is_opt background '1 agent: Hug it'
+check "a subagent waiting on its own work at a stop is still what runs" is_opt agents 'Hug it'
 check "and the session has work in the background" [ "$(inner show -pqv -t alpha:one @arena_claude)" = background ]
 claude alpha:one prompt '{"prompt": "<agent-message from=\"a4\">\ndone\n</agent-message>"}'
 claude alpha:one stop '{"last_assistant_message": "Waiting", "background_tasks": [{"id": "a5", "type": "subagent", "description": "No word"}]}'
-check "one with no status is listed" is_opt background '1 agent: No word'
+check "one with no status is listed" is_opt agents 'No word'
 check "and the session has it in the background too" [ "$(inner show -pqv -t alpha:one @arena_claude)" = background ]
 claude alpha:one prompt '{"prompt": "<agent-message from=\"a5\">\ndone\n</agent-message>"}'
 claude alpha:one tool '{"agent_id": "a2", "agent_type": "Plan", "tool_name": "Grep", "tool_input": {"pattern": "rail"}}'
@@ -539,7 +541,10 @@ claude alpha:one tool '{"hook_event_name": "PostToolUse", "tool_name": "Bash", "
 check "a shell put in the background is listed" is_opt background '1 shell: Soak it'
 claude alpha:one tool '{"hook_event_name": "PostToolUse", "tool_name": "Agent", "tool_input": {},
   "tool_response": {"status": "async_launched", "agentId": "a3", "description": "Review it"}}'
-check "and an agent sent off" is_opt background '1 agent, 1 shell: Soak it · Review it'
+check "and an agent sent off" [ "$(opt agents)" = 'Review it' -a "$(opt background)" = '1 shell: Soak it' ]
+claude alpha:one tool '{"hook_event_name": "PostToolUse", "tool_name": "Agent", "tool_input": {},
+  "tool_response": {"status": "async_launched", "agentId": "a6", "description": "Test it"}}'
+check "a second one after it, a unit separator between" is_opt agents $'Review it\x1fTest it'
 inner set -p -t alpha:one @arena_claude_began $(($(date +%s) - 3725))
 claude alpha:one stop '{"last_assistant_message": "Done. It loads"}'
 took() { [[ $(opt took) == 372[56] ]] }
@@ -562,6 +567,58 @@ said end
 check "the end takes the title and its count off too" await [ -z "$(inner show -p -t alpha:one | grep arena_claude)" ]
 
 at() { [[ $(inner list-clients -F '#{session_name}:#{window_name}') == $1 ]] }
+# stands in for Claude Code's list of agents at the foot of its screen: Down from its box goes
+# to the row of shells, then into the list, and Enter shows the agent the pointer is on
+cat >$tmp/bin/fake-agents <<'EOF'
+#!/usr/bin/env zsh
+rows=(main 'general-purpose  Explore the rail' 'general-purpose  Review it')
+at=0 shown=1
+while true; do
+  out=$'\e[H\e[2J❯ box\n  auto mode on · 1 shell'
+  for i in 1 2 3; do
+    [[ $at == $((i + 1)) ]] && p='❯' || p=' '
+    [[ $shown == $i ]] && m='●' || m='◯'
+    out+=$'\n'"$p $m $rows[i]"
+  done
+  print -rn -- "$out"
+  read -sk1 c || exit
+  case $c in
+    $'\e')
+      read -sk2 c
+      [[ $c == '[B' && $at -lt 4 ]] && at=$((at + 1))
+      [[ $c == '[A' && $at -gt 0 ]] && at=$((at - 1))
+      ;;
+    $'\n' | $'\r') [[ $at -gt 1 ]] && shown=$((at - 1)) ;;
+  esac
+done
+EOF
+was=$(inner list-clients -F '#{session_name}:#{window_name}')
+inner new-window -d -t alpha -n subs "zsh $tmp/bin/fake-agents"
+claude alpha:subs stop '{"last_assistant_message": "Waiting", "background_tasks": [
+  {"id": "s1", "type": "subagent", "status": "running", "description": "Explore the rail"},
+  {"id": "s2", "type": "subagent", "status": "running", "description": "Review it"}]}'
+row() { screen | grep -n -- "$1" | head -1 | cut -d: -f1 }
+see '│   ◔ Review it '
+y=$(row '│   ◔ Review it ')
+mouse 0 8 $y M
+mouse 0 8 $y m
+check "a click on a subagent's row in the rail goes to its Claude's window" await at alpha:subs
+fake() { inner capture-pane -p -t alpha:subs | grep -qx -- "$1" }
+check "and steps that Claude's list of agents to it: past the shells, down to its row, Enter" await fake '❯ ● general-purpose  Review it'
+# a lit row has its text in its mark's ink, a dim one a change of ink between the two
+sub_lit() { [[ $(inked $(row "│   ◔ $1 ")) == *"◔ $1 "* ]] }
+sub_dim() { [[ $(inked $(row "│   ◔ $1 ")) != *"◔ $1 "* ]] }
+check "the subagent its Claude shows has its row lit" await sub_lit 'Review it'
+check "and no other" sub_dim 'Explore the rail'
+y=$(row '│   ◔ Explore the rail ')
+mouse 0 8 $y M
+mouse 0 8 $y m
+check "a click on another, with the pointer in the list, goes up from it" await fake '❯ ● general-purpose  Explore the rail'
+check "and the light goes with it" await eval 'sub_lit "Explore the rail" && sub_dim "Review it"'
+claude alpha:subs end
+inner kill-window -t alpha:subs
+inner select-window -t $was
+await at $was
 claude beta:solo prompt
 mouse 0 5 4 M
 mouse 0 5 4 m
