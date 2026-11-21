@@ -1,9 +1,10 @@
 defmodule Babylon.Inbox do
   @moduledoc """
-  babylon's word to a session, typed into its pane whole and marked read once tmux has typed it.
-  While the pane's Claude waits on its human a typed line would land in the open dialog and be
-  lost, so it is held then, and typed on a later sweep; one tmux could not type is tried again,
-  a few times. The `inbox` tool reads what is still held.
+  babylon's word to a session. While the pane's Claude is mid-turn it is held, and arena's hook
+  hands it over at the next tool call or as the turn would end (the `inbox` tool, by the pane);
+  while it waits on its human a typed line would land in the open dialog, so it is held then too.
+  A pane between turns has it typed in whole, marked read once tmux has typed it, on a later sweep
+  for those held; one tmux could not type is tried again, a few times.
   """
   import Ecto.Query
 
@@ -41,7 +42,10 @@ defmodule Babylon.Inbox do
     held =
       Repo.all(from m in Message, where: m.pane == ^pane and is_nil(m.read_at) and m.nudges < @tries, order_by: m.id)
 
-    if panes().state(pane) == "waiting", do: 0, else: Enum.reduce_while(held, 0, &type_in(pane, &1, &2))
+    case panes().state(pane) do
+      state when state in ["waiting", "working"] -> 0
+      _ -> Enum.reduce_while(held, 0, &type_in(pane, &1, &2))
+    end
   end
 
   defp type_in(pane, message, typed) do

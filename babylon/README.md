@@ -63,11 +63,13 @@ task (if it has one) started in a window of babylon's session, so what runs is w
 A landing, a send-back and a new ask are shown on the desktop too, through `notify-send` where it
 is installed.
 
-babylon's word to a session (a ticket landed or sent back, an ask answered) is typed into its pane
-whole, and is read once tmux has typed it. While the pane's Claude waits on its human (arena's hook
-marks the pane `waiting`, when a typed line would land in an open dialog) it is held, and typed on
-a sweep once a minute after; one tmux cannot type is tried again, four times in all. The `inbox`
-tool reads what is still held.
+babylon's word to a session (a ticket landed or sent back, an ask answered) is held while the
+pane's Claude is mid-turn, and arena's hook (`hooks/babylon-inbox.sh`) hands it over without a
+key typed: as context after its next tool call, or as the reason to go on when it would stop. A
+pane between turns has it typed in whole, read once tmux has typed it; while its Claude waits on
+its human (a typed line would land in an open dialog) it is held, and typed on a sweep once a
+minute after. One tmux cannot type is tried again, four times in all. The `inbox` tool reads what
+is still held.
 
 Served, it keeps the board arena draws in `$XDG_RUNTIME_DIR/babylon/board.json` (beside the database where there is no runtime
 dir, as on the Mac): every open

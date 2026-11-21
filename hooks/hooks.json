@@ -2,8 +2,22 @@
   "hooks": {
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/claude-state.sh\" prompt" }] }],
     "PreToolUse": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/claude-state.sh\" tool" }] }],
-    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/claude-state.sh\" tool" }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/claude-state.sh\" stop" }] }],
+    "PostToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/claude-state.sh\" tool" },
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/babylon-inbox.sh\" tool" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/claude-state.sh\" stop" },
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/babylon-inbox.sh\" stop" }
+        ]
+      }
+    ],
     "Notification": [
       {
         "matcher": "permission_prompt|elicitation_dialog",

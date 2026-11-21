@@ -13,7 +13,7 @@ defmodule Babylon.InboxTest do
     Application.put_env(:babylon, :live_panes, [@live])
 
     on_exit(fn ->
-      for key <- [:told_to, :live_panes, :waiting_panes], do: Application.delete_env(:babylon, key)
+      for key <- [:told_to, :live_panes, :waiting_panes, :working_panes], do: Application.delete_env(:babylon, key)
     end)
   end
 
@@ -35,6 +35,14 @@ defmodule Babylon.InboxTest do
     assert_received {:told, @live, "babylon: #1 landed"}
     assert_received {:told, @live, "babylon: #2 sent back"}
     assert Inbox.deliver_held() == []
+  end
+
+  test "held while its Claude is mid-turn, for arena's hook to hand it over, and taken from there" do
+    Application.put_env(:babylon, :working_panes, [@live])
+    Inbox.send(@live, "#1 landed")
+    assert Inbox.deliver_held() == []
+    refute_received {:told, _, _}
+    assert [%Message{text: "#1 landed"}] = Inbox.take(@live)
   end
 
   test "one tmux cannot type is kept to be read, and tried four times in all" do
