@@ -787,6 +787,10 @@ check "g on the board shows the gate" see '╭─ 1 gate '
 print -r -- '{"tickets":[{"id":9,"repo":"arena","title":"Pipe","kind":"ticket","status":"review","priority":"med","blocked_by":[],"stage":"reviewing"}]}' \
   >$tmp/run/babylon/board.json
 check "while babylon works a ticket toward main, the board's row says which and how far" see '^│ ▤ board +◐ #9 reviewing │'
+print -r -- '{"tickets":[{"id":9,"repo":"arena","title":"Pipe","kind":"ticket","status":"review","priority":"med","blocked_by":[],"stage":"reviewing"},'\
+'{"id":10,"repo":"tlon","title":"Pipe two","kind":"ticket","status":"review","priority":"med","blocked_by":[],"stage":"verifying"}]}' \
+  >$tmp/run/babylon/board.json
+check "and with two going, the first and how many more" see '^│ ▤ board +◐ #9 reviewing \+1 │'
 
 key M-q
 check "Alt+q leaves cleanly" see 'EXIT 0'

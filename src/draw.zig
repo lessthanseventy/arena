@@ -302,13 +302,18 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
         const doing = app.boardCount(.doing);
         var buf: [48]u8 = undefined;
         try pen.set(w, if (open) chip(app) else ink(app, "amber", 4), null);
-        const running = if (app.board) |*b| b.running() else null;
+        var runs: [1]*const tickets.Card = undefined;
+        const run_count = if (app.board) |*b| b.running(&runs) else 0;
+        const running: ?*const tickets.Card = if (run_count > 0) runs[0] else null;
         if (wide) {
             // the pipeline's work in hand stands in for the counts while there is any
             var spun: [8]u8 = undefined;
             const mark = spun[0 .. std.unicode.utf8Encode(glyph(app, .working), &spun) catch 0];
             const counts = if (running) |card|
-                std.fmt.bufPrint(&buf, "{s} #{d} {s} ", .{ mark, card.id, card.stage.? }) catch ""
+                (if (run_count > 1)
+                    std.fmt.bufPrint(&buf, "{s} #{d} {s} +{d} ", .{ mark, card.id, card.stage.?, run_count - 1 })
+                else
+                    std.fmt.bufPrint(&buf, "{s} #{d} {s} ", .{ mark, card.id, card.stage.? })) catch ""
             else
                 std.fmt.bufPrint(&buf, "{d} todo  {d} doing ", .{ todo, doing }) catch "";
             try w.writeAll(" ▤ board");

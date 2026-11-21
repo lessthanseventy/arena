@@ -59,13 +59,18 @@ pub const Board = struct {
         return b.parsed.value.backlog;
     }
 
-    /// The card babylon's pipeline is working on now (verifying, reviewing or landing), if any.
-    pub fn running(b: *const Board) ?*const Card {
+    /// The cards babylon's pipeline is working on now (verifying, reviewing or landing), as many as
+    /// fit in `out`; the count of them all.
+    pub fn running(b: *const Board, out: []*const Card) usize {
+        var n: usize = 0;
         for (b.cards()) |*card| {
             const stage = card.stage orelse continue;
-            for ([_][]const u8{ "verifying", "reviewing", "landing" }) |busy| if (std.mem.eql(u8, stage, busy)) return card;
+            for ([_][]const u8{ "verifying", "reviewing", "landing" }) |busy| if (std.mem.eql(u8, stage, busy)) {
+                if (n < out.len) out[n] = card;
+                n += 1;
+            };
         }
-        return null;
+        return n;
     }
 
     /// The repos on the board, each once and in order of name, as many as fit in `out`.
@@ -147,18 +152,21 @@ test "the backlog is its own list: the columns leave it out, and a file without 
     try std.testing.expectEqual(@as(usize, 0), old.backlog().len);
 }
 
-test "the card the pipeline is working on is the one verifying, reviewing or landing" {
+test "the cards the pipeline is working on are those verifying, reviewing or landing" {
     const gpa = std.testing.allocator;
     var idle = try Board.parse(gpa,
         \\{"tickets":[{"id":1,"title":"a","status":"review","stage":"queued"},{"id":2,"title":"b","status":"doing","stage":"failed"}]}
     );
     defer idle.deinit();
-    try std.testing.expectEqual(null, idle.running());
+    var out: [2]*const Card = undefined;
+    try std.testing.expectEqual(@as(usize, 0), idle.running(&out));
     var busy = try Board.parse(gpa,
-        \\{"tickets":[{"id":1,"title":"a","status":"review","stage":"queued"},{"id":3,"title":"c","status":"review","stage":"reviewing"}]}
+        \\{"tickets":[{"id":1,"title":"a","status":"review","stage":"queued"},{"id":3,"title":"c","status":"review","stage":"reviewing"},{"id":4,"title":"d","status":"review","stage":"verifying"}]}
     );
     defer busy.deinit();
-    try std.testing.expectEqual(@as(u32, 3), busy.running().?.id);
+    try std.testing.expectEqual(@as(usize, 2), busy.running(&out));
+    try std.testing.expectEqual(@as(u32, 3), out[0].id);
+    try std.testing.expectEqual(@as(u32, 4), out[1].id);
 }
 
 test "the repos are each named once, in order" {
