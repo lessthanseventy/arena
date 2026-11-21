@@ -1114,7 +1114,7 @@ const board_keys = [_][2][]const u8{
     .{ "e", "edit its title, repo and body" },
     .{ "p", "raise its priority, high back to low" },
     .{ "> <", "close a ticket to do, reopen a done one" },
-    .{ "J K", "move it down or up its column" },
+    .{ "J K", "move it down or up among its repo's cards" },
     .{ "n, +", "file a ticket" },
     .{ "r, a tab", "the next repo, the backlog, or the one clicked" },
     .{ "t", "move a backlog card to todo" },
