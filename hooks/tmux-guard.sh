@@ -4,9 +4,9 @@
 # session runs in. The hook's JSON is on stdin. Every miss is silent: without jq nothing is refused.
 command=$(jq -r '.tool_input.command // ""' 2>/dev/null | tr '\n' ';')
 s='[[:space:]]'
-# tmux where a command starts, after env and assignments, then its own flags, then kill-server
+# tmux where a command starts, after shell keywords, env and assignments, then its own flags, then kill-server
 kills=$(printf '%s' "$command" | grep -oE \
-	"(^|[;&|(\`'\"])$s*(env$s+)?(-u$s+[^[:space:]]+$s+)*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*$s+)*tmux($s+-[A-Za-z0-9]+($s+[^-;&|[:space:]][^[:space:]]*)?)*$s+kill-server")
+	"(^|[;&|(\`'\"])$s*((if|then|elif|else|while|until|do|[{!])$s+)*(env$s+)?(-u$s+[^[:space:]]+$s+)*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*$s+)*tmux($s+-[A-Za-z0-9]+($s+[^-;&|[:space:]][^[:space:]]*)?)*$s+kill-server")
 [ -n "$kills" ] || exit 0
 printf '%s\n' "$kills" | grep -qvE "tmux.*$s-[LS]" || exit 0
 jq -nc '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason:
