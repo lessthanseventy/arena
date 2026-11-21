@@ -580,6 +580,18 @@ defmodule Babylon.PipelineTest do
     end
   end
 
+  @tag :tmp_dir
+  test "gate logs over a week old go, with their exit files; newer ones and install logs stay", %{tmp_dir: tmp} do
+    tmp = Path.join(tmp, "logs")
+    File.mkdir_p!(tmp)
+    old = System.os_time(:second) - 8 * 24 * 3600
+    for f <- ~w(app-t1-1.log app-t1-1.log.exit app-install.log), do: File.touch!(Path.join(tmp, f), old)
+    File.touch!(Path.join(tmp, "app-t1-2.log"))
+
+    Run.prune_logs(tmp)
+    assert tmp |> File.ls!() |> Enum.sort() == ~w(app-install.log app-t1-2.log)
+  end
+
   describe "tidy" do
     setup %{tmp_dir: tmp, repo: repo, ticket: ticket} do
       wt = Path.join(tmp, "wt")

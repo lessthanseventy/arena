@@ -412,10 +412,26 @@ defmodule Babylon.Pipeline.Run do
     end
   end
 
+  @doc "Remove the gate logs in `logs` (and their `.exit` files) over a week old; the others stay."
+  @spec prune_logs(String.t()) :: :ok
+  def prune_logs(logs) do
+    week_ago = System.os_time(:second) - 7 * 24 * 3600
+
+    for file <- Path.wildcard(Path.join(logs, "*.log*")),
+        Path.basename(file) =~ ~r/-t\d+-\d+\.log(\.exit)?$/,
+        {:ok, %{mtime: at}} <- [File.stat(file, time: :posix)],
+        at < week_ago,
+        do: File.rm(file)
+
+    :ok
+  end
+
   defp gate(dir, ticket) do
     minutes = div(conf(:gate_timeout), 60)
     at = DateTime.utc_now() |> DateTime.to_unix() |> Integer.to_string()
-    log = Path.join([Path.dirname(conf(:work)), "logs", "#{ticket.repo}-t#{ticket.id}-#{at}.log"])
+    logs = Path.join(Path.dirname(conf(:work)), "logs")
+    prune_logs(logs)
+    log = Path.join(logs, "#{ticket.repo}-t#{ticket.id}-#{at}.log")
     {out, code} = in_window(dir, ticket, log)
 
     case {code, unstarted(out)} do
