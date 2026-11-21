@@ -60,6 +60,7 @@ defmodule Babylon.Pipeline do
     sent = ticket |> Ecto.Changeset.change([stage: "failed", stage_note: why] ++ back) |> Repo.update!()
     Tickets.refresh_epic(Tickets.epic_of(id))
     [first | _] = String.split(why, "\n")
+    Babylon.Notice.show("##{id} sent back: #{first}")
 
     if here do
       tell(
@@ -162,6 +163,7 @@ defmodule Babylon.Pipeline do
     note = "landed on main as #{sha}#{fixed}"
     done = ticket |> Ecto.Changeset.change(stage: "landed", stage_note: note) |> Repo.update!()
     short = String.slice(sha, 0, 7)
+    Babylon.Notice.show("##{id} landed on main: #{done.title}")
 
     installed = installed || install(done.repo)
 

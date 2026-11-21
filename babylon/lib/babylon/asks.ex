@@ -15,7 +15,7 @@ defmodule Babylon.Asks do
     case {Repo.get(Ticket, attrs[:ticket_id]), open} do
       {nil, _} -> {:error, "no ticket ##{attrs[:ticket_id]}"}
       {_, %Ask{id: id}} -> {:error, "##{attrs[:ticket_id]} has ask ##{id} open: wait for its answer"}
-      _ -> attrs |> Ask.changeset(pane) |> Repo.insert()
+      _ -> attrs |> Ask.changeset(pane) |> Repo.insert() |> noticed()
     end
   end
 
@@ -75,4 +75,11 @@ defmodule Babylon.Asks do
       live -> if MapSet.member?(live, pane), do: kept(pane, text), else: :gone
     end
   end
+
+  defp noticed({:ok, ask} = asked) do
+    Babylon.Notice.show("##{ask.ticket_id} asks: #{ask.question}")
+    asked
+  end
+
+  defp noticed(refused), do: refused
 end

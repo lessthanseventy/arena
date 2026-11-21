@@ -1,6 +1,7 @@
 import Config
 
 config :babylon, panes: Babylon.PanesStub
+config :babylon, notify: []
 
 config :babylon, Babylon.Repo,
   database: Path.expand("../babylon_test.db", __DIR__),

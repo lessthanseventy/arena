@@ -217,9 +217,15 @@ defmodule Babylon.PipelineTest do
       assert {:error, "ticket ##{held.id} is in the pipeline already"} == Pipeline.submit(held.id, @nobody)
     end
 
-    test "landed, it is done", %{held: held} do
+    test "landed, it is done, and the human is shown so", %{held: held, tmp_dir: tmp} do
+      shown = Path.join(tmp, "shown")
+      Application.put_env(:babylon, :notify, ["sh", "-c", ~s(echo "$1" >> #{shown}), "sh"])
+      on_exit(fn -> Application.put_env(:babylon, :notify, []) end)
+
       assert %Ticket{status: "done", stage: "landed", stage_note: "landed on main as abc"} =
                Pipeline.finish(held.id, {:landed, "abc"}, MapSet.new([@nobody]))
+
+      assert File.read!(shown) == "##{held.id} landed on main: Work\n"
     end
 
     test "landed with the review's fixes, it says which", %{held: held} do

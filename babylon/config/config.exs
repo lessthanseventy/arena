@@ -5,6 +5,8 @@ config :babylon, ecto_repos: [Babylon.Repo]
 # immediate: a transaction takes the write lock as it begins, so a claim's read and write are one step
 config :babylon, Babylon.Repo, default_transaction_mode: :immediate
 
+config :babylon, notify: ~w(notify-send -a babylon --)
+
 config :babylon, :pipeline,
   gates: 2,
   train: 4,

@@ -60,6 +60,8 @@ sent back, it is `doing` again with why in `stage_note`, or `todo` labelled `sen
 session is gone. There are no pull requests: the gate and the review are babylon's. Landed, the
 repo's own checkout, when it is on main with nothing changed, is fast-forwarded and its `install`
 task (if it has one) started in a window of babylon's session, so what runs is what landed.
+A landing, a send-back and a new ask are shown on the desktop too, through `notify-send` where it
+is installed.
 
 babylon's word to a session (a ticket landed or sent back, an ask answered) is typed into its pane
 whole, and is read once tmux has typed it. While the pane's Claude waits on its human (arena's hook
