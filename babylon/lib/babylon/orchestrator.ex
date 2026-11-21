@@ -1,7 +1,7 @@
 defmodule Babylon.Orchestrator do
   @moduledoc """
   The standing Claude over every session and the board, in tmux's `orchestrator` session
-  (`babylon orchestrator` starts it). What the human is shown, it is told too.
+  (`babylon orchestrator` starts it).
   """
 
   @doc "Tell the orchestrator `text`, through its inbox; nothing when it is not running."
