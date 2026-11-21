@@ -872,6 +872,11 @@ key M-b q
 # nothing to wait on for a switch that must not stick: a second for tmux to have made it
 zselect -t 100
 check "opened and closed before tmux has switched, it comes back all the same" in_session alpha
+key M-b
+await in_session orchestrator
+key '`' '`' q
+zselect -t 100
+check "folded, unfolded and closed before tmux has switched back, it comes back all the same" in_session alpha
 
 done_card() { print -r -- '{"id":'$1',"repo":"arena","title":"Done '$1'","kind":"ticket","status":"done","priority":"med","blocked_by":[]}' }
 print -r -- '{"tickets":[{"id":20,"repo":"arena","title":"Next","kind":"ticket","status":"todo","priority":"med","blocked_by":[]},'\

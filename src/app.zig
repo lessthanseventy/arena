@@ -359,6 +359,8 @@ pub const App = struct {
     /// The orchestrator was asked to start: gone to as soon as its session shows, unless the human
     /// has gone somewhere else first.
     orchestrating: bool = false,
+    /// The session arena last asked tmux to switch to, until tmux says it is there.
+    heading: ?u32 = null,
     side: ?Side = null,
     /// The side was folded away: the board opens without it until it is unfolded.
     side_folded: bool = false,
@@ -928,6 +930,7 @@ pub const App = struct {
     fn onSessionChanged(app: *App, id: u32) void {
         const from = app.current;
         app.current = id;
+        if (app.heading == id) app.heading = null;
         if (from != null and from != id and app.motion) {
             const way: i32 = if (app.slide != 0) app.slide else blk: {
                 const a = app.sessionIndex(from) orelse 0;
@@ -1206,10 +1209,22 @@ pub const App = struct {
     fn sessionTo(app: *App, index: usize) !void {
         app.orchestrating = false;
         const to = app.sessions.items[index];
-        if (to.id == app.current) return;
+        if (to.id == app.bound()) return;
         try app.see();
-        app.slide = if (index > app.sessionIndex(app.current) orelse index) 1 else -1;
-        try app.send(.ignore, "switch-client -t '${d}'", .{to.id});
+        app.slide = if (index > app.sessionIndex(app.bound()) orelse index) 1 else -1;
+        try app.switchTo(to.id);
+    }
+
+    fn switchTo(app: *App, id: u32) !void {
+        app.heading = id;
+        try app.send(.ignore, "switch-client -t '${d}'", .{id});
+    }
+
+    /// The session arena is in once tmux has done what it was asked: the one it last asked for
+    /// while that is still there, else the one tmux last said.
+    fn bound(app: *const App) ?u32 {
+        if (app.heading) |id| if (app.sessionIndex(id) != null) return id;
+        return app.current;
     }
 
     fn focusBy(app: *App, delta: i32) !void {
@@ -1405,9 +1420,10 @@ pub const App = struct {
     fn showSide(app: *App) !void {
         const at = app.orchestratorSession() orelse return;
         const to = app.sessions.items[at].id;
+        const from = app.bound();
         // already there, there is nowhere to go back to
-        app.side = .{ .back = if (app.current == to) null else app.current };
-        try app.send(.ignore, "switch-client -t '${d}'", .{to});
+        app.side = .{ .back = if (from == to) null else from };
+        try app.switchTo(to);
         app.reflow();
     }
 
@@ -1418,8 +1434,7 @@ pub const App = struct {
         app.side = null;
         app.reflow();
         if (stay) return;
-        // not by app.current, which is the orchestrator's only once tmux has said so
-        if (side.back) |id| try app.send(.ignore, "switch-client -t '${d}'", .{id});
+        if (side.back) |id| try app.switchTo(id);
     }
 
     /// The windows sized again to the strip's width now, once tmux has listed them.
