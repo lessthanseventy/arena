@@ -227,6 +227,21 @@ defmodule Babylon.PipelineTest do
                Pipeline.finish(held.id, {:landed, "abc", "b:1 typo"}, MapSet.new([@nobody]))
     end
 
+    test "next is the first submitted in a repo not already running one" do
+      queued = fn title, repo, at ->
+        {:ok, t} = Babylon.Tickets.file(%{title: title, repo: repo})
+        t |> Ecto.Changeset.change(status: "review", stage: "queued", submitted_at: at) |> Repo.update!()
+      end
+
+      first = queued.("First", "tlon", ~U[2026-01-01 00:00:01Z])
+      queued.("Second", "tlon", ~U[2026-01-01 00:00:02Z])
+      other = queued.("Other", "menard", ~U[2026-01-01 00:00:03Z])
+
+      assert Pipeline.next_up([]).id == first.id
+      assert Pipeline.next_up(["tlon"]).id == other.id
+      assert Pipeline.next_up(["tlon", "menard"]) == nil
+    end
+
     test "sent back, its session keeps it, or it goes back to the list", %{held: held} do
       assert %Ticket{status: "doing", stage: "failed", stage_note: "red", claimed_by: @nobody} =
                Pipeline.finish(held.id, {:failed, "red"}, MapSet.new([@nobody]))

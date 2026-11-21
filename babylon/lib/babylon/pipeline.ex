@@ -1,8 +1,9 @@
 defmodule Babylon.Pipeline do
   @moduledoc """
   How a finished ticket's branch reaches main: verified (rebased onto main and its repo's gate run),
-  reviewed headlessly, then landed by fast-forward, one ticket at a time in the order they were
-  submitted. The session holding the ticket is told how it went: landed, the ticket is done; sent
+  reviewed headlessly, then landed by fast-forward. Each repo lands one ticket at a time in the
+  order they were submitted, as each landing rebases on the last; different repos run side by side,
+  no more than the `:gates` the config allows at once. The session holding the ticket is told how it went: landed, the ticket is done; sent
   back, it is `doing` again with why in `stage_note`, or `todo` when that session is gone.
   """
   use GenServer
@@ -69,44 +70,54 @@ defmodule Babylon.Pipeline do
   @impl true
   def init(nil) do
     Repo.update_all(from(t in Ticket, where: t.stage in @running), set: [stage: "queued"])
-    {:ok, nil, {:continue, :next}}
+    {:ok, %{}, {:continue, :next}}
   end
 
   @impl true
-  def handle_continue(:next, state), do: handle_info(:next, state)
+  def handle_continue(:next, running), do: {:noreply, start(running)}
 
+  # running: each run's task ref to its ticket's id and repo
   @impl true
-  def handle_info(:next, nil) do
-    case next() do
-      nil ->
-        {:noreply, nil}
+  def handle_info(:next, running), do: {:noreply, start(running)}
 
-      ticket ->
+  def handle_info({ref, outcome}, running) when is_map_key(running, ref) do
+    Process.demonitor(ref, [:flush])
+    settle(running, ref, outcome)
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, reason}, running) when is_map_key(running, ref) do
+    settle(running, ref, {:failed, "babylon's pipeline crashed on it: #{inspect(reason)}"})
+  end
+
+  defp settle(running, ref, outcome) do
+    {{id, _repo}, running} = Map.pop!(running, ref)
+    %Ticket{stage: stage} = finish(id, outcome, Panes.claude())
+    Logger.info("pipeline: ##{id} #{stage}")
+    {:noreply, start(running)}
+  end
+
+  defp start(running) do
+    gates = :babylon |> Application.fetch_env!(:pipeline) |> Keyword.fetch!(:gates)
+
+    case map_size(running) < gates and next_up(for {_, {_, repo}} <- running, do: repo) do
+      %Ticket{} = ticket ->
         task = Task.Supervisor.async_nolink(Babylon.Tasks, fn -> Run.run(ticket, &stage(ticket.id, &1)) end)
-        {:noreply, {task.ref, ticket.id}}
+        start(Map.put(running, task.ref, {ticket.id, ticket.repo}))
+
+      _ ->
+        running
     end
   end
 
-  def handle_info(:next, busy), do: {:noreply, busy}
-
-  def handle_info({ref, outcome}, {ref, id}) do
-    Process.demonitor(ref, [:flush])
-    settle(id, outcome)
-  end
-
-  def handle_info({:DOWN, ref, :process, _pid, reason}, {ref, id}) do
-    settle(id, {:failed, "babylon's pipeline crashed on it: #{inspect(reason)}"})
-  end
-
-  defp settle(id, outcome) do
-    %Ticket{stage: stage} = finish(id, outcome, Panes.claude())
-    Logger.info("pipeline: ##{id} #{stage}")
-    send(self(), :next)
-    {:noreply, nil}
-  end
-
-  defp next do
-    Repo.one(from t in Ticket, where: t.stage == "queued", order_by: [asc: t.submitted_at, asc: t.id], limit: 1)
+  @doc "The ticket to run next: the first submitted of those queued in a repo not in `busy`."
+  @spec next_up([String.t()]) :: Ticket.t() | nil
+  def next_up(busy) do
+    Repo.one(
+      from t in Ticket,
+        where: t.stage == "queued" and t.repo not in ^busy,
+        order_by: [asc: t.submitted_at, asc: t.id],
+        limit: 1
+    )
   end
 
   defp stage(id, stage) do

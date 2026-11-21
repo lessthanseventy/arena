@@ -37,8 +37,8 @@ A claimed ticket is `doing`, held by its pane while that pane runs Claude, with 
 `t<id>-<slug>` to work it on (`wt switch --create <branch>`). Once a minute a claim whose pane is
 gone goes back to `todo`, labelled `lapsed`, its branch kept for whoever picks it up.
 
-A submitted ticket is `review` and goes through the pipeline, one ticket at a time in the order
-submitted, in one worktree a repo (`~/projects/<repo>`) kept warm under `~/.cache/babylon/work`
+A submitted ticket is `review` and goes through the pipeline, a repo's tickets one at a time in
+the order submitted and different repos side by side, two at most at once (`gates`), in one worktree a repo (`~/projects/<repo>`) kept warm under `~/.cache/babylon/work`
 (seeded once with what the repo's `.worktreeinclude` names, then reset to each branch): its branch
 is rebased onto `origin/main` and the repo's `mise run check` run (30 minutes at most) in a window
 of babylon's own tmux session `babylon`, there to watch and read after (arena leaves it out of the
