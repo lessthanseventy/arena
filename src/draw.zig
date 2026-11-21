@@ -964,8 +964,9 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         const x = app.boardColX(c);
         const inner = cw -| 2;
         var cards: [app_mod.max_cards]*const tickets.Card = undefined;
-        const n = if (lanes) app.boardCount(tickets.statuses[c]) else app.boardColumn(c, &cards);
-        const label = std.fmt.bufPrint(&buf, " {s} {d} ", .{ name, n }) catch "";
+        const n = app.boardColumn(c, &cards);
+        const total = if (lanes) app.boardCount(tickets.statuses[c]) else app.boardColumnAll(c);
+        const label = std.fmt.bufPrint(&buf, " {s} {d} ", .{ name, total }) catch "";
         try pen.set(w, edge, null);
         try w.print("\x1b[2;{d}H╭─", .{x + 1});
         try pen.set(w, dim, null);
@@ -986,8 +987,9 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
             const slot = App.cardRowAt(y).?;
             const at = first + slot.k;
             if (at >= @min(n, cards.len) or slot.k >= app.boardShown() or inner < 4) {
-                try pen.set(w, .{}, null);
-                try fitted(w, "", inner);
+                const more = at == n and slot.part == .top and slot.k < app.boardShown() and total > n;
+                try pen.set(w, dim, null);
+                try fitted(w, if (more) std.fmt.bufPrint(&buf, " {d} more", .{total - n}) catch "" else "", inner);
             } else {
                 const card = cards[at];
                 const picked = c == view.col and at == view.row;
@@ -1281,8 +1283,11 @@ fn laneColumn(app: *const App, w: *Writer, pen: *Pen, view: app_mod.BoardView, c
             const line = at.?;
             try compactCard(app, w, pen, it, line.lane == view.lane and c == view.col and line.row == view.row, inner);
         } else {
-            try pen.set(w, .{}, null);
-            try fitted(w, "", inner);
+            var buf: [24]u8 = undefined;
+            const counts = if (at) |line| app.laneCounts(line.lane, c) else null;
+            const more = if (counts) |n| at.?.row == n.shown and n.total > n.shown else false;
+            try pen.set(w, ink(app, "dim", 8), null);
+            try fitted(w, if (more) std.fmt.bufPrint(&buf, " {d} more", .{counts.?.total - counts.?.shown}) catch "" else "", inner);
         }
         try pen.set(w, edge, null);
         try w.writeAll("│");

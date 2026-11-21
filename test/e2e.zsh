@@ -849,6 +849,20 @@ print -r -- '{"tickets":[{"id":9,"repo":"arena","title":"Pipe","kind":"ticket","
   >$tmp/run/babylon/board.json
 check "and with two going, the first and how many more" see '^│ ▤ board +◐ #9 reviewing \+1 │'
 
+done_card() { print -r -- '{"id":'$1',"repo":"arena","title":"Done '$1'","kind":"ticket","status":"done","priority":"med","blocked_by":[]}' }
+print -r -- '{"tickets":[{"id":20,"repo":"arena","title":"Next","kind":"ticket","status":"todo","priority":"med","blocked_by":[]},'\
+"$(done_card 25),$(done_card 24),$(done_card 23),$(done_card 22),$(done_card 21)]}" >$tmp/run/babylon/board.json
+key M-b
+check "done shows its last few closed in a lane" see '│ #23 Done 23 +│'
+check "then how many more it has" see '│ 2 more +│'
+check "and its count is all of them" see '─ done 5 ─'
+check "not the rest" gone 'Done 22'
+key r
+check "and so in one repo's view" see '│ 2 more +│'
+key l l l j j j
+check "where the pick goes no further than the last shown" see '╰ edit ─ priority ╯'
+key M-b
+
 key M-q
 check "Alt+q leaves cleanly" see 'EXIT 0'
 check "and leaves the sessions running" inner has-session -t alpha

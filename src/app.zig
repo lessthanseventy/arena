@@ -1388,7 +1388,7 @@ pub const App = struct {
     }
 
     /// The cards of the board's column `col` as it is narrowed, as many as fit in `out`; the
-    /// count of them all.
+    /// count of those it shows.
     pub fn boardColumn(app: *const App, col: usize, out: []*const tickets.Card) usize {
         const b = if (app.board) |*b| b else return 0;
         if (app.boardBacklog()) {
@@ -1397,7 +1397,30 @@ pub const App = struct {
             };
             return b.backlog().len;
         }
-        return b.column(tickets.statuses[col], app.pickRepo(), out);
+        return shownOf(tickets.statuses[col], b.column(tickets.statuses[col], app.pickRepo(), out));
+    }
+
+    /// The count of every card in the board's column `col` as it is narrowed, shown or not.
+    pub fn boardColumnAll(app: *const App, col: usize) usize {
+        const b = if (app.board) |*b| b else return 0;
+        if (app.boardBacklog()) return b.backlog().len;
+        return b.column(tickets.statuses[col], app.pickRepo(), &.{});
+    }
+
+    /// Done shows its last few closed, the first in its column, and then how many more it has.
+    pub const done_shown = 3;
+
+    /// Of `total` cards in `status`'s column, how many are shown.
+    pub fn shownOf(status: tickets.Status, total: usize) usize {
+        return if (status == .done) @min(total, done_shown) else total;
+    }
+
+    /// The cards in column `col` of lane `lane`: those shown, and all of them.
+    pub fn laneCounts(app: *const App, lane: usize, col: usize) struct { shown: usize, total: usize } {
+        const b = if (app.board) |*b| b else return .{ .shown = 0, .total = 0 };
+        const repo = app.laneRepo(lane) orelse return .{ .shown = 0, .total = 0 };
+        const total = b.column(tickets.statuses[col], repo, &.{});
+        return .{ .shown = shownOf(tickets.statuses[col], total), .total = total };
     }
 
     /// Whether the open board is the every view, a lane a repo, not one repo's columns.
@@ -1424,11 +1447,16 @@ pub const App = struct {
         return if (lane < n) repos[lane] else null;
     }
 
-    /// The rows lane `repo` takes: as many as its longest column has cards, one at least.
+    /// The rows lane `repo` takes: as many as its longest column shows, with a row for how many
+    /// more it has, one at least.
     pub fn laneRows(app: *const App, repo: []const u8) usize {
         const b = if (app.board) |*b| b else return 1;
         var most: usize = 1;
-        for (tickets.statuses) |status| most = @max(most, b.column(status, repo, &.{}));
+        for (tickets.statuses) |status| {
+            const total = b.column(status, repo, &.{});
+            const shown = shownOf(status, total);
+            most = @max(most, shown + @intFromBool(total > shown));
+        }
         return most;
     }
 
@@ -1466,7 +1494,7 @@ pub const App = struct {
         const b = if (app.board) |*b| b else return null;
         const repo = app.laneRepo(lane) orelse return null;
         var out: [max_cards]*const tickets.Card = undefined;
-        const n = b.column(tickets.statuses[col], repo, &out);
+        const n = shownOf(tickets.statuses[col], b.column(tickets.statuses[col], repo, &out));
         return if (row < @min(n, max_cards)) out[row] else null;
     }
 
