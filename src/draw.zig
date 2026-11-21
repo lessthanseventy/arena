@@ -1093,7 +1093,7 @@ fn helpBox(app: *App, w: *Writer) !void {
     const edge = ink(app, "amber", 4);
     var pen: Pen = .{};
     var y: u16 = 4;
-    if (y + board_keys.len + 3 > app.view_h) return;
+    if (y + board_keys.len + 3 > app.view_h or bw < 32) return;
     try pen.set(w, edge, null);
     try w.print("\x1b[{d};{d}H╭─", .{ y, x + 1 });
     try pen.set(w, heading(app), null);
