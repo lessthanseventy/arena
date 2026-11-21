@@ -149,15 +149,16 @@ waiting)
 	mark=waiting
 	opt @arena_claude_doing "$(text '.message // "" | sub("^Claude needs your permission to use "; "allow ") | sub("^Claude "; "")')"
 	;;
-# Quotes inside the JSON's strings are escaped, so only a field of its own matches.
+# Quotes inside the JSON's strings are escaped, so only a field of its own matches. A task not
+# yet finished is still there whatever else it is doing: pending, paused, waiting on its own.
 stop)
-	if printf '%s' "$json" | grep -Eq '"status" *: *"running"'; then mark=background; else mark='done'; fi
+	if printf '%s' "$json" | grep -Eo '"status" *: *"[a-z_]*"' | grep -Evq '"(completed|failed|killed|done)"$'; then mark=background; else mark='done'; fi
 	opt @arena_claude_doing ''
 	began=$(tmux show -pqv -t "$pane" @arena_claude_began 2>/dev/null)
 	[ -n "$began" ] && opt @arena_claude_took "$((now - began))"
 	t=$(title) && [ -n "$t" ] && opt @arena_claude_title "$t"
 	opt @arena_claude_said "$(text '[.last_assistant_message // "" | splits("\n") | gsub("^[#>*\\s-]+|[*`]"; "") | select(test("\\S"))][0] // ""')"
-	l=$(change '[.background_tasks[]? | select(.status == "running") |
+	l=$(change '[.background_tasks[]? | select(.status | IN("completed", "failed", "killed", "done") | not) |
 		{id, type, description: (.description // .command // "" | split("\n")[0])}]') && keep "$l"
 	n=$(tokens) && [ -n "$n" ] && opt @arena_claude_tokens "$n"
 	branch

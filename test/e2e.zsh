@@ -523,6 +523,11 @@ check "a shell's notice that it finished takes it off" is_opt background '1 agen
 check "and is not taken for a prompt" is_opt prompt 'p'
 claude alpha:one prompt '{"prompt": "<agent-message from=\"a1\">\ndone\n</agent-message>"}'
 check "nor is a subagent's, which takes it off too" is_opt background ''
+claude alpha:one stop '{"last_assistant_message": "Waiting", "background_tasks": [{"id": "a4", "type": "subagent", "status": "waiting", "description": "Hug it"},
+  {"id": "b4", "type": "shell", "status": "completed", "command": "x"}]}'
+check "a subagent waiting on its own work at a stop is still what runs" is_opt background '1 agent: Hug it'
+check "and the session has work in the background" [ "$(inner show -pqv -t alpha:one @arena_claude)" = background ]
+claude alpha:one prompt '{"prompt": "<agent-message from=\"a4\">\ndone\n</agent-message>"}'
 claude alpha:one tool '{"agent_id": "a2", "agent_type": "Plan", "tool_name": "Grep", "tool_input": {"pattern": "rail"}}'
 check "with nothing running, a subagent's tool is shown as what runs" is_opt background 'agent Plan: Grep rail'
 claude alpha:one tool '{"hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": {"command": "sleep 9", "description": "Soak it"},
