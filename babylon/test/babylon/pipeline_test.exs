@@ -84,7 +84,7 @@ defmodule Babylon.PipelineTest do
           "app",
           "sh",
           "-c",
-          "sleep 300 & echo $! > #{pid}; wait"
+          "trap '' HUP; sleep 300 & echo $! > #{pid}; wait"
         ])
 
       assert eventually(fn -> File.exists?(pid) and File.read!(pid) != "" end)
