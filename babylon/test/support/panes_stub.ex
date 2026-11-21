@@ -16,6 +16,10 @@ defmodule Babylon.PanesStub do
     end
   end
 
+  @doc "Each Claude pane's repo, from `:claude_repos`."
+  @spec claude_repos(String.t()) :: %{String.t() => String.t()}
+  def claude_repos(_projects), do: Application.get_env(:babylon, :claude_repos, %{})
+
   @doc "The pane named for `session` in `:claude_in`."
   @spec claude_in(String.t()) :: String.t() | nil
   def claude_in(session), do: Application.get_env(:babylon, :claude_in, %{})[session]

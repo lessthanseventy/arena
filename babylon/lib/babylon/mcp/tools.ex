@@ -24,7 +24,16 @@ defmodule Babylon.MCP.Tools.FileTicket do
   end
 
   @impl true
-  def execute(params, frame), do: reply(frame, Tickets.file(given(params), filed_by: pane(frame)), &render/1)
+  def execute(params, frame) do
+    filed = Tickets.file(given(params), filed_by: pane(frame))
+    with {:ok, ticket} <- filed, do: Babylon.Claims.offer(ticket, pane(frame), repos())
+    reply(frame, filed, &render/1)
+  end
+
+  defp repos do
+    projects = :babylon |> Application.get_env(:pipeline, []) |> Keyword.get(:projects, "")
+    Application.get_env(:babylon, :panes, Babylon.Panes).claude_repos(projects)
+  end
 end
 
 defmodule Babylon.MCP.Tools.ListTickets do

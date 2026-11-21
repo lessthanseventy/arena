@@ -52,6 +52,7 @@ defmodule Babylon.PanesTest do
     d="#{dir}"
     echo "$*" >> "$d/calls"
     case "$1" in
+      list-panes) cat "$d/panes" ;;
       capture-pane)
         [ "$2" = -ep ] && { cat "$d/typing" 2>/dev/null || cat "$d/clear"; exit 0; }
         n=$(grep -c '^capture-pane -p' "$d/calls")
@@ -85,6 +86,21 @@ defmodule Babylon.PanesTest do
     calls = File.read!(Path.join(dir, "calls"))
     assert calls =~ "set -p -t %1 @babylon_named #7 Lights"
     assert calls =~ "set -p -t %1 @arena_claude_title #7 Lights"
+  end
+
+  @tag :tmp_dir
+  test "each Claude pane's repo is the directory it is in under projects, a worktree counted", %{tmp_dir: dir} do
+    fake_tmux(dir, 0)
+
+    File.write!(Path.join(dir, "panes"), """
+    %1 claude /p/tlon
+    %2 claude /p/arena/.worktrees/t1-x/babylon
+    %3 zsh /p/ficciones
+    %4 claude /home/elsewhere
+    %5 claude /p
+    """)
+
+    assert Panes.claude_repos("/p") == %{"%1" => "tlon", "%2" => "arena"}
   end
 
   @tag :tmp_dir

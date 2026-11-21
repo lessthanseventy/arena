@@ -21,6 +21,23 @@ defmodule Babylon.ClaimsTest do
     assert {:ok, ^claimed, :held} = Claims.claim(ticket.id, "%1", panes(["%1"]))
   end
 
+  test "a ticket filed into another repo is told to the orchestrator and to a pane in that repo" do
+    Application.put_env(:babylon, :claude_in, %{"orchestrator" => "%9"})
+    on_exit(fn -> Application.delete_env(:babylon, :claude_in) end)
+    repos = %{"%1" => "tlon", "%2" => "ficciones", "%3" => "ficciones", "%4" => "ficciones", "%9" => "arena"}
+
+    ticket = file!(title: "Gate needs Godot", repo: "ficciones")
+    assert Claims.offer(ticket, "%1", repos) == ["%2"]
+    told = Babylon.Repo.all(Babylon.Message) |> Enum.map(& &1.pane) |> Enum.sort()
+    assert told == ["%2", "%9"]
+    assert Claims.offer(ticket, "%1", %{"%1" => "tlon"}) == []
+
+    assert Claims.offer(ticket, "%3", repos) == []
+    assert Claims.offer(%{ticket | status: "backlog"}, "%1", repos) == []
+    assert Claims.offer(ticket, "%1", :unknown) == []
+    assert Claims.offer(ticket, "%8", repos) == []
+  end
+
   test "refused while a live pane holds it, or anyone does when tmux cannot be asked" do
     ticket = file!(title: "t")
     {:ok, _, :new} = Claims.claim(ticket.id, "%1", panes(["%1", "%2"]))

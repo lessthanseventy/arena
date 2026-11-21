@@ -33,6 +33,30 @@ defmodule Babylon.Panes do
   end
 
   @doc """
+  The repo each pane running Claude is in, by its directory name under `projects` (a worktree of
+  it counts as it), or `:unknown` when tmux cannot be asked. A pane outside `projects` is left out.
+  """
+  @spec claude_repos(String.t()) :: %{String.t() => String.t()} | :unknown
+  def claude_repos(projects) do
+    format = "\#{pane_id} \#{pane_current_command} \#{pane_current_path}"
+
+    case System.cmd("tmux", ["list-panes", "-a", "-F", format], stderr_to_stdout: true) do
+      {out, 0} ->
+        for line <- String.split(out, "\n", trim: true),
+            [id, "claude", path] <- [String.split(line, " ", parts: 3)],
+            [repo | _] <- [Path.split(Path.relative_to(path, projects))],
+            path != projects and Path.type(Path.relative_to(path, projects)) == :relative,
+            into: %{},
+            do: {id, repo}
+
+      _ ->
+        :unknown
+    end
+  rescue
+    ErlangError -> :unknown
+  end
+
+  @doc """
   What `pane`'s Claude is doing, as arena's hook keeps it on the pane: `working`, `waiting` (on its
   human: a permission or a question is open), `done`, or `""` when unknown.
   """
