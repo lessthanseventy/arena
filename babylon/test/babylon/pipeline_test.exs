@@ -261,6 +261,19 @@ defmodule Babylon.PipelineTest do
       assert eventually(fn -> File.exists?(log) and File.read!(log) =~ "\ninstalled\n" end)
     end
 
+    test "two opened at once, with no babylon session yet, each get their window",
+         %{tmp_dir: tmp, origin: origin} do
+      sh(tmp, "git clone -q #{origin} projects/other")
+      [socket] = Keyword.fetch!(Application.fetch_env!(:babylon, :pipeline), :tmux) |> Enum.take(-1)
+
+      ["app", "other"]
+      |> Enum.map(&Task.async(fn -> Run.install(&1) end))
+      |> Enum.each(&assert({:ok, _} = Task.await(&1)))
+
+      {names, 0} = System.cmd("tmux", ["-L", socket, "list-windows", "-t", "=babylon", "-F", "\#{window_name}"])
+      assert names |> String.split() |> Enum.sort() == ["app-install", "other-install"]
+    end
+
     test "one off main, or with changes, is left as it is", %{repo: repo, ticket: ticket} do
       assert {:landed, _} = Run.run(ticket, fn _ -> :ok end)
       File.write!(Path.join(repo, "a"), "changed")

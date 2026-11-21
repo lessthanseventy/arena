@@ -159,7 +159,9 @@ defmodule Babylon.Pipeline.Run do
             do: tmux(["kill-window", "-t", id])
 
       _ ->
-        tmux(["new-session", "-s", "babylon" | opened])
+        # another lane may make the session first: then this window goes into it
+        with {_, code} when code != 0 <- tmux(["new-session", "-s", "babylon" | opened]),
+             do: tmux(["new-window", "-t", "=babylon:" | opened])
     end
   end
 
