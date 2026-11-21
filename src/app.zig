@@ -1702,7 +1702,7 @@ pub const App = struct {
         const pane = card.holder() orelse {
             if (!startable(card)) return;
             const repo = card.repo.?;
-            var named: [session_name]u8 = undefined;
+            var named: [session_name + "-work".len]u8 = undefined;
             const session = repoSession(app.sessions.items[0..app.railSessions()], repo, &named);
             // tmux reads # as a format in run-shell's command: ## is one #. A second go before the
             // claim shows finds the window the first made
@@ -3069,7 +3069,7 @@ fn sessionNamed(repo: []const u8, buf: []u8) []const u8 {
 /// The session a card of `repo` starts its Claude in: the rail's named for it, else the rail's
 /// with it between slashes in its name, else a new one named for it, or for it and `-work`
 /// where babylon or the orchestrator has that name.
-fn repoSession(rail: []const *Session, repo: []const u8, buf: []u8) []const u8 {
+fn repoSession(rail: []const *Session, repo: []const u8, buf: *[session_name + "-work".len]u8) []const u8 {
     const name = sessionNamed(repo, buf[0 .. buf.len - "-work".len]);
     for (rail) |s| if (std.mem.eql(u8, s.name, name)) return name;
     for (rail) |s| {
@@ -3083,7 +3083,7 @@ fn repoSession(rail: []const *Session, repo: []const u8, buf: []u8) []const u8 {
 }
 
 test "a card's Claude starts on the rail, in a session named for its repo or holding it among others" {
-    var buf: [session_name]u8 = undefined;
+    var buf: [session_name + "-work".len]u8 = undefined;
     var tlon: Session = .{ .id = 1, .name = @constCast("tlon") };
     var both: Session = .{ .id = 2, .name = @constCast("arena/babylon") };
     const rail = [_]*Session{ &tlon, &both };
@@ -3093,6 +3093,8 @@ test "a card's Claude starts on the rail, in a session named for its repo or hol
     try std.testing.expectEqualStrings("menard", repoSession(&rail, "menard", &buf));
     try std.testing.expectEqualStrings("babylon-work", repoSession(rail[0..1], "babylon", &buf));
     try std.testing.expectEqualStrings("orchestrator-work", repoSession(rail[0..1], "orchestrator", &buf));
+    const longest: [session_name]u8 = @splat('r');
+    try std.testing.expectEqualStrings(&longest, repoSession(rail[0..1], &longest, &buf));
 }
 
 test "a repo's session is named as tmux would have it, a dot a _" {
