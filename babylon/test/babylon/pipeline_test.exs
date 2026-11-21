@@ -113,6 +113,27 @@ defmodule Babylon.PipelineTest do
       assert sh(origin, "git log --format=%s main") == "theirs\none"
     end
 
+    test "a file deleted on one side and changed on the other is not the resolver's: it goes back",
+         %{tmp_dir: tmp, repo: repo, ticket: ticket} do
+      sh(repo, "git checkout -q -b t6-a main && echo mine >> a && git commit -qam mine && git checkout -q main")
+      sh(repo, "git rm -q a && git commit -qm gone && git push -q origin main")
+      gated(tmp, ["sh", "-c", "exit 0"], ["sh", "-c", "cat >/dev/null; echo RESOLVED"])
+
+      assert {:failed, "it does not rebase onto main cleanly; conflicts in: a"} =
+               Run.run(%{ticket | id: 6, branch: "t6-a"}, fn _ -> :ok end)
+    end
+
+    test "a resolver that touches a file past the conflict is not trusted",
+         %{tmp_dir: tmp, repo: repo, ticket: ticket} do
+      sh(repo, "git checkout -q -b t6-a main && echo mine >> a && git commit -qam mine && git checkout -q main")
+      sh(repo, "echo theirs >> a && git commit -qam theirs && git push -q origin main")
+      [sh, c, script] = @keep_both
+      gated(tmp, ["sh", "-c", "exit 0"], [sh, c, "echo stray > z; " <> script])
+
+      assert {:failed, "it does not rebase onto main cleanly" <> _} =
+               Run.run(%{ticket | id: 6, branch: "t6-a"}, fn _ -> :ok end)
+    end
+
     test "rebases onto a main that moved, keeping both", %{tmp_dir: tmp, origin: origin, ticket: ticket} do
       other = Path.join(tmp, "other")
       sh(tmp, "git clone -q #{origin} #{other}")

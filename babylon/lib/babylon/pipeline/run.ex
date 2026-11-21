@@ -278,7 +278,16 @@ defmodule Babylon.Pipeline.Run do
 
   defp resolved(dir, ticket, op, steps) do
     files = conflicted(dir)
-    marked = Map.new(files, &{&1, File.read!(Path.join(dir, &1))})
+    marked = Map.new(files, &{&1, read(dir, &1)})
+
+    # a file deleted on one side has no markers to resolve: that is a decision, sent back
+    if Enum.all?(Map.values(marked), &(is_binary(&1) and markers?(&1))),
+      do: resolve(dir, ticket, op, steps, marked),
+      else: :error
+  end
+
+  defp resolve(dir, ticket, op, steps, marked) do
+    files = Map.keys(marked)
     prompt = dir <> ".resolve"
     File.write!(prompt, resolve_prompt(ticket, files))
     named = conf(:reviewer) ++ ["--name", "babylon resolve · #{ticket.repo} ##{ticket.id}"]
@@ -286,9 +295,7 @@ defmodule Babylon.Pipeline.Run do
     try do
       with {out, 0} <- cmd(named, dir, timeout: conf(:review_timeout), stdin: prompt),
            true <- out =~ ~r/^RESOLVED\s*$/m,
-           true <- Enum.all?(marked, fn {file, _} -> not markers?(File.read!(Path.join(dir, file))) end),
-           true <-
-             Enum.sum(for {file, before} <- marked, do: changed(before, File.read!(Path.join(dir, file)))) <= @fix_limit,
+           true <- kept_to(dir, marked),
            :ok <- stage_resolution(dir, ticket, files) do
         case git(dir, ["-c", "core.editor=true", op, "--continue"]) do
           {_, 0} -> :ok
@@ -299,6 +306,25 @@ defmodule Babylon.Pipeline.Run do
       end
     after
       File.rm(prompt)
+    end
+  end
+
+  # every conflicted file there, its markers gone, the lines changed past them under the limit, and
+  # nothing touched outside them
+  defp kept_to(dir, marked) do
+    now = Map.new(marked, fn {file, _} -> {file, read(dir, file)} end)
+    {unstaged, _} = git(dir, ["diff", "--name-only"])
+    {untracked, _} = git(dir, ["ls-files", "--others", "--exclude-standard"])
+
+    Enum.all?(Map.values(now), &(is_binary(&1) and not markers?(&1))) and
+      Enum.sum(for {file, before} <- marked, do: changed(before, now[file])) <= @fix_limit and
+      Enum.all?(String.split(unstaged <> "\n" <> untracked), &Map.has_key?(marked, &1))
+  end
+
+  defp read(dir, file) do
+    case File.read(Path.join(dir, file)) do
+      {:ok, text} -> text
+      {:error, _} -> nil
     end
   end
 
@@ -325,7 +351,7 @@ defmodule Babylon.Pipeline.Run do
       File.write!(msg, String.trim(Enum.join(was, "\n")) <> "\n\n" <> resolved <> "\n")
     end
 
-    ok(git(dir, ["add", "-A"]), "could not stage the resolution")
+    ok(git(dir, ["add", "--" | files]), "could not stage the resolution")
   end
 
   defp resolve_prompt(ticket, files) do
