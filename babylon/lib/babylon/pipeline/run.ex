@@ -57,6 +57,28 @@ defmodule Babylon.Pipeline.Run do
     end
   end
 
+  @doc """
+  Remove `branch`'s worktree in repo `name` and the branch, unless a pane in `paths` is in it, it
+  has uncommitted changes, or a commit on it is not on main.
+  """
+  @spec tidy(String.t(), String.t(), [String.t()]) :: :removed | :absent | {:kept, String.t()}
+  def tidy(name, branch, paths) do
+    repo = Path.join(conf(:projects), name)
+
+    with {:ok, dir} <- worktree_of(repo, branch),
+         :ok <- unoccupied(dir, paths),
+         :ok <- committed(dir),
+         :ok <- landed(repo, branch),
+         {_, 0} <- git(repo, ["worktree", "remove", dir]),
+         {_, 0} <- git(repo, ["branch", "-D", branch]) do
+      :removed
+    else
+      :absent -> :absent
+      {:kept, _} = kept -> kept
+      {out, _} -> {:kept, String.trim(out)}
+    end
+  end
+
   defp answers({out, 0}, out, _why), do: :ok
   defp answers(_, _, why), do: {:skipped, why}
 
@@ -641,4 +663,39 @@ defmodule Babylon.Pipeline.Run do
   defp tail(out), do: out |> String.split("\n") |> Enum.take(-@tail_lines) |> Enum.join("\n") |> String.trim()
 
   defp conf(key), do: :babylon |> Application.fetch_env!(:pipeline) |> Keyword.fetch!(key)
+
+  defp worktree_of(repo, branch) do
+    {out, _} = git(repo, ["worktree", "list", "--porcelain"])
+
+    out
+    |> String.split("\n\n", trim: true)
+    |> Enum.map(&String.split(&1, "\n"))
+    |> Enum.find_value(:absent, fn
+      ["worktree " <> dir | rest] -> "branch refs/heads/#{branch}" in rest and {:ok, dir}
+      _ -> nil
+    end)
+  end
+
+  defp unoccupied(dir, paths) do
+    if Enum.any?(paths, &(&1 == dir or String.starts_with?(&1, dir <> "/"))),
+      do: {:kept, "a session is in it"},
+      else: :ok
+  end
+
+  defp committed(dir) do
+    case git(dir, ["status", "--porcelain"]) do
+      {"", 0} -> :ok
+      _ -> {:kept, "it has uncommitted changes"}
+    end
+  end
+
+  # by patch, as babylon rebased what it landed
+  defp landed(repo, branch) do
+    git(repo, ["fetch", "-q", "origin", "main"])
+
+    case git(repo, ["cherry", "origin/main", branch]) do
+      {out, 0} -> if String.contains?(out, "+ "), do: {:kept, "it has commits not on main"}, else: :ok
+      {out, _} -> {:kept, String.trim(out)}
+    end
+  end
 end

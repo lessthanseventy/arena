@@ -4,6 +4,17 @@ defmodule Babylon.Panes do
   waits an hour on an answer keeps its ticket and one whose pane is gone lets it go.
   """
 
+  @doc "Where every tmux pane is (its current path), or `:unknown` when tmux cannot say."
+  @spec paths() :: [String.t()] | :unknown
+  def paths do
+    case System.cmd("tmux", ["list-panes", "-a", "-F", "\#{pane_current_path}"], stderr_to_stdout: true) do
+      {out, 0} -> String.split(out, "\n", trim: true)
+      _ -> :unknown
+    end
+  rescue
+    ErlangError -> :unknown
+  end
+
   @doc "The ids of the panes running Claude, or `:unknown` when tmux cannot be asked."
   @spec claude() :: MapSet.t(String.t()) | :unknown
   def claude do

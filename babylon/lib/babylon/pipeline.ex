@@ -184,8 +184,28 @@ defmodule Babylon.Pipeline do
 
     installed = installed || install(done.repo)
 
-    tell(done, "##{id} landed on main as #{short}#{fixed}; #{installed}. Its worktree can go: wt remove #{done.branch}")
+    tell(
+      done,
+      "##{id} landed on main as #{short}#{fixed}; #{installed}. babylon removes its worktree once no session is in it."
+    )
+
     done
+  end
+
+  @doc """
+  Remove the worktree and branch of each ticket landed in the last day, once no pane in `paths`
+  is in it, it has nothing uncommitted and every commit on it is on main; the branches removed.
+  """
+  @spec tidy([String.t()] | :unknown) :: [String.t()]
+  def tidy(:unknown), do: []
+
+  def tidy(paths) do
+    since = DateTime.add(DateTime.utc_now(), -1, :day)
+
+    from(t in Ticket, where: t.stage == "landed" and not is_nil(t.branch) and t.closed_at > ^since)
+    |> Repo.all()
+    |> Enum.filter(&(Run.tidy(&1.repo, &1.branch, paths) == :removed))
+    |> Enum.map(& &1.branch)
   end
 
   defp install(repo) do

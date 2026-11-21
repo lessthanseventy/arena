@@ -487,6 +487,33 @@ defmodule Babylon.PipelineTest do
     end
   end
 
+  describe "tidy" do
+    setup %{tmp_dir: tmp, repo: repo, ticket: ticket} do
+      wt = Path.join(tmp, "wt")
+      {_, 0} = System.cmd("git", ["-C", repo, "worktree", "add", "-q", wt, "t1-work"], stderr_to_stdout: true)
+      %{wt: wt, landed: Run.run(ticket, fn _ -> :ok end)}
+    end
+
+    test "removes a landed branch's worktree and the branch once nobody is in it", %{repo: repo, wt: wt} do
+      assert {:kept, "a session is in it"} = Run.tidy("app", "t1-work", [Path.join(wt, "lib")])
+      assert File.dir?(wt)
+
+      assert :removed = Run.tidy("app", "t1-work", ["/elsewhere"])
+      refute File.exists?(wt)
+      assert sh(repo, "git branch --list t1-work") == ""
+      assert :absent = Run.tidy("app", "t1-work", [])
+    end
+
+    test "keeps one with work not on main, committed or not", %{wt: wt} do
+      File.write!(Path.join(wt, "loose"), "x")
+      assert {:kept, "it has uncommitted changes"} = Run.tidy("app", "t1-work", [])
+
+      sh(wt, "git add loose && git commit -qm more")
+      assert {:kept, "it has commits not on main"} = Run.tidy("app", "t1-work", [])
+      assert File.dir?(wt)
+    end
+  end
+
   describe "install" do
     test "a checkout on main and clean is fast-forwarded and its install run", %{repo: repo, ticket: ticket} do
       File.write!(Path.join(repo, "mise.toml"), "[tasks.install]\nrun = 'echo installed'\n")

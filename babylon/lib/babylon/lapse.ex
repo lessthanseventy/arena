@@ -29,6 +29,7 @@ defmodule Babylon.Lapse do
 
     Babylon.Inbox.deliver_held()
     Babylon.Claims.name_sessions()
+    Babylon.Pipeline.tidy(Babylon.Panes.paths())
     Process.send_after(self(), :sweep, @every)
     {:noreply, state}
   end
