@@ -159,7 +159,11 @@ stop)
 	t=$(title) && [ -n "$t" ] && opt @arena_claude_title "$t"
 	opt @arena_claude_said "$(text '[.last_assistant_message // "" | splits("\n") | gsub("^[#>*\\s-]+|[*`]"; "") | select(test("\\S"))][0] // ""')"
 	l=$(change '[.background_tasks[]? | select(.status | IN("completed", "failed", "killed", "done") | not) |
-		{id, type, description: (.description // .command // "" | split("\n")[0])}]') && keep "$l"
+		{id, type, description: (.description // .command // "" | split("\n")[0])}]') && {
+		keep "$l"
+		# what is listed is what runs: the grep above stands only where jq is missing
+		if [ "$l" = '[]' ]; then mark='done'; else mark=background; fi
+	}
 	n=$(tokens) && [ -n "$n" ] && opt @arena_claude_tokens "$n"
 	branch
 	;;

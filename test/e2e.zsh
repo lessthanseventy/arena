@@ -528,6 +528,10 @@ claude alpha:one stop '{"last_assistant_message": "Waiting", "background_tasks":
 check "a subagent waiting on its own work at a stop is still what runs" is_opt background '1 agent: Hug it'
 check "and the session has work in the background" [ "$(inner show -pqv -t alpha:one @arena_claude)" = background ]
 claude alpha:one prompt '{"prompt": "<agent-message from=\"a4\">\ndone\n</agent-message>"}'
+claude alpha:one stop '{"last_assistant_message": "Waiting", "background_tasks": [{"id": "a5", "type": "subagent", "description": "No word"}]}'
+check "one with no status is listed" is_opt background '1 agent: No word'
+check "and the session has it in the background too" [ "$(inner show -pqv -t alpha:one @arena_claude)" = background ]
+claude alpha:one prompt '{"prompt": "<agent-message from=\"a5\">\ndone\n</agent-message>"}'
 claude alpha:one tool '{"agent_id": "a2", "agent_type": "Plan", "tool_name": "Grep", "tool_input": {"pattern": "rail"}}'
 check "with nothing running, a subagent's tool is shown as what runs" is_opt background 'agent Plan: Grep rail'
 claude alpha:one tool '{"hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": {"command": "sleep 9", "description": "Soak it"},
