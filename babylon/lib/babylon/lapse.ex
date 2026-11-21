@@ -28,6 +28,7 @@ defmodule Babylon.Lapse do
     end
 
     Babylon.Inbox.deliver_held()
+    Babylon.Claims.name_sessions()
     Process.send_after(self(), :sweep, @every)
     {:noreply, state}
   end

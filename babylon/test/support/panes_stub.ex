@@ -19,6 +19,10 @@ defmodule Babylon.PanesStub do
   @spec claude_in(String.t()) :: String.t() | nil
   def claude_in(session), do: Application.get_env(:babylon, :claude_in, %{})[session]
 
+  @doc "The pane's title, from `:titles`."
+  @spec title(String.t()) :: String.t()
+  def title(pane), do: Map.get(Application.get_env(:babylon, :titles, %{}), pane, "")
+
   @doc "Type `text` into a live pane."
   @spec tell(String.t(), String.t()) :: :ok | {:error, String.t()}
   def tell(pane, text) do

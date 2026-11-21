@@ -48,6 +48,17 @@ defmodule Babylon.Panes do
     ErlangError -> nil
   end
 
+  @doc "What arena's hook last read as `pane`'s session title; empty where it has none."
+  @spec title(String.t()) :: String.t()
+  def title(pane) do
+    case System.cmd("tmux", ["show", "-pqv", "-t", pane, "@arena_claude_title"], stderr_to_stdout: true) do
+      {out, 0} -> String.trim(out)
+      _ -> ""
+    end
+  rescue
+    ErlangError -> ""
+  end
+
   @doc """
   Type `text` into `pane` as one line and submit it, as if its human had: an idle Claude takes it
   as its next turn, a busy one queues it.

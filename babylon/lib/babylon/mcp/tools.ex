@@ -162,6 +162,7 @@ defmodule Babylon.MCP.Tools.ClaimTicket do
       case Claims.claim(id, pane, Panes.claude()) do
         {:ok, ticket, how} ->
           Claims.name_session(pane)
+
           ok(frame, Map.put(render(ticket), :start, start(ticket.branch, how)))
 
         {:error, reason} ->

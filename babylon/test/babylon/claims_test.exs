@@ -76,6 +76,29 @@ defmodule Babylon.ClaimsTest do
     assert name == "#{second.id} A session is named after the tic +1"
   end
 
+  test "a session waiting at its claim is named on the sweep after, and not again once it is" do
+    Application.put_env(:babylon, :told_to, self())
+    Application.put_env(:babylon, :live_panes, ["%1"])
+    Application.put_env(:babylon, :waiting_panes, ["%1"])
+
+    on_exit(fn ->
+      for key <- [:told_to, :live_panes, :waiting_panes, :titles], do: Application.delete_env(:babylon, key)
+    end)
+
+    ticket = file!(title: "Lights")
+    {:ok, _, :new} = Claims.claim(ticket.id, "%1", panes(["%1"]))
+    assert Claims.name_session("%1") == :waiting
+    assert Claims.name_sessions() == []
+    refute_received {:told, _, _}
+
+    Application.put_env(:babylon, :waiting_panes, [])
+    assert Claims.name_sessions() == ["%1"]
+    assert_received {:told, "%1", "/rename #" <> _}
+
+    Application.put_env(:babylon, :titles, %{"%1" => "##{ticket.id} Lights"})
+    assert Claims.name_sessions() == []
+  end
+
   test "release gives it back to todo with its branch; only its pane can" do
     ticket = file!(title: "t")
     {:ok, claimed, :new} = Claims.claim(ticket.id, "%1", panes(["%1"]))

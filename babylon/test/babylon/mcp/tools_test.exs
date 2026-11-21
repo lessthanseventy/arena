@@ -28,6 +28,11 @@ defmodule Babylon.MCP.ToolsTest do
   end
 
   test "a claim is held by the calling pane, and refused without one" do
+    # the call's own receive takes what is in this process's mailbox: what is typed is kept apart
+    told = spawn(fn -> receive(do: (said -> receive(do: ({:get, to} -> send(to, said))))) end)
+    Application.put_env(:babylon, :told_to, told)
+    Application.put_env(:babylon, :live_panes, ["%9"])
+    on_exit(fn -> for key <- [:told_to, :live_panes], do: Application.delete_env(:babylon, key) end)
     {:ok, %{"id" => id, "filed_by" => nil}} = call("file_ticket", %{title: "Claim me"})
     assert {:ok, %{"filed_by" => "%7"}} = call("file_ticket", %{title: "Filed from a pane"}, "%7")
 
@@ -37,6 +42,9 @@ defmodule Babylon.MCP.ToolsTest do
              call("claim_ticket", %{id: id}, "%9")
 
     assert start == "wt switch --create t#{id}-claim-me"
+    send(told, {:get, self()})
+    assert_receive {:told, "%9", "/rename #" <> named}
+    assert named == "#{id} Claim me"
     assert {:ok, [%{"id" => ^id}]} = call("list_tickets", %{mine: true}, "%9")
     assert {:ok, []} = call("list_tickets", %{mine: true}, "%8")
 

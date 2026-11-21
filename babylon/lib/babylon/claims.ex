@@ -62,10 +62,38 @@ defmodule Babylon.Claims do
 
   @doc """
   Name `pane`'s session after the ticket it claimed last, and how many more it holds, by typing
-  `/rename` into it; left as it is while its Claude waits on its human.
+  `/rename` into it; left as it is while its Claude waits on its human, for `name_sessions/0`.
   """
   @spec name_session(String.t()) :: :ok | :waiting | {:error, String.t()}
   def name_session(pane) do
+    case {name(pane), panes().state(pane)} do
+      {nil, _} -> :ok
+      {_, "waiting"} -> :waiting
+      {name, _} -> panes().tell(pane, "/rename " <> name)
+    end
+  end
+
+  @doc """
+  Rename each session not waiting on its human whose title is not the name its tickets give it:
+  one left waiting at its claim, or that tmux could not type into. The panes renamed.
+  """
+  @spec name_sessions() :: [String.t()]
+  def name_sessions do
+    from(t in Ticket,
+      where: not is_nil(t.claimed_by) and t.status in ["doing", "review"],
+      distinct: true,
+      select: t.claimed_by
+    )
+    |> Repo.all()
+    |> Enum.filter(fn pane ->
+      name = name(pane)
+
+      panes().state(pane) != "waiting" and panes().title(pane) != name and
+        panes().tell(pane, "/rename " <> name) == :ok
+    end)
+  end
+
+  defp name(pane) do
     held =
       Repo.all(
         from t in Ticket,
@@ -73,10 +101,9 @@ defmodule Babylon.Claims do
           order_by: [desc: t.claimed_at, desc: t.id]
       )
 
-    case {held, panes().state(pane)} do
-      {[], _} -> :ok
-      {_, "waiting"} -> :waiting
-      {[last | rest], _} -> panes().tell(pane, "/rename ##{last.id} #{String.slice(last.title, 0, 32)}#{more(rest)}")
+    case held do
+      [] -> nil
+      [last | rest] -> "##{last.id} #{String.slice(last.title, 0, 32)}#{more(rest)}"
     end
   end
 
