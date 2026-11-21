@@ -145,7 +145,7 @@ case $command in
       (if .stage then "", "stage: \(.stage)", (.stage_note // "" | select(. != "")) else empty end),
       (if (.body // "") != "" then "", .body else empty end)
     ' <<<"$ticket"
-    log=$(ls -t "${XDG_CACHE_HOME:-$HOME/.cache}/babylon/logs/$(jq -r '.repo // ""' <<<"$ticket")-t$1-"*.log 2>/dev/null | head -1)
+    log=$(ls -t "${XDG_CACHE_HOME:-$HOME/.cache}/babylon/logs/$(jq -r '.repo // ""' <<<"$ticket")-t$1-"*.log 2>/dev/null | head -1 || true)
     if [[ -n $log && -s $log ]]; then
       printf '\nthe gate'"'"'s last lines (%s):\n' "$log"
       tail -n 15 "$log"
