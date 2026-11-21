@@ -69,13 +69,14 @@ defmodule Babylon.Claims do
     case {name(pane), panes().state(pane)} do
       {nil, _} -> :ok
       {_, "waiting"} -> :waiting
-      {name, _} -> panes().tell(pane, "/rename " <> name)
+      {name, _} -> rename(pane, name)
     end
   end
 
   @doc """
-  Rename each session not waiting on its human whose title is not the name its tickets give it:
-  one left waiting at its claim, or that tmux could not type into. The panes renamed.
+  Rename each session not waiting on its human whose title is not the name its tickets give it,
+  and not already typed that name: one left waiting at its claim, or that tmux could not type
+  into. The panes renamed.
   """
   @spec name_sessions() :: [String.t()]
   def name_sessions do
@@ -88,8 +89,8 @@ defmodule Babylon.Claims do
     |> Enum.filter(fn pane ->
       name = name(pane)
 
-      panes().state(pane) != "waiting" and panes().title(pane) != name and
-        panes().tell(pane, "/rename " <> name) == :ok
+      panes().state(pane) != "waiting" and panes().title(pane) != name and panes().named(pane) != name and
+        rename(pane, name) == :ok
     end)
   end
 
@@ -173,5 +174,10 @@ defmodule Babylon.Claims do
       |> String.trim("-")
 
     "t#{id}-#{slug}"
+  end
+
+  # the pane keeps what was typed: its title moves only once the turn ends, so it is no guide meanwhile
+  defp rename(pane, name) do
+    with :ok <- panes().tell(pane, "/rename " <> name), do: panes().mark_named(pane, name)
   end
 end

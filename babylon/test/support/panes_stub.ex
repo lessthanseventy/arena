@@ -19,6 +19,16 @@ defmodule Babylon.PanesStub do
   @spec claude_in(String.t()) :: String.t() | nil
   def claude_in(session), do: Application.get_env(:babylon, :claude_in, %{})[session]
 
+  @doc "The name last typed into the pane, from `:named`."
+  @spec named(String.t()) :: String.t()
+  def named(pane), do: Map.get(Application.get_env(:babylon, :named, %{}), pane, "")
+
+  @doc "Keep the name typed into the pane in `:named`."
+  @spec mark_named(String.t(), String.t()) :: :ok
+  def mark_named(pane, name) do
+    Application.put_env(:babylon, :named, Map.put(Application.get_env(:babylon, :named, %{}), pane, name))
+  end
+
   @doc "The pane's title, from `:titles`."
   @spec title(String.t()) :: String.t()
   def title(pane), do: Map.get(Application.get_env(:babylon, :titles, %{}), pane, "")

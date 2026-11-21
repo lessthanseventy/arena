@@ -48,6 +48,26 @@ defmodule Babylon.Panes do
     ErlangError -> nil
   end
 
+  @doc "The name babylon last typed `/rename` for into `pane`; empty where none."
+  @spec named(String.t()) :: String.t()
+  def named(pane) do
+    case System.cmd("tmux", ["show", "-pqv", "-t", pane, "@babylon_named"], stderr_to_stdout: true) do
+      {out, 0} -> String.trim(out)
+      _ -> ""
+    end
+  rescue
+    ErlangError -> ""
+  end
+
+  @doc "Keep on `pane` that babylon typed `/rename name` into it."
+  @spec mark_named(String.t(), String.t()) :: :ok
+  def mark_named(pane, name) do
+    System.cmd("tmux", ["set", "-p", "-t", pane, "@babylon_named", name], stderr_to_stdout: true)
+    :ok
+  rescue
+    ErlangError -> :ok
+  end
+
   @doc "What arena's hook last read as `pane`'s session title; empty where it has none."
   @spec title(String.t()) :: String.t()
   def title(pane) do
