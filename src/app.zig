@@ -1646,33 +1646,6 @@ pub const App = struct {
         }
     }
 
-    /// n files a ticket and e edits the one picked, each in a window of their own; p raises its
-    /// priority, from high back to low; > closes a ticket still to do and < opens a closed one
-    /// again, the columns between being a claim's and the pipeline's; J and K move it down or up
-    /// its column, the pick going with it. Each through babylon's command line.
-    fn boardChange(app: *App, key: []const u8) !void {
-        const view = if (app.board_view) |*open| open else return;
-        const eql = std.mem.eql;
-        var buf: [80]u8 = undefined;
-        const narrowed = if (app.boardRepo()) |r| (if (plainName(r)) std.fmt.bufPrint(&buf, " --repo {s}", .{r}) catch "" else "") else "";
-        if (eql(u8, key, "n")) return app.ticketWindow("babylon new{s}", .{narrowed});
-        const card = app.boardCard(view.col, view.row) orelse return;
-        if (eql(u8, key, "e")) return app.ticketWindow("babylon edit {d}", .{card.id});
-        if (eql(u8, key, "p")) {
-            const next = if (eql(u8, card.priority, "low")) "med" else if (eql(u8, card.priority, "med")) "high" else "low";
-            try app.send(.ignore, "run-shell -b \"babylon update {d} --priority {s}\"", .{ card.id, next });
-        }
-        if (eql(u8, key, ">") and card.status == .todo)
-            try app.send(.ignore, "run-shell -b \"babylon update {d} --status done\"", .{card.id});
-        if (eql(u8, key, "<") and card.status == .done)
-            try app.send(.ignore, "run-shell -b \"babylon update {d} --status todo\"", .{card.id});
-        if (eql(u8, key, "J") or eql(u8, key, "K")) {
-            const down = eql(u8, key, "J");
-            try app.send(.ignore, "run-shell -b \"babylon move {d} {s}{s}\"", .{ card.id, if (down) "down" else "up", narrowed });
-            view.row = if (down) @min(view.row + 1, app.boardColumn(view.col, &.{}) -| 1) else view.row -| 1;
-        }
-    }
-
     /// A command over a ticket that wants the terminal, as $EDITOR does: in a window by the
     /// focused one, kept open on a refusal to be read.
     fn ticketWindow(app: *App, comptime cmd: []const u8, args: anytype) !void {
@@ -1709,6 +1682,14 @@ pub const App = struct {
         }
         if (!m.leftPress()) return true;
         app.dirty = true;
+        const open = &app.board_view.?;
+        // a box over the board takes the click, as a key would, so nothing hidden under it is pressed
+        if (open.help or open.detail != null or open.answering) {
+            open.help = false;
+            open.detail = null;
+            open.answering = false;
+            return true;
+        }
         var buttons: [48]Button = undefined;
         for (app.boardButtons(&buttons)) |button| if (m.y == button.y and m.x >= button.x and m.x < button.x + button.w) {
             try app.pressButton(button);
@@ -2632,12 +2613,12 @@ pub fn appendClean(out: *std.ArrayList(u8), gpa: Allocator, text: []const u8) !v
     }
 }
 
-/// A repo's name safe in a tmux command unquoted, as directory names are.
 /// The cells `text` takes, a character a cell.
 pub fn cellCount(text: []const u8) usize {
     return std.unicode.utf8CountCodepoints(text) catch text.len;
 }
 
+/// A repo's name safe in a tmux command unquoted, as directory names are.
 fn plainName(name: []const u8) bool {
     for (name) |c| if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_' and c != '.') return false;
     return name.len > 0;

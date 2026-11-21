@@ -745,6 +745,9 @@ check "r narrows it to one repo, its tab lit" tablit arena
 check "and to its cards" gone '#7 Lights'
 tabrow() { screen | grep -n -m1 ' board   every' | cut -d: -f1 }
 tabcol() { local l=$(screen | grep -m1 ' board   every'); local p=${l%%" $1 "*}; print $(( ${#p} + 2 )) }
+key '?'
+mouse 0 $(tabcol tlon) $(tabrow) M
+check "a click while the keys are shown only puts them away" tablit arena
 mouse 0 $(tabcol tlon) $(tabrow) M
 check "a click on a tab narrows it to that repo" see '#7 Lights'
 check "and only that" gone '#8 Board'
