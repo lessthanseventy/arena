@@ -236,6 +236,33 @@ defmodule Babylon.PipelineTest do
     end
   end
 
+  describe "install" do
+    test "a checkout on main and clean is fast-forwarded and its install run", %{repo: repo, ticket: ticket} do
+      File.write!(Path.join(repo, "mise.toml"), "[tasks.install]\nrun = 'echo installed'\n")
+      assert {:landed, sha} = Run.run(ticket, fn _ -> :ok end)
+      assert {:ok, log} = Run.install("app")
+      assert {^sha <> "\n", 0} = System.cmd("git", ["-C", repo, "rev-parse", "HEAD"])
+
+      assert eventually(fn -> File.exists?(log) and File.read!(log) =~ "\ninstalled\n" end)
+    end
+
+    test "one off main, or with changes, is left as it is", %{repo: repo, ticket: ticket} do
+      assert {:landed, _} = Run.run(ticket, fn _ -> :ok end)
+      File.write!(Path.join(repo, "a"), "changed")
+      assert {:skipped, "its checkout has changes"} = Run.install("app")
+      sh(repo, "git checkout -q -- a && git checkout -q t1-work")
+      assert {:skipped, "its checkout is not on main"} = Run.install("app")
+    end
+  end
+
+  defp eventually(check, tries \\ 50) do
+    cond do
+      check.() -> true
+      tries == 0 -> false
+      true -> Process.sleep(100) && eventually(check, tries - 1)
+    end
+  end
+
   defp gated(tmp, gate, reviewer) do
     Application.put_env(
       :babylon,

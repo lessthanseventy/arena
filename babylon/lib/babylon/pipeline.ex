@@ -135,7 +135,14 @@ defmodule Babylon.Pipeline do
     note = "landed on main as #{sha}#{fixed}"
     done = ticket |> Ecto.Changeset.change(stage: "landed", stage_note: note) |> Repo.update!()
     short = String.slice(sha, 0, 7)
-    tell(done, "##{id} landed on main as #{short}#{fixed}. Its worktree can go: wt remove #{done.branch}")
+
+    installed =
+      case Run.install(done.repo) do
+        {:ok, log} -> "#{done.repo}'s checkout is on it, its install running (#{log})"
+        {:skipped, why} -> "#{done.repo}'s checkout is left as it is: #{why}"
+      end
+
+    tell(done, "##{id} landed on main as #{short}#{fixed}; #{installed}. Its worktree can go: wt remove #{done.branch}")
     done
   end
 

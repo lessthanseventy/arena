@@ -32,6 +32,30 @@ defmodule Babylon.Pipeline.Run do
     end
   end
 
+  @doc """
+  Bring `name`'s own checkout up to origin's main, when it is on main with nothing changed, and
+  start its `install` task, if it has one, in a window of babylon's tmux session. Not waited on:
+  installing babylon restarts it. `{:ok, log}`, or `{:skipped, why}` with the checkout untouched.
+  """
+  @spec install(String.t()) :: {:ok, String.t()} | {:skipped, String.t()}
+  def install(name) do
+    repo = Path.join(conf(:projects), name)
+    log = Path.join([Path.dirname(conf(:work)), "logs", "#{name}-install.log"])
+
+    with :ok <- answers(git(repo, ["branch", "--show-current"]), "main\n", "its checkout is not on main"),
+         :ok <- answers(git(repo, ["status", "--porcelain", "--untracked-files=no"]), "", "its checkout has changes"),
+         :ok <- answers(git(repo, ["fetch", "-q", "origin", "main"]), "", "could not fetch origin's main"),
+         :ok <- answers(git(repo, ["merge", "-q", "--ff-only", "origin/main"]), "", "its main would not fast-forward") do
+      File.mkdir_p!(Path.dirname(log))
+      script = "{ mise tasks info install >/dev/null 2>&1 && mise run install; } >#{sh_quote(log)} 2>&1; read _"
+      open_window("#{name}-install", ["-d", "-c", repo, "-e", "MISE_TRUSTED_CONFIG_PATHS=#{repo}", "sh", "-c", script])
+      {:ok, log}
+    end
+  end
+
+  defp answers({out, 0}, out, _why), do: :ok
+  defp answers(_, _, why), do: {:skipped, why}
+
   # one worktree a repo, kept between runs so its builds and deps stay warm
   defp checkout(repo, dir, branch) do
     cond do
@@ -114,10 +138,19 @@ defmodule Babylon.Pipeline.Run do
       "(#{gate}; echo $? > #{sh_quote(exit_file)}) 2>&1 | tee #{sh_quote(log)}; " <>
         "tmux #{Enum.map_join(conf(:tmux), " ", &sh_quote/1)} wait-for -S #{channel}; read _"
 
-    name = ticket.repo
-    opened = ["-d", "-n", name, "-c", dir, "-e", "MISE_TRUSTED_CONFIG_PATHS=#{dir}", "sh", "-c", script]
+    open_window(ticket.repo, ["-d", "-c", dir, "-e", "MISE_TRUSTED_CONFIG_PATHS=#{dir}", "sh", "-c", script])
+    tmux(["wait-for", channel], conf(:gate_timeout) + 60)
 
-    # the repo's last window goes once the new one is open, as the session ends with its last window
+    case File.read(exit_file) do
+      {:ok, code} -> {File.read!(log), code |> String.trim() |> String.to_integer()}
+      {:error, _} -> {File.read!(log) <> "\nthe gate's window closed before it finished", 1}
+    end
+  end
+
+  # the last window of that name goes once the new one is open, as the session ends with its last window
+  defp open_window(name, opened) do
+    opened = ["-n", name | opened]
+
     case tmux(["list-windows", "-t", "=babylon", "-F", "\#{window_id} \#{window_name}"]) do
       {listed, 0} ->
         tmux(["new-window", "-t", "=babylon:" | opened])
@@ -127,13 +160,6 @@ defmodule Babylon.Pipeline.Run do
 
       _ ->
         tmux(["new-session", "-s", "babylon" | opened])
-    end
-
-    tmux(["wait-for", channel], conf(:gate_timeout) + 60)
-
-    case File.read(exit_file) do
-      {:ok, code} -> {File.read!(log), code |> String.trim() |> String.to_integer()}
-      {:error, _} -> {File.read!(log) <> "\nthe gate's window closed before it finished", 1}
     end
   end
 

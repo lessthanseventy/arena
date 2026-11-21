@@ -17,6 +17,14 @@ description = "babylon's gate"
 dir = "babylon"
 run = "mise run check"
 
+[tasks.install]
+description = "after a landing: arena built, and babylon released when the landing changed it"
+run = "zig build && { git diff --quiet ORIG_HEAD HEAD -- babylon || mise run babylon:release; }"
+
+[tasks."babylon:release"]
+dir = "babylon"
+run = "mise run release"
+
 [tasks.check]
 description = "the unit tests, then end to end, then babylon's gate"
 depends = ["test", "e2e", "babylon:check"]

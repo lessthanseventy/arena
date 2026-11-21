@@ -50,7 +50,9 @@ dropped. Then it is pushed as main's new head, which only a fast-forward passes;
 moved meanwhile means another rebase and gate first. How it went goes to the holding session's
 inbox: landed, the ticket is `done`;
 sent back, it is `doing` again with why in `stage_note`, or `todo` labelled `sent back` when that
-session is gone. There are no pull requests: the gate and the review are babylon's.
+session is gone. There are no pull requests: the gate and the review are babylon's. Landed, the
+repo's own checkout, when it is on main with nothing changed, is fast-forwarded and its `install`
+task (if it has one) started in a window of babylon's session, so what runs is what landed.
 
 babylon's word to a session (a ticket landed or sent back, an ask answered) is kept per pane until
 the session reads it with the `inbox` tool. What is typed into the pane is only a nudge to read it,
