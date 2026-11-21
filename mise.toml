@@ -16,10 +16,14 @@ run = ["zsh test/e2e.zsh", "zsh test/e2e-cleanup.zsh"]
 description = "babylon's inbox hook against a fake babylon, and the tmux guard on Bash calls"
 run = ["zsh test/inbox-hook.zsh", "zsh test/tmux-guard.zsh"]
 
+[tasks.mod]
+description = "the board-feed pane against a fake board file"
+run = ["claude plugin validate .", "claude plugin test ."]
+
 [tasks.install]
 description = "after a landing: arena built"
 run = "zig build"
 
 [tasks.check]
-description = "the unit tests, then end to end, then the hooks"
-depends = ["test", "e2e", "hooks"]
+description = "the unit tests, then end to end, then the hooks and the mod"
+depends = ["test", "e2e", "hooks", "mod"]

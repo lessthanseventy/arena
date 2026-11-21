@@ -69,6 +69,10 @@ always did; arena draws them and leaves them running when it quits.
   orchestrator runs, its window shows beside the board, arena in its session to have it live:
   Tab, or a click on it, gives it the keys and Tab gives them back; `` ` `` folds it away, and the
   board opens so until it is unfolded. Closing the board goes back to the session you were in.
+  The orchestrator's own Claude has a pane beside its chat, a feed of the board: the asks waiting
+  on you and for how long, the tickets sent back and why, what is being done or in review with
+  its holder's window and stage, and the last ten landings. It is drawn again when babylon's file
+  changes (watched with `inotifywait`), and no other Claude has it.
 - **Jump** to any window in any session by typing part of its name.
 - **A menu** for everything, for when you would rather click.
 - **Mouse throughout**: click, wheel, drag to select and copy (shift-drag over a program that takes
