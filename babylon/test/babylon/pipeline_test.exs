@@ -285,6 +285,71 @@ defmodule Babylon.PipelineTest do
       assert sh(origin, "git log --format=%s main") == "two\none"
     end
 
+    test "a branch built on another in the train lands without its commits twice",
+         %{tmp_dir: tmp, repo: repo, origin: origin, ticket: ticket} do
+      sh(
+        repo,
+        "git checkout -q -b t3-on t1-work && echo five > e && git add e && git commit -qm five && git checkout -q main"
+      )
+
+      gated(tmp, ["sh", "-c", "exit 0"], @approve)
+
+      assert [{1, {:landed, _}}, {3, {:landed, _}}] =
+               [ticket, %{ticket | id: 3, branch: "t3-on"}] |> Run.train(fn _, _ -> :ok end) |> Enum.sort()
+
+      assert sh(origin, "git log --format=%s main") == "five\ntwo\none"
+    end
+
+    test "one that will not stack goes back alone", %{tmp_dir: tmp, repo: repo, origin: origin, ticket: ticket} do
+      for {branch, text} <- [{"t4-x", "x"}, {"t5-y", "y"}] do
+        sh(
+          repo,
+          "git checkout -q -b #{branch} main && echo #{text} > a && git commit -qam #{text} && git checkout -q main"
+        )
+      end
+
+      gated(tmp, ["sh", "-c", "exit 0"], @approve)
+      cars = [%{ticket | id: 4, branch: "t4-x"}, %{ticket | id: 5, branch: "t5-y"}]
+
+      assert [{4, {:landed, _}}, {5, {:failed, "it does not stack cleanly on main with #4"}}] =
+               cars |> Run.train(fn _, _ -> :ok end) |> Enum.sort()
+
+      assert sh(origin, "git log --format=%s main") == "x\none"
+    end
+
+    test "a red train of four finds the one at fault in its back half, the rest landing",
+         %{tmp_dir: tmp, repo: repo, origin: origin, train: train, ticket: ticket} do
+      for {branch, file} <- [{"t6-f", "f"}, {"t7-g", "g"}] do
+        sh(
+          repo,
+          "git checkout -q -b #{branch} main && echo #{file} > #{file} && git add #{file} && git commit -qm #{file} && git checkout -q main"
+        )
+      end
+
+      gated(tmp, ["sh", "-c", "test ! -e g"], @approve)
+      cars = train ++ [%{ticket | id: 6, branch: "t6-f"}, %{ticket | id: 7, branch: "t7-g"}]
+
+      assert [{1, {:landed, _}}, {2, {:landed, _}}, {6, {:landed, _}}, {7, {:failed, "the gate is red" <> _}}] =
+               cars |> Run.train(fn _, _ -> :ok end) |> Enum.sort()
+
+      assert sh(origin, "git log --format=%s main") == "f\nfour\ntwo\none"
+    end
+
+    test "main moving under a gated train restacks it on main and lands it",
+         %{tmp_dir: tmp, origin: origin, train: train} do
+      other = Path.join(tmp, "other")
+      sh(tmp, "git clone -q #{origin} #{other}")
+      moved = Path.join(tmp, "moved")
+
+      once =
+        "test -e #{moved} || { touch #{moved}; cd #{other} && echo z > z && git add z && git commit -qm moved && git push -q origin main; }"
+
+      gated(tmp, ["sh", "-c", once], @approve)
+
+      assert [{1, {:landed, _}}, {2, {:landed, _}}] = train |> Run.train(fn _, _ -> :ok end) |> Enum.sort()
+      assert sh(origin, "git log --format=%s main") == "four\ntwo\nmoved\none"
+    end
+
     test "one the review refuses drops out, the rest land", %{tmp_dir: tmp, origin: origin, train: train} do
       refuse = ["sh", "-c", "if grep -q Other; then echo 'VERDICT: request_changes'; else echo 'VERDICT: approve'; fi"]
       gated(tmp, ["sh", "-c", "exit 0"], refuse)

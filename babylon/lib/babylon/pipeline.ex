@@ -1,9 +1,10 @@
 defmodule Babylon.Pipeline do
   @moduledoc """
   How a finished ticket's branch reaches main: verified (rebased onto main and its repo's gate run),
-  reviewed headlessly, then landed by fast-forward. Each repo lands one ticket at a time in the
-  order they were submitted, as each landing rebases on the last; different repos run side by side,
-  no more than the `:gates` the config allows at once. The session holding the ticket is told how it went: landed, the ticket is done; sent
+  reviewed headlessly, then landed by fast-forward. Each repo has one lane, taking its tickets in
+  the order submitted: a lone one goes through by itself, several (up to `:train`) as a merge
+  train (`Babylon.Pipeline.Run.train/2`). Different repos run side by side, no more than the
+  `:gates` the config allows at once. The session holding the ticket is told how it went: landed, the ticket is done; sent
   back, it is `doing` again with why in `stage_note`, or `todo` when that session is gone.
   """
   use GenServer
@@ -38,12 +39,16 @@ defmodule Babylon.Pipeline do
   @doc """
   Settle ticket `id` on its `outcome`, and tell the session holding it. `panes` is the set running
   Claude (`Babylon.Panes.claude/0`): a ticket sent back to a pane not among them goes to `todo`.
+  A landing starts the repo's install, unless `installed` says how the train's one went.
   """
-  @spec finish(pos_integer(), outcome(), Babylon.Claims.panes()) :: Ticket.t()
-  def finish(id, {:landed, sha}, _panes), do: landed(id, sha, "")
-  def finish(id, {:landed, sha, fixed}, _panes), do: landed(id, sha, ", with the review's fixes: #{fixed}")
+  @spec finish(pos_integer(), outcome(), Babylon.Claims.panes(), String.t() | nil) :: Ticket.t()
+  def finish(id, outcome, panes, installed \\ nil)
+  def finish(id, {:landed, sha}, _panes, installed), do: landed(id, sha, "", installed)
 
-  def finish(id, {:failed, why}, panes) do
+  def finish(id, {:landed, sha, fixed}, _panes, installed),
+    do: landed(id, sha, ", with the review's fixes: #{fixed}", installed)
+
+  def finish(id, {:failed, why}, panes, _installed) do
     ticket = Repo.get!(Ticket, id)
     here = ticket.claimed_by != nil and (panes == :unknown or MapSet.member?(panes, ticket.claimed_by))
 
@@ -92,11 +97,14 @@ defmodule Babylon.Pipeline do
   end
 
   defp settle(running, ref, outcomes) do
-    {_, running} = Map.pop!(running, ref)
+    {{_ids, repo}, running} = Map.pop!(running, ref)
     panes = Panes.claude()
+    # one install for a train, however many of it landed
+    installed =
+      if Enum.any?(outcomes, &(match?({_, {:landed, _}}, &1) or match?({_, {:landed, _, _}}, &1))), do: install(repo)
 
     for {id, outcome} <- outcomes do
-      %Ticket{stage: stage} = finish(id, outcome, panes)
+      %Ticket{stage: stage} = finish(id, outcome, panes, installed)
       Logger.info("pipeline: ##{id} #{stage}")
     end
 
@@ -149,20 +157,23 @@ defmodule Babylon.Pipeline do
     {:ok, queued}
   end
 
-  defp landed(id, sha, fixed) do
+  defp landed(id, sha, fixed, installed) do
     {:ok, ticket} = Tickets.update(Repo.get!(Ticket, id), %{status: "done"})
     note = "landed on main as #{sha}#{fixed}"
     done = ticket |> Ecto.Changeset.change(stage: "landed", stage_note: note) |> Repo.update!()
     short = String.slice(sha, 0, 7)
 
-    installed =
-      case Run.install(done.repo) do
-        {:ok, log} -> "#{done.repo}'s checkout is on it, its install running (#{log})"
-        {:skipped, why} -> "#{done.repo}'s checkout is left as it is: #{why}"
-      end
+    installed = installed || install(done.repo)
 
     tell(done, "##{id} landed on main as #{short}#{fixed}; #{installed}. Its worktree can go: wt remove #{done.branch}")
     done
+  end
+
+  defp install(repo) do
+    case Run.install(repo) do
+      {:ok, log} -> "#{repo}'s checkout is on it, its install running (#{log})"
+      {:skipped, why} -> "#{repo}'s checkout is left as it is: #{why}"
+    end
   end
 
   defp tell(%Ticket{claimed_by: nil}, _text), do: :ok
