@@ -46,6 +46,13 @@ defmodule Babylon.ClaimsTest do
     assert {:error, "no ticket #0"} = Claims.claim(0, "%1", panes([]))
   end
 
+  test "a ticket moved from the backlog to todo can be claimed" do
+    {:ok, idea} = Babylon.Tickets.file(%{title: "Idea", status: "backlog"})
+    assert idea.status == "backlog"
+    {:ok, _} = Babylon.Tickets.update(idea, %{status: "todo"})
+    assert {:ok, %{status: "doing"}, :new} = Claims.claim(idea.id, "%1", panes(["%1"]))
+  end
+
   test "refuses a ticket in the backlog, which stays off the board" do
     idea = file!(title: "Someday", status: "backlog")
     assert {:error, "ticket #" <> rest} = Claims.claim(idea.id, "%1", panes(["%1"]))
