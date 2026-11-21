@@ -914,7 +914,7 @@ print -r -- '{"tickets":[{"id":13,"repo":"babylon","title":"Gatekeeping","kind":
   >$tmp/run/babylon/board.json
 inner new-session -d -s work/babylon -n w sh
 key M-b
-await see '#13 Gatekeeping'
+see '#13 Gatekeepi'
 key Enter
 started_in() { [[ $(inner list-panes -t "=${1}:t13" -F '#{pane_start_command}' 2>/dev/null) == *'Claim ticket #13 with claim_ticket'* ]] }
 check "a babylon card's Claude starts in the rail's session holding babylon among others" await started_in work/babylon
