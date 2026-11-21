@@ -1044,6 +1044,7 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     }
     try boardButtons(app, w, view);
     if (view.answering) if (app.boardCard(view.col, view.row)) |card| if (card.ask) |ask| try askBox(app, w, card.id, ask);
+    if (view.giving) |picked| if (app.boardCard(view.col, view.row)) |card| try giveBox(app, w, card.id, picked);
     if (view.detail) |id| try detailBox(app, w, id, view.detail_scroll);
     if (view.help) try helpBox(app, w);
 }
@@ -1127,7 +1128,7 @@ const board_keys = [_][2][]const u8{
     .{ "hjkl, arrows", "pick a card" },
     .{ "⏎, click it", "go to the Claude holding it, or start one on a free todo card" },
     .{ "space", "its whole ticket: body, links, gate log" },
-    .{ "a", "answer the question it asks" },
+    .{ "a G", "answer what it asks, give it to a running Claude" },
     .{ "e", "edit its title, repo and body" },
     .{ "p", "raise its priority, high back to low" },
     .{ "> <", "close a ticket to do, reopen a done one" },
@@ -1222,6 +1223,59 @@ fn askBox(app: *App, w: *Writer, id: u32, ask: tickets.Ask) !void {
     }
     y += 1;
     try boxLine(w, &pen, edge, ink(app, "dim", 8), x, y, "its number answers · esc puts it away", inner);
+    y += 1;
+    try pen.set(w, edge, null);
+    try w.print("\x1b[{d};{d}H╰", .{ y, x + 1 });
+    for (0..bw - 2) |_| try w.writeAll("─");
+    try w.writeAll("╯");
+}
+
+/// The Claudes the picked card can be given to, boxed over the middle of the board, each by its
+/// number: its session and what its window is called, dim with why where babylon would refuse it.
+fn giveBox(app: *App, w: *Writer, id: u32, picked: usize) !void {
+    const bw: u16 = @min(app.boardW() -| 4, 64);
+    const inner = bw -| 4;
+    const x = app.boardX() + (app.boardW() -| bw) / 2;
+    const edge = ink(app, "amber", 4);
+    var pen: Pen = .{};
+    var buf: [48]u8 = undefined;
+    var y: u16 = 4;
+
+    const title = std.fmt.bufPrint(&buf, " give #{d} to ", .{id}) catch " give to ";
+    try pen.set(w, edge, null);
+    try w.print("\x1b[{d};{d}H╭─", .{ y, x + 1 });
+    try pen.set(w, heading(app), null);
+    try w.writeAll(title);
+    try pen.set(w, edge, null);
+    for (cellCount(title) + 1..bw - 2) |_| try w.writeAll("─");
+    try w.writeAll("╮");
+
+    var found: [app_mod.give_rows]App.Agent = undefined;
+    const n = app.agents(&found);
+    for (found[0..n], 0..) |agent, i| {
+        y += 1;
+        const why = switch (agent.win.claude) {
+            .working => " · mid-turn",
+            .waiting => " · waits on you",
+            .none, .background, .done => "",
+        };
+        var line: [256]u8 = undefined;
+        const text = std.fmt.bufPrint(&line, "{s} · {s}{s}", .{ app.sessions.items[agent.session].name, agent.win.label(), why }) catch agent.win.label();
+        try pen.set(w, edge, null);
+        try w.print("\x1b[{d};{d}H│ ", .{ y, x + 1 });
+        try pen.set(w, heading(app), null);
+        try w.print("{d}  ", .{i + 1});
+        try pen.set(w, if (i == picked) chip(app) else if (why.len > 0) ink(app, "dim", 8) else .{}, null);
+        try fitted(w, text, inner -| 3);
+        try pen.set(w, edge, null);
+        try w.writeAll(" │");
+    }
+    if (n == 0) {
+        y += 1;
+        try boxLine(w, &pen, edge, .{}, x, y, "no Claude is running", inner);
+    }
+    y += 1;
+    try boxLine(w, &pen, edge, ink(app, "dim", 8), x, y, "its number gives, or jk and ⏎ · esc puts it away", inner);
     y += 1;
     try pen.set(w, edge, null);
     try w.print("\x1b[{d};{d}H╰", .{ y, x + 1 });

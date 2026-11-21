@@ -47,7 +47,9 @@ always did; arena draws them and leaves them running when it quits.
   holding it, what it waits on, where it is on babylon's way to main (queued, verifying, reviewing,
   landing, `✗ sent back`, `◆ landed`) and `? asks` when its Claude waits on a decision from you:
   `a` shows the question and its options, and an option's number answers it, typed into that
-  Claude by babylon. One that waits is dimmed, at the foot of its column. Its first row has the repos as tabs, the one shown lit: a click on one narrows the board to it,
+  Claude by babylon. `G` on a free todo card lists the running Claudes, and one's number, or
+  `j`, `k` and Enter, gives it the card: babylon types the claim into that Claude as your word,
+  and says why when it will not (that Claude is mid-turn, or waits on you). One that waits is dimmed, at the foot of its column. Its first row has the repos as tabs, the one shown lit: a click on one narrows the board to it,
   and `r` goes to the next, then every one again; the gate is a button beside them while babylon
   runs one, and `?` shows every key. `A`, or the `auto` button beside the tabs, turns babylon's
   auto mode on and off: while it is on, babylon starts a Claude on each free todo card, up to its

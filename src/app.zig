@@ -322,6 +322,8 @@ pub const BoardView = struct {
     backlog: bool = false,
     /// The picked card's question shown over the board, waiting on its answer's number.
     answering: bool = false,
+    /// The Claudes the picked card can be given to shown over the board, and the one picked.
+    giving: ?usize = null,
     /// The ticket whose whole detail is shown over the board, and how far down it is scrolled.
     detail: ?u32 = null,
     detail_scroll: usize = 0,
@@ -331,6 +333,8 @@ pub const BoardView = struct {
 
 /// The cards a column of the board can hold, and the repos it can be narrowed to.
 pub const max_cards = 256;
+/// The Claudes a card can be given to, each picked by its number.
+pub const give_rows = 9;
 const max_repos = 32;
 
 fn anyKey(pressed: []const u8, names: []const []const u8) bool {
@@ -1774,6 +1778,7 @@ pub const App = struct {
         const view = &app.board_view.?;
         const is = anyKey;
         if (view.answering) return app.answerKey(key);
+        if (view.giving != null) return app.giveKey(key);
         if (view.help) {
             view.help = false;
             return;
@@ -1861,6 +1866,7 @@ pub const App = struct {
         const keyed = [_]struct { []const u8, CardAction }{
             .{ "\r", .go },    .{ "e", .edit }, .{ "p", .priority }, .{ ">", .close },
             .{ "<", .reopen }, .{ "J", .down }, .{ "K", .up },       .{ "t", .to_todo },
+            .{ "G", .give },
         };
         for (keyed) |pair| if (std.mem.eql(u8, key, pair[0])) return app.act(pair[1]);
     }
@@ -1914,6 +1920,7 @@ pub const App = struct {
     pub const CardAction = enum {
         go,
         answer,
+        give,
         edit,
         priority,
         close,
@@ -1926,6 +1933,7 @@ pub const App = struct {
             return switch (action) {
                 .go => "go",
                 .answer => "answer",
+                .give => "give",
                 .edit => "edit",
                 .priority => "priority",
                 .close => "close",
@@ -1937,7 +1945,8 @@ pub const App = struct {
         }
     };
 
-    /// The actions `card` has: go while a Claude holds it, answer while it asks, close while still to
+    /// The actions `card` has: go while a Claude holds it, answer while it asks, give while it is
+    /// free to claim, close while still to
     /// do and reopen once done, to todo while in the backlog, and edit and priority always, and
     /// moving it along its column but in the backlog or without a repo the move can be narrowed
     /// to, babylon having no move among the cards of none alone.
@@ -1945,9 +1954,10 @@ pub const App = struct {
         var n: usize = 0;
         const movable = card.status != .backlog and plainName(card.repo orelse "");
         const all = [_]struct { CardAction, bool }{
-            .{ .go, card.holder() != null or startable(card) }, .{ .answer, card.ask != null },    .{ .edit, true },
-            .{ .priority, true },                               .{ .close, card.status == .todo }, .{ .reopen, card.status == .done },
-            .{ .to_todo, card.status == .backlog },             .{ .up, movable },                 .{ .down, movable },
+            .{ .go, card.holder() != null or startable(card) }, .{ .answer, card.ask != null },         .{ .give, givable(card) },
+            .{ .edit, true },                                   .{ .priority, true },                   .{ .close, card.status == .todo },
+            .{ .reopen, card.status == .done },                 .{ .to_todo, card.status == .backlog }, .{ .up, movable },
+            .{ .down, movable },
         };
         for (all) |pair| if (pair[1]) {
             out[n] = pair[0];
@@ -1970,6 +1980,7 @@ pub const App = struct {
         switch (action) {
             .go => try app.goCard(),
             .answer => view.answering = true,
+            .give => view.giving = 0,
             .edit => try app.ticketWindow("babylon edit {d}", .{card.id}),
             .priority => {
                 const eql = std.mem.eql;
@@ -2104,6 +2115,26 @@ pub const App = struct {
         view.answering = false;
     }
 
+    /// A key while the Claudes the picked card can be given to are shown: j and k pick one, and
+    /// Enter or its number gives it the card through babylon, which types the claim into its pane
+    /// as its human's word; Esc puts them away.
+    fn giveKey(app: *App, key: []const u8) !void {
+        const view = &app.board_view.?;
+        var found: [give_rows]Agent = undefined;
+        const n = app.agents(&found);
+        const picked = view.giving.?;
+        if (anyKey(key, &.{ "\x1b", "q" })) view.giving = null;
+        if (anyKey(key, &.{ "j", "\x1b[B", "\x1bOB" }) and picked + 1 < n) view.giving = picked + 1;
+        if (anyKey(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.giving = picked -| 1;
+        const to = if (anyKey(key, &.{"\r"})) picked else if (key.len == 1 and key[0] >= '1' and key[0] <= '9') key[0] - '1' else return;
+        if (to >= n) return;
+        const card = app.boardCard(view.col, view.row) orelse return;
+        // babylon's refusal (that Claude is mid-turn, the card was claimed meanwhile) is said
+        try app.send(.ignore, "run-shell -b \"out=\\$(babylon give {d} %{d} 2>&1) || " ++
+            "{{ command -v notify-send >/dev/null && notify-send -a arena -- \\\"\\$out\\\"; }}\"", .{ card.id, found[to].win.agent_pane });
+        view.giving = null;
+    }
+
     /// The mouse on the board: a click on a card picks it, and on the card picked goes to the
     /// Claude holding it; the wheel moves along the column. Whether it was the board's: on the
     /// rail it is the rail's, and closes the board but for its own row there.
@@ -2126,10 +2157,11 @@ pub const App = struct {
         app.dirty = true;
         const open = &app.board_view.?;
         // a box over the board takes the click, as a key would, so nothing hidden under it is pressed
-        if (open.help or open.detail != null or open.answering) {
+        if (open.help or open.detail != null or open.answering or open.giving != null) {
             open.help = false;
             open.detail = null;
             open.answering = false;
+            open.giving = null;
             return true;
         }
         var buttons: [48]Button = undefined;
@@ -3094,6 +3126,28 @@ fn startable(card: *const tickets.Card) bool {
     const repo = card.repo orelse return false;
     return card.holder() == null and card.status == .todo and card.blocked_by.len == 0 and plainName(repo) and
         repo.len <= session_name;
+}
+
+/// A card babylon would let a running Claude claim: to do, held by no one, waiting on nothing.
+fn givable(card: *const tickets.Card) bool {
+    return card.holder() == null and card.status == .todo and card.blocked_by.len == 0 and !std.mem.eql(u8, card.kind, "epic");
+}
+
+test "a card is given only while it is free to claim, whatever its repo" {
+    const free: tickets.Card = .{ .id = 1, .title = "a", .status = .todo };
+    try std.testing.expect(givable(&free));
+    var c = free;
+    c.blocked_by = &.{2};
+    try std.testing.expect(!givable(&c));
+    c = free;
+    c.claimed_by = "%3";
+    try std.testing.expect(!givable(&c));
+    c = free;
+    c.status = .backlog;
+    try std.testing.expect(!givable(&c));
+    c = free;
+    c.kind = "epic";
+    try std.testing.expect(!givable(&c));
 }
 
 test "a Claude is started only on a free todo card of a plain repo" {

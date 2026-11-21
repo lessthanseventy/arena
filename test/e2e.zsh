@@ -760,6 +760,16 @@ key M-b
 last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
 key p
 check "p raises the picked card's priority through babylon" await last 'update 7 --priority high'
+inner set -p -t alpha:one @arena_claude_since $(date +%s)
+key G
+check "G shows the running Claudes the picked card can be given to" see '│ [1-9]  alpha · one '
+key Escape
+check "and Escape puts them away" gone 'give #7 to'
+key G
+key "$(screen | sed -n 's/.*│ \([1-9]\)  alpha · one .*/\1/p')"
+check "and a Claude's number gives it the card through babylon, by its pane" await last "give 7 $one"
+check "and puts them away" gone 'give #7 to'
+inner set -pu -t alpha:one @arena_claude_since
 check "with no auto in babylon's file, the board says nothing of it" hides 'auto [0-9]'
 key A
 check "A turns babylon's auto mode on" await last 'auto on'
