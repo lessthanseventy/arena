@@ -191,6 +191,9 @@ defmodule Babylon.Pipeline.Run do
         for {ticket, _, _} <- stacked, do: stage.(ticket.id, "landing")
         pushed(repo, dir, stacked, stage, tries)
 
+      {{:retry, _} = retry, _} ->
+        for {ticket, _, _} <- stacked, do: {ticket.id, retry}
+
       {failed, [_]} ->
         [{first.id, failed}]
 
@@ -411,12 +414,17 @@ defmodule Babylon.Pipeline.Run do
 
   defp gate(dir, ticket) do
     minutes = div(conf(:gate_timeout), 60)
-    log = Path.join([Path.dirname(conf(:work)), "logs", "#{ticket.repo}-t#{ticket.id}.log"])
+    at = DateTime.utc_now() |> DateTime.to_unix() |> Integer.to_string()
+    log = Path.join([Path.dirname(conf(:work)), "logs", "#{ticket.repo}-t#{ticket.id}-#{at}.log"])
     {out, code} = in_window(dir, ticket, log)
 
     case {code, unstarted(out)} do
       {0, _} ->
         :ok
+
+      # EX_TEMPFAIL: the repo's gate refused to start now (a queue busy); not the ticket's fault
+      {75, _} ->
+        {:retry, "its gate did not run (exit 75): #{out |> String.trim() |> String.split("\n") |> List.last()}"}
 
       {124, _} ->
         {:failed, "the gate ran past #{minutes} minutes; its output is in #{log}"}

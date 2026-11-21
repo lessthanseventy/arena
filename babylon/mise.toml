@@ -25,6 +25,14 @@ cd "$build/babylon"
 MIX_ENV=prod mix deps.get --only prod >/dev/null
 MIX_ENV=prod mix release --overwrite --path "$dest" >/dev/null
 echo "babylon: $(git rev-parse --short HEAD) released to $dest"
+# a restart mid-gate orphans the gate's processes: let running gates finish first, up to 30 minutes
+for _ in $(seq 180); do
+  running=$(babylon call list_tickets '{"status":["review"]}' 2>/dev/null |
+    jq '[.[] | select(.stage == "verifying" or .stage == "reviewing" or .stage == "landing")] | length' || echo 0)
+  [ "$running" = 0 ] && break
+  echo "babylon: waiting on $running running gate(s) before restarting"
+  sleep 10
+done
 if command -v systemctl >/dev/null && systemctl --user cat babylon.service >/dev/null 2>&1; then
   systemctl --user restart babylon.service
   echo "babylon: service restarted"

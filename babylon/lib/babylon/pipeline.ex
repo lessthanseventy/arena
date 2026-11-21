@@ -20,9 +20,11 @@ defmodule Babylon.Pipeline do
   require Logger
 
   @running ~w(verifying reviewing landing)
+  @retry_after 60
 
   @type note :: {:fixed, String.t()} | {:followup, String.t()}
-  @type outcome :: {:landed, String.t()} | {:landed, String.t(), [note()]} | {:failed, String.t()}
+  @type outcome ::
+          {:landed, String.t()} | {:landed, String.t(), [note()]} | {:retry, String.t()} | {:failed, String.t()}
 
   @doc false
   def start_link(_opts), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -64,6 +66,12 @@ defmodule Babylon.Pipeline do
   def finish(id, {:landed, sha}, _panes, installed), do: landed(id, sha, [], installed)
 
   def finish(id, {:landed, sha, notes}, _panes, installed), do: landed(id, sha, notes, installed)
+
+  def finish(id, {:retry, why}, _panes, _installed) do
+    Repo.get!(Ticket, id)
+    |> Ecto.Changeset.change(stage: "queued", stage_note: "to gate again: " <> why, submitted_at: later())
+    |> Repo.update!()
+  end
 
   def finish(id, {:failed, why}, panes, _installed) do
     ticket = Repo.get!(Ticket, id)
@@ -127,6 +135,9 @@ defmodule Babylon.Pipeline do
       Logger.info("pipeline: ##{id} #{stage}")
     end
 
+    if Enum.any?(outcomes, &match?({_, {:retry, _}}, &1)),
+      do: Process.send_after(self(), :next, @retry_after * 1000 + 500)
+
     {:noreply, start(running)}
   end
 
@@ -149,7 +160,7 @@ defmodule Babylon.Pipeline do
   def next_up(busy) do
     Repo.one(
       from t in Ticket,
-        where: t.stage == "queued" and t.repo not in ^busy,
+        where: t.stage == "queued" and t.repo not in ^busy and t.submitted_at <= ^now(),
         order_by: [asc: t.submitted_at, asc: t.id],
         limit: 1
     )
@@ -259,4 +270,6 @@ defmodule Babylon.Pipeline do
   end
 
   defp conf(key), do: :babylon |> Application.fetch_env!(:pipeline) |> Keyword.fetch!(key)
+
+  defp later, do: DateTime.add(now(), @retry_after)
 end

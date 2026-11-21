@@ -199,12 +199,19 @@ defmodule Babylon.PipelineTest do
       before = sh(origin, "git rev-parse main")
       gated(tmp, ["sh", "-c", "echo boom; exit 3"], @approve)
 
-      log = Path.join(tmp, "logs/app-t1.log")
-
-      assert Run.run(ticket, fn _ -> :ok end) ==
-               {:failed, "the gate is red (exit 3); its whole output is in #{log}\nboom"}
-
+      assert {:failed, "the gate is red (exit 3); its whole output is in " <> rest} = Run.run(ticket, fn _ -> :ok end)
+      [log, "boom"] = String.split(rest, "\n")
+      assert log =~ ~r"^#{tmp}/logs/app-t1-\d+\.log$"
       assert File.read!(log) == "boom\n"
+      assert sh(origin, "git rev-parse main") == before
+    end
+
+    test "a gate that did not run (exit 75) is to be tried again, not the ticket's fault",
+         %{tmp_dir: tmp, origin: origin, ticket: ticket} do
+      before = sh(origin, "git rev-parse main")
+      gated(tmp, ["sh", "-c", "echo 'checks queue: refused'; exit 75"], @approve)
+
+      assert Run.run(ticket, fn _ -> :ok end) == {:retry, "its gate did not run (exit 75): checks queue: refused"}
       assert sh(origin, "git rev-parse main") == before
     end
 
@@ -359,6 +366,14 @@ defmodule Babylon.PipelineTest do
                Pipeline.finish(held.id, {:landed, "abc"}, MapSet.new([@nobody]))
 
       assert File.read!(shown) == "##{held.id} landed on main: Work\n"
+    end
+
+    test "a gate to try again keeps the ticket queued, behind a minute, and tells nobody", %{held: held} do
+      done = Pipeline.finish(held.id, {:retry, "its gate did not run (exit 75): busy"}, MapSet.new([@nobody]))
+      assert %Ticket{stage: "queued", stage_note: "to gate again: " <> _} = done
+      assert DateTime.diff(done.submitted_at, DateTime.utc_now()) in 55..60
+      assert Pipeline.next_up([]) == nil
+      assert Repo.all(Babylon.Message) == []
     end
 
     test "landed with follow-ups, each is filed then as a ticket of its own, and named", %{held: held} do
