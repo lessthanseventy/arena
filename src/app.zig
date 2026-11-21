@@ -347,7 +347,8 @@ pub const App = struct {
     board: ?tickets.Board = null,
     /// The board while it is open in place of the strip.
     board_view: ?BoardView = null,
-    /// The orchestrator was asked to start: gone to as soon as its session shows.
+    /// The orchestrator was asked to start: gone to as soon as its session shows, unless the human
+    /// has gone somewhere else first.
     orchestrating: bool = false,
     rail: enum { wide, narrow } = .wide,
     /// The narrow rail drawn wide over the strip, while the pointer is on it.
@@ -1174,6 +1175,7 @@ pub const App = struct {
     }
 
     fn sessionTo(app: *App, index: usize) !void {
+        app.orchestrating = false;
         const to = app.sessions.items[index];
         if (to.id == app.current) return;
         try app.see();
@@ -1189,6 +1191,7 @@ pub const App = struct {
     }
 
     fn focusTo(app: *App, index: usize) !void {
+        app.orchestrating = false;
         const s = app.cur() orelse return;
         try app.see();
         s.focus = index;
@@ -1350,6 +1353,7 @@ pub const App = struct {
     }
 
     fn toggleBoard(app: *App) void {
+        app.orchestrating = false;
         app.board_view = if (app.board_view != null or app.board == null) null else .{};
         app.dirty = true;
     }

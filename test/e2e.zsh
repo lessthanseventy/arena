@@ -802,8 +802,17 @@ key M-b
 key o
 starting() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == orchestrator ]] }
 check "o on the board starts the orchestrator when it is not running" await starting
+key M-b
+check "the board opened in the meantime" see ' board   every'
+key M-b
+check "and closed" gone ' board   every'
 inner new-session -d -s orchestrator -n orch sh
-check "and goes to it once its session is there" see '╭─ 1 orch '
+# nothing to wait on for what must not happen: a second for the session to be seen
+zselect -t 100
+check "an orchestrator that shows after the human moved on does not pull them to it" see '╭─ 1 gate '
+key M-b
+key o
+check "and o goes to it now it is there" see '╭─ 1 orch '
 check "which the rail does not list" gone '│ orchestrator '
 print -r -- '{"tickets":[{"id":9,"repo":"arena","title":"Pipe","kind":"ticket","status":"review","priority":"med","blocked_by":[],"stage":"reviewing"}]}' \
   >$tmp/run/babylon/board.json
