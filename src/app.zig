@@ -1459,7 +1459,7 @@ pub const App = struct {
         const pane = card.holder() orelse {
             if (!startable(card)) return;
             const repo = card.repo.?;
-            var named: [64]u8 = undefined;
+            var named: [session_name]u8 = undefined;
             const session = sessionNamed(repo, &named);
             // tmux reads # as a format in run-shell's command: ## is one #. A second go before the
             // claim shows finds the window the first made
@@ -2705,11 +2705,14 @@ pub fn cellCount(text: []const u8) usize {
     return std.unicode.utf8CountCodepoints(text) catch text.len;
 }
 
-/// A repo's name safe in a tmux command unquoted, as directory names are.
+/// The longest repo name a session is named for in full.
+const session_name = 64;
+
 /// A todo card no Claude holds, waiting on nothing, of a repo that can name a session and a folder.
 fn startable(card: *const tickets.Card) bool {
     const repo = card.repo orelse return false;
-    return card.holder() == null and card.status == .todo and card.blocked_by.len == 0 and plainName(repo);
+    return card.holder() == null and card.status == .todo and card.blocked_by.len == 0 and plainName(repo) and
+        repo.len <= session_name;
 }
 
 test "a Claude is started only on a free todo card of a plain repo" {
@@ -2723,6 +2726,10 @@ test "a Claude is started only on a free todo card of a plain repo" {
     try std.testing.expect(!startable(&c));
     c = free;
     c.status = .doing;
+    try std.testing.expect(!startable(&c));
+    c = free;
+    const long: [session_name + 1]u8 = @splat('a');
+    c.repo = &long;
     try std.testing.expect(!startable(&c));
     c = free;
     c.repo = "a b";
@@ -2745,6 +2752,7 @@ test "a repo's session is named as tmux would have it, a dot a _" {
     try std.testing.expectEqualStrings("tlon", sessionNamed("tlon", &buf));
 }
 
+/// A repo's name safe in a tmux command unquoted, as directory names are.
 fn plainName(name: []const u8) bool {
     for (name) |c| if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_' and c != '.') return false;
     return name.len > 0;
