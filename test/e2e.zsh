@@ -694,7 +694,16 @@ check "babylon's board has a row atop the rail, with its counts" see '^│ ▤ b
 key M-b
 check "Alt+b opens it in place of the strip, its repos as tabs" see ' board   every   arena   tlon '
 check "and where its keys are" see '\? keys · esc close'
-check "the picked card's actions as chips on its bottom edge" see '╰ go ─ answer ─'
+check "the picked card's actions as chips on its column's bottom edge" see '╰─ go ─ answer ─╯'
+key k l
+check "k off a lane's top goes into the lane above, l along it" see '╰─ go ─ edit ───╯'
+key j h
+check "and j off its end into the lane below" see '╰─ go ─ answer ─╯'
+spot() { local l=$(screen | grep -m1 -- "$1"); local p=${l%%"$1"*}; print $(( ${#p} + 2 )) $(screen | grep -n -m1 -- "$1" | cut -d: -f1) }
+mouse 0 ${(z)$(spot '#8 Board')} M
+check "a click on a card in a lane picks it" see '╰─ go ─ edit ───╯'
+mouse 0 ${(z)$(spot '#7 Lights')} M
+check "and on another, that one" see '╰─ go ─ answer ─╯'
 key '?'
 check "? shows the board's keys" see "the board's keys"
 key x
@@ -703,14 +712,12 @@ check "a column a status, with its count" see '╭─ doing 1 ─'
 railed() { local l=$(inked $1); print -r -- "${${l#*│}%%│*}" }
 alone() { [[ $(railed 2) == *$'\e[1;7m'* && $(railed 3)$(railed 4)$(railed 5) != *$'\e[1;7m'* ]] }
 check "and the board's row is the one lit, not the session's" alone
-check "a card has its number and title" see '│ #8 Board +│'
+check "every repo a lane, its name and counts at its left" see '│  arena 0·1·0·0│'
+check "its cards a row each, a high one marked at its left" see '│▌#8 Board '
+check "sent back and asking as glyphs before its number and title" see ' tlon  1·0·0·0│ ✗ \? #7 Lights │'
 cardrow() { local l; for l in "${(@f)$(outer capture-pane -ep -t o)}"; [[ $l == *$1* ]] && print -r -- $l }
 picked_lit() { [[ $(cardrow '#7 Lights') == *$'\e[1m\e[38;5;4m│\e[0m #7 Lights'* ]] }
-check "the picked card's border is lit" picked_lit
 high_edge() { [[ $(cardrow '#8 Board') == *$'\e[38;5;4m│\e[38;5;8m #8 Board'* ]] }
-check "a high card's left edge is amber" high_edge
-check "under them its repo and the Claude holding it" see '│ arena · alpha:…'
-check "and, sent back from the pipeline, that first, after a question waiting on you" see '│ \? asks · ✗ sen…'
 key a
 check "a shows the picked card's question" see '│ Which colour\? +│'
 check "with its options by number" see '│ 2  blue +│'
@@ -742,7 +749,7 @@ last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
 key p
 check "p raises the picked card's priority through babylon" await last 'update 7 --priority high'
 key J
-check "J moves it down its column" await last 'move 7 down'
+check "J moves it down its column, among its lane's" await last 'move 7 down --repo tlon'
 key '>'
 check "> closes a ticket still to do" await last 'update 7 --status done'
 key e
@@ -756,6 +763,9 @@ key r
 tablit() { [[ $(outer capture-pane -ep -t o) =~ $'((\e\\[[0-9;]*m)+) '$1' ' && $match[1] =~ '[[;]7[;m]' ]] }
 check "r narrows it to one repo, its tab lit" await tablit arena
 check "and to its cards" gone '#7 Lights'
+check "which are whole there: number and title" see '│ #8 Board +│'
+check "a high card's left edge amber" high_edge
+check "under them the Claude holding it" see '│ alpha:one · wa…'
 tabrow() { screen | grep -n -m1 ' board   every' | cut -d: -f1 }
 tabcol() { local l=$(screen | grep -m1 ' board   every'); local p=${l%%" $1 "*}; print $(( ${#p} + 2 )) }
 key '?'
@@ -764,6 +774,9 @@ check "a click while the keys are shown only puts them away" tablit arena
 mouse 0 $(tabcol tlon) $(tabrow) M
 check "a click on a tab narrows it to that repo" see '#7 Lights'
 check "and only that" gone '#8 Board'
+check "the picked card's border is lit" picked_lit
+check "and, sent back from the pipeline, that first, after a question waiting on you" see '│ \? asks · ✗ sen…'
+check "its actions as chips on its bottom edge" see '╰ go ─ answer ─'
 check "the four columns do not show the backlog" gone '#12 Someday'
 key r
 check "r from the last repo goes to the backlog tab, lit" await tablit backlog

@@ -957,12 +957,14 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     try pen.set(w, .{}, null);
     try fitted(w, "", app.view_w -| cellCount(App.board_title));
 
+    const lanes = app.boardLanes();
+    if (lanes) try laneNames(app, w, &pen);
     for (0..app.boardCols()) |c| {
         const name = if (view.backlog) "backlog" else @tagName(tickets.statuses[c]);
-        const x = ox + c * cw;
+        const x = app.boardColX(c);
         const inner = cw -| 2;
         var cards: [app_mod.max_cards]*const tickets.Card = undefined;
-        const n = app.boardColumn(c, &cards);
+        const n = if (lanes) app.boardCount(tickets.statuses[c]) else app.boardColumn(c, &cards);
         const label = std.fmt.bufPrint(&buf, " {s} {d} ", .{ name, n }) catch "";
         try pen.set(w, edge, null);
         try w.print("\x1b[2;{d}H╭─", .{x + 1});
@@ -973,6 +975,10 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         try w.writeAll("╮");
         const first = app.boardFirst(c);
         var y: u16 = 2;
+        if (lanes) {
+            try laneColumn(app, w, &pen, view, c, x, inner);
+            y = app.view_h;
+        }
         while (y + 1 < app.view_h) : (y += 1) {
             try w.print("\x1b[{d};{d}H", .{ y + 1, x + 1 });
             try pen.set(w, edge, null);
@@ -1210,6 +1216,116 @@ fn boxLine(w: *Writer, pen: *Pen, edge: vt.Style, style: vt.Style, x: u16, y: u1
     try w.writeAll(" │");
 }
 
+/// The every view's lane names down the board's left, each with its cards' count a column
+/// under it, a rule between lanes as between their cards.
+fn laneNames(app: *const App, w: *Writer, pen: *Pen) !void {
+    const ox = app.term_w - app.view_w;
+    const lw = app.laneLabelW();
+    const view = app.board_view.?;
+    const scroll = app.laneScroll();
+    const b = if (app.board) |*b| b else return;
+    var buf: [48]u8 = undefined;
+    var y: u16 = 1;
+    while (y < app.view_h) : (y += 1) {
+        try w.print("\x1b[{d};{d}H", .{ y + 1, ox + 1 });
+        const at = if (y >= 2 and y + 1 < app.view_h) app.laneLineAt(y - 2 + scroll) else null;
+        const line = at orelse {
+            try pen.set(w, .{}, null);
+            try fitted(w, "", lw);
+            continue;
+        };
+        if (line.rule) {
+            try pen.set(w, .{ .fg_color = .palette(8) }, null);
+            for (0..lw) |_| try w.writeAll("─");
+            continue;
+        }
+        const repo = app.laneRepo(line.lane).?;
+        const name = if (repo.len == 0) "no repo" else repo;
+        const counts = std.fmt.bufPrint(&buf, "{d}·{d}·{d}·{d}", .{
+            b.column(.todo, repo, &.{}), b.column(.doing, repo, &.{}), b.column(.review, repo, &.{}), b.column(.done, repo, &.{}),
+        }) catch "";
+        // a lane of one row has its counts beside its name, where they fit
+        const beside = line.row == 0 and app.laneRows(repo) == 1 and cellCount(name) + 1 + cellCount(counts) <= lw -| 1;
+        try pen.set(w, if (line.row != 0) ink(app, "dim", 8) else if (line.lane == view.lane) heading(app) else .{}, null);
+        try w.writeAll(" ");
+        if (beside) {
+            try fitted(w, name, lw -| 1 -| cellCount(counts));
+            try pen.set(w, ink(app, "dim", 8), null);
+            try w.writeAll(counts);
+        } else try fitted(w, switch (line.row) {
+            0 => name,
+            1 => counts,
+            else => "",
+        }, lw -| 1);
+    }
+}
+
+/// Column `c` of the every view: each lane's cards in it a row each, a rule between lanes.
+fn laneColumn(app: *const App, w: *Writer, pen: *Pen, view: app_mod.BoardView, c: usize, x: u16, inner: u16) !void {
+    const edge: vt.Style = .{ .fg_color = .palette(8) };
+    const scroll = app.laneScroll();
+    var y: u16 = 2;
+    while (y + 1 < app.view_h) : (y += 1) {
+        try w.print("\x1b[{d};{d}H", .{ y + 1, x + 1 });
+        try pen.set(w, edge, null);
+        const at = app.laneLineAt(y - 2 + scroll);
+        if (at) |line| if (line.rule) {
+            try w.writeAll("├");
+            for (0..inner) |_| try w.writeAll("─");
+            try w.writeAll("┤");
+            continue;
+        };
+        try w.writeAll("│");
+        const card = if (at) |line| app.laneCard(line.lane, c, line.row) else null;
+        if (card) |it| {
+            const line = at.?;
+            try compactCard(app, w, pen, it, line.lane == view.lane and c == view.col and line.row == view.row, inner);
+        } else {
+            try pen.set(w, .{}, null);
+            try fitted(w, "", inner);
+        }
+        try pen.set(w, edge, null);
+        try w.writeAll("│");
+    }
+}
+
+/// A card on one row of `width`: its priority a mark at its left, where the pipeline has it and
+/// a question waiting as glyphs, then its number and title, the picked one lit.
+fn compactCard(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, picked: bool, width: usize) !void {
+    var buf: [160]u8 = undefined;
+    const eql = std.mem.eql;
+    if (width < 4) return fitted(w, "", width);
+    try pen.set(w, if (eql(u8, card.priority, "high")) ink(app, "amber", 4) else ink(app, "dim", 8), null);
+    try w.writeAll(if (eql(u8, card.priority, "med")) " " else "▌");
+    var used: usize = 1;
+    if (stageOf(app, card)) |stage| if (stage.glyph != 0) {
+        try pen.set(w, stage.style, null);
+        try put(w, stage.glyph);
+        try w.writeAll(" ");
+        used += 2;
+    };
+    if (card.ask != null) {
+        try pen.set(w, ink(app, "amber", 4), null);
+        try w.writeAll("? ");
+        used += 2;
+    }
+    const title = std.fmt.bufPrint(&buf, "#{d} {s}", .{ card.id, card.title }) catch card.title;
+    try pen.set(w, if (picked) chip(app) else if (card.blocked_by.len > 0) ink(app, "dim", 8) else .{}, null);
+    try fitted(w, title, width -| used);
+}
+
+/// Where the pipeline has a card: its glyph, none when it has none, the word for it, and the
+/// colour of both.
+fn stageOf(app: *const App, card: *const tickets.Card) ?struct { style: vt.Style, glyph: u21, word: []const u8 } {
+    const s = card.stage orelse return null;
+    const eql = std.mem.eql;
+    if (eql(u8, s, "failed")) return .{ .style = ink(app, "emberdim", 1), .glyph = '✗', .word = "sent back" };
+    if (eql(u8, s, "landed")) return .{ .style = ink(app, "amber", 4), .glyph = '◆', .word = "landed" };
+    if (eql(u8, s, "queued")) return .{ .style = ink(app, "violet", 5), .glyph = '»', .word = "queued" };
+    if (eql(u8, s, "verifying") or eql(u8, s, "reviewing")) return .{ .style = ink(app, "amber", 4), .glyph = glyph(app, .working), .word = s };
+    return .{ .style = ink(app, "dim", 8), .glyph = 0, .word = s };
+}
+
 /// A card's footer in `width` cells, a space either side: a question waiting on the human, then
 /// where the pipeline has it as a glyph in its colour, then the rest of what is so of it.
 fn cardFooter(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, with_repo: bool, width: usize) !void {
@@ -1217,18 +1333,8 @@ fn cardFooter(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card,
     var spun: [32]u8 = undefined;
     const dim = ink(app, "dim", 8);
     const amber = ink(app, "amber", 4);
-    const eql = std.mem.eql;
-    const stage: struct { vt.Style, []const u8 } = if (card.stage) |s|
-        (if (eql(u8, s, "failed"))
-            .{ ink(app, "emberdim", 1), "✗ sent back" }
-        else if (eql(u8, s, "landed"))
-            .{ amber, "◆ landed" }
-        else if (eql(u8, s, "queued"))
-            .{ ink(app, "violet", 5), "» queued" }
-        else if (eql(u8, s, "verifying") or eql(u8, s, "reviewing"))
-            .{ amber, std.fmt.bufPrint(&spun, "{u} {s}", .{ glyph(app, .working), s }) catch s }
-        else
-            .{ dim, s })
+    const stage: struct { vt.Style, []const u8 } = if (stageOf(app, card)) |s|
+        .{ s.style, if (s.glyph == 0) s.word else std.fmt.bufPrint(&spun, "{u} {s}", .{ s.glyph, s.word }) catch s.word }
     else
         .{ dim, "" };
     const parts = [_]struct { vt.Style, []const u8 }{
