@@ -13,8 +13,8 @@ depends = ["build"]
 run = "zsh test/e2e.zsh"
 
 [tasks.hooks]
-description = "babylon's inbox hook against a fake babylon"
-run = "zsh test/inbox-hook.zsh"
+description = "babylon's inbox hook against a fake babylon, and the tmux guard on Bash calls"
+run = ["zsh test/inbox-hook.zsh", "zsh test/tmux-guard.zsh"]
 
 [tasks.install]
 description = "after a landing: arena built"
