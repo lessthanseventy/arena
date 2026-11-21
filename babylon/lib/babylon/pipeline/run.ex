@@ -238,6 +238,8 @@ defmodule Babylon.Pipeline.Run do
 
   # one worktree a repo, kept between runs so its builds and deps stay warm
   defp checkout(repo, dir, branch) do
+    stop_gate(Path.basename(dir))
+
     cond do
       not File.dir?(repo) ->
         {:failed, "there is no checkout of it at #{repo}"}
@@ -462,6 +464,21 @@ defmodule Babylon.Pipeline.Run do
   end
 
   # the last window of that name goes once the new one is open, as the session ends with its last window
+  # a gate left running in the warm worktree, as by a babylon restarted under it, would race this
+  # one there: it goes first, with every process of its pane's session
+  defp stop_gate(name) do
+    case tmux(["list-panes", "-s", "-t", "=babylon", "-F", "\#{window_name} \#{pane_pid} \#{window_id}"]) do
+      {listed, 0} ->
+        for [^name, pid, window] <- Enum.map(String.split(listed, "\n", trim: true), &String.split(&1, " ")) do
+          System.cmd("pkill", ["-KILL", "-s", pid], stderr_to_stdout: true)
+          tmux(["kill-window", "-t", window])
+        end
+
+      _ ->
+        :ok
+    end
+  end
+
   defp open_window(name, opened) do
     opened = ["-n", name | opened]
 

@@ -67,6 +67,33 @@ defmodule Babylon.PipelineTest do
       for stage <- ~w(verifying reviewing landing), do: assert_received({:stage, ^stage})
     end
 
+    test "a gate still running in the warm worktree, as after a restart, is stopped before it is used",
+         %{tmp_dir: tmp, ticket: ticket} do
+      [_, socket] = Application.fetch_env!(:babylon, :pipeline)[:tmux]
+      pid = Path.join(tmp, "pid")
+
+      {_, 0} =
+        System.cmd("tmux", [
+          "-L",
+          socket,
+          "new-session",
+          "-d",
+          "-s",
+          "babylon",
+          "-n",
+          "app",
+          "sh",
+          "-c",
+          "sleep 300 & echo $! > #{pid}; wait"
+        ])
+
+      assert eventually(fn -> File.exists?(pid) and File.read!(pid) != "" end)
+      left = String.trim(File.read!(pid))
+
+      assert {:landed, _} = Run.run(ticket, fn _ -> :ok end)
+      assert {_, 1} = System.cmd("kill", ["-0", left], stderr_to_stdout: true)
+    end
+
     test "runs the gate in a window of the babylon tmux session, kept open to be read", %{ticket: ticket} do
       assert {:landed, _} = Run.run(ticket, fn _ -> :ok end)
       [_, socket] = Application.fetch_env!(:babylon, :pipeline)[:tmux]
