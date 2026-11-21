@@ -36,6 +36,16 @@ cleanup() {
   rm -rf $tmp
 }
 trap cleanup EXIT
+# zsh runs the EXIT trap on an exit, not on a signal that kills it
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+# a run killed outright cleaned nothing up: its servers go once its pid has
+for stale in ${TMUX_TMPDIR:-/tmp}/tmux-$UID/arena-e2e-(in|out)-<->(N); do
+  kill -0 ${stale##*-} 2>/dev/null && continue
+  tmux -L ${stale:t} kill-server 2>/dev/null
+  rm -f $stale
+done
 
 screen() { outer capture-pane -p -t o }
 # what the hook names this checkout's branch: babylon's gate runs on a detached one
