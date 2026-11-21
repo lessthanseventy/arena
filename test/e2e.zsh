@@ -764,23 +764,26 @@ one=$(inner display -p -t alpha:one '#{pane_id}')
 mkdir -p $tmp/run/babylon
 print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[],"stage":"failed",'\
 '"ask":{"id":5,"question":"Which colour?","options":["red","blue"]}},'\
-'{"id":8,"repo":"arena","title":"Board","kind":"ticket","status":"doing","priority":"high","claimed_by":"'$one'","blocked_by":[7]}],'\
+'{"id":8,"repo":"arena","title":"Board of the lanes","kind":"ticket","status":"doing","priority":"high","claimed_by":"'$one'",'\
+'"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[7]}],'\
 '"backlog":[{"id":12,"repo":"arena","title":"Someday","kind":"ticket","status":"backlog","priority":"med","blocked_by":[]}]}' \
   >$tmp/run/babylon/board.json
 check "babylon's board has a row atop the rail, with its counts" see '^│ ▤ board +1 todo  1 doing │'
 key M-b
 check "Alt+b opens it in place of the strip, its repos as tabs" see ' board   every   arena   tlon '
 check "and where its keys are" see '\? keys · esc close'
-check "the picked card's actions as chips on its column's bottom edge" see '╰─ go ─ answer ─╯'
+check "the picked card's actions as chips on its own bottom edge" see '╰ go ─ answer ╯'
+rowof() { screen | grep -n -m1 -- "$1" | cut -d: -f1 }
+check "the row under its footer" test $(( $(rowof '#7 Lights') + 3 )) -eq "$(rowof '╰ go ─ answer ╯')"
 key l k
-check "k off a lane's top goes up to the lane above with a card in that column" see '╰─ go ─ edit ───╯'
+check "k off a lane's top goes up to the lane above with a card in that column" see '╰ go ─ edit '
 key h j
-check "and j off its end down to the lane below with one" see '╰─ go ─ answer ─╯'
+check "and j off its end down to the lane below with one" see '╰ go ─ answer ╯'
 spot() { local l=$(screen | grep -m1 -- "$1"); local p=${l%%"$1"*}; print $(( ${#p} + 2 )) $(screen | grep -n -m1 -- "$1" | cut -d: -f1) }
 mouse 0 ${(z)$(spot '#8 Board')} M
-check "a click on a card in a lane picks it" see '╰─ go ─ edit ───╯'
+check "a click on a card in a lane picks it" see '╰ go ─ edit '
 mouse 0 ${(z)$(spot '#7 Lights')} M
-check "and on another, that one" see '╰─ go ─ answer ─╯'
+check "and on another, that one" see '╰ go ─ answer ╯'
 key '?'
 check "? shows the board's keys" see "the board's keys"
 key x
@@ -792,8 +795,13 @@ check "and the board's row is the one lit, not the session's" alone
 check "every repo with work a lane, its name at its left" see '│  arena +│'
 rule_at() { screen | grep -n -m1 '├─' | cut -d: -f1 }
 check "the lanes share the board's height, the rule between them well under their cards" test "$(rule_at)" -gt 6
-check "its cards a row each, a high one marked at its left" see '│▌#8 Board '
-check "sent back and asking as glyphs before its number and title" see ' tlon +│ ✗ \? #7 Lights │'
+check "its cards boxed, their number and title inside" see '│ #8 Board of +│'
+check "a long title running on to a second line" see '│ the lanes +│'
+check "and a doing one its holder's window under them, and how long it has held it" see '│ one · [0-9]+[sm] '
+claude alpha:one prompt
+check "with its Claude's mark while it works" see '│ [◐◓◑◒] one · [0-9]+[sm]'
+claude alpha:one end
+check "sent back and asking in its footer" see '│ \? asks · ✗… │'
 cardrow() { local l; for l in "${(@f)$(outer capture-pane -ep -t o)}"; [[ $l == *$1* ]] && print -r -- $l }
 picked_lit() { [[ $(cardrow '#7 Lights') == *$'\e[1m\e[38;5;4m│\e[0m #7 Lights'* ]] }
 high_edge() { [[ $(cardrow '#8 Board') == *$'\e[38;5;4m│\e[38;5;8m #8 Board'* ]] }
@@ -877,9 +885,9 @@ key r
 tablit() { [[ $(outer capture-pane -ep -t o) =~ $'((\e\\[[0-9;]*m)+) '$1' ' && $match[1] =~ '[[;]7[;m]' ]] }
 check "r narrows it to one repo, its tab lit" await tablit arena
 check "and to its cards" gone '#7 Lights'
-check "which are whole there: number and title" see '│ #8 Board +│'
+check "which are whole there: number and title" see '│ #8 Board of the +│'
 check "a high card's left edge amber" high_edge
-check "under them the Claude holding it" see '│ alpha:one · wa…'
+check "under them the window of the Claude holding it" see '│ one · [0-9]+[sm] · w'
 tabrow() { screen | grep -n -m1 ' board   every' | cut -d: -f1 }
 tabcol() { local l=$(screen | grep -m1 ' board   every'); local p=${l%%" $1 "*}; print $(( ${#p} + 2 )) }
 key '?'

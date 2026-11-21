@@ -1686,17 +1686,26 @@ pub const App = struct {
         return if (lane < n) repos[lane] else null;
     }
 
-    /// The rows lane `repo` takes: as many as its longest column shows, with a row for how many
-    /// more it has, one at least.
+    /// The rows lane `repo` takes: a card's for each card its longest column shows, with a row for
+    /// how many more it has, one at least.
     pub fn laneRows(app: *const App, repo: []const u8) usize {
         const b = if (app.board) |*b| b else return 1;
         var most: usize = 1;
         for (tickets.statuses) |status| {
             const total = b.column(status, repo, &.{});
             const shown = shownOf(status, total);
-            most = @max(most, shown + @intFromBool(total > shown));
+            most = @max(most, shown * card_rows + @intFromBool(total > shown));
         }
         return most;
+    }
+
+    /// The line of the lanes lane `lane` starts on.
+    pub fn laneStart(app: *const App, lane: usize) usize {
+        var heights: [max_repos + 1]usize = undefined;
+        const n = app.laneHeights(&heights);
+        var start: usize = 0;
+        for (heights[0..@min(lane, n)]) |rows| start += rows + 1;
+        return start;
     }
 
     /// The rows each lane is given: those it needs, and the lines under the last shared among
@@ -1741,13 +1750,10 @@ pub const App = struct {
     }
 
     /// The line of the lanes on the board's first row inside its border: scrolled to keep the
-    /// picked card in view.
+    /// picked card in view, down to its bottom edge.
     pub fn laneScroll(app: *const App) usize {
         const view = app.board_view orelse return 0;
-        var heights: [max_repos + 1]usize = undefined;
-        const n = app.laneHeights(&heights);
-        var pick: usize = view.row;
-        for (heights[0..@min(view.lane, n)]) |rows| pick += rows + 1;
+        const pick = app.laneStart(view.lane) + view.row * card_rows + card_rows - 1;
         const shown = app.view_h -| 3;
         return if (pick >= shown) pick - shown + 1 else 0;
     }
@@ -1845,8 +1851,9 @@ pub const App = struct {
         if (col >= app.boardCols()) return null;
         if (app.boardLanes()) {
             const at = app.laneLineAt(y - 2 + app.laneScroll()) orelse return null;
-            if (at.rule or app.laneCard(at.lane, col, at.row) == null) return null;
-            return .{ .lane = at.lane, .col = col, .row = at.row };
+            const k = at.row / card_rows;
+            if (at.rule or app.laneCard(at.lane, col, k) == null) return null;
+            return .{ .lane = at.lane, .col = col, .row = k };
         }
         const at = cardRowAt(y) orelse return null;
         if (at.k >= app.boardShown()) return null;
@@ -2177,8 +2184,8 @@ pub const App = struct {
     }
 
     /// The board's buttons: the repos as tabs and the gate and auto's switch beside them on its first row, a + on
-    /// the to-do column's top edge, and the picked card's actions on its bottom edge, or in the
-    /// every view its column's, each kept to the room it has.
+    /// the to-do column's top edge, and the picked card's actions on its bottom edge, each kept
+    /// to the room it has.
     pub fn boardButtons(app: *const App, out: []Button) []Button {
         const view = app.board_view orelse return out[0..0];
         const cw = app.boardColW();
@@ -2189,9 +2196,13 @@ pub const App = struct {
             n += 1;
         }
         const card = app.boardCard(view.col, view.row) orelse return out[0..n];
-        // a card on one row has no edge of its own: its actions go on its column's
-        const y = if (app.boardLanes()) app.view_h -| 1 else cardTop(view.row - app.boardFirst(view.col)) + @backingInt(CardRow.bottom);
-        if (!app.boardLanes() and y + 1 >= app.view_h) return out[0..n];
+        const y: u16 = if (app.boardLanes()) blk: {
+            const line = app.laneStart(view.lane) + view.row * card_rows + @backingInt(CardRow.bottom);
+            const scroll = app.laneScroll();
+            if (line < scroll) return out[0..n];
+            break :blk @intCast(@min(2 + line - scroll, app.view_h));
+        } else cardTop(view.row - app.boardFirst(view.col)) + @backingInt(CardRow.bottom);
+        if (y + 1 >= app.view_h) return out[0..n];
         var have: [8]CardAction = undefined;
         var x: u16 = app.boardColX(view.col) + 2;
         const edge = app.boardColX(view.col) + cw -| 2;
@@ -3459,12 +3470,14 @@ test "the every view's lanes: their lines, the pick stepping across them, and th
     app.board_view = .{};
     const eq = std.testing.expectEqual;
 
-    // arena two rows, tlon one, the cards of no repo one, a rule under each
+    // a card's rows for each card: arena two cards, tlon one, the cards of no repo one, a rule
+    // between lanes
+    const cr = App.card_rows;
     try eq(App.LaneLine{ .lane = 0, .row = 1, .rule = false }, app.laneLineAt(1).?);
-    try eq(App.LaneLine{ .lane = 0, .row = 2, .rule = true }, app.laneLineAt(2).?);
-    try eq(App.LaneLine{ .lane = 1, .row = 0, .rule = false }, app.laneLineAt(3).?);
-    try eq(App.LaneLine{ .lane = 2, .row = 0, .rule = false }, app.laneLineAt(5).?);
-    try eq(@as(?App.LaneLine, null), app.laneLineAt(7));
+    try eq(App.LaneLine{ .lane = 0, .row = 2 * cr, .rule = true }, app.laneLineAt(2 * cr).?);
+    try eq(App.LaneLine{ .lane = 1, .row = 0, .rule = false }, app.laneLineAt(2 * cr + 1).?);
+    try eq(App.LaneLine{ .lane = 2, .row = 0, .rule = false }, app.laneLineAt(3 * cr + 2).?);
+    try eq(@as(?App.LaneLine, null), app.laneLineAt(4 * cr + 2));
 
     const picked = struct {
         fn id(a: *const App) ?u32 {
@@ -3475,11 +3488,11 @@ test "the every view's lanes: their lines, the pick stepping across them, and th
     try eq(@as(?u32, 1), picked(&app));
     try app.boardKey("j");
     try eq(@as(?u32, 2), picked(&app));
-    try eq(@as(usize, 0), app.laneScroll());
+    // three lines shown, and the second card's bottom edge on the tenth
+    try eq(@as(usize, 2 * cr - 3), app.laneScroll());
     try app.boardKey("j");
     try eq(@as(?u32, 5), picked(&app));
-    // three lines shown and the pick on the sixth
-    try eq(@as(usize, 3), app.laneScroll());
+    try eq(@as(usize, 4 * cr + 2 - 3), app.laneScroll());
     try app.boardKey("j");
     try eq(@as(?u32, 5), picked(&app));
     try app.boardKey("k");

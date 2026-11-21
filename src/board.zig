@@ -20,6 +20,8 @@ pub const Card = struct {
     priority: []const u8 = "med",
     /// The tmux pane holding it, as `%12`.
     claimed_by: ?[]const u8 = null,
+    /// When it was claimed, as `2026-11-21T23:20:05Z`.
+    claimed_at: ?[]const u8 = null,
     branch: ?[]const u8 = null,
     /// The open tickets it waits on.
     blocked_by: []const u32 = &.{},
@@ -34,6 +36,26 @@ pub const Card = struct {
         const pane = card.claimed_by orelse return null;
         if (pane.len < 2 or pane[0] != '%') return null;
         return std.fmt.parseInt(u32, pane[1..], 10) catch null;
+    }
+
+    /// When it was claimed, in seconds since the epoch, if babylon says when.
+    pub fn claimedAt(card: *const Card) ?i64 {
+        const at = card.claimed_at orelse return null;
+        if (at.len < 19) return null;
+        const int = std.fmt.parseInt;
+        const year = int(i64, at[0..4], 10) catch return null;
+        const month = int(i64, at[5..7], 10) catch return null;
+        const day = int(i64, at[8..10], 10) catch return null;
+        const hour = int(i64, at[11..13], 10) catch return null;
+        const minute = int(i64, at[14..16], 10) catch return null;
+        const second = int(i64, at[17..19], 10) catch return null;
+        // days from the civil date, the year counted from March so a leap day ends it
+        const y = if (month <= 2) year - 1 else year;
+        const era = @divFloor(y, 400);
+        const of_era = y - era * 400;
+        const of_year = @divFloor(153 * (if (month > 2) month - 3 else month + 9) + 2, 5) + day - 1;
+        const days = era * 146097 + of_era * 365 + @divFloor(of_era, 4) - @divFloor(of_era, 100) + of_year - 719468;
+        return days * 86400 + hour * 3600 + minute * 60 + second;
     }
 };
 
@@ -140,6 +162,17 @@ test "the board parses babylon's file, fields it does not draw left out" {
     try std.testing.expectEqual(@as(?u32, 12), b.cards()[1].holder());
     try std.testing.expectEqual(@as(?u32, null), b.cards()[0].holder());
     try std.testing.expectEqualSlices(u32, &.{1}, b.cards()[2].blocked_by);
+}
+
+test "a claim's time is read as seconds since the epoch, and one unsaid or unread is none" {
+    var card: Card = .{ .id = 1, .title = "Board", .status = .doing };
+    try std.testing.expectEqual(@as(?i64, null), card.claimedAt());
+    card.claimed_at = "2026-11-21T23:20:05Z";
+    try std.testing.expectEqual(@as(?i64, 1795303205), card.claimedAt());
+    card.claimed_at = "2024-02-29T00:00:00Z";
+    try std.testing.expectEqual(@as(?i64, 1709164800), card.claimedAt());
+    card.claimed_at = "soon";
+    try std.testing.expectEqual(@as(?i64, null), card.claimedAt());
 }
 
 test "a column is narrowed to one repo, in board order, those waiting last" {
