@@ -110,9 +110,14 @@ const BoardFile = struct {
         const path = std.fmt.bufPrint(&buf, "{s}/detail-{d}.txt", .{ dir, id }) catch return;
         const text = std.Io.Dir.cwd().readFileAlloc(app.io, path, app.gpa, .limited(1 << 20)) catch return;
         defer app.gpa.free(text);
-        if (std.mem.eql(u8, text, app.detail.items)) return;
-        app.detail.clearRetainingCapacity();
-        app.detail.appendSlice(app.gpa, text) catch return;
+        var clean: std.ArrayList(u8) = .empty;
+        @import("app.zig").appendClean(&clean, app.gpa, text) catch {
+            clean.deinit(app.gpa);
+            return;
+        };
+        if (std.mem.eql(u8, clean.items, app.detail.items)) return clean.deinit(app.gpa);
+        app.detail.deinit(app.gpa);
+        app.detail = clean;
         app.dirty = true;
     }
 

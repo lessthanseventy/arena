@@ -1342,8 +1342,6 @@ pub const App = struct {
         return if (view.repo <= n) repos[view.repo - 1] else null;
     }
 
-    /// The cards of the board's column `col` as it is narrowed, as many as fit in `out`; the
-    /// count of them all.
     /// The rows the card's detail takes in its box.
     pub fn detailRows(app: *const App) usize {
         var lines = DetailLines.init(if (app.detail.items.len > 0) app.detail.items else "…", detailWidth(app.view_w).inner);
@@ -1352,6 +1350,14 @@ pub const App = struct {
         return n;
     }
 
+    /// Where babylon writes ticket `id`'s detail for the board to read.
+    pub fn detailPath(app: *const App, id: u32, buf: []u8) ?[]const u8 {
+        const dir = app.board_dir orelse return null;
+        return std.fmt.bufPrint(buf, "{s}/detail-{d}.txt", .{ dir, id }) catch null;
+    }
+
+    /// The cards of the board's column `col` as it is narrowed, as many as fit in `out`; the
+    /// count of them all.
     pub fn boardColumn(app: *const App, col: usize, out: []*const tickets.Card) usize {
         const b = if (app.board) |*b| b else return 0;
         return b.column(tickets.statuses[col], app.boardRepo(), out);
@@ -1425,15 +1431,18 @@ pub const App = struct {
         const is = anyKey;
         if (view.answering) return app.answerKey(key);
         if (view.detail != null) {
-            if (is(key, &.{ "\x1b", "q", " " })) view.detail = null;
+            if (is(key, &.{ "\x1b", "q", " " })) {
+                var buf: [std.fs.max_path_bytes]u8 = undefined;
+                if (app.detailPath(view.detail.?, &buf)) |path| std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
+                view.detail = null;
+            }
             if (is(key, &.{ "j", "\x1b[B", "\x1bOB" }) and view.detail_scroll + 1 < app.detailRows()) view.detail_scroll += 1;
             if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.detail_scroll -|= 1;
             return;
         }
-        if (is(key, &.{" "})) if (app.boardCard(view.col, view.row)) |card| if (app.board_dir) |dir| {
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        if (is(key, &.{" "})) if (app.boardCard(view.col, view.row)) |card| if (app.detailPath(card.id, &buf)) |path| {
             // tmux gives a control client run-shell's output outside its reply, so it comes by a file
-            var buf: [std.fs.max_path_bytes]u8 = undefined;
-            const path = std.fmt.bufPrint(&buf, "{s}/detail-{d}.txt", .{ dir, card.id }) catch return;
             std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
             view.detail = card.id;
             view.detail_scroll = 0;
@@ -2379,7 +2388,6 @@ pub const App = struct {
     }
 };
 
-/// A repo's name safe in a tmux command unquoted, as directory names are.
 /// The detail box's width, and the text's within its border.
 pub fn detailWidth(view_w: u16) struct { box: u16, inner: u16 } {
     const box = @min(view_w -| 4, 100);
@@ -2409,9 +2417,50 @@ pub const DetailLines = struct {
     }
 };
 
+/// `text` made safe to draw: escape sequences and control characters but newlines dropped, a tab
+/// a space, and a byte that is not UTF-8 a `?`.
+pub fn appendClean(out: *std.ArrayList(u8), gpa: Allocator, text: []const u8) !void {
+    var i: usize = 0;
+    while (i < text.len) {
+        const b = text[i];
+        if (b == 0x1b) {
+            i += 1;
+            if (i < text.len and text[i] == '[') {
+                i += 1;
+                while (i < text.len and (text[i] < 0x40 or text[i] > 0x7e)) i += 1;
+            } else if (i < text.len and text[i] == ']') {
+                while (i < text.len and text[i] != 0x07 and !(text[i] == 0x1b and i + 1 < text.len and text[i + 1] == '\\')) i += 1;
+                if (i < text.len and text[i] == 0x1b) i += 1;
+            }
+            i += 1;
+        } else if (b == '\t') {
+            try out.append(gpa, ' ');
+            i += 1;
+        } else if (b < 0x20 and b != '\n' or b == 0x7f) {
+            i += 1;
+        } else if (b < 0x80) {
+            try out.append(gpa, b);
+            i += 1;
+        } else {
+            const len = std.unicode.utf8ByteSequenceLength(b) catch 0;
+            const whole = len > 0 and i + len <= text.len and (if (std.unicode.utf8Decode(text[i .. i + len])) |_| true else |_| false);
+            if (whole) try out.appendSlice(gpa, text[i .. i + len]) else try out.append(gpa, '?');
+            i += if (whole) len else 1;
+        }
+    }
+}
+
+/// A repo's name safe in a tmux command unquoted, as directory names are.
 fn plainName(name: []const u8) bool {
     for (name) |c| if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_' and c != '.') return false;
     return name.len > 0;
+}
+
+test "text to draw loses its escapes and controls, and a byte not UTF-8 is a ?" {
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(std.testing.allocator);
+    try appendClean(&out, std.testing.allocator, "\x1b[31mred\x1b[0m\tok\x07\n\xff é \x1b]0;title\x07end\xe2\x82");
+    try std.testing.expectEqualStrings("red ok\n? é end??", out.items);
 }
 
 test "a card's detail runs its long lines on, cut at the box's width" {
