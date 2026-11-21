@@ -695,10 +695,10 @@ key M-b
 check "Alt+b opens it in place of the strip, its repos as tabs" see ' board   every   arena   tlon '
 check "and where its keys are" see '\? keys · esc close'
 check "the picked card's actions as chips on its column's bottom edge" see '╰─ go ─ answer ─╯'
-key k l
-check "k off a lane's top goes into the lane above, l along it" see '╰─ go ─ edit ───╯'
-key j h
-check "and j off its end into the lane below" see '╰─ go ─ answer ─╯'
+key l k
+check "k off a lane's top goes up to the lane above with a card in that column" see '╰─ go ─ edit ───╯'
+key h j
+check "and j off its end down to the lane below with one" see '╰─ go ─ answer ─╯'
 spot() { local l=$(screen | grep -m1 -- "$1"); local p=${l%%"$1"*}; print $(( ${#p} + 2 )) $(screen | grep -n -m1 -- "$1" | cut -d: -f1) }
 mouse 0 ${(z)$(spot '#8 Board')} M
 check "a click on a card in a lane picks it" see '╰─ go ─ edit ───╯'

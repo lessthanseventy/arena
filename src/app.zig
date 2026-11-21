@@ -1664,20 +1664,29 @@ pub const App = struct {
         const up = is(key, &.{ "k", "\x1b[A", "\x1bOA" });
         const down = is(key, &.{ "j", "\x1b[B", "\x1bOB" });
         if (app.boardLanes()) {
-            // off a lane's end the pick goes on into the next lane's same column
+            // off a lane's end the pick goes on to the next lane with a card in the same column
             var repos: [max_repos + 1][]const u8 = undefined;
             const lanes = app.laneRepos(&repos);
             if (up and view.row > 0) {
                 view.row -= 1;
-            } else if (up and view.lane > 0) {
-                view.lane -= 1;
-                view.row = std.math.maxInt(usize);
+            } else if (up) {
+                var k = view.lane;
+                while (k > 0) {
+                    k -= 1;
+                    if (app.laneCounts(k, view.col).shown == 0) continue;
+                    view.lane = k;
+                    view.row = std.math.maxInt(usize);
+                    break;
+                }
             }
             if (down and view.row + 1 < app.boardColumn(view.col, &.{})) {
                 view.row += 1;
-            } else if (down and view.lane + 1 < lanes) {
-                view.lane += 1;
-                view.row = 0;
+            } else if (down) {
+                for (view.lane + 1..lanes) |k| if (app.laneCounts(k, view.col).shown > 0) {
+                    view.lane = k;
+                    view.row = 0;
+                    break;
+                };
             }
         } else {
             if (up) view.row -|= 1;
@@ -2944,6 +2953,57 @@ test "text to draw loses its escapes and controls, and a byte not UTF-8 is a ?" 
     defer out.deinit(std.testing.allocator);
     try appendClean(&out, std.testing.allocator, "\x1b[31mred\x1b[0m\tok\x07\n\xff é \x1b]0;title\x07end\xe2\x82");
     try std.testing.expectEqualStrings("red ok\n? é end??", out.items);
+}
+
+test "the every view's lanes: their lines, the pick stepping across them, and the scroll" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 100;
+    app.view_w = 80;
+    app.view_h = 6;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"repo":"arena","title":"a","status":"todo"},
+        \\{"id":2,"repo":"arena","title":"b","status":"todo"},
+        \\{"id":3,"repo":"arena","title":"c","status":"doing"},
+        \\{"id":4,"repo":"tlon","title":"d","status":"doing"},
+        \\{"id":5,"title":"e","status":"todo"}
+        \\]}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{};
+    const eq = std.testing.expectEqual;
+
+    // arena two rows, tlon one, the cards of no repo one, a rule under each
+    try eq(App.LaneLine{ .lane = 0, .row = 1, .rule = false }, app.laneLineAt(1).?);
+    try eq(App.LaneLine{ .lane = 0, .row = 2, .rule = true }, app.laneLineAt(2).?);
+    try eq(App.LaneLine{ .lane = 1, .row = 0, .rule = false }, app.laneLineAt(3).?);
+    try eq(App.LaneLine{ .lane = 2, .row = 0, .rule = false }, app.laneLineAt(5).?);
+    try eq(@as(?App.LaneLine, null), app.laneLineAt(7));
+
+    const picked = struct {
+        fn id(a: *const App) ?u32 {
+            const view = a.board_view.?;
+            return if (a.boardCard(view.col, view.row)) |card| card.id else null;
+        }
+    }.id;
+    try eq(@as(?u32, 1), picked(&app));
+    try app.boardKey("j");
+    try eq(@as(?u32, 2), picked(&app));
+    try eq(@as(usize, 0), app.laneScroll());
+    try app.boardKey("j");
+    try eq(@as(?u32, 5), picked(&app));
+    // three lines shown and the pick on the sixth
+    try eq(@as(usize, 3), app.laneScroll());
+    try app.boardKey("j");
+    try eq(@as(?u32, 5), picked(&app));
+    try app.boardKey("k");
+    try eq(@as(?u32, 2), picked(&app));
+    try app.boardKey("l");
+    try eq(@as(?u32, 3), picked(&app));
+    try app.boardKey("j");
+    try eq(@as(?u32, 4), picked(&app));
+    try app.boardKey("j");
+    try eq(@as(?u32, 4), picked(&app));
 }
 
 test "a card's title wraps at a space onto its second row" {
