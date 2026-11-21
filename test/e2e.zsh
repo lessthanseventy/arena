@@ -739,7 +739,8 @@ key n
 check "n files one, from every repo with the repo asked" await last 'new'
 key M-b
 key r
-tablit() { [[ $(outer capture-pane -ep -t o) =~ $'\e\\[1;7m(\e\\[[0-9;]*m)* '$1' ' ]] }
+# how tmux spells the lit style varies with its terminal: any reverse-video SGR run just before the name
+tablit() { [[ $(outer capture-pane -ep -t o) =~ $'((\e\\[[0-9;]*m)+) '$1' ' && $match[1] =~ '[[;]7[;m]' ]] }
 check "r narrows it to one repo, its tab lit" tablit arena
 check "and to its cards" gone '#7 Lights'
 tabrow() { screen | grep -n -m1 ' board   every' | cut -d: -f1 }
