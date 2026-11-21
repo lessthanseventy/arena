@@ -7,6 +7,7 @@ config :babylon, Babylon.Repo, default_transaction_mode: :immediate
 
 config :babylon, :pipeline,
   gates: 2,
+  train: 4,
   gate: ~w(mise run check),
   gate_timeout: 1800,
   reviewer: [

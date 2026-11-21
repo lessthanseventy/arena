@@ -76,7 +76,7 @@ defmodule Babylon.Pipeline do
   @impl true
   def handle_continue(:next, running), do: {:noreply, start(running)}
 
-  # running: each run's task ref to its ticket's id and repo
+  # running: each run's task ref to its tickets' ids and their repo
   @impl true
   def handle_info(:next, running), do: {:noreply, start(running)}
 
@@ -86,23 +86,31 @@ defmodule Babylon.Pipeline do
   end
 
   def handle_info({:DOWN, ref, :process, _pid, reason}, running) when is_map_key(running, ref) do
-    settle(running, ref, {:failed, "babylon's pipeline crashed on it: #{inspect(reason)}"})
+    {ids, _repo} = running[ref]
+    crashed = {:failed, "babylon's pipeline crashed on it: #{inspect(reason)}"}
+    settle(running, ref, for(id <- ids, do: {id, crashed}))
   end
 
-  defp settle(running, ref, outcome) do
-    {{id, _repo}, running} = Map.pop!(running, ref)
-    %Ticket{stage: stage} = finish(id, outcome, Panes.claude())
-    Logger.info("pipeline: ##{id} #{stage}")
+  defp settle(running, ref, outcomes) do
+    {_, running} = Map.pop!(running, ref)
+    panes = Panes.claude()
+
+    for {id, outcome} <- outcomes do
+      %Ticket{stage: stage} = finish(id, outcome, panes)
+      Logger.info("pipeline: ##{id} #{stage}")
+    end
+
     {:noreply, start(running)}
   end
 
   defp start(running) do
-    gates = :babylon |> Application.fetch_env!(:pipeline) |> Keyword.fetch!(:gates)
+    gates = conf(:gates)
 
     case map_size(running) < gates and next_up(for {_, {_, repo}} <- running, do: repo) do
       %Ticket{} = ticket ->
-        task = Task.Supervisor.async_nolink(Babylon.Tasks, fn -> Run.run(ticket, &stage(ticket.id, &1)) end)
-        start(Map.put(running, task.ref, {ticket.id, ticket.repo}))
+        train = [ticket | riders(ticket, conf(:train) - 1)]
+        task = Task.Supervisor.async_nolink(Babylon.Tasks, fn -> ride(train) end)
+        start(Map.put(running, task.ref, {Enum.map(train, & &1.id), ticket.repo}))
 
       _ ->
         running
@@ -159,4 +167,21 @@ defmodule Babylon.Pipeline do
 
   defp tell(%Ticket{claimed_by: nil}, _text), do: :ok
   defp tell(%Ticket{claimed_by: pane}, text), do: Babylon.Inbox.send(pane, text)
+
+  defp ride([ticket]), do: [{ticket.id, Run.run(ticket, &stage(ticket.id, &1))}]
+  defp ride(train), do: Run.train(train, &stage/2)
+
+  # the next queued tickets of the same repo, to go through with `ticket` as one train
+  defp riders(_ticket, 0), do: []
+
+  defp riders(ticket, n) do
+    Repo.all(
+      from t in Ticket,
+        where: t.stage == "queued" and t.repo == ^ticket.repo and t.id != ^ticket.id,
+        order_by: [asc: t.submitted_at, asc: t.id],
+        limit: ^n
+    )
+  end
+
+  defp conf(key), do: :babylon |> Application.fetch_env!(:pipeline) |> Keyword.fetch!(key)
 end

@@ -26,6 +26,7 @@ defmodule Babylon.Pipeline.Run do
          :ok <- gate(dir, ticket),
          :ok <- stage.("reviewing"),
          {:ok, fixed} <- review(dir, ticket),
+         :ok <- regate(dir, ticket, fixed),
          :ok <- stage.("landing"),
          {:landed, sha} <- land(dir, ticket, 3) do
       if fixed == [], do: {:landed, sha}, else: {:landed, sha, Enum.join(fixed, "; ")}
@@ -55,6 +56,118 @@ defmodule Babylon.Pipeline.Run do
 
   defp answers({out, 0}, out, _why), do: :ok
   defp answers(_, _, why), do: {:skipped, why}
+
+  @doc """
+  Take several of one repo's `tickets` through as a train: each rebased onto main and reviewed on
+  its own, side by side; those the review passes stacked one on another and gated once, landing
+  together when it is green. A red train is split in half and each half gated, so the green ones
+  land and only the one at fault goes back. `stage` is called with a ticket's id and each stage.
+  """
+  @spec train([Ticket.t()], (pos_integer(), String.t() -> :ok)) :: [{pos_integer(), Babylon.Pipeline.outcome()}]
+  def train([first | _] = tickets, stage) do
+    repo = Path.join(conf(:projects), first.repo)
+
+    {ready, refused} =
+      tickets
+      |> Task.async_stream(&reviewed(repo, &1, stage), timeout: :infinity, max_concurrency: length(tickets))
+      |> Enum.map(fn {:ok, result} -> result end)
+      |> Enum.split_with(&match?({_, {:ok, _, _}}, &1))
+
+    for({ticket, failed} <- refused, do: {ticket.id, failed}) ++
+      together(repo, for({ticket, {:ok, range, fixed}} <- ready, do: {ticket, range, fixed}), stage)
+  end
+
+  # in a worktree of its own, removed after: reviews run side by side and need no warm builds
+  defp reviewed(repo, ticket, stage) do
+    dir = Path.join(conf(:work), "#{ticket.repo}.t#{ticket.id}")
+    stage.(ticket.id, "reviewing")
+
+    result =
+      try do
+        review_alone(repo, dir, ticket)
+      after
+        git(repo, ["worktree", "remove", "--force", dir])
+      end
+
+    {ticket, result}
+  end
+
+  defp review_alone(repo, dir, ticket) do
+    with :ok <- fresh(repo, dir, ticket.branch),
+         :ok <- onto_main(dir),
+         :ok <- ahead(dir),
+         {:ok, fixed} <- review(dir, ticket) do
+      {:ok, {rev(dir, "origin/main"), rev(dir, "HEAD")}, fixed}
+    end
+  end
+
+  defp fresh(repo, dir, branch) do
+    File.rm_rf!(dir)
+    git(repo, ["worktree", "prune"])
+    File.mkdir_p!(Path.dirname(dir))
+
+    case git(repo, ["rev-parse", "--verify", "--quiet", "refs/heads/#{branch}"]) do
+      {_, 0} -> ok(git(repo, ["worktree", "add", "-q", "--detach", dir, branch]), "could not check it out")
+      _ -> {:failed, "there is no branch #{branch} in #{repo}: commit the work on it first"}
+    end
+  end
+
+  defp rev(dir, ref), do: dir |> git(["rev-parse", ref]) |> elem(0) |> String.trim()
+
+  defp together(_repo, [], _stage), do: []
+
+  defp together(repo, [{first, _, _} | _] = cars, stage) do
+    dir = Path.join(conf(:work), first.repo)
+
+    case stack(repo, dir, cars) do
+      {[], refused} -> refused
+      {stacked, refused} -> refused ++ gated(repo, dir, stacked, stage)
+    end
+  end
+
+  # main's head with each car's reviewed commits picked on in turn; one that will not pick goes back
+  defp stack(repo, dir, [{first, _, _} | _] = cars) do
+    with :ok <- checkout(repo, dir, first.branch),
+         :ok <- ok(git(dir, ["fetch", "-q", "origin", "main"]), "could not fetch origin's main"),
+         :ok <- ok(git(dir, ["checkout", "-q", "--detach", "origin/main"]), "could not check out main") do
+      Enum.reduce(cars, {[], []}, &pick(dir, &1, &2))
+    else
+      failed -> {[], for({ticket, _, _} <- cars, do: {ticket.id, failed})}
+    end
+  end
+
+  defp pick(dir, {ticket, {base, tip}, _} = car, {stacked, refused}) do
+    case git(dir, ["cherry-pick", "#{base}..#{tip}"]) do
+      {_, 0} ->
+        {stacked ++ [car], refused}
+
+      _ ->
+        git(dir, ["cherry-pick", "--abort"])
+        ahead = Enum.map_join(stacked, ", ", fn {t, _, _} -> "##{t.id}" end)
+        {stacked, refused ++ [{ticket.id, {:failed, "it does not stack cleanly on main with #{ahead}"}}]}
+    end
+  end
+
+  defp gated(repo, dir, [{first, _, _} | _] = stacked, stage) do
+    for {ticket, _, _} <- stacked, do: stage.(ticket.id, "verifying")
+
+    case {gate(dir, first), stacked} do
+      {:ok, _} ->
+        for {ticket, _, _} <- stacked, do: stage.(ticket.id, "landing")
+        outcome = land(dir, first, 3)
+        for {ticket, _, fixed} <- stacked, do: {ticket.id, with_fixes(outcome, fixed)}
+
+      {failed, [_]} ->
+        [{first.id, failed}]
+
+      {_, _} ->
+        {front, back} = Enum.split(stacked, div(length(stacked), 2))
+        together(repo, front, stage) ++ together(repo, back, stage)
+    end
+  end
+
+  defp with_fixes({:landed, sha}, [_ | _] = fixed), do: {:landed, sha, Enum.join(fixed, "; ")}
+  defp with_fixes(outcome, _fixed), do: outcome
 
   # one worktree a repo, kept between runs so its builds and deps stay warm
   defp checkout(repo, dir, branch) do
@@ -245,7 +358,6 @@ defmodule Babylon.Pipeline.Run do
         message = "Review fixes for ##{ticket.id}\n\n" <> Enum.map_join(fixed, "\n", &("- " <> &1))
 
         with :ok <- ok(git(dir, ["commit", "-q", "-m", message]), "could not commit the review's fixes"),
-             :ok <- gate(dir, ticket),
              do: {:ok, fixed}
     end
   end
@@ -254,6 +366,10 @@ defmodule Babylon.Pipeline.Run do
     discard(dir)
     verdict
   end
+
+  # a lone ticket was gated before its review: the review's fixes are gated again
+  defp regate(_dir, _ticket, []), do: :ok
+  defp regate(dir, ticket, _fixed), do: gate(dir, ticket)
 
   defp discard(dir) do
     git(dir, ["reset", "-q", "--hard"])

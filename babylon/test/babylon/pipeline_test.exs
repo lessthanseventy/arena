@@ -251,6 +251,51 @@ defmodule Babylon.PipelineTest do
     end
   end
 
+  describe "a train" do
+    setup %{repo: repo, ticket: ticket} do
+      sh(
+        repo,
+        "git checkout -q -b t2-other main && echo four > d && git add d && git commit -qm four && git checkout -q main"
+      )
+
+      %{train: [ticket, %{ticket | id: 2, branch: "t2-other", title: "Other"}]}
+    end
+
+    test "lands every ticket on one gate, each reviewed apart", %{tmp_dir: tmp, origin: origin, train: train} do
+      runs = Path.join(tmp, "runs")
+      gated(tmp, ["sh", "-c", "echo run >> #{runs}"], @approve)
+      me = self()
+
+      assert [{1, {:landed, sha}}, {2, {:landed, sha}}] =
+               train |> Run.train(fn id, stage -> send(me, {id, stage}) end) |> Enum.sort()
+
+      assert sh(origin, "git log --format=%s main") == "four\ntwo\none"
+      assert File.read!(runs) == "run\n"
+      assert_received {1, "reviewing"}
+      assert_received {2, "landing"}
+    end
+
+    test "a red train is split: the green half lands, the one at fault goes back",
+         %{tmp_dir: tmp, origin: origin, train: train} do
+      gated(tmp, ["sh", "-c", "test ! -e d"], @approve)
+
+      assert [{1, {:landed, _}}, {2, {:failed, "the gate is red" <> _}}] =
+               train |> Run.train(fn _, _ -> :ok end) |> Enum.sort()
+
+      assert sh(origin, "git log --format=%s main") == "two\none"
+    end
+
+    test "one the review refuses drops out, the rest land", %{tmp_dir: tmp, origin: origin, train: train} do
+      refuse = ["sh", "-c", "if grep -q Other; then echo 'VERDICT: request_changes'; else echo 'VERDICT: approve'; fi"]
+      gated(tmp, ["sh", "-c", "exit 0"], refuse)
+
+      assert [{1, {:landed, _}}, {2, {:failed, "the review asked for changes" <> _}}] =
+               train |> Run.train(fn _, _ -> :ok end) |> Enum.sort()
+
+      assert sh(origin, "git log --format=%s main") == "two\none"
+    end
+  end
+
   describe "install" do
     test "a checkout on main and clean is fast-forwarded and its install run", %{repo: repo, ticket: ticket} do
       File.write!(Path.join(repo, "mise.toml"), "[tasks.install]\nrun = 'echo installed'\n")

@@ -47,8 +47,15 @@ reviews the diff and ends on a verdict: `approve`; `fix`, having made small mech
 itself in the gate's worktree (no edits outside it), which are committed on the branch and gated
 again, at most 60 changed lines, each named on a `FIXED:` line; or `request_changes`, its edits
 dropped. Then it is pushed as main's new head, which only a fast-forward passes; main having
-moved meanwhile means another rebase and gate first. How it went goes to the holding session's
-inbox: landed, the ticket is `done`;
+moved meanwhile means another rebase and gate first.
+
+With more than one ticket of a repo queued, up to four (`train`) go through as a merge train:
+each is rebased and reviewed in a worktree of its own, side by side; those the review passes are
+stacked one on another in the warm worktree and gated once, and on green main is fast-forwarded
+to the top, landing them all. A red train is split in half and each half gated, so the green ones
+land and only the one at fault goes back; one that will not stack goes back alone.
+
+How it went goes to the holding session's inbox: landed, the ticket is `done`;
 sent back, it is `doing` again with why in `stage_note`, or `todo` labelled `sent back` when that
 session is gone. There are no pull requests: the gate and the review are babylon's. Landed, the
 repo's own checkout, when it is on main with nothing changed, is fast-forwarded and its `install`
