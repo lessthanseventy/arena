@@ -712,7 +712,13 @@ key j j j j j
 check "and j scrolls it no further than its last line" see '│ the whole of it '
 key Escape
 check "and Escape puts it away" gone 'the whole of it'
-check "leaving no file of it behind" test ! -e $tmp/run/babylon/detail-7.txt
+nofile() { [[ ! -e $tmp/run/babylon/detail-7.txt ]] }
+check "leaving no file of it behind" await nofile
+key ' '
+check "shown again" see '│ the whole of it '
+mouse 0 3 12 M
+check "and closed with the board by a click on the rail, no file either" await nofile
+key M-b
 last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
 key p
 check "p raises the picked card's priority through babylon" await last 'update 7 --priority high'

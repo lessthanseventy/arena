@@ -366,6 +366,8 @@ pub const App = struct {
     detail: std.ArrayList(u8) = .empty,
     /// Where babylon keeps its board file, and where a card's detail is written to be read.
     board_dir: ?[]const u8 = null,
+    /// The tickets whose detail babylon was asked to write and arena has yet to take in.
+    detail_asked: std.ArrayList(u32) = .empty,
     want_list: bool = true,
     listing: bool = false,
     listed: bool = false,
@@ -424,6 +426,7 @@ pub const App = struct {
         app.pending.deinit(app.gpa);
         app.block.deinit(app.gpa);
         app.detail.deinit(app.gpa);
+        app.detail_asked.deinit(app.gpa);
         app.guard.deinit(app.gpa);
         app.out.deinit(app.gpa);
         app.plain.deinit(app.gpa);
@@ -1431,11 +1434,7 @@ pub const App = struct {
         const is = anyKey;
         if (view.answering) return app.answerKey(key);
         if (view.detail != null) {
-            if (is(key, &.{ "\x1b", "q", " " })) {
-                var buf: [std.fs.max_path_bytes]u8 = undefined;
-                if (app.detailPath(view.detail.?, &buf)) |path| std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
-                view.detail = null;
-            }
+            if (is(key, &.{ "\x1b", "q", " " })) view.detail = null;
             if (is(key, &.{ "j", "\x1b[B", "\x1bOB" }) and view.detail_scroll + 1 < app.detailRows()) view.detail_scroll += 1;
             if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.detail_scroll -|= 1;
             return;
@@ -1444,6 +1443,8 @@ pub const App = struct {
         if (is(key, &.{" "})) if (app.boardCard(view.col, view.row)) |card| if (app.detailPath(card.id, &buf)) |path| {
             // tmux gives a control client run-shell's output outside its reply, so it comes by a file
             std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
+            if (app.detail_asked.items.len == 16) _ = app.detail_asked.orderedRemove(0);
+            try app.detail_asked.append(app.gpa, card.id);
             view.detail = card.id;
             view.detail_scroll = 0;
             app.detail.clearRetainingCapacity();

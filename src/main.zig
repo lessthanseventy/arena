@@ -102,12 +102,24 @@ const BoardFile = struct {
     }
 
     /// The detail of the card the board shows, once babylon has written it beside the board.
+    /// Each detail asked for is taken in, the open card's read: none is left beside the board,
+    /// whichever way its box closed, one written after it closed too.
     fn checkDetail(file: *BoardFile, app: *App) void {
-        const view = app.board_view orelse return;
-        const id = view.detail orelse return;
-        const dir = std.fs.path.dirname(file.path orelse return) orelse return;
-        var buf: [std.fs.max_path_bytes]u8 = undefined;
-        const path = std.fmt.bufPrint(&buf, "{s}/detail-{d}.txt", .{ dir, id }) catch return;
+        _ = file;
+        const open = if (app.board_view) |view| view.detail else null;
+        var i: usize = 0;
+        while (i < app.detail_asked.items.len) {
+            const id = app.detail_asked.items[i];
+            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            const path = app.detailPath(id, &buf) orelse return;
+            if (id == open) readDetail(app, path);
+            if (std.Io.Dir.cwd().deleteFile(app.io, path)) {
+                _ = app.detail_asked.orderedRemove(i);
+            } else |_| i += 1;
+        }
+    }
+
+    fn readDetail(app: *App, path: []const u8) void {
         const text = std.Io.Dir.cwd().readFileAlloc(app.io, path, app.gpa, .limited(1 << 20)) catch return;
         defer app.gpa.free(text);
         var clean: std.ArrayList(u8) = .empty;
@@ -122,6 +134,10 @@ const BoardFile = struct {
     }
 
     fn deinit(file: *BoardFile, app: *App) void {
+        for (app.detail_asked.items) |id| {
+            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            if (app.detailPath(id, &buf)) |path| std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
+        }
         if (file.text) |was| app.gpa.free(was);
         if (file.path) |path| app.gpa.free(path);
     }
