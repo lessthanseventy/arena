@@ -191,6 +191,28 @@ defmodule Babylon.MCP.Tools.SubmitTicket do
   end
 end
 
+defmodule Babylon.MCP.Tools.BumpTicket do
+  @moduledoc """
+  Put a queued ticket ahead of every other in babylon's pipeline, so it is the next to be
+  verified, reviewed and landed: for prioritising what lands first.
+  """
+  use Babylon.MCP.Tool
+
+  alias Babylon.Pipeline
+
+  schema do
+    field :id, :integer, required: true
+  end
+
+  @impl true
+  def execute(%{id: id}, frame) do
+    case Pipeline.bump(id) do
+      {:ok, ticket} -> ok(frame, render(ticket))
+      {:error, reason} -> fail(frame, reason)
+    end
+  end
+end
+
 defmodule Babylon.MCP.Tools.AskHuman do
   @moduledoc """
   Ask your human a decision about a ticket, as a question and two to nine options. It shows on

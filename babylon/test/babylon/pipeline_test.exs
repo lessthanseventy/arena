@@ -248,6 +248,22 @@ defmodule Babylon.PipelineTest do
       assert Pipeline.next_up(["tlon", "menard"]) == nil
     end
 
+    test "a queued ticket bumped runs before those queued ahead of it", %{held: held} do
+      {:ok, other} = Babylon.Tickets.file(%{title: "Other", repo: "app"})
+
+      other
+      |> Ecto.Changeset.change(status: "review", stage: "queued", submitted_at: ~U[2026-01-01 00:00:00Z])
+      |> Repo.update!()
+
+      assert {:error, "ticket #" <> _} = Pipeline.bump(held.id)
+
+      held
+      |> Ecto.Changeset.change(status: "review", stage: "queued", submitted_at: ~U[2026-01-02 00:00:00Z])
+      |> Repo.update!()
+
+      assert {:ok, %Ticket{submitted_at: ~U[2025-12-31 23:59:59Z]}} = Pipeline.bump(held.id)
+    end
+
     test "sent back, its session keeps it, or it goes back to the list", %{held: held} do
       assert %Ticket{status: "doing", stage: "failed", stage_note: "red", claimed_by: @nobody} =
                Pipeline.finish(held.id, {:failed, "red"}, MapSet.new([@nobody]))

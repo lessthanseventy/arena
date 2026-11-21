@@ -32,6 +32,7 @@ defmodule Babylon.MCP.Server do
   component(Babylon.MCP.Tools.ClaimTicket, name: "claim_ticket")
   component(Babylon.MCP.Tools.ReleaseTicket, name: "release_ticket")
   component(Babylon.MCP.Tools.SubmitTicket, name: "submit_ticket")
+  component(Babylon.MCP.Tools.BumpTicket, name: "bump_ticket")
   component(Babylon.MCP.Tools.AskHuman, name: "ask_human")
   component(Babylon.MCP.Tools.AnswerAsk, name: "answer_ask")
   component(Babylon.MCP.Tools.Inbox, name: "inbox")

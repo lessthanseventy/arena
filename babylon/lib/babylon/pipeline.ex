@@ -36,6 +36,23 @@ defmodule Babylon.Pipeline do
     end
   end
 
+  @doc "Make queued ticket `id` the next to run, ahead of every other queued ticket."
+  @spec bump(pos_integer()) :: {:ok, Ticket.t()} | {:error, String.t()}
+  def bump(id) do
+    case Repo.get(Ticket, id) do
+      %Ticket{stage: "queued"} = ticket ->
+        first = Repo.one(from t in Ticket, where: t.stage == "queued", select: min(t.submitted_at))
+        ahead = DateTime.add(first, -1, :second)
+        {:ok, ticket |> Ecto.Changeset.change(submitted_at: ahead) |> Repo.update!()}
+
+      %Ticket{} ->
+        {:error, "ticket ##{id} is not queued"}
+
+      nil ->
+        {:error, "no ticket ##{id}"}
+    end
+  end
+
   @doc """
   Settle ticket `id` on its `outcome`, and tell the session holding it. `panes` is the set running
   Claude (`Babylon.Panes.claude/0`): a ticket sent back to a pane not among them goes to `todo`.
