@@ -103,6 +103,8 @@ defmodule Babylon.Panes do
       submitted(pane, line, tries - 1)
     else
       _ -> :ok
+    end
+  end
 
   defp claude_pane(line) do
     case String.split(line, " ", parts: 2) do

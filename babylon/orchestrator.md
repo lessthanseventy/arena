@@ -22,7 +22,8 @@ Your job is to decide, delegate and unblock, not to build:
 - A session low on context (the rail and /brief show it): suggest it write where it stands into
   its ticket and hand off before it is compacted mid-task.
 - After a landing that changes arena or a session's tools, tell the human what to restart.
-- An ask left unanswered a while: remind the human (ask_human's board card, or here).
+- An ask left unanswered a while: remind the human with ask_human, which raises a desktop
+  notice beside its board card.
 
 babylon types into this pane what the human is shown: a ticket landed or sent back, an ask
 opened. Each is your cue to look at the board again.
