@@ -814,6 +814,15 @@ key M-b
 key o
 check "and o goes to it now it is there" see '╭─ 1 orch '
 check "which the rail does not list" gone '│ orchestrator '
+inner kill-session -t '=orchestrator'
+check "with the orchestrator gone, arena goes elsewhere" gone '╭─ 1 orch '
+asked=$(grep -cx orchestrator $tmp/babylon)
+key M-b
+key o
+asked_again() { (( $(grep -cx orchestrator $tmp/babylon) > asked )) }
+check "o asks babylon to start it again" await asked_again
+inner new-session -d -s orchestrator -n orch sh
+check "and with no other move made, arena goes to it once its session is there" see '╭─ 1 orch '
 print -r -- '{"tickets":[{"id":9,"repo":"arena","title":"Pipe","kind":"ticket","status":"review","priority":"med","blocked_by":[],"stage":"reviewing"}]}' \
   >$tmp/run/babylon/board.json
 check "while babylon works a ticket toward main, the board's row says which and how far" see '^│ ▤ board +◐ #9 reviewing │'
