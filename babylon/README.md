@@ -98,7 +98,7 @@ A repo lands through babylon once it has:
 - **Optionally an `install` task,** run after a landing in the main checkout (when it is on main
   with nothing changed), so what is installed is what landed.
 
-A gate's whole output is in `~/.cache/babylon/logs/<repo>-t<id>.log`, and runs in a window of the
+A gate's whole output is in `~/.cache/babylon/logs/<repo>-t<id>-<unix time>.log`, one per run (`babylon detail` shows the newest's last lines), and runs in a window of the
 `babylon` tmux session, to be watched as it goes. A send-back saying the gate is red means the
 ticket's change failed it; one where the gate never got to the change (deps missing, a tool not
 installed) is the repo's setup to fix, not the ticket's.
