@@ -40,7 +40,10 @@ pub const Card = struct {
 /// babylon's auto mode: while on, it starts a Claude on each free todo card until `cap` are working.
 pub const Auto = struct { on: bool = false, cap: u32 = 0, working: u32 = 0 };
 
-const File = struct { tickets: []const Card, backlog: []const Card = &.{}, auto: ?Auto = null };
+/// babylon's orchestrator: `running` while its session is there, `on` while babylon keeps it so.
+pub const Orchestrator = struct { on: bool = true, running: bool = true };
+
+const File = struct { tickets: []const Card, backlog: []const Card = &.{}, auto: ?Auto = null, orchestrator: ?Orchestrator = null };
 
 pub const Board = struct {
     parsed: std.json.Parsed(File),
@@ -61,6 +64,11 @@ pub const Board = struct {
     pub fn auto(b: *const Board) ?Auto {
         const state = b.parsed.value.auto orelse return null;
         return if (state.on) state else null;
+    }
+
+    /// What babylon says of its orchestrator, when its file does.
+    pub fn orchestrator(b: *const Board) ?Orchestrator {
+        return b.parsed.value.orchestrator;
     }
 
     /// The cards waiting to be put on the board, by repo then board order.
@@ -177,6 +185,18 @@ test "auto mode is read while on, and a file without it or with it off has none"
     var old = try Board.parse(gpa, sample);
     defer old.deinit();
     try std.testing.expectEqual(@as(?Auto, null), old.auto());
+}
+
+test "the orchestrator's state is read as babylon gives it, and a file without it has none" {
+    const gpa = std.testing.allocator;
+    var kept_off = try Board.parse(gpa,
+        \\{"tickets":[],"orchestrator":{"on":false,"running":false}}
+    );
+    defer kept_off.deinit();
+    try std.testing.expectEqual(@as(?Orchestrator, .{ .on = false, .running = false }), kept_off.orchestrator());
+    var old = try Board.parse(gpa, sample);
+    defer old.deinit();
+    try std.testing.expectEqual(@as(?Orchestrator, null), old.orchestrator());
 }
 
 test "the cards the pipeline is working on are those verifying, reviewing or landing" {

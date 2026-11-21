@@ -2001,6 +2001,11 @@ pub const App = struct {
         try app.send(.ignore, "run-shell -b \"babylon orchestrator\"", .{});
     }
 
+    /// What babylon's file says of its orchestrator, when it does.
+    pub fn orchestrator(app: *const App) ?tickets.Orchestrator {
+        return if (app.board) |*b| b.orchestrator() else null;
+    }
+
     /// babylon's auto mode, while it is on.
     pub fn auto(app: *const App) ?tickets.Auto {
         return if (app.board) |*b| b.auto() else null;
@@ -2117,7 +2122,7 @@ pub const App = struct {
             },
             .backlog => " backlog ",
             .gate => " gate ",
-            .orchestrator => " orch ",
+            .orchestrator => if (app.orchestrator()) |state| (if (state.running or state.on) " orch " else " orch off ") else " orch ",
             .auto => if (app.auto()) |state| std.fmt.bufPrint(buf, " auto {d}/{d} ", .{ state.working, state.cap }) catch " auto " else " auto ",
             .new => " + ",
             .card => |action| std.fmt.bufPrint(buf, " {s} ", .{action.label()}) catch " ? ",

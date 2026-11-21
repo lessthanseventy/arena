@@ -841,6 +841,16 @@ check "off, the state is gone" gone 'auto [0-9]'
 autocol() { local l=$(screen | grep -m1 ' board   every'); local p=${l%% auto *}; print $(( ${#p} + 2 )) }
 mouse 0 $(autocol) $(screen | grep -n -m1 ' board   every' | cut -d: -f1) M
 check "a click on the switch turns it on as A does" await last 'auto on'
+# the colour the orchestrator's button, with $2 after its name, is drawn in
+orch_ink() { [[ $(outer capture-pane -ep -t o) =~ $'((\e\\[[0-9;]*m)+) orch'$2 && $match[1] == *"38;5;$1m" ]] }
+check "with nothing of the orchestrator in babylon's file, its button is drawn as it was" await orch_ink 5 ' '
+print -r -- "${$(<$tmp/board.noauto)%\}}"',"orchestrator":{"on":true,"running":false}}' >$tmp/run/babylon/board.json
+check "an orchestrator that is not running has its button unlit" await orch_ink 8 ' '
+print -r -- "${$(<$tmp/board.noauto)%\}}"',"orchestrator":{"on":false,"running":false}}' >$tmp/run/babylon/board.json
+check "and one babylon keeps off says so" await orch_ink 8 ' off '
+print -r -- "${$(<$tmp/board.noauto)%\}}"',"orchestrator":{"on":true,"running":true}}' >$tmp/run/babylon/board.json
+check "running, it is lit" await orch_ink 5 ' '
+cp $tmp/board.noauto $tmp/run/babylon/board.json
 key J
 check "J moves it down its column, among its lane's" await last 'move 7 down --repo tlon'
 key '>'

@@ -1114,7 +1114,8 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         const style: vt.Style = switch (button.what) {
             .repo => |i| if (i == view.repo and !view.backlog) chip(app) else if (app.tabLive(i)) .{} else ink(app, "dim", 8),
             .backlog => if (view.backlog) chip(app) else ink(app, "dim", 8),
-            .gate, .orchestrator => ink(app, "violet", 5),
+            .gate => ink(app, "violet", 5),
+            .orchestrator => if (app.orchestrator()) |state| (if (state.running) ink(app, "violet", 5) else ink(app, "dim", 8)) else ink(app, "violet", 5),
             .auto => if (app.auto() != null) autoOn(app) else ink(app, "dim", 8),
             .new => heading(app),
             .card => blk: {
