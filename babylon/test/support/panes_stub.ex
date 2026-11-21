@@ -8,6 +8,10 @@ defmodule Babylon.PanesStub do
   @spec state(String.t()) :: String.t()
   def state(pane), do: if(pane in Application.get_env(:babylon, :waiting_panes, []), do: "waiting", else: "working")
 
+  @doc "The pane named for `session` in `:claude_in`."
+  @spec claude_in(String.t()) :: String.t() | nil
+  def claude_in(session), do: Application.get_env(:babylon, :claude_in, %{})[session]
+
   @doc "Type `text` into a live pane."
   @spec tell(String.t(), String.t()) :: :ok | {:error, String.t()}
   def tell(pane, text) do

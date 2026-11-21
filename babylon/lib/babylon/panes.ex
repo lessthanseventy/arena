@@ -35,6 +35,19 @@ defmodule Babylon.Panes do
     ErlangError -> ""
   end
 
+  @doc "The pane running Claude in tmux session `session`, or nil when there is none."
+  @spec claude_in(String.t()) :: String.t() | nil
+  def claude_in(session) do
+    case System.cmd("tmux", ["list-panes", "-t", "=" <> session, "-F", "\#{pane_id} \#{pane_current_command}"],
+           stderr_to_stdout: true
+         ) do
+      {out, 0} -> Enum.find_value(String.split(out, "\n", trim: true), &claude_pane/1)
+      _ -> nil
+    end
+  rescue
+    ErlangError -> nil
+  end
+
   @doc """
   Type `text` into `pane` as one line and submit it, as if its human had: an idle Claude takes it
   as its next turn, a busy one queues it.
@@ -90,6 +103,11 @@ defmodule Babylon.Panes do
       submitted(pane, line, tries - 1)
     else
       _ -> :ok
+
+  defp claude_pane(line) do
+    case String.split(line, " ", parts: 2) do
+      [id, "claude"] -> id
+      _ -> nil
     end
   end
 end
