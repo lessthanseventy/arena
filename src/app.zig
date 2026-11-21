@@ -1705,7 +1705,9 @@ pub const App = struct {
         const ask = card.ask orelse return;
         const choice = key[0] - '0';
         if (choice > ask.options.len) return;
-        try app.send(.ignore, "run-shell -b \"babylon answer {d} {d}\"", .{ ask.id, choice });
+        // babylon's refusal (the session that asked is gone) is said, or the ask stays with no word why
+        try app.send(.ignore, "run-shell -b \"out=\\$(babylon answer {d} {d} 2>&1) || " ++
+            "{{ command -v notify-send >/dev/null && notify-send -a arena -- \\\"\\$out\\\"; }}\"", .{ ask.id, choice });
         view.answering = false;
     }
 
