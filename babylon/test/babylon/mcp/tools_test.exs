@@ -6,6 +6,20 @@ defmodule Babylon.MCP.ToolsTest do
     assert instructions =~ "claim_ticket"
   end
 
+  test "a ticket filed through the tool into another repo is told there, and a refused one is not" do
+    Application.put_env(:babylon, :claude_repos, %{"%1" => "tlon", "%2" => "ficciones"})
+    Application.put_env(:babylon, :claude_in, %{"orchestrator" => "%9"})
+    on_exit(fn -> for k <- [:claude_repos, :claude_in], do: Application.delete_env(:babylon, k) end)
+
+    assert {:error, _} = call("file_ticket", %{title: "", repo: "ficciones"}, "%1")
+    assert Babylon.Repo.all(Babylon.Message) == []
+
+    assert {:ok, %{"id" => id}} = call("file_ticket", %{title: "Gate needs Godot", repo: "ficciones"}, "%1")
+    told = Babylon.Repo.all(Babylon.Message)
+    assert told |> Enum.map(& &1.pane) |> Enum.sort() == ["%2", "%9"]
+    assert Enum.all?(told, &(&1.text =~ "##{id} was filed for ficciones"))
+  end
+
   test "file, list, get, update and link, through the HTTP plug" do
     assert {:ok, %{"id" => blocker, "status" => "todo", "repo" => "arena"}} =
              call("file_ticket", %{title: "blocker", repo: "arena"})
