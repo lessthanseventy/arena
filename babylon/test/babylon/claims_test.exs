@@ -21,6 +21,20 @@ defmodule Babylon.ClaimsTest do
     assert {:ok, ^claimed, :held} = Claims.claim(ticket.id, "%1", panes(["%1"]))
   end
 
+  test "a title cut at a space names the session without the space, as Claude keeps it" do
+    Application.put_env(:babylon, :told_to, self())
+    Application.put_env(:babylon, :live_panes, ["%1"])
+    Application.delete_env(:babylon, :named)
+    on_exit(fn -> for key <- [:told_to, :live_panes, :named], do: Application.delete_env(:babylon, key) end)
+
+    ticket = file!(title: "babylon started a ticket's gate twice")
+    {:ok, _, :new} = Claims.claim(ticket.id, "%1", panes(["%1"]))
+    assert Claims.name_session("%1") == :ok
+    assert_received {:told, "%1", "/rename #" <> name}
+    assert name == "#{ticket.id} babylon started a ticket's gate"
+    assert Claims.name_sessions() == []
+  end
+
   test "a ticket filed into another repo is told to the orchestrator and to a pane in that repo" do
     Application.put_env(:babylon, :claude_in, %{"orchestrator" => "%9"})
     on_exit(fn -> Application.delete_env(:babylon, :claude_in) end)

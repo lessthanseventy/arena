@@ -128,7 +128,7 @@ defmodule Babylon.Claims do
 
     case held do
       [] -> nil
-      [last | rest] -> "##{last.id} #{String.slice(last.title, 0, 32)}#{more(rest)}"
+      [last | rest] -> "##{last.id} #{last.title |> String.slice(0, 32) |> String.trim_trailing()}#{more(rest)}"
     end
   end
 
