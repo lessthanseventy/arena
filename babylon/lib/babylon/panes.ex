@@ -45,11 +45,51 @@ defmodule Babylon.Panes do
 
     with {_, 0} <- System.cmd("tmux", ["send-keys", "-t", pane, "-l", line], stderr_to_stdout: true),
          {_, 0} <- System.cmd("tmux", ["send-keys", "-t", pane, "Enter"], stderr_to_stdout: true) do
-      :ok
+      submitted(pane, line, 4)
     else
       {out, _} -> {:error, "tmux would not type into #{pane}: #{String.trim(out)}"}
     end
   rescue
     ErlangError -> {:error, "there is no tmux to type into #{pane}"}
+  end
+
+  @doc """
+  Whether `line` is still in the input box of the Claude drawn in `screen`: its last `❯` prompt
+  line and those under it, up to the rule closing the box.
+  """
+  @spec pending?(String.t(), String.t()) :: boolean()
+  def pending?(screen, line) do
+    lines = String.split(screen, "\n")
+    prompts = for {l, i} <- Enum.with_index(lines), String.starts_with?(String.trim_leading(l), "❯"), do: i
+
+    case List.last(prompts) do
+      nil ->
+        false
+
+      at ->
+        box =
+          lines
+          |> Enum.drop(at)
+          |> Enum.take_while(&(not String.starts_with?(String.trim_leading(&1), "─")))
+          |> Enum.map_join(" ", &String.trim/1)
+
+        String.contains?(box, String.slice(line, 0, 30))
+    end
+  end
+
+  # a burst of keys can be taken as a paste, its Enter a newline in the box: Enter again until the
+  # text has left it
+  defp submitted(_pane, _line, 0), do: :ok
+
+  defp submitted(pane, line, tries) do
+    Process.sleep(400)
+
+    with {screen, 0} <- System.cmd("tmux", ["capture-pane", "-p", "-t", pane], stderr_to_stdout: true),
+         true <- pending?(screen, line) do
+      System.cmd("tmux", ["send-keys", "-t", pane, "Enter"], stderr_to_stdout: true)
+      submitted(pane, line, tries - 1)
+    else
+      _ -> :ok
+    end
   end
 end
