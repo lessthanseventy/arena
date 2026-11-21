@@ -1709,7 +1709,7 @@ pub const App = struct {
         if (y + 1 >= app.view_h) return out[0..n];
         var have: [8]CardAction = undefined;
         x = ox + @as(u16, @intCast(view.col)) * cw + 2;
-        const edge = ox + @as(u16, @intCast(view.col + 1)) * cw -| 1;
+        const edge = ox + @as(u16, @intCast(view.col + 1)) * cw -| 2;
         for (cardActions(card, &have)) |action| {
             const w: u16 = @intCast(cellCount(app.buttonLabel(.{ .card = action }, &buf)));
             if (x + w > edge or n == out.len) break;

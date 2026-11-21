@@ -979,7 +979,7 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
             try w.writeAll("│");
             const slot = App.cardRowAt(y).?;
             const at = first + slot.k;
-            if (at >= @min(n, cards.len) or inner < 4) {
+            if (at >= @min(n, cards.len) or slot.k >= app.boardShown() or inner < 4) {
                 try pen.set(w, .{}, null);
                 try fitted(w, "", inner);
             } else {
