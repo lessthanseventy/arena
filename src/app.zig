@@ -293,6 +293,7 @@ pub const Session = struct {
 
 const Pending = union(enum) {
     ignore,
+    switched,
     sessions,
     panes,
     modes: u32,
@@ -359,8 +360,10 @@ pub const App = struct {
     /// The orchestrator was asked to start: gone to as soon as its session shows, unless the human
     /// has gone somewhere else first.
     orchestrating: bool = false,
-    /// The session arena last asked tmux to switch to, until tmux says it is there.
+    /// The session arena last asked tmux to switch to, until tmux says it is there, and how many
+    /// switches tmux has yet to answer.
     heading: ?u32 = null,
+    switches: u32 = 0,
     side: ?Side = null,
     /// The side was folded away: the board opens without it until it is unfolded.
     side_folded: bool = false,
@@ -883,7 +886,8 @@ pub const App = struct {
     }
 
     pub fn onLine(app: *App, line: []u8) !void {
-        switch (control.parse(line, if (app.in_block) app.guard.items else null)) {
+        const event = control.parse(line, if (app.in_block) app.guard.items else null);
+        switch (event) {
             .begin => |open| {
                 app.in_block = true;
                 app.block_mine = open.mine;
@@ -895,10 +899,11 @@ pub const App = struct {
                 try app.block.appendSlice(app.gpa, body);
                 try app.block.append(app.gpa, '\n');
             },
-            .end => {
+            .end, .failed => {
                 app.in_block = false;
                 if (!app.block_mine) return;
                 const kind: Pending = if (app.pending.items.len > 0) app.pending.orderedRemove(0) else .ignore;
+                if (kind == .switched) return app.onSwitched(event == .failed);
                 try app.onReply(kind, app.block.items);
             },
             .output => |out| {
@@ -930,7 +935,8 @@ pub const App = struct {
     fn onSessionChanged(app: *App, id: u32) void {
         const from = app.current;
         app.current = id;
-        if (app.heading == id) app.heading = null;
+        // a report with switches still unanswered may be one on the way to the last asked for
+        if (app.heading == id or app.switches == 0) app.heading = null;
         if (from != null and from != id and app.motion) {
             const way: i32 = if (app.slide != 0) app.slide else blk: {
                 const a = app.sessionIndex(from) orelse 0;
@@ -950,7 +956,7 @@ pub const App = struct {
 
     fn onReply(app: *App, kind: Pending, body: []const u8) !void {
         switch (kind) {
-            .ignore => {},
+            .ignore, .switched => {},
             .sessions => try app.onSessions(body),
             .panes => try app.onPanes(body),
             // What the program set before arena was watching, which no capture shows: without
@@ -1217,7 +1223,15 @@ pub const App = struct {
 
     fn switchTo(app: *App, id: u32) !void {
         app.heading = id;
-        try app.send(.ignore, "switch-client -t '${d}'", .{id});
+        app.switches += 1;
+        try app.send(.switched, "switch-client -t '${d}'", .{id});
+    }
+
+    /// tmux answered a switch. Answered in order, the last answers the session last asked for:
+    /// refused, arena is going nowhere.
+    fn onSwitched(app: *App, refused: bool) void {
+        app.switches -|= 1;
+        if (refused and app.switches == 0) app.heading = null;
     }
 
     /// The session arena is in once tmux has done what it was asked: the one it last asked for
@@ -3133,6 +3147,35 @@ test "a card moves along its column only with a repo, out of the backlog" {
     try std.testing.expect(!has(.{ .id = 2, .title = "b", .status = .todo }, &have));
     try std.testing.expect(!has(.{ .id = 4, .repo = "two words", .title = "d", .status = .todo }, &have));
     try std.testing.expect(!has(.{ .id = 3, .repo = "arena", .title = "c", .status = .backlog }, &have));
+}
+
+test "the session arena is headed for is kept only while tmux has a switch to it unanswered" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    const eq = std.testing.expectEqual;
+
+    // two switches asked: the report of the first is on the way to the second
+    app.heading = 2;
+    app.switches = 2;
+    app.onSwitched(false);
+    app.onSessionChanged(3);
+    try eq(@as(?u32, 2), app.heading);
+    app.onSwitched(false);
+    app.onSessionChanged(2);
+    try eq(@as(?u32, null), app.heading);
+
+    // refused: no report will come
+    app.heading = 4;
+    app.switches = 1;
+    app.onSwitched(true);
+    try eq(@as(?u32, null), app.heading);
+
+    // answered, then the client moved elsewhere before the report of it came
+    app.heading = 5;
+    app.switches = 1;
+    app.onSwitched(false);
+    app.onSessionChanged(6);
+    try eq(@as(?u32, null), app.heading);
+    try eq(@as(?u32, 6), app.current);
 }
 
 test "a card's title wraps at a space onto its second row" {

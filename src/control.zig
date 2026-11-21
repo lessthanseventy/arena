@@ -5,6 +5,8 @@ pub const Event = union(enum) {
     /// command of this client's only when `mine`.
     begin: struct { guard: []const u8, mine: bool },
     end,
+    /// A reply ends, its command refused.
+    failed,
     /// A line of a command's reply, between `begin` and `end`.
     body: []const u8,
     /// Pane output, still in tmux's octal escaping; see `unescape`.
@@ -32,7 +34,8 @@ pub fn parse(line: []const u8, open: ?[]const u8) Event {
         for ([_][]const u8{ "%end ", "%error " }) |prefix| {
             if (!std.mem.startsWith(u8, line, prefix)) continue;
             const rest = line[prefix.len..];
-            if (std.mem.startsWith(u8, rest, guard) and rest.len > guard.len and rest[guard.len] == ' ') return .end;
+            if (std.mem.startsWith(u8, rest, guard) and rest.len > guard.len and rest[guard.len] == ' ')
+                return if (std.mem.eql(u8, prefix, "%error ")) .failed else .end;
         }
         return .{ .body = line };
     }
@@ -96,7 +99,7 @@ test "a block's lines are body until its own end or error" {
     try std.testing.expect(!parse("%begin 1 2 0", null).begin.mine);
     try std.testing.expectEqualStrings("%1 zsh", parse("%1 zsh", "1 2").body);
     try std.testing.expectEqual(Event.end, parse("%end 1 2 1", "1 2"));
-    try std.testing.expectEqual(Event.end, parse("%error 1 2 1", "1 2"));
+    try std.testing.expectEqual(Event.failed, parse("%error 1 2 1", "1 2"));
 }
 
 test "a line of a reply that looks like a guard is still the reply's" {
