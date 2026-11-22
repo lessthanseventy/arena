@@ -7,11 +7,15 @@ zig = "0.17.1"
 [env]
 ZIG_GLOBAL_CACHE_DIR = "{{env.HOME}}/.cache/zig-mise"
 
+# A compile waiting on another's cache lock waits for good, at no CPU: each zig task ends itself
+# inside babylon's 30 minutes for the gate, so what fails is the task, by name.
 [tasks.build]
+timeout = "20m"
 run = "zig build"
 
 [tasks.test]
 depends = ["build"]
+timeout = "20m"
 run = "zig build test --summary all"
 
 [tasks.e2e]
@@ -29,6 +33,7 @@ run = ["claude plugin validate .", "claude plugin test ."]
 
 [tasks.install]
 description = "after a landing: arena built"
+timeout = "20m"
 run = "zig build"
 
 [tasks.check]
