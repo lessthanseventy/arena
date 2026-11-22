@@ -30,7 +30,8 @@ pub const Card = struct {
     stage: ?[]const u8 = null,
     /// The question about it waiting on an answer, if there is one.
     ask: ?Ask = null,
-    /// Why babylon left its Claude running once it landed, empty when there is nothing to say.
+    /// Why babylon left its Claude running once it landed, empty when there is nothing to say:
+    /// one line, safe to draw.
     session_note: []const u8 = "",
 
     /// The id of the pane holding it, if one does.
@@ -67,13 +68,22 @@ pub const Auto = struct { on: bool = false, cap: u32 = 0, working: u32 = 0 };
 /// babylon's orchestrator: `running` while its session is there, `on` while babylon keeps it so.
 pub const Orchestrator = struct { on: bool = true, running: bool = true };
 
-const File = struct { tickets: []const Card, backlog: []const Card = &.{}, auto: ?Auto = null, orchestrator: ?Orchestrator = null };
+const File = struct { tickets: []Card, backlog: []const Card = &.{}, auto: ?Auto = null, orchestrator: ?Orchestrator = null };
 
 pub const Board = struct {
     parsed: std.json.Parsed(File),
 
     pub fn parse(gpa: std.mem.Allocator, text: []const u8) !Board {
-        return .{ .parsed = try std.json.parseFromSlice(File, gpa, text, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) };
+        var parsed = try std.json.parseFromSlice(File, gpa, text, .{ .ignore_unknown_fields = true, .allocate = .alloc_always });
+        errdefer parsed.deinit();
+        for (parsed.value.tickets) |*card| {
+            if (card.session_note.len == 0) continue;
+            var clean: std.ArrayList(u8) = .empty;
+            try @import("app.zig").appendClean(&clean, parsed.arena.allocator(), card.session_note);
+            std.mem.replaceScalar(u8, clean.items, '\n', ' ');
+            card.session_note = clean.items;
+        }
+        return .{ .parsed = parsed };
     }
 
     pub fn deinit(b: *Board) void {
@@ -166,6 +176,14 @@ test "the board parses babylon's file, fields it does not draw left out" {
     try std.testing.expectEqualSlices(u32, &.{1}, b.cards()[2].blocked_by);
     try std.testing.expectEqualStrings("its session is left running: it holds #6", b.cards()[3].session_note);
     try std.testing.expectEqualStrings("", b.cards()[0].session_note);
+}
+
+test "a note's escapes and control characters are gone once the board is parsed, and it is one line" {
+    var b = try Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1,"title":"Board","status":"done","session_note":"\u001b[31mit holds\u0007\n#6\u001b]0;t\u0007"}]}
+    );
+    defer b.deinit();
+    try std.testing.expectEqualStrings("it holds #6", b.cards()[0].session_note);
 }
 
 test "a claim's time is read as seconds since the epoch, and one unsaid or unread is none" {
