@@ -959,11 +959,18 @@ pub const App = struct {
         return app.sided() and s.orchestrator();
     }
 
+    /// Whether arena is in its session once tmux has made the switches asked of it: what is typed
+    /// goes by this, so none of it by where arena was while a switch is unanswered.
+    fn sideDue(app: *const App) bool {
+        const s = app.sessionById(app.bound()) orelse return false;
+        return app.sided() and s.orchestrator();
+    }
+
     /// Whether its column is the one focused: the keys and the mouse are then its own, as any
     /// window's.
     pub fn sideFocused(app: *const App) bool {
         const view = app.board_view orelse return false;
-        return view.focus == .orchestrator and !view.boxed() and app.sideShown();
+        return view.focus == .orchestrator and !view.boxed() and app.sideDue();
     }
 
     /// The width right of the rail, the strip's or the board's and its side's.
@@ -3171,9 +3178,9 @@ pub const App = struct {
     }
 
     fn onChord(app: *App, letter: u8) !void {
-        if (app.menu == null and app.prompt == null and app.sideShown()) {
+        if (app.menu == null and app.prompt == null and app.sideDue()) {
             const view = &app.board_view.?;
-            const s = app.cur().?;
+            const s = app.sessionById(app.bound()).?;
             const at_board = view.focus == .board;
             // the board is the column before the orchestrator's first
             if (!view.boxed() and ((at_board and letter == 'l') or (!at_board and letter == 'h' and s.focus == 0))) {
@@ -3181,7 +3188,11 @@ pub const App = struct {
                 app.dirty = true;
                 return;
             }
-            if (app.sideFocused() and (letter == 'h' or letter == 'l')) return app.focusBy(if (letter == 'h') -1 else 1);
+            if (app.sideFocused() and (letter == 'h' or letter == 'l')) {
+                // its windows are stepped through only once arena is among them
+                if (app.sideShown()) try app.focusBy(if (letter == 'h') -1 else 1);
+                return;
+            }
         }
         if (app.overlay()) {
             app.menu = null;
@@ -3262,7 +3273,7 @@ pub const App = struct {
     }
 
     fn forward(app: *App, bytes: []const u8) !void {
-        const s = app.cur() orelse return;
+        const s = app.sessionById(app.bound()) orelse return;
         const win = s.focused() orelse return;
         const pane = win.activePane() orelse return;
         if (bytes.len == 0) return;
@@ -3780,6 +3791,32 @@ test "the session arena is headed for is kept only while tmux has a switch to it
     app.onSessionChanged(6);
     try eq(@as(?u32, null), app.heading);
     try eq(@as(?u32, 6), app.current);
+}
+
+test "beside the board, the keys go by the session tmux was last asked for" {
+    var work: Session = .{ .id = 1, .name = @constCast("work") };
+    var orch: Session = .{ .id = 2, .name = @constCast("orchestrator") };
+    var sessions = [_]*Session{ &work, &orch };
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.sessions = .fromOwnedSlice(&sessions);
+    const expect = std.testing.expect;
+
+    // the board opened from the human's session: the switch to the orchestrator's is unanswered
+    app.board_view = .{ .back = 1 };
+    app.current = 1;
+    app.heading = 2;
+    app.switches = 1;
+    try expect(!app.typing());
+    try app.onChord('l');
+    try expect(app.board_view.?.focus == .orchestrator);
+    try expect(app.typing());
+    try app.onChord('l');
+    try expect(app.board_view != null);
+
+    // on the way back out of it, they are the board's
+    app.current = 2;
+    app.heading = 1;
+    try expect(!app.typing());
 }
 
 test "a card's title wraps at a space onto its second row" {

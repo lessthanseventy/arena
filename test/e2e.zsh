@@ -1063,6 +1063,13 @@ await in_session orchestrator
 key '`' '`' q
 zselect -t 100
 check "folded, unfolded and closed before tmux has switched back, it comes back all the same" in_session alpha
+said() { inner capture-pane -p -t $1 | grep -qx $2 }
+key M-b M-l 'echo ahead' Enter
+check "Alt+l and what is typed before tmux has switched reach the orchestrator's pane" await said orchestrator:orch ahead
+check "the board left open" shows ' board   every'
+key M-b 'echo home' Enter
+check "what is typed after the board closes, before tmux has switched back, reaches the human's" await said alpha: home
+check "and none of it the orchestrator's" eval '! said orchestrator:orch home'
 key M-b
 await in_session orchestrator
 key M-l
