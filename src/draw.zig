@@ -1413,13 +1413,13 @@ fn cardLine(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, p
 }
 
 /// Where the pipeline has a card: its glyph, none when it has none, the word for it, and the
-/// colour of both.
+/// colour of both. A queued one with a question open is held: babylon moves it once it is answered.
 fn stageOf(app: *const App, card: *const tickets.Card) ?struct { style: vt.Style, glyph: u21, word: []const u8 } {
     const s = card.stage orelse return null;
     const eql = std.mem.eql;
     if (eql(u8, s, "failed")) return .{ .style = ink(app, "emberdim", 1), .glyph = '✗', .word = "sent back" };
     if (eql(u8, s, "landed")) return .{ .style = ink(app, "amber", 4), .glyph = '◆', .word = "landed" };
-    if (eql(u8, s, "queued")) return .{ .style = ink(app, "violet", 5), .glyph = '»', .word = "queued" };
+    if (eql(u8, s, "queued")) return .{ .style = ink(app, "violet", 5), .glyph = if (card.ask == null) '»' else 0, .word = if (card.ask == null) "queued" else "held" };
     if (eql(u8, s, "verifying") or eql(u8, s, "reviewing")) return .{ .style = ink(app, "amber", 4), .glyph = glyph(app, .working), .word = s };
     return .{ .style = ink(app, "dim", 8), .glyph = 0, .word = s };
 }
@@ -1544,6 +1544,27 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
     try w.writeAll("\x1b[0m");
     if (cursor) |at| try w.print("\x1b[{d};{d}H\x1b[?25h", .{ at.y + 1, at.x + 1 });
     try w.writeAll("\x1b[?2026l");
+}
+
+test "a queued card with a question open is held, and one without is queued" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    var buf: [512]u8 = undefined;
+    var card: tickets.Card = .{ .id = 1, .title = "Handed in", .status = .review, .stage = "queued" };
+
+    var waiting: Writer = .fixed(&buf);
+    var pen: Pen = .{};
+    try cardFooter(&app, &waiting, &pen, &card, false, 15);
+    try std.testing.expect(std.mem.indexOf(u8, waiting.buffered(), "» queued") != null);
+
+    card.ask = .{ .id = 5, .question = "Which colour?" };
+    var held: Writer = .fixed(&buf);
+    pen = .{};
+    try cardFooter(&app, &held, &pen, &card, false, 15);
+    const drawn = held.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "? asks") != null);
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "held") != null);
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "queued") == null);
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "…") == null);
 }
 
 test "the board's keys end on a card's edge and its marks, and a 24-row terminal has them whole" {
