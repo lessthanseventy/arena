@@ -30,6 +30,8 @@ pub const Card = struct {
     stage: ?[]const u8 = null,
     /// The question about it waiting on an answer, if there is one.
     ask: ?Ask = null,
+    /// Why babylon left its Claude running once it landed, empty when there is nothing to say.
+    session_note: []const u8 = "",
 
     /// The id of the pane holding it, if one does.
     pub fn holder(card: *const Card) ?u32 {
@@ -151,7 +153,7 @@ const sample =
     \\{"id":3,"repo":"tlon","title":"House","kind":"ticket","status":"todo","priority":"low","labels":[],"claimed_by":null,"branch":null,"blocked_by":[],"epic_id":null},
     \\{"id":1,"repo":"arena","title":"Board","kind":"ticket","status":"doing","priority":"high","labels":["x"],"claimed_by":"%12","branch":"t1-board","blocked_by":[],"epic_id":null},
     \\{"id":2,"repo":"arena","title":"Rail","kind":"ticket","status":"todo","priority":"med","labels":[],"claimed_by":null,"branch":null,"blocked_by":[1],"epic_id":4},
-    \\{"id":5,"repo":null,"title":"Loose","kind":"ticket","status":"todo","priority":"med","labels":[],"claimed_by":null,"branch":null,"blocked_by":[],"epic_id":null}
+    \\{"id":5,"repo":null,"title":"Loose","kind":"ticket","status":"todo","priority":"med","labels":[],"claimed_by":null,"branch":null,"blocked_by":[],"epic_id":null,"session_note":"its session is left running: it holds #6"}
     \\]}
 ;
 
@@ -162,6 +164,8 @@ test "the board parses babylon's file, fields it does not draw left out" {
     try std.testing.expectEqual(@as(?u32, 12), b.cards()[1].holder());
     try std.testing.expectEqual(@as(?u32, null), b.cards()[0].holder());
     try std.testing.expectEqualSlices(u32, &.{1}, b.cards()[2].blocked_by);
+    try std.testing.expectEqualStrings("its session is left running: it holds #6", b.cards()[3].session_note);
+    try std.testing.expectEqualStrings("", b.cards()[0].session_note);
 }
 
 test "a claim's time is read as seconds since the epoch, and one unsaid or unread is none" {

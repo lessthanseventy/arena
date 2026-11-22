@@ -1070,21 +1070,39 @@ fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
     for (cellCount(title) + 1..bw - 2) |_| try w.writeAll("─");
     try w.writeAll("╮");
 
+    const dim = ink(app, "dim", 8);
+    const note = doneNote(app, id);
+    var note_rows: u16 = 0;
+    var counted = app_mod.DetailLines.init(note, inner);
+    if (note.len > 0) while (counted.next()) |_| {
+        if (note_rows < bottom - top - 3) note_rows += 1;
+    };
+    const text_end = bottom - 1 - note_rows;
+
     const text = if (app.detail.items.len > 0) app.detail.items else "…";
     var y = top + 1;
     var row: usize = 0;
     var lines = app_mod.DetailLines.init(text, inner);
     while (lines.next()) |line| : (row += 1) {
-        if (row < scroll or y >= bottom - 1) continue;
+        if (row < scroll or y >= text_end) continue;
         try boxLine(w, &pen, edge, .{}, x, y, line, inner);
         y += 1;
     }
-    while (y < bottom - 1) : (y += 1) try boxLine(w, &pen, edge, .{}, x, y, "", inner);
-    try boxLine(w, &pen, edge, ink(app, "dim", 8), x, y, "jk scroll · esc puts it away", inner);
+    while (y < text_end) : (y += 1) try boxLine(w, &pen, edge, .{}, x, y, "", inner);
+    var noted = app_mod.DetailLines.init(note, inner);
+    while (y < bottom - 1) : (y += 1) try boxLine(w, &pen, edge, dim, x, y, noted.next() orelse "", inner);
+    try boxLine(w, &pen, edge, dim, x, y, "jk scroll · esc puts it away", inner);
     try pen.set(w, edge, null);
     try w.print("\x1b[{d};{d}H╰", .{ bottom, x + 1 });
     for (0..bw - 2) |_| try w.writeAll("─");
     try w.writeAll("╯");
+}
+
+/// Why babylon left done ticket `id`'s Claude running, empty when it says nothing of it.
+fn doneNote(app: *const App, id: u32) []const u8 {
+    const b = if (app.board) |*b| b else return "";
+    for (b.cards()) |*card| if (card.id == id) return if (card.status == .done) card.session_note else "";
+    return "";
 }
 
 /// The board's buttons over what is drawn under them: the repo tabs, the one shown lit, and the
@@ -1451,7 +1469,7 @@ fn cardFooter(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card,
 
 /// What else is so of a card, joined: its repo when the board shows every one, the window of the
 /// Claude holding it with that Claude's mark and how long it has held it, the tickets it waits
-/// on, that it is an epic, a priority not the usual one.
+/// on, that it is an epic, a priority not the usual one, why a done one's Claude was left running.
 fn cardDetail(app: *const App, card: *const tickets.Card, with_repo: bool, buf: []u8) []const u8 {
     var out: Writer = .fixed(buf);
     var sep: []const u8 = "";
@@ -1480,7 +1498,12 @@ fn cardDetail(app: *const App, card: *const tickets.Card, with_repo: bool, buf: 
         out.print("{s}epic", .{sep}) catch {};
         sep = " · ";
     }
-    if (!std.mem.eql(u8, card.priority, "med")) out.print("{s}{s}", .{ sep, card.priority }) catch {};
+    if (!std.mem.eql(u8, card.priority, "med")) {
+        out.print("{s}{s}", .{ sep, card.priority }) catch {};
+        sep = " · ";
+    }
+
+    if (card.status == .done and card.session_note.len > 0) out.print("{s}{s}", .{ sep, card.session_note }) catch {};
     return out.buffered();
 }
 

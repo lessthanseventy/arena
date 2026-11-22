@@ -1097,7 +1097,8 @@ await in_session alpha
 
 done_card() { print -r -- '{"id":'$1',"repo":"arena","title":"Done '$1'","kind":"ticket","status":"done","priority":"med","blocked_by":[]}' }
 print -r -- '{"tickets":[{"id":20,"repo":"arena","title":"Next","kind":"ticket","status":"todo","priority":"med","blocked_by":[]},'\
-"$(done_card 25),$(done_card 24),$(done_card 23),$(done_card 22),$(done_card 21),"\
+"${$(done_card 25)%\}}"',"session_note":"left running: it holds #9"},'\
+"$(done_card 24),$(done_card 23),$(done_card 22),$(done_card 21),"\
 '{"id":30,"repo":"menard","title":"Old","kind":"ticket","status":"done","priority":"med","blocked_by":[]}]}' >$tmp/run/babylon/board.json
 key M-b
 key '`'
@@ -1129,7 +1130,12 @@ check "and off, it is gone again" gone 'auto [0-9]'
 check "not the rest" gone 'Done 22'
 key r
 check "and so in one repo's view" see '│ 2 more +│'
-key l l l j j j
+check "where one whose Claude babylon left running says why, as far as its card has room" see '│ left running: [^│]*… │'
+key l l l ' '
+check "and its whole ticket says all of why" see '│ left running: it holds #9 '
+key Escape
+check "put away again" gone '│ left running: it holds #9 '
+key j j j
 check "where the pick goes no further than the last shown" see '╰ edit ─ priority ╯'
 key M-b
 
