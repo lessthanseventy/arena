@@ -36,10 +36,15 @@ const BOARD = {
       stage: 'failed',
       stage_note: 'the gate is red: e2e timed out\nmore of the log',
     }),
-    card(14, 'A pane for the board', 'doing', { claimed_by: '%5' }),
-    card(15, 'Keys under a box', 'review', { claimed_by: '%6', stage: 'verifying' }),
+    card(14, 'A pane for the board', 'doing', { claimed_by: '%5', claimed_at: '2026-11-21T10:00:00Z' }),
+    card(15, 'Keys under a box', 'review', {
+      claimed_by: '%6',
+      claimed_at: '2026-11-21T11:00:00Z',
+      stage: 'verifying',
+    }),
     card(16, 'Which colour is the rail', 'doing', {
       claimed_by: '%9',
+      claimed_at: '2026-11-21T09:00:00Z',
       ask: { id: 3, question: 'Blue or green?', options: ['Blue', 'Green'], asked_at: '2026-11-21T11:48:00Z' },
     }),
     card(9, 'The strip keeps its width', 'done', { stage: 'landed', closed_at: '2026-11-21T09:00:00Z' }),
@@ -117,7 +122,7 @@ test('in the orchestrator, the pane shows asks, send-backs, work and landings', 
   expect(await row(/#7/)).toBe(undefined)
 
   const all = await ui.findAll({ type: 'Text', text: /^#/ })
-  expect(all.map(one => one.text?.split(' ')[0])).toEqual(['#16', '#12', '#14', '#15', '#16', '#9', '#8'])
+  expect(all.map(one => one.text?.split(' ')[0])).toEqual(['#16', '#12', '#15', '#14', '#16', '#9', '#8'])
   await ui.unmount()
 })
 

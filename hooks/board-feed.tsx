@@ -20,12 +20,14 @@ type Card = {
   claimed_by?: string | null
   stage?: string | null
   stage_note?: string
+  claimed_at?: string | null
   closed_at?: string | null
   ask?: Ask | null
 }
 
 const time = (iso?: string | null) => (iso ? Date.parse(iso) : undefined)
 const newest = (a: Row, b: Row) => (b.at ?? 0) - (a.at ?? 0) || b.id - a.id
+const lastClaimed = (a: Card, b: Card) => (time(b.claimed_at) ?? 0) - (time(a.claimed_at) ?? 0)
 const line = (text: string) => text.split('\n')[0] ?? ''
 
 /** The feed's rows from the board file's text; `windows` names each holding pane's window. */
@@ -49,6 +51,7 @@ export const rows = (text: string, windows: Record<string, string>): Feed => {
       .map(card => ({ id: card.id, lead: 'sent back', text: line(card.stage_note ?? '') || card.title })),
     running: working
       .filter(card => !isSentBack(card))
+      .sort(lastClaimed)
       .map(card => ({
         id: card.id,
         lead: [card.status, card.stage, holder(card)].filter(Boolean).join(' '),
