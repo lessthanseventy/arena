@@ -412,6 +412,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
 
 test {
     _ = @import("app.zig");
+    _ = @import("draw.zig");
     _ = @import("control.zig");
     _ = @import("theme.zig");
     _ = @import("board.zig");

@@ -1545,3 +1545,28 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
     if (cursor) |at| try w.print("\x1b[{d};{d}H\x1b[?25h", .{ at.y + 1, at.x + 1 });
     try w.writeAll("\x1b[?2026l");
 }
+
+test "the board's keys end on a card's edge and its marks, and a 24-row terminal has them whole" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.view_w = 80;
+    const x = app.boardX() + 10;
+    var buf: [8192]u8 = undefined;
+    var at: [24]u8 = undefined;
+
+    app.view_h = 23;
+    var short: Writer = .fixed(&buf);
+    try helpBox(&app, &short);
+    var drawn = short.buffered();
+    for ([_][]const u8{ "left edge", "its priority: lit for high, dim for low", "◐ » ✗ ◆ ?", "working, queued, sent back, landed, asks" }) |text| {
+        try std.testing.expect(std.mem.indexOf(u8, drawn, text) != null);
+    }
+    try std.testing.expect(std.mem.indexOf(u8, drawn, try std.fmt.bufPrint(&at, "\x1b[1;{d}H╭", .{x + 1})) != null);
+    try std.testing.expect(std.mem.indexOf(u8, drawn, try std.fmt.bufPrint(&at, "\x1b[{d};{d}H╰", .{ board_keys.len + 3, x + 1 })) != null);
+    try std.testing.expect(board_keys.len + 3 <= app.view_h);
+
+    app.view_h = 40;
+    var tall: Writer = .fixed(&buf);
+    try helpBox(&app, &tall);
+    drawn = tall.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, drawn, try std.fmt.bufPrint(&at, "\x1b[3;{d}H╭", .{x + 1})) != null);
+}
