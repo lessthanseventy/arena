@@ -30,6 +30,7 @@ inner() { tmux -L $in -f /dev/null "$@" }
 outer() { tmux -L $out -f /dev/null "$@" }
 # kill-server leaves the socket file behind
 cleanup() {
+  [[ -n $server ]] && kill -CONT $server 2>/dev/null
   inner kill-server 2>/dev/null
   outer kill-server 2>/dev/null
   rm -f ${TMUX_TMPDIR:-/tmp}/tmux-$UID/{$in,$out}
@@ -1073,10 +1074,24 @@ key '`' '`' q
 zselect -t 100
 check "folded, unfolded and closed before tmux has switched back, it comes back all the same" in_session alpha
 said() { inner capture-pane -p -t $1 | grep -qx $2 }
-key M-b M-l 'echo ahead' Enter
+# The sessions' server stopped answers nothing: arena reads what is typed with its switch unanswered.
+# Nothing shows that arena has read it, so it is given half a second to.
+server=$(inner display -p '#{pid}')
+kill -STOP $server
+key M-b
+see ' board   every'
+key M-l 'echo ahead' Enter
+zselect -t 50
+check "the board stays open on an Alt+l typed before tmux has switched" shows ' board   every'
+kill -CONT $server
 check "Alt+l and what is typed before tmux has switched reach the orchestrator's pane" await said orchestrator:orch ahead
 check "the board left open" shows ' board   every'
-key M-b 'echo home' Enter
+kill -STOP $server
+key M-b
+gone ' board   every'
+key 'echo home' Enter
+zselect -t 50
+kill -CONT $server
 check "what is typed after the board closes, before tmux has switched back, reaches the human's" await said alpha: home
 check "and none of it the orchestrator's" eval '! said orchestrator:orch home'
 key M-b
