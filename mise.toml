@@ -1,10 +1,17 @@
 [tools]
 zig = "0.17.1"
 
+# mise's zig has a cache of its own. Another install of the same version (the system's) makes the
+# same libc++ manifests from files with other stats, so each rewrites the other's, and two
+# compiles write-locking them at once wait on each other for good.
+[env]
+ZIG_GLOBAL_CACHE_DIR = "{{env.HOME}}/.cache/zig-mise"
+
 [tasks.build]
 run = "zig build"
 
 [tasks.test]
+depends = ["build"]
 run = "zig build test --summary all"
 
 [tasks.e2e]
