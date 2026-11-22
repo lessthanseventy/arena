@@ -54,7 +54,7 @@ always did; arena draws them and leaves them running when it quits.
   and says why when it will not (that Claude is mid-turn, or waits on you). One that waits is dimmed, at the foot of its column. Its first row has the repos as tabs, the one shown lit: a click on one narrows the board to it,
   and `r` goes to the next, then every one again; the gate is a button beside them while babylon
   runs one, and `?` shows every key. The `orch` button, as `o`, goes to the orchestrator: lit
-  while it runs, dim while it does not, and `orch off` while babylon does not keep it running. `A`, or the `auto` button beside the tabs, turns babylon's
+  while it runs, dim while it does not, and `orch off` while babylon does not keep it running; the board's row atop the rail says the same after its name. `A`, or the `auto` button beside the tabs, turns babylon's
   auto mode on and off: while it is on, babylon starts a Claude on each free todo card, up to its
   cap of Claudes working, and the button, the board's header and its row atop the rail say `auto 1/2`, one
   working of a cap of two. A `+` on the to-do column files a ticket, and the picked card

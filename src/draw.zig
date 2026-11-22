@@ -319,11 +319,23 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
             try w.writeAll(" ▤ board");
             var auto_buf: [32]u8 = undefined;
             const auto = if (app.auto()) |state| std.fmt.bufPrint(&auto_buf, " auto {d}/{d}", .{ state.working, state.cap }) catch "" else "";
-            // auto's state gives way to the counts on a rail too narrow for both
-            const head = 8 + if (8 + cellCount(auto) + 1 + cellCount(counts) <= inner) cellCount(auto) else 0;
-            if (head > 8) {
+            const orch_state = app.orchestrator();
+            const runs_orch = if (orch_state) |state| state.running else false;
+            const orch: []const u8 = if (orch_state) |state| (if (state.running or state.on) " orch" else " orch off") else "";
+            // both give way to the counts on a rail too narrow: a running orchestrator first,
+            // then auto's state, and one that is not running last
+            const room = inner -| (8 + 1 + cellCount(counts));
+            const down_w = if (!runs_orch and cellCount(orch) <= room) cellCount(orch) else 0;
+            const auto_w = if (cellCount(auto) + down_w <= room) cellCount(auto) else 0;
+            const orch_w = if (runs_orch and auto_w + cellCount(orch) <= room) cellCount(orch) else down_w;
+            const head = 8 + auto_w + orch_w;
+            if (auto_w > 0) {
                 if (!open) try pen.set(w, autoOn(app), null);
                 try w.writeAll(auto);
+            }
+            if (orch_w > 0) {
+                if (!open) try pen.set(w, if (runs_orch) ink(app, "violet", 5) else ink(app, "dim", 8), null);
+                try w.writeAll(orch);
             }
             try pen.set(w, if (open) chip(app) else ink(app, "dim", 8), null);
             try fitted(w, "", inner -| head -| cellCount(counts));

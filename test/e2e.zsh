@@ -878,11 +878,15 @@ orch_ink() { [[ $(outer capture-pane -ep -t o) =~ $'((\e\\[[0-9;]*m)+) orch'$2 &
 check "with nothing of the orchestrator in babylon's file, its button is drawn as it was" await orch_ink 5 ' '
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"orchestrator":{"on":true,"running":false}}' >$tmp/run/babylon/board.json
 check "an orchestrator that is not running has its button unlit" await orch_ink 8 ' '
+check "and the board's row atop the rail says it is not" see '^│ ▤ board orch  '
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"orchestrator":{"on":false,"running":false}}' >$tmp/run/babylon/board.json
 check "and one babylon keeps off says so" await orch_ink 8 ' off '
+check "as the board's row does" see '^│ ▤ board orch off '
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"orchestrator":{"on":true,"running":true}}' >$tmp/run/babylon/board.json
 check "running, it is lit" await orch_ink 5 ' '
+check "and the board's row names it" see '^│ ▤ board orch  '
 cp $tmp/board.noauto $tmp/run/babylon/board.json
+check "with nothing of it in babylon's file again, the row says nothing" gone '^│ ▤ board orch'
 key J
 check "J moves it down its column, among its lane's" await last 'move 7 down --repo tlon'
 key '>'
@@ -945,6 +949,15 @@ mouse 0 3 2 M
 check "a click on its row in the rail opens the board again" see ' board   every'
 mouse 0 3 2 M
 check "and another closes it" gone ' board   every'
+# the colour the board's row atop the rail, unlit with the board closed, names the orchestrator in
+rail_orch_ink() { [[ $(outer capture-pane -ep -t o) =~ $'▤ board((\e\\[[0-9;]*m)*) orch' && $match[1] == *"38;5;$1m" ]] }
+cp $tmp/run/babylon/board.json $tmp/board.closed
+print -r -- "${$(<$tmp/board.closed)%\}}"',"orchestrator":{"on":true,"running":true}}' >$tmp/run/babylon/board.json
+check "the board's row has a running orchestrator lit" await rail_orch_ink 5
+print -r -- "${$(<$tmp/board.closed)%\}}"',"orchestrator":{"on":true,"running":false}}' >$tmp/run/babylon/board.json
+check "and one that is not running unlit" await rail_orch_ink 8
+cp $tmp/board.closed $tmp/run/babylon/board.json
+check "and says nothing of it once babylon's file does not" gone '^│ ▤ board orch'
 inner new-session -d -s babylon -n gate sh
 key M-b
 check "with babylon's gate session there, the board offers it" see ' gate .*\? keys'
