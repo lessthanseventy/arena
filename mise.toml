@@ -8,7 +8,8 @@ zig = "0.17.1"
 ZIG_GLOBAL_CACHE_DIR = "{{env.HOME}}/.cache/zig-mise"
 
 # A compile waiting on another's cache lock waits for good, at no CPU: each zig task ends itself
-# inside babylon's 30 minutes for the gate, so what fails is the task, by name.
+# after 20 minutes, so what fails is the task, by name. The timeout is per task and leaves out its
+# depends: a hung test ends inside babylon's 30 minutes for the gate only after a build under 10.
 [tasks.build]
 timeout = "20m"
 run = "zig build"
