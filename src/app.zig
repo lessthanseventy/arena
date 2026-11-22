@@ -1386,16 +1386,23 @@ pub const App = struct {
         return app.current;
     }
 
+    /// A step along the strip of the session arena is bound for: typed while a switch is
+    /// unanswered, it is not lost, nor made in the session being left.
     fn focusBy(app: *App, delta: i32) !void {
-        const s = app.cur() orelse return;
+        const s = app.sessionById(app.bound()) orelse return;
         const next = @as(i32, @intCast(s.focus)) + delta;
         if (next < 0 or next >= s.wins.items.len) return;
-        try app.focusTo(@intCast(next));
+        try app.focusIn(s, @intCast(next));
     }
 
+    /// To a window of the session shown, which is where a click's index is from.
     fn focusTo(app: *App, index: usize) !void {
-        app.orchestrating = false;
         const s = app.cur() orelse return;
+        try app.focusIn(s, index);
+    }
+
+    fn focusIn(app: *App, s: *Session, index: usize) !void {
+        app.orchestrating = false;
         try app.see();
         s.focus = index;
         try app.send(.ignore, "select-window -t @{d}", .{s.wins.items[index].id});
@@ -3201,11 +3208,7 @@ pub const App = struct {
                 app.dirty = true;
                 return;
             }
-            if (app.sideFocused() and (letter == 'h' or letter == 'l')) {
-                // its windows are stepped through only once arena is among them
-                if (app.sideShown()) try app.focusBy(if (letter == 'h') -1 else 1);
-                return;
-            }
+            if (app.sideFocused() and (letter == 'h' or letter == 'l')) return app.focusBy(if (letter == 'h') -1 else 1);
         }
         if (app.overlay()) {
             app.menu = null;
@@ -3241,8 +3244,8 @@ pub const App = struct {
                 app.dirty = true;
             },
             '\r' => try app.newWindow(),
-            else => if (app.cur()) |s| {
-                if (letter - '1' < s.wins.items.len) try app.focusTo(letter - '1');
+            else => if (app.sessionById(app.bound())) |s| {
+                if (letter - '1' < s.wins.items.len) try app.focusIn(s, letter - '1');
             },
         }
     }

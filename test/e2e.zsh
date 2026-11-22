@@ -1096,6 +1096,19 @@ zselect -t 50
 kill -CONT $server
 check "what is typed after the board closes, before tmux has switched back, reaches the human's" await said alpha: home
 check "and none of it the orchestrator's" eval '! said orchestrator:orch home'
+inner new-window -d -t orchestrator: -n two sh
+key M-b
+see '╭─ 1 orch ─ *╮ ╭─ 2 t'
+key M-b
+await in_session alpha
+orch_at() { [[ $(inner display -p -t orchestrator: '#{window_name}') == $1 ]] }
+key M-b M-l M-l
+check "Alt+l again before tmux has switched steps to the orchestrator's next window" await orch_at two
+key M-h
+check "and Alt+h back" await orch_at orch
+inner kill-window -t orchestrator:two
+key M-b
+await in_session alpha
 key M-b
 await in_session orchestrator
 key M-l
