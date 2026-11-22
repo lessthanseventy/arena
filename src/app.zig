@@ -1020,10 +1020,19 @@ pub const App = struct {
                 app.in_block = false;
                 if (!app.block_mine) return;
                 const kind: Pending = if (app.pending.items.len > 0) app.pending.orderedRemove(0) else .ignore;
-                // tmux runs no more of a list once a command of it fails, as a capture of a
-                // pane just gone does: the cursor asked for after it gets no reply
-                if (event == .failed and kind == .capture and app.pending.items.len > 0 and app.pending.items[0] == .cursor)
-                    _ = app.pending.orderedRemove(0);
+                // tmux runs no more of a list once a command of it fails, as one on a pane
+                // just gone does: what was asked of that pane after it gets no reply
+                if (event == .failed) switch (kind) {
+                    .modes, .capture => |id| while (app.pending.items.len > 0) {
+                        const rest = switch (app.pending.items[0]) {
+                            .capture, .cursor => |next| next == id,
+                            else => false,
+                        };
+                        if (!rest) break;
+                        _ = app.pending.orderedRemove(0);
+                    },
+                    else => {},
+                };
                 if (kind == .switched) return app.onSwitched(event == .failed);
                 try app.onReply(kind, app.block.items);
             },
@@ -3533,6 +3542,20 @@ test "a capture tmux refuses, its pane gone, takes the cursor asked with it off 
     }
     try std.testing.expectEqual(@as(usize, 1), app.pending.items.len);
     try std.testing.expect(app.pending.items[0] == .sessions);
+}
+
+test "the modes tmux refuses, its pane gone, take the capture and cursor asked with them off what is awaited" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    defer app.deinit();
+    try app.pending.appendSlice(app.gpa, &.{ .{ .modes = 9 }, .{ .capture = 9 }, .{ .cursor = 9 }, .{ .modes = 10 } });
+    const lines = [_][]const u8{ "%begin 1 1 1", "can't find pane: %9", "%error 1 1 1" };
+    var buf: [32]u8 = undefined;
+    for (lines) |line| {
+        @memcpy(buf[0..line.len], line);
+        try app.onLine(buf[0..line.len]);
+    }
+    try std.testing.expectEqual(@as(usize, 1), app.pending.items.len);
+    try std.testing.expectEqual(@as(u32, 10), app.pending.items[0].modes);
 }
 
 test "the session arena is headed for is kept only while tmux has a switch to it unanswered" {
