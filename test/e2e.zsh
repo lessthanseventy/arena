@@ -765,7 +765,9 @@ mkdir -p $tmp/run/babylon
 print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[],"stage":"failed",'\
 '"ask":{"id":5,"question":"Which colour?","options":["red","blue"]}},'\
 '{"id":8,"repo":"arena","title":"Board of the lanes","kind":"ticket","status":"doing","priority":"high","claimed_by":"'$one'",'\
-'"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[7]}],'\
+'"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[7]},'\
+'{"id":11,"repo":"arena","title":"Handed in","kind":"ticket","status":"review","priority":"med","claimed_by":"'$one'",'\
+'"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[],"stage":"queued"}],'\
 '"backlog":[{"id":12,"repo":"arena","title":"Someday","kind":"ticket","status":"backlog","priority":"med","blocked_by":[]}]}' \
   >$tmp/run/babylon/board.json
 check "babylon's board has a row atop the rail, with its counts" see '^│ ▤ board +1 todo  1 doing │'
@@ -798,6 +800,7 @@ check "the lanes share the board's height, the rule between them well under thei
 check "its cards boxed, their number and title inside" see '│ #8 Board of +│'
 check "a long title running on to a second line" see '│ the lanes +│'
 check "and a doing one its holder's window under them, and how long it has held it" see '│ one · [0-9]+[sm] '
+check "one in review its stage in the holder's place" see '│ » queued +│'
 claude alpha:one prompt
 check "with its Claude's mark while it works" see '│ [◐◓◑◒] one · [0-9]+[sm]'
 claude alpha:one end
