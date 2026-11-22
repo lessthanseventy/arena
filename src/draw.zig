@@ -1380,7 +1380,7 @@ fn laneColumn(app: *const App, w: *Writer, pen: *Pen, view: app_mod.BoardView, c
 }
 
 /// Row `part` of a card boxed in `inner` cells: its edges, the picked one's lit and its left one a
-/// high or low priority's colour, its number and title on two rows, and its footer.
+/// high or low priority's colour, its number and title on two rows, and its footer and top edge.
 fn cardLine(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, part: App.CardRow, picked: bool, with_repo: bool, inner: u16) !void {
     if (inner < 4) return fitted(w, "", inner);
     var buf: [160]u8 = undefined;
@@ -1395,7 +1395,8 @@ fn cardLine(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, p
     try pen.set(w, left, null);
     try w.writeAll(ends[0]);
     switch (part) {
-        .top, .bottom => {
+        .top => try cardText(app, w, pen, card, with_repo, .{ .edge = border }, inner - 2),
+        .bottom => {
             try pen.set(w, border, null);
             for (0..inner - 2) |_| try w.writeAll("─");
         },
@@ -1406,7 +1407,7 @@ fn cardLine(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, p
             try w.writeAll(" ");
             try fitted(w, lines[@intFromBool(part == .title_more)], inner - 3);
         },
-        .footer => try cardFooter(app, w, pen, card, with_repo, inner - 2),
+        .footer => try cardText(app, w, pen, card, with_repo, .footer, inner - 2),
     }
     try pen.set(w, border, null);
     try w.writeAll(ends[1]);
@@ -1424,22 +1425,46 @@ fn stageOf(app: *const App, card: *const tickets.Card) ?struct { style: vt.Style
     return .{ .style = ink(app, "dim", 8), .glyph = 0, .word = s };
 }
 
-/// A card's footer in `width` cells, a space either side: a question waiting on the human, then
-/// where the pipeline has it as a glyph in its colour, then the rest of what is so of it.
-fn cardFooter(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, with_repo: bool, width: usize) !void {
+/// What has a card's footer to itself: the Claude holding it or, in review, where the pipeline
+/// has it. Nothing has a card nobody holds.
+fn cardWho(card: *const tickets.Card) enum { none, holder, stage } {
+    if (card.status == .review) return if (card.stage != null) .stage else .none;
+    return if (card.holder() != null) .holder else .none;
+}
+
+/// A card's footer or its top edge in `width` cells. The footer is who has the card, alone; the
+/// rest of what is so of it is then on the top edge, the edge's line run on after it: a question
+/// waiting on the human, where the pipeline has it as a glyph in its colour, and its detail. A
+/// card nobody has keeps all of that in its footer, and its edge is bare.
+fn cardText(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, with_repo: bool, on: union(enum) { edge: vt.Style, footer }, width: usize) !void {
     var buf: [160]u8 = undefined;
+    var held: [96]u8 = undefined;
     var spun: [32]u8 = undefined;
     const dim = ink(app, "dim", 8);
-    const amber = ink(app, "amber", 4);
+    const who = cardWho(card);
+    const rest = (who == .none) == (on == .footer);
     const stage: struct { vt.Style, []const u8 } = if (stageOf(app, card)) |s|
         .{ s.style, if (s.glyph == 0) s.word else std.fmt.bufPrint(&spun, "{u} {s}", .{ s.glyph, s.word }) catch s.word }
     else
         .{ dim, "" };
     const parts = [_]struct { vt.Style, []const u8 }{
-        .{ amber, if (card.ask != null) "? asks" else "" },
-        stage,
-        .{ dim, cardDetail(app, card, with_repo, &buf) },
+        .{ ink(app, "amber", 4), if (rest and card.ask != null) "? asks" else "" },
+        if (if (who == .stage) on == .footer else rest) stage else .{ dim, "" },
+        .{ dim, if (who == .holder and on == .footer) cardHolder(app, card, &held) else "" },
+        .{ dim, if (rest) cardDetail(card, with_repo, &buf) else "" },
     };
+    const fill: struct { vt.Style, []const u8 } = switch (on) {
+        .edge => |border| .{ border, "─" },
+        .footer => .{ .{}, " " },
+    };
+    const bare = for (parts) |part| {
+        if (part[1].len > 0) break false;
+    } else true;
+    if (bare and on == .edge) {
+        try pen.set(w, fill[0], null);
+        for (0..width) |_| try w.writeAll(fill[1]);
+        return;
+    }
     var left = width -| 2;
     try pen.set(w, .{}, null);
     try w.writeAll(" ");
@@ -1464,31 +1489,34 @@ fn cardFooter(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card,
         }
     }
     try pen.set(w, .{}, null);
-    for (0..left + 1) |_| try w.writeAll(" ");
+    try w.writeAll(" ");
+    try pen.set(w, fill[0], null);
+    for (0..left) |_| try w.writeAll(fill[1]);
 }
 
-/// What else is so of a card, joined: its repo when the board shows every one, the window of the
-/// Claude holding it with that Claude's mark and how long it has held it, the tickets it waits
-/// on, that it is an epic, a priority not the usual one, why a done one's Claude was left running.
-fn cardDetail(app: *const App, card: *const tickets.Card, with_repo: bool, buf: []u8) []const u8 {
+/// The window of the Claude holding a card, with that Claude's mark and how long it has held it.
+fn cardHolder(app: *const App, card: *const tickets.Card, buf: []u8) []const u8 {
+    var out: Writer = .fixed(buf);
+    const pane = card.holder() orelse return "";
+    if (app.paneWindow(pane)) |at| {
+        const win = at.session.wins.items[at.index];
+        if (win.claude != .none) out.print("{u} ", .{glyph(app, win.claude)}) catch {};
+        out.writeAll(win.name) catch {};
+    } else out.writeAll(card.claimed_by.?) catch {};
+    var age: [8]u8 = undefined;
+    if (card.claimedAt()) |at| out.print(" · {s}", .{ago(&age, app.epoch, @intCast(@max(1, at)))}) catch {};
+    return out.buffered();
+}
+
+/// What else is so of a card, joined: its repo when the board shows every one, the tickets it
+/// waits on, that it is an epic, a priority not the usual one, why a done one's Claude was left running.
+fn cardDetail(card: *const tickets.Card, with_repo: bool, buf: []u8) []const u8 {
     var out: Writer = .fixed(buf);
     var sep: []const u8 = "";
     if (with_repo) {
         out.print("{s}{s}", .{ sep, card.repo orelse "no repo" }) catch {};
         sep = " · ";
     }
-    // in review the pipeline has it, and its stage says so in the holder's place
-    if (card.status != .review) if (card.holder()) |pane| {
-        if (app.paneWindow(pane)) |at| {
-            const win = at.session.wins.items[at.index];
-            out.writeAll(sep) catch {};
-            if (win.claude != .none) out.print("{u} ", .{glyph(app, win.claude)}) catch {};
-            out.writeAll(win.name) catch {};
-        } else out.print("{s}{s}", .{ sep, card.claimed_by.? }) catch {};
-        var age: [8]u8 = undefined;
-        if (card.claimedAt()) |at| out.print(" · {s}", .{ago(&age, app.epoch, @intCast(@max(1, at)))}) catch {};
-        sep = " · ";
-    };
     if (card.blocked_by.len > 0) {
         out.print("{s}waits", .{sep}) catch {};
         for (card.blocked_by) |id| out.print(" #{d}", .{id}) catch {};
@@ -1553,18 +1581,23 @@ test "a queued card with a question open is held, and one without is queued" {
 
     var waiting: Writer = .fixed(&buf);
     var pen: Pen = .{};
-    try cardFooter(&app, &waiting, &pen, &card, false, 15);
+    try cardText(&app, &waiting, &pen, &card, false, .footer, 15);
     try std.testing.expect(std.mem.indexOf(u8, waiting.buffered(), "» queued") != null);
 
     card.ask = .{ .id = 5, .question = "Which colour?" };
     var held: Writer = .fixed(&buf);
     pen = .{};
-    try cardFooter(&app, &held, &pen, &card, false, 15);
+    try cardText(&app, &held, &pen, &card, false, .footer, 15);
     const drawn = held.buffered();
-    try std.testing.expect(std.mem.indexOf(u8, drawn, "? asks") != null);
     try std.testing.expect(std.mem.indexOf(u8, drawn, "held") != null);
     try std.testing.expect(std.mem.indexOf(u8, drawn, "queued") == null);
     try std.testing.expect(std.mem.indexOf(u8, drawn, "…") == null);
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "? asks") == null);
+
+    var edge: Writer = .fixed(&buf);
+    pen = .{};
+    try cardText(&app, &edge, &pen, &card, false, .{ .edge = .{} }, 15);
+    try std.testing.expect(std.mem.indexOf(u8, edge.buffered(), "? asks") != null);
 }
 
 test "the board's keys end on a card's edge and its marks, and a 24-row terminal has them whole" {

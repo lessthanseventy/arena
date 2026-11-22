@@ -800,8 +800,9 @@ rule_at() { screen | grep -n -m1 '├─' | cut -d: -f1 }
 check "the lanes share the board's height, the rule between them well under their cards" test "$(rule_at)" -gt 6
 check "its cards boxed, their number and title inside" see '│ #8 Board of +│'
 check "a long title running on to a second line" see '│ the lanes +│'
-check "and a doing one its holder's window under them, and how long it has held it" see '│ one · [0-9]+[sm] '
+check "and a doing one its holder's window under them, and how long it has held it, alone on the row" see '│ one · [0-9]+[sm] +│'
 check "one in review its stage in the holder's place" see '│ » queued +│'
+check "what it waits on is on its top edge" see '╭ waits #7 '
 claude alpha:one prompt
 check "with its Claude's mark while it works" see '│ [◐◓◑◒] one · [0-9]+[sm]'
 claude alpha:one end
@@ -908,7 +909,8 @@ check "r narrows it to one repo, its tab lit" await tablit arena
 check "and to its cards" gone '#7 Lights'
 check "which are whole there: number and title" see '│ #8 Board of the +│'
 check "a high card's left edge amber" high_edge
-check "under them the window of the Claude holding it" see '│ one · [0-9]+[sm] · w'
+check "under them the window of the Claude holding it, alone on the row" see '│ one · [0-9]+[sm] +│'
+check "the rest of what is so of it on its top edge" see '╭ waits #7 · high ─*╮'
 tabrow() { screen | grep -n -m1 ' board   every' | cut -d: -f1 }
 tabcol() { local l=$(screen | grep -m1 ' board   every'); local p=${l%%" $1 "*}; print $(( ${#p} + 2 )) }
 key '?'
