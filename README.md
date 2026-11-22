@@ -120,8 +120,9 @@ arena board 240   # the board on ticket 240, in the arena that is running
 ticket picked, the ticket's question over it when it waits on one, and comes back at once. A
 ticket the board shows nowhere, a done one older than its repo's last three, has its whole
 detail over the board in the pick's place. With
-no arena running it starts one, so opened. It reaches arena through tmux, as any control-mode
-client on that server: `-L` names the server there too.
+no arena running it starts one, so opened. It reaches arena through tmux, and only arena: each
+arena names its client in the server's `@arena_clients`, so another control-mode client there,
+as iTerm's, is told nothing. `-L` names the server there too.
 
 Everything is on Alt, so it stays out of the way of your shell and your window manager.
 

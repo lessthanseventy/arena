@@ -1153,9 +1153,17 @@ check "with nothing on stderr" test ! -s $tmp/err
 
 print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[],'\
 '"ask":{"id":5,"question":"Which colour?","options":["red","blue"]}}]}' >$tmp/run/babylon/board.json
+# a control-mode client that is no arena, as iTerm is
+mkfifo $tmp/other
+inner -C attach <$tmp/other >$tmp/other-out 2>&1 &
+exec {other}>$tmp/other
+other_there() { [[ $(inner list-clients -F '#{client_control_mode}') == 1 ]] }
+check "a control-mode client that is no arena is on the server" await other_there
 outer new-window -t o \
   "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 $bin -L $in board 7; echo EXIT \$?; cat"
 check "with no arena running, arena board and an id starts one with the board on that ticket" see '│ Which colour\? +│'
+untold() { ! grep -q 'arena board' $tmp/other-out }
+check "and a control-mode client that is no arena is told nothing" untold
 key Escape Escape M-q
 check "which leaves as any other" see 'EXIT 0'
 

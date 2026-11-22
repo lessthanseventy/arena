@@ -162,14 +162,19 @@ fn hasSession(init: std.process.Init, tmux: []const []const u8) !bool {
     return has.term.success();
 }
 
+/// The server option each arena adds its client's name to: a control-mode client not named
+/// there, as iTerm's, is no arena. A name outlives its client there, so it marks only a
+/// client still on the server.
+const clients_option = "@arena_clients";
+
 /// Has every arena on the server show the board on ticket `id`, and says whether one was told.
-/// An arena is a control-mode client, and any such client is taken for one.
 fn tellCard(init: std.process.Init, tmux: []const []const u8, id: u32) !bool {
     const gpa = init.gpa;
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(gpa);
     try argv.appendSlice(gpa, tmux);
-    try argv.appendSlice(gpa, &.{ "list-clients", "-F", "#{client_control_mode} #{client_name}" });
+    const arenas = "#{&&:#{client_control_mode},#{m:* #{client_name} *,#{" ++ clients_option ++ "}}}";
+    try argv.appendSlice(gpa, &.{ "list-clients", "-F", "#{client_name}", "-f", arenas });
     const clients = try std.process.run(gpa, init.io, .{ .argv = argv.items });
     defer gpa.free(clients.stdout);
     defer gpa.free(clients.stderr);
@@ -178,10 +183,9 @@ fn tellCard(init: std.process.Init, tmux: []const []const u8, id: u32) !bool {
     defer gpa.free(message);
     var told = false;
     var lines = std.mem.tokenizeScalar(u8, clients.stdout, '\n');
-    while (lines.next()) |line| {
-        if (!std.mem.startsWith(u8, line, "1 ")) continue;
+    while (lines.next()) |client| {
         argv.items.len = tmux.len;
-        try argv.appendSlice(gpa, &.{ "display-message", "-c", line[2..], message });
+        try argv.appendSlice(gpa, &.{ "display-message", "-c", client, message });
         const said = try std.process.run(gpa, init.io, .{ .argv = argv.items });
         gpa.free(said.stdout);
         gpa.free(said.stderr);
@@ -281,6 +285,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
 
     var app: App = .{ .gpa = gpa, .io = io, .tmux_in = child.stdin.? };
     defer app.deinit();
+    try app.send(.ignore, "set-option -saF " ++ clients_option ++ " ' #{{client_name}} '", .{});
     app.motion = init.environ_map.get("ARENA_REDUCED_MOTION") == null;
     var theme_file: ThemeFile = .{
         .path = if (init.environ_map.get("HOME")) |home| try std.fs.path.join(gpa, &.{ home, ".config/ficciones/theme/palette.sh" }) else null,
