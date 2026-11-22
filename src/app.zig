@@ -1703,7 +1703,8 @@ pub const App = struct {
         for (tickets.statuses) |status| {
             const total = b.column(status, repo, &.{});
             const shown = shownOf(status, total);
-            most = @max(most, shown * card_rows + @intFromBool(total > shown));
+            const each: usize = if (status == .done) 1 else card_rows;
+            most = @max(most, shown * each + @intFromBool(total > shown));
         }
         return most;
     }
@@ -1762,7 +1763,8 @@ pub const App = struct {
     /// picked card in view, down to its bottom edge.
     pub fn laneScroll(app: *const App) usize {
         const view = app.board_view orelse return 0;
-        const pick = app.laneStart(view.lane) + view.row * card_rows + card_rows - 1;
+        const each = app.cardRows(view.col);
+        const pick = app.laneStart(view.lane) + view.row * each + each - 1;
         const shown = app.view_h -| 3;
         return if (pick >= shown) pick - shown + 1 else 0;
     }
@@ -1813,13 +1815,33 @@ pub const App = struct {
     }
 
     /// The board's four columns side by side under a row of its own, right of the lanes' names
-    /// in the every view; in each, cards stacked from the second row inside its border.
-    pub fn boardColW(app: *const App) u16 {
-        return (app.boardW() - app.laneLabelW()) / @as(u16, @intCast(app.boardCols()));
+    /// in the every view; in each, cards stacked from the second row inside its border. The
+    /// every view's strip is narrow, and the columns before it share what it leaves.
+    pub fn boardColW(app: *const App, col: usize) u16 {
+        const room = app.boardW() - app.laneLabelW();
+        const cols: u16 = @intCast(app.boardCols());
+        if (!app.boardLanes()) return room / cols;
+        const strip = @min(strip_max, app.boardW() / 6);
+        return if (app.boardStrip(col)) strip else (room - strip) / (cols - 1);
     }
 
     pub fn boardColX(app: *const App, col: usize) u16 {
-        return app.boardX() + app.laneLabelW() + @as(u16, @intCast(col)) * app.boardColW();
+        var x = app.boardX() + app.laneLabelW();
+        for (0..col) |c| x += app.boardColW(c);
+        return x;
+    }
+
+    pub const strip_max = 24;
+
+    /// Whether column `col` is the every view's strip of what each lane closed last: done, a
+    /// card a row with no box.
+    pub fn boardStrip(app: *const App, col: usize) bool {
+        return app.boardLanes() and tickets.statuses[col] == .done;
+    }
+
+    /// The rows a card takes in column `col`.
+    pub fn cardRows(app: *const App, col: usize) usize {
+        return if (app.boardStrip(col)) 1 else card_rows;
     }
 
     pub fn laneLabelW(app: *const App) u16 {
@@ -1856,11 +1878,12 @@ pub const App = struct {
     fn boardCardAt(app: *const App, x: u16, y: u16) ?struct { lane: usize, col: usize, row: usize } {
         const left = app.boardColX(0);
         if (x < left or y < 2 or y + 1 >= app.view_h) return null;
-        const col: usize = (x - left) / @max(1, app.boardColW());
-        if (col >= app.boardCols()) return null;
+        const col = for (0..app.boardCols()) |c| {
+            if (x < app.boardColX(c) + app.boardColW(c)) break c;
+        } else return null;
         if (app.boardLanes()) {
             const at = app.laneLineAt(y - 2 + app.laneScroll()) orelse return null;
-            const k = at.row / card_rows;
+            const k = at.row / app.cardRows(col);
             if (at.rule or app.laneCard(at.lane, col, k) == null) return null;
             return .{ .lane = at.lane, .col = col, .row = k };
         }
@@ -2194,10 +2217,10 @@ pub const App = struct {
 
     /// The board's buttons: the repos as tabs and the gate and auto's switch beside them on its first row, a + on
     /// the to-do column's top edge, and the picked card's actions on its bottom edge, each kept
-    /// to the room it has.
+    /// to the room it has. A row of the strip has no edge: the strip's own foot has its reopen.
     pub fn boardButtons(app: *const App, out: []Button) []Button {
         const view = app.board_view orelse return out[0..0];
-        const cw = app.boardColW();
+        const cw = app.boardColW(0);
         var buf: [64]u8 = undefined;
         var n = app.tabRow(out, cellCount(app.boardTitle(&buf)));
         if (cw >= 12 and n < out.len) {
@@ -2205,17 +2228,19 @@ pub const App = struct {
             n += 1;
         }
         const card = app.boardCard(view.col, view.row) orelse return out[0..n];
-        const y: u16 = if (app.boardLanes()) blk: {
+        const strip = app.boardStrip(view.col);
+        const y: u16 = if (strip) app.view_h -| 1 else if (app.boardLanes()) blk: {
             const line = app.laneStart(view.lane) + view.row * card_rows + @backingInt(CardRow.bottom);
             const scroll = app.laneScroll();
             if (line < scroll) return out[0..n];
             break :blk @intCast(@min(2 + line - scroll, app.view_h));
         } else cardTop(view.row - app.boardFirst(view.col)) + @backingInt(CardRow.bottom);
-        if (y + 1 >= app.view_h) return out[0..n];
+        if (!strip and y + 1 >= app.view_h) return out[0..n];
         var have: [8]CardAction = undefined;
         var x: u16 = app.boardColX(view.col) + 2;
-        const edge = app.boardColX(view.col) + cw -| 2;
+        const edge = app.boardColX(view.col) + app.boardColW(view.col) -| 2;
         for (cardActions(card, &have)) |action| {
+            if (strip and action != .reopen) continue;
             const w: u16 = @intCast(cellCount(app.buttonLabel(.{ .card = action }, &buf)));
             if (x + w > edge or n == out.len) break;
             out[n] = .{ .what = .{ .card = action }, .x = x, .y = y, .w = w };
@@ -3512,6 +3537,52 @@ test "the every view's lanes: their lines, the pick stepping across them, and th
     try eq(@as(?u32, 4), picked(&app));
     try app.boardKey("j");
     try eq(@as(?u32, 4), picked(&app));
+}
+
+test "the every view's done column is a strip: narrow, a card a row, its reopen on its foot" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 140;
+    app.view_w = 120;
+    app.view_h = 20;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"repo":"arena","title":"a","status":"todo"},
+        \\{"id":2,"repo":"arena","title":"b","status":"done"},
+        \\{"id":3,"repo":"arena","title":"c","status":"done"},
+        \\{"id":4,"repo":"arena","title":"d","status":"done"},
+        \\{"id":5,"repo":"arena","title":"e","status":"done"},
+        \\{"id":6,"repo":"arena","title":"f","status":"done"},
+        \\{"id":7,"repo":"arena","title":"g","status":"done"},
+        \\{"id":8,"repo":"arena","title":"h","status":"done"}
+        \\]}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{};
+    const eq = std.testing.expectEqual;
+
+    try eq(@min(App.strip_max, app.boardW() / 6), app.boardColW(3));
+    try std.testing.expect(app.boardColW(0) > app.boardColW(3));
+    try eq(app.boardColX(2) + app.boardColW(2), app.boardColX(3));
+    try std.testing.expect(app.boardColX(3) + app.boardColW(3) <= app.boardX() + app.boardW());
+    // one card's rows, where done's three rows and its count of the rest are four
+    try eq(@as(usize, App.card_rows), app.laneRows("arena"));
+
+    try app.boardKey("l");
+    try app.boardKey("l");
+    try app.boardKey("l");
+    try app.boardKey("j");
+    const view = app.board_view.?;
+    try eq(@as(usize, 1), view.row);
+    try eq(view.row, app.boardCardAt(app.boardColX(3) + 1, 2 + 1).?.row);
+    var buttons: [48]App.Button = undefined;
+    const shown = app.boardButtons(&buttons);
+    const last = shown[shown.len - 1];
+    try eq(App.CardAction.reopen, last.what.card);
+    try eq(app.view_h - 1, last.y);
+
+    // one repo's view keeps done a column like the others
+    app.board_view.?.repo = 1;
+    try eq(app.boardColW(0), app.boardColW(3));
 }
 
 test "a card moves along its column only with a repo, out of the backlog" {

@@ -772,18 +772,18 @@ check "babylon's board has a row atop the rail, with its counts" see '^│ ▤ b
 key M-b
 check "Alt+b opens it in place of the strip, its repos as tabs" see ' board   every   arena   tlon '
 check "and where its keys are" see '\? keys · esc close'
-check "the picked card's actions as chips on its own bottom edge" see '╰ go ─ answer ╯'
+check "the picked card's actions as chips on its own bottom edge" see '╰ go ─ answer ─╯'
 rowof() { screen | grep -n -m1 -- "$1" | cut -d: -f1 }
-check "the row under its footer" test $(( $(rowof '#7 Lights') + 3 )) -eq "$(rowof '╰ go ─ answer ╯')"
+check "the row under its footer" test $(( $(rowof '#7 Lights') + 3 )) -eq "$(rowof '╰ go ─ answer ─╯')"
 key l k
 check "k off a lane's top goes up to the lane above with a card in that column" see '╰ go ─ edit '
 key h j
-check "and j off its end down to the lane below with one" see '╰ go ─ answer ╯'
+check "and j off its end down to the lane below with one" see '╰ go ─ answer ─╯'
 spot() { local l=$(screen | grep -m1 -- "$1"); local p=${l%%"$1"*}; print $(( ${#p} + 2 )) $(screen | grep -n -m1 -- "$1" | cut -d: -f1) }
 mouse 0 ${(z)$(spot '#8 Board')} M
 check "a click on a card in a lane picks it" see '╰ go ─ edit '
 mouse 0 ${(z)$(spot '#7 Lights')} M
-check "and on another, that one" see '╰ go ─ answer ╯'
+check "and on another, that one" see '╰ go ─ answer ─╯'
 key '?'
 check "? shows the board's keys" see "the board's keys"
 key x
@@ -801,7 +801,7 @@ check "and a doing one its holder's window under them, and how long it has held 
 claude alpha:one prompt
 check "with its Claude's mark while it works" see '│ [◐◓◑◒] one · [0-9]+[sm]'
 claude alpha:one end
-check "sent back and asking in its footer" see '│ \? asks · ✗… │'
+check "sent back and asking in its footer" see '│ \? asks · ✗ … │'
 cardrow() { local l; for l in "${(@f)$(outer capture-pane -ep -t o)}"; [[ $l == *$1* ]] && print -r -- $l }
 picked_lit() { [[ $(cardrow '#7 Lights') == *$'\e[1m\e[38;5;4m│\e[0m #7 Lights'* ]] }
 high_edge() { [[ $(cardrow '#8 Board') == *$'\e[38;5;4m│\e[38;5;8m #8 Board'* ]] }
@@ -1069,9 +1069,16 @@ print -r -- '{"tickets":[{"id":20,"repo":"arena","title":"Next","kind":"ticket",
 key M-b
 key '`'
 
-check "done shows its last few closed in a lane" see '│ #23 Done 23 +│'
+check "done shows its last few closed in a lane, a row each under a ✓" see '│ ✓ #23 Done…│'
 check "then how many more it has" see '│ 2 more +│'
-check "and its count is all of them" see '─ done 6 ─'
+check "headed recent, its count all of them" see '╭─ recent 6 ─'
+colw() { local l=$(screen | grep -m1 -- "╭─ $1 "); l=${l#*"╭─ $1 "}; print $(( ${#${l%%╮*}} )) }
+check "a strip narrower than the columns before it" test "$(colw todo)" -gt "$(colw recent)"
+key l l l j
+check "a row of it is picked, its reopen on the strip's foot" see '╰─ reopen ─+╯'
+key '<'
+check "and < opens it again" await last 'update 24 --status todo'
+key h h h
 check "a repo with only done cards has no lane" gone '│  menard '
 tabline() { local l; for l in "${(@f)$(outer capture-pane -ep -t o)}"; [[ $l == *' board '*' every '* ]] && print -r -- $l }
 tab_dim() { [[ $(tabline) == *$'\e[38;5;8m '$1' '* ]] }

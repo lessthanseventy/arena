@@ -971,7 +971,6 @@ fn overview(app: *App, w: *Writer, spot: App.Spot) !void {
 /// the picked one's border lit.
 fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     const ox = app.boardX();
-    const cw = app.boardColW();
     const dim = ink(app, "dim", 8);
     const edge: vt.Style = .{ .fg_color = .palette(8) };
     const repo = app.boardRepo();
@@ -990,9 +989,9 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     const lanes = app.boardLanes();
     if (lanes) try laneNames(app, w, &pen);
     for (0..app.boardCols()) |c| {
-        const name = if (view.backlog) "backlog" else @tagName(tickets.statuses[c]);
+        const name = if (view.backlog) "backlog" else if (app.boardStrip(c)) "recent" else @tagName(tickets.statuses[c]);
         const x = app.boardColX(c);
-        const inner = cw -| 2;
+        const inner = app.boardColW(c) -| 2;
         var cards: [app_mod.max_cards]*const tickets.Card = undefined;
         const n = app.boardColumn(c, &cards);
         const total = if (lanes) app.boardCount(tickets.statuses[c]) else app.boardColumnAll(c);
@@ -1309,7 +1308,8 @@ fn laneNames(app: *const App, w: *Writer, pen: *Pen) !void {
     }
 }
 
-/// Column `c` of the every view: each lane's cards in it boxed, a rule between lanes.
+/// Column `c` of the every view: each lane's cards in it boxed, a rule between lanes. The strip's
+/// are a dim row each, ✓ and its number and title, the picked one lit.
 fn laneColumn(app: *const App, w: *Writer, pen: *Pen, view: app_mod.BoardView, c: usize, x: u16, inner: u16) !void {
     const edge: vt.Style = .{ .fg_color = .palette(8) };
     const scroll = app.laneScroll();
@@ -1325,16 +1325,22 @@ fn laneColumn(app: *const App, w: *Writer, pen: *Pen, view: app_mod.BoardView, c
             continue;
         };
         try w.writeAll("│");
-        const k = if (at) |line| line.row / App.card_rows else 0;
+        const each = app.cardRows(c);
+        const k = if (at) |line| line.row / each else 0;
         const card = if (at) |line| app.laneCard(line.lane, c, k) else null;
         if (card) |it| {
             const line = at.?;
-            const part: App.CardRow = @fromBackingInt(@intCast(line.row % App.card_rows));
-            try cardLine(app, w, pen, it, part, line.lane == view.lane and c == view.col and k == view.row, false, inner);
+            const picked = line.lane == view.lane and c == view.col and k == view.row;
+            if (each == 1) {
+                var buf: [160]u8 = undefined;
+                try pen.set(w, if (picked) heading(app) else ink(app, "dim", 8), null);
+                try w.writeAll(" ");
+                try fitted(w, std.fmt.bufPrint(&buf, "✓ #{d} {s}", .{ it.id, it.title }) catch it.title, inner -| 1);
+            } else try cardLine(app, w, pen, it, @fromBackingInt(@intCast(line.row % each)), picked, false, inner);
         } else {
             var buf: [24]u8 = undefined;
             const counts = if (at) |line| app.laneCounts(line.lane, c) else null;
-            const more = if (counts) |n| at.?.row == n.shown * App.card_rows and n.total > n.shown else false;
+            const more = if (counts) |n| at.?.row == n.shown * each and n.total > n.shown else false;
             try pen.set(w, ink(app, "dim", 8), null);
             try fitted(w, if (more) std.fmt.bufPrint(&buf, " {d} more", .{counts.?.total - counts.?.shown}) catch "" else "", inner);
         }

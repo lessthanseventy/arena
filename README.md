@@ -45,7 +45,7 @@ always did; arena draws them and leaves them running when it quits.
 - **Panes**, drawn where tmux has them. Click one to select it, drag the line between two to resize.
 - **An overview** of every session's windows at once.
 - **The board**: the tickets every Claude on the machine shares, from [babylon](https://github.com/lessthanseventy/babylon),
-  in place of the strip, a column for each of todo, doing, review and done. A card has its number and title, whole on two lines, and under them its repo, the window of the Claude
+  in place of the strip, a column for each of todo, doing, review and done. With every repo shown, done is a narrow strip headed `recent`, each lane's last few closed a dim `✓` row, and its `reopen` on the strip's foot for the picked one. A card has its number and title, whole on two lines, and under them its repo, the window of the Claude
   holding it with that Claude's mark and how long it has held it (in review, the pipeline's stage in its place), what it waits on, where it is on babylon's way to main (queued, verifying, reviewing,
   landing, `✗ sent back`, `◆ landed`) and `? asks` when its Claude waits on a decision from you:
   `a` shows the question and its options, and an option's number answers it, typed into that
