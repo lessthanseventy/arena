@@ -117,7 +117,9 @@ arena board 240   # the board on ticket 240, in the arena that is running
 ```
 
 `arena board <id>` is the door from outside: it has the running arena open its board with that
-ticket picked, the ticket's question over it when it waits on one, and comes back at once. With
+ticket picked, the ticket's question over it when it waits on one, and comes back at once. A
+ticket the board shows nowhere, a done one older than its repo's last three, has its whole
+detail over the board in the pick's place. With
 no arena running it starts one, so opened. It reaches arena through tmux, as any control-mode
 client on that server: `-L` names the server there too.
 

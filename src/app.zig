@@ -1569,8 +1569,9 @@ pub const App = struct {
     }
 
     /// The board opened on ticket `id`, over whatever had the keys, with its question shown
-    /// when it asks one: what `arena board <id>` asks for. A ticket the board shows nowhere
-    /// opens the board as Alt+b does; with no board there is nothing to open.
+    /// when it asks one: what `arena board <id>` asks for. A ticket the board shows nowhere, a
+    /// done one older than its repo's last few or one babylon has none of, opens the board as
+    /// Alt+b does with what babylon says of it over it; with no board there is nothing to open.
     pub fn showCard(app: *App, id: u32) !void {
         if (app.board == null) return;
         app.menu = null;
@@ -1584,8 +1585,27 @@ pub const App = struct {
         view.help = false;
         view.detail = null;
         view.giving = null;
-        view.answering = app.pickCard(id) and app.boardCard(view.col, view.row).?.ask != null;
+        const picked = app.pickCard(id);
+        view.answering = picked and app.boardCard(view.col, view.row).?.ask != null;
+        if (!picked) _ = try app.openDetail(id);
         try app.toSide();
+    }
+
+    /// Ticket `id`'s whole detail asked of babylon and shown over the open board. False with
+    /// nowhere for babylon to write it.
+    fn openDetail(app: *App, id: u32) !bool {
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const path = app.detailPath(id, &buf) orelse return false;
+        const view = &app.board_view.?;
+        // tmux gives a control client run-shell's output outside its reply, so it comes by a file
+        std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
+        if (app.detail_asked.items.len == 16) _ = app.detail_asked.orderedRemove(0);
+        try app.detail_asked.append(app.gpa, id);
+        view.detail = id;
+        view.detail_scroll = 0;
+        app.detail.clearRetainingCapacity();
+        try app.send(.ignore, "run-shell -b \"babylon detail {d} >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ id, path, path, path });
+        return true;
     }
 
     /// The open board's pick put on ticket `id`: in the every view where it shows there, else
@@ -2004,17 +2024,8 @@ pub const App = struct {
             if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.detail_scroll -|= 1;
             return;
         }
-        var buf: [std.fs.max_path_bytes]u8 = undefined;
-        if (is(key, &.{" "})) if (app.boardCard(view.col, view.row)) |card| if (app.detailPath(card.id, &buf)) |path| {
-            // tmux gives a control client run-shell's output outside its reply, so it comes by a file
-            std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
-            if (app.detail_asked.items.len == 16) _ = app.detail_asked.orderedRemove(0);
-            try app.detail_asked.append(app.gpa, card.id);
-            view.detail = card.id;
-            view.detail_scroll = 0;
-            app.detail.clearRetainingCapacity();
-            try app.send(.ignore, "run-shell -b \"babylon detail {d} >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ card.id, path, path, path });
-            return;
+        if (is(key, &.{" "})) if (app.boardCard(view.col, view.row)) |card| {
+            if (try app.openDetail(card.id)) return;
         };
         if (is(key, &.{"?"})) {
             view.help = true;

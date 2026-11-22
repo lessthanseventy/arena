@@ -1140,6 +1140,10 @@ key Escape
 check "put away again" gone '│ left running: it holds #9 '
 key j j j
 check "where the pick goes no further than the last shown" see '╰ edit ─ priority ╯'
+$bin -L $in board 21
+check "arena board and the id of a done card older than those shown has its whole ticket over the board" see '│ #21 Lights '
+key Escape
+check "put away as any other" gone '│ #21 Lights '
 key M-b
 
 key M-q
