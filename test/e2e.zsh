@@ -831,6 +831,13 @@ key ' '
 check "shown again" see '│ the whole of it '
 mouse 0 3 12 M
 check "and closed with the board by a click on the rail, no file either" await nofile
+$bin -L $in board 7
+check "arena board and a ticket's id, run elsewhere, opens the board on it with its question" see '│ Which colour\? +│'
+key Escape
+$bin -L $in board 8
+check "and with the board open, moves the pick to it" see '╰ go ─ edit '
+key Escape
+gone ' board   every'
 key M-b
 last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
 key p
@@ -1104,5 +1111,13 @@ key M-q
 check "Alt+q leaves cleanly" see 'EXIT 0'
 check "and leaves the sessions running" inner has-session -t alpha
 check "with nothing on stderr" test ! -s $tmp/err
+
+print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[],'\
+'"ask":{"id":5,"question":"Which colour?","options":["red","blue"]}}]}' >$tmp/run/babylon/board.json
+outer new-window -t o \
+  "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 $bin -L $in board 7; echo EXIT \$?; cat"
+check "with no arena running, arena board and an id starts one with the board on that ticket" see '│ Which colour\? +│'
+key Escape Escape M-q
+check "which leaves as any other" see 'EXIT 0'
 
 exit $((fails > 0))

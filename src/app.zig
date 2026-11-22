@@ -1052,6 +1052,7 @@ pub const App = struct {
                 app.want_list = true;
             },
             .session_changed => |id| app.onSessionChanged(id),
+            .card => |id| try app.showCard(id),
             .exit => {
                 app.ended = true;
                 app.quit = true;
@@ -1556,6 +1557,58 @@ pub const App = struct {
         if (app.board == null) return;
         app.board_view = .{ .lane = app.firstLane() };
         try app.toSide();
+    }
+
+    /// The board opened on ticket `id`, over whatever had the keys, with its question shown
+    /// when it asks one: what `arena board <id>` asks for. A ticket the board shows nowhere
+    /// opens the board as Alt+b does; with no board there is nothing to open.
+    pub fn showCard(app: *App, id: u32) !void {
+        if (app.board == null) return;
+        app.menu = null;
+        app.prompt = null;
+        app.overview = null;
+        app.orchestrating = false;
+        app.dirty = true;
+        if (app.board_view == null) app.board_view = .{};
+        const view = &app.board_view.?;
+        view.focus = .board;
+        view.help = false;
+        view.detail = null;
+        view.giving = null;
+        view.answering = app.pickCard(id) and app.boardCard(view.col, view.row).?.ask != null;
+        try app.toSide();
+    }
+
+    /// The open board's pick put on ticket `id`: in the every view where it shows there, else
+    /// in its repo's own columns, else in the backlog. False when the board shows it nowhere,
+    /// the board then as it opens.
+    fn pickCard(app: *App, id: u32) bool {
+        const view = &app.board_view.?;
+        var repos: [max_repos][]const u8 = undefined;
+        const n = if (app.board) |*b| b.repos(&repos) else 0;
+        for (0..n + 2) |narrowed| {
+            view.backlog = narrowed == n + 1;
+            view.repo = if (view.backlog) 0 else narrowed;
+            var lanes: [max_repos + 1][]const u8 = undefined;
+            for (0..if (app.boardLanes()) app.laneRepos(&lanes) else 1) |lane| {
+                view.lane = lane;
+                for (0..app.boardCols()) |col| {
+                    var out: [max_cards]*const tickets.Card = undefined;
+                    const shown = @min(app.boardColumn(col, &out), max_cards);
+                    for (out[0..shown], 0..) |card, row| if (card.id == id) {
+                        view.col = col;
+                        view.row = row;
+                        return true;
+                    };
+                }
+            }
+        }
+        view.backlog = false;
+        view.repo = 0;
+        view.col = 0;
+        view.row = 0;
+        view.lane = app.firstLane();
+        return false;
     }
 
     /// The board put away, and the side with it, back in the session the human was in.
@@ -3583,6 +3636,55 @@ test "the every view's done column is a strip: narrow, a card a row, its reopen 
     // one repo's view keeps done a column like the others
     app.board_view.?.repo = 1;
     try eq(app.boardColW(0), app.boardColW(3));
+}
+
+test "the board opens on a ticket by its id: its lane, its repo's columns or the backlog, its question shown" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 100;
+    app.view_w = 80;
+    app.view_h = 24;
+    try app.showCard(4);
+    try std.testing.expect(app.board_view == null);
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"repo":"arena","title":"a","status":"todo"},
+        \\{"id":4,"repo":"tlon","title":"d","status":"doing","ask":{"id":9,"question":"Which?","options":["x"]}},
+        \\{"id":6,"repo":"menard","title":"f","status":"done"},
+        \\{"id":5,"title":"e","status":"todo"}
+        \\],"backlog":[{"id":7,"repo":"arena","title":"g","status":"backlog"},{"id":8,"repo":"arena","title":"h","status":"backlog"}]}
+    );
+    defer app.board.?.deinit();
+    const eq = std.testing.expectEqual;
+    const picked = struct {
+        fn id(a: *const App) ?u32 {
+            const view = a.board_view.?;
+            return if (a.boardCard(view.col, view.row)) |card| card.id else null;
+        }
+    }.id;
+
+    app.overview = .{ .session = 0, .win = 0 };
+    try app.showCard(4);
+    try eq(@as(?u32, 4), picked(&app));
+    try std.testing.expect(app.overview == null);
+    try std.testing.expect(app.boardLanes());
+    try std.testing.expect(app.board_view.?.answering);
+
+    try app.showCard(5);
+    try eq(@as(?u32, 5), picked(&app));
+    try std.testing.expect(!app.board_view.?.answering);
+
+    // menard has only a closed card, so no lane in the every view
+    try app.showCard(6);
+    try eq(@as(?u32, 6), picked(&app));
+    try std.testing.expectEqualStrings("menard", app.boardRepo().?);
+
+    try app.showCard(8);
+    try eq(@as(?u32, 8), picked(&app));
+    try std.testing.expect(app.board_view.?.backlog);
+
+    try app.showCard(99);
+    try eq(@as(?u32, 1), picked(&app));
+    try std.testing.expect(app.boardLanes());
 }
 
 test "a card moves along its column only with a repo, out of the backlog" {

@@ -113,7 +113,13 @@ by every Claude on the machine, over MCP.
 arena             # the most recent session, or a new one when there is none
 arena work        # the session called work, made if it is not there
 arena -L socket   # a tmux server other than the default one
+arena board 240   # the board on ticket 240, in the arena that is running
 ```
+
+`arena board <id>` is the door from outside: it has the running arena open its board with that
+ticket picked, the ticket's question over it when it waits on one, and comes back at once. With
+no arena running it starts one, so opened. It reaches arena through tmux, as any control-mode
+client on that server: `-L` names the server there too.
 
 Everything is on Alt, so it stays out of the way of your shell and your window manager.
 

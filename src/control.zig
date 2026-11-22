@@ -17,9 +17,15 @@ pub const Event = union(enum) {
     window_selected: u32,
     /// This client is now on the session with this id.
     session_changed: u32,
+    /// `arena board <id>` run elsewhere asks this arena for the board on that ticket.
+    card: u32,
     exit,
     other,
 };
+
+/// What `arena board <id>` has tmux say to a running arena, the id after it: display-message
+/// to a control client comes to it as a `%message` line.
+pub const card_message = "arena board ";
 
 const changes = [_][]const u8{
     "%sessions-changed", "%session-renamed ",     "%window-add ",
@@ -51,6 +57,10 @@ pub fn parse(line: []const u8, open: ?[]const u8) Event {
         return .{ .output = .{ .pane = pane, .data = rest[space + 1 ..] } };
     }
     if (std.mem.startsWith(u8, line, "%exit")) return .exit;
+    if (std.mem.startsWith(u8, line, "%message " ++ card_message)) {
+        const id = std.fmt.parseInt(u32, line["%message ".len + card_message.len ..], 10) catch return .other;
+        return .{ .card = id };
+    }
     if (sessionId(line, "%session-changed $")) |id| return .{ .session_changed = id };
     if (sessionId(line, "%session-window-changed $")) |id| return .{ .window_selected = id };
     for (changes) |prefix| {
@@ -116,6 +126,12 @@ test "anything that changes the tree asks for a relist" {
     }) |line| try std.testing.expectEqual(Event.changed, parse(line, null));
     try std.testing.expectEqual(Event.other, parse("%client-session-changed /dev/pts/3 $1 a", null));
     try std.testing.expectEqual(Event.exit, parse("%exit", null));
+}
+
+test "a message for the board says which ticket, and any other message is not arena's" {
+    try std.testing.expectEqual(@as(u32, 240), parse("%message arena board 240", null).card);
+    try std.testing.expectEqual(Event.other, parse("%message arena board lights", null));
+    try std.testing.expectEqual(Event.other, parse("%message hello", null));
 }
 
 test "session notifications say which session" {

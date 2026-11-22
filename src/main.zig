@@ -3,6 +3,7 @@ const layout = @import("layout.zig");
 const color = @import("color.zig");
 const draw = @import("draw.zig");
 const keys = @import("keys.zig");
+const control = @import("control.zig");
 const Theme = @import("theme.zig").Theme;
 const App = @import("app.zig").App;
 const posix = std.posix;
@@ -161,6 +162,34 @@ fn hasSession(init: std.process.Init, tmux: []const []const u8) !bool {
     return has.term.success();
 }
 
+/// Has every arena on the server show the board on ticket `id`, and says whether one was told.
+/// An arena is a control-mode client, and any such client is taken for one.
+fn tellCard(init: std.process.Init, tmux: []const []const u8, id: u32) !bool {
+    const gpa = init.gpa;
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(gpa);
+    try argv.appendSlice(gpa, tmux);
+    try argv.appendSlice(gpa, &.{ "list-clients", "-F", "#{client_control_mode} #{client_name}" });
+    const clients = try std.process.run(gpa, init.io, .{ .argv = argv.items });
+    defer gpa.free(clients.stdout);
+    defer gpa.free(clients.stderr);
+    if (!clients.term.success()) return false;
+    const message = try std.fmt.allocPrint(gpa, control.card_message ++ "{d}", .{id});
+    defer gpa.free(message);
+    var told = false;
+    var lines = std.mem.tokenizeScalar(u8, clients.stdout, '\n');
+    while (lines.next()) |line| {
+        if (!std.mem.startsWith(u8, line, "1 ")) continue;
+        argv.items.len = tmux.len;
+        try argv.appendSlice(gpa, &.{ "display-message", "-c", line[2..], message });
+        const said = try std.process.run(gpa, init.io, .{ .argv = argv.items });
+        gpa.free(said.stdout);
+        gpa.free(said.stderr);
+        told = told or said.term.success();
+    }
+    return told;
+}
+
 /// Runs until the user leaves or tmux has no session left; false when none was ever shown.
 fn run(init: std.process.Init) !bool {
     const gpa = init.gpa;
@@ -171,13 +200,18 @@ fn run(init: std.process.Init) !bool {
     try argv.append(gpa, "tmux");
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     var session: ?[]const u8 = null;
+    var card: ?u32 = null;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "-L") and i + 1 < args.len) {
             try argv.appendSlice(gpa, &.{ "-L", args[i + 1] });
             i += 1;
+        } else if (std.mem.eql(u8, args[i], "board") and i + 1 < args.len and ticketId(args[i + 1]) != null) {
+            card = ticketId(args[i + 1]);
+            i += 1;
         } else session = args[i];
     }
+    if (card) |id| if (try tellCard(init, argv.items, id)) return true;
     // A named session is attached or made. With no name, the most recent one, or a first one
     // when there is none: starting the server is what lets tmux's own restore bring sessions back.
     const tmux = try gpa.dupe([]const u8, argv.items);
@@ -214,22 +248,28 @@ fn run(init: std.process.Init) !bool {
     // are other sessions that is no reason to leave: arena attaches again, to the most recent.
     var shown = false;
     while (true) {
-        switch (try attached(init, argv.items, tty)) {
+        switch (try attached(init, argv.items, tty, card)) {
             .left => return true,
             .never => return shown,
             .lost => shown = true,
         }
+        card = null;
         if (!try hasSession(init, tmux)) return true;
         argv.items.len = tmux.len;
         try argv.appendSlice(gpa, &.{ "-C", "attach" });
     }
 }
 
+fn ticketId(arg: []const u8) ?u32 {
+    return std.fmt.parseInt(u32, arg, 10) catch null;
+}
+
 const Outcome = enum { left, lost, never };
 
 /// One tmux client's life: until the user leaves (`left`) or tmux ends it, after showing a
-/// session (`lost`) or before (`never`).
-fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) !Outcome {
+/// session (`lost`) or before (`never`). With `card`, the board opens on that ticket once
+/// tmux's sessions are known.
+fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, card: ?u32) !Outcome {
     const gpa = init.gpa;
     const io = init.io;
     var child = try std.process.spawn(io, .{ .argv = argv, .stdin = .pipe, .stdout = .pipe });
@@ -270,6 +310,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) 
     var last_frame: i64 = 0;
     var theme_checked: i64 = -theme_check_ms;
     var listed_at: i64 = 0;
+    var card_wanted = card;
 
     while (!app.quit) {
         const now = std.Io.Timestamp.now(io, .awake).toMilliseconds();
@@ -287,6 +328,10 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File) 
             board_file.checkDetail(&app);
         }
         if (app.want_list and !app.listing) try app.requestList();
+        if (app.listed) if (card_wanted) |id| {
+            card_wanted = null;
+            try app.showCard(id);
+        };
 
         if (app.yoff != 0) {
             app.yoff = layout.step(app.yoff, 0);
