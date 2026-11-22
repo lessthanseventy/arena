@@ -958,6 +958,12 @@ print -r -- "${$(<$tmp/board.closed)%\}}"',"orchestrator":{"on":true,"running":f
 check "and one that is not running unlit" await rail_orch_ink 8
 cp $tmp/board.closed $tmp/run/babylon/board.json
 check "and says nothing of it once babylon's file does not" gone '^│ ▤ board orch'
+key M-b
+see ' board   every'
+key -l 'qecho kept-after-q'
+kept_after() { inner capture-pane -p -t alpha:one | grep -qF 'echo kept-after-q' }
+check "what is typed in one read after the q closing the board is the pane's" await kept_after
+key C-u
 inner new-session -d -s babylon -n gate sh
 key M-b
 check "with babylon's gate session there, the board offers it" see ' gate .*\? keys'

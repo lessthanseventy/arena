@@ -3052,6 +3052,8 @@ pub const App = struct {
     fn menuKeys(app: *App, text: []const u8) !void {
         var i: usize = 0;
         while (i < text.len) {
+            // a key that closed what had the keys leaves the rest of the read to the pane
+            if (app.typing()) return app.forward(text[i..]);
             // an arrow is ESC and two more; anything else is a key a byte
             const len: usize = if (text[i] == 0x1b and text.len - i >= 3) 3 else 1;
             const key = text[i..][0..len];
@@ -3072,7 +3074,7 @@ pub const App = struct {
                         if (prompt.selected + 1 < app.jumpHits(prompt.text(), &hits)) prompt.selected += 1;
                     },
                 }
-            } else if (app.menu) |*open| try app.menuResult(open.press(key)) else return;
+            } else if (app.menu) |*open| try app.menuResult(open.press(key)) else unreachable;
         }
     }
 
