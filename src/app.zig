@@ -1156,9 +1156,11 @@ pub const App = struct {
                 return a.order < b.order or (a.order == b.order and a.id < b.id);
             }
         }.before);
-        if (app.board_view) |*view| if (app.orchestratorSession() == null) {
-            view.focus = .board;
-        };
+        if (app.board_view) |*view| {
+            const alone = app.orchestratorSession() == null;
+            if (alone) view.focus = .board;
+            if (alone or app.sessionIndex(view.back) == null) view.back = null;
+        }
         try app.toSide();
         if (app.orchestrating) if (app.orchestratorSession()) |at| {
             app.orchestrating = false;
@@ -3537,6 +3539,26 @@ test "text to draw loses its escapes and controls, and a byte not UTF-8 is a ?" 
     defer out.deinit(std.testing.allocator);
     try appendClean(&out, std.testing.allocator, "\x1b[31mred\x1b[0m\tok\x07\n\xff é \x1b]0;title\x07end\xe2\x82");
     try std.testing.expectEqualStrings("red ok\n? é end??", out.items);
+}
+
+test "the session to go back to is forgotten once it, or the orchestrator's, is gone" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    defer app.deinit();
+    app.current = 2;
+    const eq = std.testing.expectEqual;
+
+    app.board_view = .{ .back = 1, .focus = .orchestrator };
+    try app.onSessions("$1 0 work\n$2 1 orchestrator\n");
+    try eq(@as(?u32, 1), app.board_view.?.back);
+    try eq(.orchestrator, app.board_view.?.focus);
+
+    try app.onSessions("$2 1 orchestrator\n");
+    try eq(@as(?u32, null), app.board_view.?.back);
+
+    app.board_view.?.back = 1;
+    try app.onSessions("$1 0 work\n");
+    try eq(@as(?u32, null), app.board_view.?.back);
+    try eq(.board, app.board_view.?.focus);
 }
 
 test "the every view's lanes: their lines, the pick stepping across them, and the scroll" {
