@@ -1,8 +1,9 @@
 # The orchestrator is the front door
 
 This design is for #500, held to [the principles](principles.md), and builds on
-[the board design](board-design.md) and [normal mode](normal-mode.md). Nothing in it is built
-yet, and it waits on the human's approval. The build is a list of tickets, given at the end.
+[the board design](board-design.md) and [normal mode](normal-mode.md). The human agreed to it
+as drawn on 2026-11-23. Nothing in it is built yet. The build is a list of tickets, given at the
+end.
 
 The human, 2026-11-22: "the sessions popup is kinda dumb can we jsut like step back and think
 about this? like the orchestrator is probably a first class citizen somehow. how should this
@@ -319,12 +320,12 @@ The rest of the deck (the log, media and the timer) stays.
 
 ## The build
 
-Each step is one ticket. The arena steps form one stack, each on the one before. babylon's and
+Epic #525. Each step is one ticket. The arena steps form one stack, each on the one before. babylon's and
 ficciones' steps stand alone, apart from what each one says it waits on.
 
 arena:
 
-1. **Home (new; absorbs #252):** `arena` opens the board with the orchestrator's column pinned at
+1. **Home (#526; absorbs #252):** `arena` opens the board with the orchestrator's column pinned at
    60 cells, the column focused, `b` and the rail's top row going home, and `arena inbox` the
    door. The column survives an orchestrator restart. While it restarts, the head says
    `◌ restarting`, the board stays open, and the human stays where they were (#252's bug). The
@@ -341,26 +342,26 @@ arena:
 5. **Looks (#342, rescoped):** `o` and `y` on an ask that names a doc, in the feed.
 6. **Proposals (#343, rescoped):** `⏎ go` and `x no` in the feed, the same call as #494's card
    buttons.
-7. **Home at half width (new):** one of the column and the board at a time, with `b` and `o`.
-8. **The narrow rail holds only what moves (new, after #427 and #358):** working and waiting
+7. **Home at half width (#527):** one of the column and the board at a time, with `b` and `o`.
+8. **The narrow rail holds only what moves (#528, after #427 and #358):** working and waiting
    Claudes, the rest folded per session into one line, and the orchestrator left out.
 9. **The peek (#392)** covers feed items too. It is unchanged apart from that, and is not held.
 
 babylon:
 
-10. **`babylon tell TEXT` (new):** the line typed into the orchestrator as the human's word,
+10. **`babylon tell TEXT` (#529):** the line typed into the orchestrator as the human's word,
     held while it is mid-turn, refused over text in its box, and refused from a Claude's pane.
-11. **Notices only for decisions (new):** a notice for a new proposal, none for landed or sent
+11. **Notices only for decisions (#530):** a notice for a new proposal, none for landed or sent
     back. The orchestrator's prompt says to propose an action for each free send-back.
 12. **#242** as filed: a Claude whose ticket is closed done with nothing to land is ended.
 
 ficciones:
 
-13. **The bar's orchestrator cell (new):** `▲ N · orchestrator: <state>`, from the session
+13. **The bar's orchestrator cell (#531):** `▲ N · orchestrator: <state>`, from the session
     state files and board.json, with a click running `arena inbox`.
-14. **`Super+U` tells the orchestrator (new, after 10):** the one-line entry running
+14. **`Super+U` tells the orchestrator (#532, after 10 and 15):** the one-line entry running
     `babylon tell`.
-15. **Remove the deck's session cells and the office rail (new, after 13):** `deck-sessions`,
+15. **Remove the deck's session cells and the office rail (#533, after 13):** `deck-sessions`,
     `deck-agents`, `Office.tsx`, and the keys.json row for `Super+U` rewritten.
 16. **Notices are `▲ N need you` and open arena (#349, rescoped):** one per item, raised once,
     taken back when settled, and none while arena's home is in front.
