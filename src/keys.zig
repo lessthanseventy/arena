@@ -41,6 +41,8 @@ pub const Mouse = struct {
 pub const Event = union(enum) {
     /// The letter of an Alt chord arena acts on.
     chord: u8,
+    /// Ctrl+Space, which a terminal sends as one NUL byte: insert mode and normal mode swap.
+    mode,
     mouse: Mouse,
     /// A terminal's reply to a query, the text between `ESC ]` and its terminator.
     osc: []const u8,
@@ -61,9 +63,15 @@ pub const Part = struct {
 /// The keys arena takes with Alt; `\r` is Enter.
 pub const chords = "hjklHLJKxmqzpowbnN/;'123456789\r";
 
-/// Splits input at the first thing arena reads itself: an Alt chord (ESC then one of `chords`),
-/// an SGR mouse report, or the terminal's reply to a query.
+/// Splits input at the first thing arena reads itself: Ctrl+Space, an Alt chord (ESC then one of
+/// `chords`), an SGR mouse report, or the terminal's reply to a query.
 pub fn next(bytes: []const u8) Part {
+    const part = nextEscape(bytes);
+    const nul = std.mem.indexOfScalar(u8, part.text, 0) orelse return part;
+    return .{ .text = bytes[0..nul], .event = .mode, .rest = bytes[nul + 1 ..] };
+}
+
+fn nextEscape(bytes: []const u8) Part {
     var i: usize = 0;
     while (std.mem.indexOfScalarPos(u8, bytes, i, 0x1b)) |esc| : (i = esc + 1) {
         const after = bytes[esc + 1 ..];
@@ -125,6 +133,14 @@ test "a chord is found among other typing" {
     try std.testing.expectEqualStrings("echo hi\r", part.text);
     try std.testing.expectEqual(@as(u8, 'j'), part.event.?.chord);
     try std.testing.expectEqualStrings("more", part.rest);
+}
+
+test "Ctrl+Space is the mode event, found among typing and before a later chord" {
+    const part = next("ab\x00cd\x1bj");
+    try std.testing.expectEqualStrings("ab", part.text);
+    try std.testing.expectEqual(Event.mode, part.event.?);
+    try std.testing.expectEqualStrings("cd\x1bj", part.rest);
+    try std.testing.expectEqual(Event.mode, next("\x00").event.?);
 }
 
 test "Alt+Enter is a chord" {

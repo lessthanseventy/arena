@@ -124,12 +124,14 @@ const Column = struct {
             return put(w, col.title[cx - 2]);
         }
 
+        // normal mode stops the focused column's gradient and dims it
+        const turning = col.focused and !app.normal;
         const style: vt.Style = if (app.theme) |t| rgbStyle(theme.gradient(
-            if (col.focused) t.amber else t.amberdim,
-            if (col.focused) t.violet else t.emberdim,
+            if (turning) t.amber else t.amberdim,
+            if (turning) t.violet else t.emberdim,
             theme.around(col.w, h, cx, y),
-            if (col.focused) app.phase else 0,
-        )) else .{ .fg_color = .palette(if (col.focused) 4 else 8) };
+            if (turning) app.phase else 0,
+        )) else .{ .fg_color = .palette(if (turning) 4 else 8) };
         try pen.set(w, style, null);
         const left = cx == 0;
         const right = cx == col.w - 1;
@@ -145,6 +147,8 @@ fn dots(app: *const App, w: *Writer, s: *const Session) !void {
     try w.print("\x1b[{d};{d}H", .{ app.view_h + 1, ox + 1 });
     try pen.set(w, .{}, null);
     for (0..app.view_w) |_| try w.writeAll(" ");
+    try modeCorner(app, w, &pen);
+    if (app.normal) return normalKeys(app, w, &pen);
     if (app.over_dots) if (try tabs(app, w, &pen, s)) return;
     const start = layout.dotsStart(app.view_w, s.wins.items.len) orelse return;
     for (s.wins.items, 0..) |win, i| {
@@ -154,6 +158,32 @@ fn dots(app: *const App, w: *Writer, s: *const Session) !void {
         try pen.set(w, if (here or mark != .none) ink(app, "amber", 4) else ink(app, "dim", 8), null);
         try put(w, if (here) '●' else if (mark != .none) glyph(app, mark) else if (win.alert != .none) alertGlyph(win.alert) else '○');
     }
+}
+
+const normal_label = "NORMAL";
+const normal_keys = "i insert  Esc insert  Ctrl+Space insert";
+
+/// `NORMAL` in the accent at the bottom-left corner of the screen while in normal mode, and the
+/// cells it takes blank otherwise.
+fn modeCorner(app: *const App, w: *Writer, pen: *Pen) !void {
+    const ox = app.term_w - app.view_w;
+    try w.print("\x1b[{d};1H", .{app.view_h + 1});
+    if (app.normal) {
+        try pen.set(w, ink(app, "amber", 4), null);
+        try w.writeAll(normal_label);
+    } else {
+        try pen.set(w, .{}, null);
+        for (0..@min(normal_label.len, ox)) |_| try w.writeAll(" ");
+    }
+}
+
+/// In normal mode the row of dots is the keys that can be pressed, written out.
+fn normalKeys(app: *const App, w: *Writer, pen: *Pen) !void {
+    const ox = app.term_w - app.view_w;
+    const start = (app.view_w -| normal_keys.len) / 2;
+    try w.print("\x1b[{d};{d}H", .{ app.view_h + 1, ox + start + 1 });
+    try pen.set(w, ink(app, "dim", 8), null);
+    try w.writeAll(normal_keys[0..@min(normal_keys.len, app.view_w)]);
 }
 
 /// With the pointer on the row of dots, each window's number and name in their place, the one in

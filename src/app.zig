@@ -397,6 +397,10 @@ pub const App = struct {
     peek: bool = false,
     /// The pointer is on the row under the strip, which then has the windows' names for dots.
     over_dots: bool = false,
+    /// Normal mode: keys drive arena and none is typed into a pane. Only held while nothing lies
+    /// over the strip, or the orchestrator's column beside the board is focused; otherwise the
+    /// overlay is the mode.
+    normal: bool = false,
     agent_sort: AgentSort = .urgency,
     /// When the pointer came to rest on the narrow rail; 0 while it is elsewhere.
     hover_at: i64 = 0,
@@ -2864,6 +2868,10 @@ pub const App = struct {
     /// or, outside it, closes it.
     fn onMouse(app: *App, m: keys.Mouse) !void {
         app.pointer = .{ .x = m.x, .y = m.y };
+        if (m.leftPress() and app.menu == null and app.prompt == null and app.overview == null) {
+            app.normal = !app.paneClick(m);
+            app.dirty = true;
+        }
         try app.pointAs(m);
         if (m.hover()) app.hoverRail(m.x);
         const over_dots = m.y == app.view_h and m.x >= app.term_w - app.view_w;
@@ -3110,7 +3118,39 @@ pub const App = struct {
     /// Whether what is typed is the focused pane's: nothing lies over the strip, or the board
     /// does with the orchestrator's column beside it focused.
     fn typing(app: *const App) bool {
-        return app.menu == null and app.prompt == null and app.overview == null and (app.board_view == null or app.sideFocused());
+        return !app.normal and app.menu == null and app.prompt == null and app.overview == null and (app.board_view == null or app.sideFocused());
+    }
+
+    /// Whether a left click at `m` is on the strip or the board's side column, which it makes
+    /// insert; the rail and the board are chrome.
+    fn paneClick(app: *const App, m: keys.Mouse) bool {
+        if (app.board_view) |view| return app.sideShown() and !view.boxed() and m.y < app.view_h and m.x >= app.boardX() + app.boardW();
+        return m.x >= @max(app.term_w - app.view_w, app.railDrawnW());
+    }
+
+    /// Normal mode ends where an overlay has the keys: it is the mode there, and closing it is
+    /// back to insert.
+    fn settleMode(app: *App) void {
+        if (app.normal and app.overlay() and !app.sideFocused()) app.normal = false;
+    }
+
+    /// Ctrl+Space: normal mode to insert, an overlay closed or the board's orchestrator column
+    /// focused, or insert to normal.
+    fn toggleMode(app: *App) !void {
+        app.dirty = true;
+        if (app.normal) {
+            app.normal = false;
+        } else if (app.menu != null or app.prompt != null or app.overview != null) {
+            app.menu = null;
+            app.prompt = null;
+            app.overview = null;
+        } else if (app.board_view) |*view| {
+            if (app.sideFocused()) {
+                app.normal = true;
+            } else if (app.sideDue() and !view.boxed()) {
+                view.focus = .orchestrator;
+            } else try app.closeBoard();
+        } else app.normal = true;
     }
 
     fn menuKeys(app: *App, text: []const u8) !void {
@@ -3122,7 +3162,12 @@ pub const App = struct {
             const len: usize = if (text[i] == 0x1b and text.len - i >= 3) 3 else 1;
             const key = text[i..][0..len];
             i += len;
-            if (app.overview != null) {
+            if (app.normal) {
+                if (std.mem.eql(u8, key, "i") or std.mem.eql(u8, key, "\x1b")) {
+                    app.normal = false;
+                    app.dirty = true;
+                }
+            } else if (app.overview != null) {
                 try app.overviewKey(key);
             } else if (app.board_view != null and !app.sideFocused()) {
                 try app.boardKey(key);
@@ -3312,9 +3357,11 @@ pub const App = struct {
             const part = keys.next(rest);
             rest = part.rest;
             if (app.typing()) try app.forward(part.text) else try app.menuKeys(part.text);
+            defer app.settleMode();
             switch (part.event orelse return part.held.len) {
                 .mouse => |m| try app.onMouse(m),
                 .chord => |letter| try app.onChord(letter),
+                .mode => try app.toggleMode(),
                 .osc => |body| {
                     app.palette.answer(body);
                     app.dirty = true;
@@ -3332,6 +3379,7 @@ pub const App = struct {
     /// Held input that turned out to be all there was, typed as it is.
     pub fn typedAlone(app: *App, bytes: []const u8) !void {
         if (app.typing()) try app.forward(bytes) else try app.menuKeys(bytes);
+        app.settleMode();
     }
 
     fn forward(app: *App, bytes: []const u8) !void {

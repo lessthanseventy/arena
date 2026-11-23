@@ -134,6 +134,12 @@ as iTerm's, is told nothing. `-L` names the server there too.
 
 Everything is on Alt, so it stays out of the way of your shell and your window manager.
 
+There are two modes, and a single letter is never arena's in the first. In insert, the default,
+every key goes to the shown pane, apart from the Alt chords. `Ctrl+Space` makes it normal, where
+no key is typed into a pane, `NORMAL` shows at the bottom-left and the row under the strip says
+the keys; `i`, `Esc` or `Ctrl+Space` is insert again. A click on a pane is insert, and one on the
+rail is normal. With the board open, `Ctrl+Space` focuses the orchestrator's column, as `Alt+l`.
+
 | Key | Does |
 |---|---|
 | `Alt+h` `Alt+l` | the window to the left, to the right |

@@ -138,6 +138,36 @@ mouse 0 $x 24 m
 mouse 35 60 10 M
 await dots '● ○ ○'
 
+# insert and normal: every key of a sentence is the pane's, or none is
+typed() { [[ $(screen | grep -c -- "$1") -ge $2 ]] }
+key -l 'echo jhklqnb'
+key Enter
+check "in insert a sentence with j h k l q n b reaches the pane whole" await typed 'jhklqnb' 2
+key C-Space
+check "Ctrl+Space is normal mode, NORMAL in the corner and its key in the dots' row" await shows '^NORMAL .*i insert'
+key -l 'echo xjhklqnb'
+key Enter
+zselect -t 50
+check "in normal none of it reaches the pane, and q does not quit" hides 'xjhklqnb'
+key -l i
+check "i is insert again" gone '^NORMAL'
+key -l 'echo back-in'
+key Enter
+check "and what is typed is the pane's" await typed 'back-in' 2
+key C-Space
+see '^NORMAL'
+key Escape
+check "Esc in normal is insert too" gone '^NORMAL'
+key C-Space
+see '^NORMAL'
+mouse 0 60 10 M
+mouse 0 60 10 m
+check "a click on a pane is insert" gone '^NORMAL'
+mouse 0 5 3 M
+mouse 0 5 3 m
+check "a click on the rail is normal" see '^NORMAL'
+key -l i
+
 # A tmux with the pixels patch gives arena's terminal cells of 9x19 pixels, as a real one has.
 mkfifo $tmp/sizer
 outer -C attach -t o <$tmp/sizer >/dev/null 2>&1 &
@@ -740,6 +770,8 @@ mouse 32 3 3 M
 mouse 0 3 3 m
 check "dragging a session moves it up the rail" await rail betaalpha
 check "and its place is kept in tmux" await order 1beta2alpha
+# a click on the rail is normal mode
+key -l i
 
 key 'echo hello brave world' Enter
 see '│hello brave world'
@@ -1106,7 +1138,18 @@ zselect -t 50
 check "the board stays open on an Alt+l typed before tmux has switched" shows ' board   every'
 kill -CONT $server
 check "Alt+l and what is typed before tmux has switched reach the orchestrator's pane" await said orchestrator:orch ahead
-check "the board left open" shows ' board   every'
+check "the board left open" await shows ' board   every'
+key -l 'echo jkdufltb'
+key Enter
+check "with the board open, a sentence of the board's own letters reaches the orchestrator's pane whole" await said orchestrator:orch jkdufltb
+check "and the board is still open" shows ' board   every'
+key C-Space
+key -l 'echo nojkdu'
+key Enter
+zselect -t 50
+check "Ctrl+Space makes that column normal: none of it reaches the pane" eval '! said orchestrator:orch nojkdu'
+key -l i
+check "and i is insert again" gone '^NORMAL'
 kill -STOP $server
 key M-b
 gone ' board   every'
