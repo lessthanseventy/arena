@@ -260,7 +260,11 @@ fn run(init: std.process.Init) !bool {
         } else if (std.mem.eql(u8, args[i], "board") and i + 1 < args.len and ticketId(args[i + 1]) != null) {
             card = ticketId(args[i + 1]);
             i += 1;
-        } else if (std.mem.eql(u8, args[i], "show") and i + 1 < args.len and showTarget(args[i + 1])) {
+        } else if (std.mem.eql(u8, args[i], "show")) {
+            if (i + 1 >= args.len or !showTarget(args[i + 1])) {
+                try std.Io.File.stderr().writeStreamingAll(io, usage);
+                std.process.exit(2);
+            }
             door = try std.fmt.allocPrint(init.arena.allocator(), control.show_message ++ "{s}", .{args[i + 1]});
             i += 1;
         } else if (std.mem.eql(u8, args[i], "inbox")) {
