@@ -1259,7 +1259,7 @@ check "the board left open" await shows ' board  every'
 key -l 'echo jkdufltb'
 key Enter
 check "with the board open, a sentence of the board's own letters reaches the orchestrator's pane whole" await said orchestrator:orch jkdufltb
-check "and the board is still open" shows ' board  every'
+check "and the board is still open" see ' board  every'
 key C-Space
 key -l 'echo nojkdu'
 key Enter
