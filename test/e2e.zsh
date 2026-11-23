@@ -681,8 +681,14 @@ mouse 0 5 6 M
 mouse 0 5 6 m
 see '├─ agents · urgency '
 key M-w
-check "Alt+w narrows the rail to a session's first letters and its mark" see '^│ al ▲ │ '
-check "and a Claude's mark and time" see '^│ ▲ +[0-9]+[sm]│ '
+inner set -p -t beta:solo @arena_claude_branch t324-lights
+check "Alt+w narrows the rail to a session's short name, its mark and its windows" see '^│ alpha.3│ '
+check "a Claude by its mark and its ticket's number" see '^│ . 324 +│ '
+check "or its window's place when it has no ticket" see '^│ . w3 +│ '
+check "a session over its Claudes is a rule with its name" see '^│─alpha──│ '
+sel() { [[ $(inked $(row "$1")) == *$'\e[1;7m'* ]] }
+check "the Claude in view has its whole row in the selected style" await sel ' 324 '
+check "and its session's rule and another Claude's row do not" test "$(sel '─beta─' && print y)$(sel ' w3 ' && print y)" = ""
 mouse 35 3 9 M
 check "the pointer resting on it draws it wide over the strip" see '├─ agents · urgency '
 mouse 35 72 3 M

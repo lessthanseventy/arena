@@ -241,7 +241,7 @@ Four columns do not fit in about 90 cells, so the board shows two: **now** (doin
 While the board is open, the rail's sessions and Claudes repeat its cards (`#292`, `#260`, `#307`)
 as cut lines. With the board open:
 
-- **The rail goes narrow by itself**, as `Alt+w` makes it: two letters a session, a mark a Claude.
+- **The rail goes narrow by itself**, as `Alt+w` makes it: a short name and its windows a session, a Claude its mark and its ticket's number.
   Its width goes to the board, and it comes back wide when the board closes. Resting the pointer on
   it draws it wide over the board, as today.
 - **The rail and the board point at each other.** The Claude holding the picked card is lit in the

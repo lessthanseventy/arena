@@ -15,7 +15,7 @@ pub const rail_button = "≡ menu";
 pub const rail_new = "+ new";
 const history_lines = 5000;
 const rail_wide = 36;
-const rail_narrow = 8;
+const rail_narrow = 10;
 /// How long the pointer rests on the narrow rail before it is drawn wide over the strip.
 const dwell_ms = 300;
 const quiet_s = 600;
@@ -949,7 +949,7 @@ pub const App = struct {
 
     /// The session rail's width, the same whatever its names, so the strip does not move when a
     /// Claude comes or goes. A terminal too narrow for it has none.
-    /// Narrow, the rail shows a session by two letters, and a Claude by its mark and time.
+    /// Narrow, the rail shows a session by a short name, and a Claude by its mark and ticket.
     pub fn railW(app: *const App) u16 {
         if (app.term_w < 48 or app.sessions.items.len == 0) return 0;
         return if (app.rail == .wide) app.railWideW() else rail_narrow;

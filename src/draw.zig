@@ -359,14 +359,15 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
         // lit as the current one is: a window held by its title would go to it
         const here = (s.id == app.current and app.board_view == null) or (drop == .session and drop.session == index);
         if (!wide) {
-            const name = clip(s.name, inner -| 4);
+            const name = shortName(s.name);
             try pen.set(w, if (here) chip(app) else .{}, null);
             try w.writeAll(" ");
             try w.writeAll(name);
             for (0..inner - 3 - cellCount(name)) |_| try w.writeAll(" ");
             try pen.set(w, if (here) chip(app) else ink(app, "amber", 4), null);
             try put(w, sessionGlyph(app, s));
-            try w.writeAll(" ");
+            try pen.set(w, if (here) chip(app) else dim, null);
+            try w.print("{d}", .{@min(s.wins.items.len, 9)});
             filled = inner;
         } else {
             const review = App.sessionReview(s);
@@ -417,11 +418,20 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
     switch (line) {
         .session => |si| {
             const s = app.sessions.items[si];
-            const name = clip(s.name, if (wide) inner - 2 else 2);
             try pen.set(w, if (s.id == app.current and app.board_view == null) heading(app) else dim, null);
-            try w.writeAll(" ");
-            try w.writeAll(name);
-            filled = 1 + cellCount(name);
+            if (wide) {
+                const name = clip(s.name, inner - 2);
+                try w.writeAll(" ");
+                try w.writeAll(name);
+                filled = 1 + cellCount(name);
+            } else {
+                // a rule with the name in it, so it does not read as an entry
+                const name = shortName(s.name);
+                try w.writeAll("─");
+                try w.writeAll(name);
+                for (0..inner - 1 - cellCount(name)) |_| try w.writeAll("─");
+                filled = inner;
+            }
         },
         .agent => |a| {
             const win = a.win;
@@ -431,7 +441,18 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
             try w.writeAll(" ");
             try put(w, agentGlyph(app, win));
             filled = 2;
-            if (wide) {
+            if (!wide) {
+                // its ticket's number, else its window's place in its session
+                var num: [8]u8 = undefined;
+                const s = app.sessions.items[a.session];
+                const at = std.mem.indexOfScalar(*Window, s.wins.items, win) orelse 0;
+                const label = branchTicket(win.text(.branch)) orelse
+                    (std.fmt.bufPrint(&num, "w{d}", .{at + 1}) catch "");
+                try pen.set(w, dim, null);
+                try w.writeAll(" ");
+                try w.writeAll(label);
+                filled = 3 + cellCount(label);
+            } else {
                 // the time and a space at the right end
                 const room = inner - 3 - 5;
                 const s = app.sessions.items[a.session];
@@ -440,11 +461,13 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
                 try fitted(w, win.label(), room);
                 filled = 3 + room;
             }
-            try pen.set(w, dim, null);
-            try w.writeAll(" ");
-            for (time.len..3) |_| try w.writeAll(" ");
-            try w.writeAll(time);
-            filled += 4;
+            if (wide) {
+                try pen.set(w, dim, null);
+                try w.writeAll(" ");
+                for (time.len..3) |_| try w.writeAll(" ");
+                try w.writeAll(time);
+                filled += 4;
+            }
         },
         .detail => |a| {
             const win = a.win;
@@ -614,6 +637,28 @@ fn reviewInk(app: *const App, review: app_mod.Review) vt.Style {
 
 fn cellCount(text: []const u8) usize {
     return std.unicode.utf8CountCodepoints(text) catch text.len;
+}
+
+/// A session's name in five cells or fewer: a fixed short name for the repos that have one, else
+/// the name cut.
+fn shortName(name: []const u8) []const u8 {
+    const short = [_][2][]const u8{
+        .{ "ficciones", "ficc" },
+        .{ "babylon-work", "bab-w" },
+        .{ "silliest_of_gooses", "goose" },
+        .{ "menard", "menrd" },
+    };
+    for (short) |pair| if (std.mem.eql(u8, name, pair[0])) return pair[1];
+    return clip(name, 5);
+}
+
+/// The number of the ticket a branch named `t<number>-...` works, null for any other branch.
+fn branchTicket(branch: []const u8) ?[]const u8 {
+    if (branch.len < 2 or branch[0] != 't') return null;
+    var n: usize = 1;
+    while (n < branch.len and std.ascii.isDigit(branch[n])) n += 1;
+    if (n == 1 or (n < branch.len and branch[n] != '-')) return null;
+    return branch[1..n];
 }
 
 /// The first `max` characters of `text`.
