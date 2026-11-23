@@ -1,8 +1,7 @@
 # Normal mode, the peek and the modal
 
-This is a design for #393, held to [the principles](principles.md). Nothing in it is built yet.
-The build is a stack of tickets, listed at the end, and waits on the human's answer to the open
-choices.
+This is a design for #393, held to [the principles](principles.md), and the human agreed to it on
+2026-11-23. Nothing in it is built yet. The build is a stack of tickets, listed at the end.
 
 The human, 2026-11-22: "I know we're super tmux heavy but I'm thinking we need some like
 vim/modality sprinkled in if that makes sense? like I want to be able to just peek at stuff in a
@@ -335,25 +334,25 @@ be built as it is specced, adding the `space open` button.
 
 ## The build, as a stack
 
-Each builds on the one before. All are arena's, apart from the babylon tickets above.
+Epic #452. Each step builds on the one before. All of them are arena's, apart from the babylon tickets above (#447, #449) and ficciones' #448.
 
 1. **Modes, as #426:** `Ctrl+Space` read as an event, insert and normal, `i` and `Esc`, the dim
    gradient and `NORMAL`, and the click rule (pane is insert, chrome is normal). #426's focus rule
    is built here, once. e2e: in insert, a sentence with `j k h l q n b` reaches the pane whole; in normal, none of
    it does.
-2. **The rail's pick:** `j` `k` `]` `[` move it without moving the strip, `⏎` goes, and the key bar
+2. **The rail's pick (#453):** `j` `k` `]` `[` move it without moving the strip, `⏎` goes, and the key bar
    replaces the dots in normal mode.
-3. **The popup:** `space` on a Claude or a session, the live pane from arena's own copy, scrolling,
+3. **The popup (#454):** `space` on a Claude or a session, the live pane from arena's own copy, scrolling,
    `G` live, `/` search, `h` `l` leafing through, and `⏎` go. e2e: no cell outside the popup
    changes while it is open, and closing it leaves the screen as it was.
-4. **Answer and reply in the popup:** `a` with babylon's ask or Claude's own question, and `r`.
-5. **One modal frame:** a centred box with a head, a scrollable body and a foot of buttons, each a
+4. **Answer and reply in the popup (#455):** `a` with babylon's ask or Claude's own question, and `r`.
+5. **One modal frame (#456):** a centred box with a head, a scrollable body and a foot of buttons, each a
    rectangle from Board 1's layout (#333). Today's detail over the board moves onto it.
-6. **The card's modal**, with `space` and a click on the picked card opening it, and `#N` from
+6. **The card's modal (#457)**, with `space` and a click on the picked card opening it, and `#N` from
    normal mode.
-7. **The gate's modal** (waits on babylon's run stages).
-8. **The ask's and proposal's modal**, and the inbox's `space`.
-9. **Normal keys for the rest**, with the Alt chords that collide with Claude Code retired:
+7. **The gate's modal (#459)**, which waits on babylon's run stages (#449).
+8. **The ask's and proposal's modal (#460)**, and the inbox's `space`.
+9. **Normal keys for the rest (#461)**, with the Alt chords that collide with Claude Code retired:
    `Alt+j`, `Alt+m`, `Alt+o`, `Alt+p`, `Alt+w`. The README's key table follows.
-10. **Later, not this stack:** a desktop hotkey opens the popup over whatever is in front, through
+10. **Later, not this stack (ficciones #462):** a desktop hotkey opens the popup over whatever is in front, through
     arena's commands (ficciones).
