@@ -1120,7 +1120,7 @@ fn feedRun(app: *const App, kind: feed.Kind, text: []const u8, at: usize, base: 
     while (true) {
         const end = std.mem.indexOfScalarPos(u8, text, pos, ' ') orelse text.len;
         if (idx == 0) failed = std.mem.eql(u8, text[pos..end], "✗");
-        if (pos == at) {
+        if (at < end) {
             const word = text[pos..end];
             return .{ .end = end, .style = feedWord(app, kind, word, idx, failed) };
         }
@@ -1134,6 +1134,7 @@ fn feedWord(app: *const App, kind: feed.Kind, word: []const u8, idx: usize, fail
     const dim = ink(app, "dim", 8);
     const error_ink = ink(app, "emberdim", 1);
     const first = @intFromBool(failed);
+    if (word[0] == '+') return dim;
     if (idx < first) return error_ink;
     if (idx == first) return if (failed) error_ink else ink(app, "amber", 4);
     if (idx == first + 1 or word[0] == '+' or isAge(word)) return dim;
