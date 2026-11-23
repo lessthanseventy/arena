@@ -337,9 +337,9 @@ be built as it is specced, adding the `space open` button.
 
 Each builds on the one before. All are arena's, apart from the babylon tickets above.
 
-1. **Modes:** `Ctrl+Space` read as an event, insert and normal, `i` and `Esc`, the dim gradient
-   and `NORMAL`, and the click rule (pane is insert, chrome is normal). This takes in #426's focus
-   rule. e2e: in insert, a sentence with `j k h l q n b` reaches the pane whole; in normal, none of
+1. **Modes, as #426:** `Ctrl+Space` read as an event, insert and normal, `i` and `Esc`, the dim
+   gradient and `NORMAL`, and the click rule (pane is insert, chrome is normal). #426's focus rule
+   is built here, once. e2e: in insert, a sentence with `j k h l q n b` reaches the pane whole; in normal, none of
    it does.
 2. **The rail's pick:** `j` `k` `]` `[` move it without moving the strip, `⏎` goes, and the key bar
    replaces the dots in normal mode.
