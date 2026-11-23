@@ -3499,7 +3499,11 @@ pub const App = struct {
         app.pointer = .{ .x = m.x, .y = m.y };
         if (!std.meta.eql(was, app.hovered())) app.dirty = true;
         if (m.leftPress() and app.menu == null and app.prompt == null and app.overview == null) {
-            app.normal = !app.paneClick(m);
+            // with the board open, where a click puts the keys is the board's to say: a click on
+            // its chrome must not leave the focused column in normal mode, drawn as insert
+            if (app.paneClick(m)) {
+                app.normal = false;
+            } else if (app.board_view == null or m.x < app.railDrawnW()) app.normal = true;
             app.dirty = true;
         }
         try app.pointAs(m);

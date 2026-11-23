@@ -1581,6 +1581,19 @@ outer new-window -t o \
 check "arena with no session named opens home: the board, the orchestrator's column beside it" see '╭─ ○ orchestrator · idle '
 check "and the board" see ' board  every'
 check "the column with the keys" await orch_lit
+# the click that focuses a new terminal window lands anywhere in it
+mouse 0 100 24 M
+mouse 0 100 24 m
+key -l 'echo restarted-jkdufltb'
+key Enter
+check "a click on the row under the column leaves it the keys, in insert: a sentence reaches its pane whole" await said orchestrator:orch restarted-jkdufltb
+key M-b
+gone ' board  every'
+key -l 'echo worker-jkdufltb'
+key Enter
+check "and the board closed, a worker's pane gets it whole too" await said alpha: worker-jkdufltb
+key M-b
+see ' board  every'
 key M-q
 gone ' board  every'
 key M-q
