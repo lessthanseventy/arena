@@ -97,7 +97,6 @@ decision banners already do this. The human approved the reversal on 2026-11-23.
 
 ## The ticket changes
 
-
 | ticket | change |
 | --- | --- |
 | **#588** (babylon) | `board.json` carries `needs_you`: each item's id, kind, ticket, repo, first row and actions (`label`, `argv`), in the order the feed shows them, with #480's free send-back rule. `Proposals.noticed`'s count goes |
