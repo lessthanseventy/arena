@@ -248,7 +248,10 @@ inner send-keys -t alpha:one clear Enter
 print -rn -- $'\e[?1000h\e[?1006h' >$tmp/clicks
 inner send-keys -t alpha:two "stty -echo -icanon; cat $tmp/clicks; timeout 2 cat -v; printf '\\033[?1006l\\033[?1000l'; stty sane" Enter
 await mousing alpha:two
-two=$(screen | awk 'NR == 1 { print index($0, "╭─ 2 two") + 3 }')
+# a capture taken mid-frame can lack the title, and index's 0 would click the rail
+titled() { two=$(screen | awk 'NR == 1 { print index($0, "╭─ 2 two") }'); (( two > 0 )) }
+check "window two's title is on the top line, to click under" await titled
+two=$((two + 3))
 mouse 0 $two 6 M
 mouse 0 $two 6 m
 current() { [[ $(inner display -p -t alpha '#{window_name}') == $1 ]] }
