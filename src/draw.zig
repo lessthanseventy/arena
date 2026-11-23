@@ -2071,7 +2071,7 @@ test "the feed's headers and a landing row's stage word are drawn in their state
 test "auto's line draws a paused repo in the error colour, hold on in bold, and a pinned ticket's mark in the accent" {
     var b = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[],"needs_you":[],"hold":true,
-        \\"auto":{"on":true,"cap":6,"working":4,"idle":2,"repo_caps":{"arena":2,"tlon":0}},
+        \\"auto":{"on":true,"cap":6,"working":4,"idle":{"slots":2,"why":"next empty"},"repo_caps":{"arena":2,"tlon":0}},
         \\"plan":{"next":[{"ticket":655,"repo":"arena","title":"Typing","why":"third","set_by":"human"}]}}
     );
     defer b.deinit();

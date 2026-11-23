@@ -241,7 +241,7 @@ fn next(p: *Part, board: *const tickets.Board, repo_sel: usize, width: usize) vo
     const plan = board.next();
     const auto = board.autoState();
     if (plan.len == 0 and auto == null) return;
-    const idle = if (auto) |a| a.idle orelse 0 else 0;
+    const idle = if (auto) |a| (if (a.idle) |i| i.slots else 0) else 0;
     if (idle > 0) {
         p.add(.next_head, false, "▷ next {d} · {d} slot{s} idle", .{ plan.len, idle, if (idle == 1) "" else "s" });
     } else p.add(.next_head, false, "▷ next {d}", .{plan.len});
@@ -571,7 +571,7 @@ const planned =
     \\{"id":14,"repo":"arena","title":"A pane","status":"doing","claimed_by":"%3","claimed_at":"2026-11-21T10:00:00Z"},
     \\{"id":15,"repo":"arena","title":"Another","status":"doing","claimed_by":"%4","claimed_at":"2026-11-21T10:00:00Z"}],
     \\"needs_you":[],"hold":true,
-    \\"auto":{"on":true,"cap":6,"working":4,"idle":2,"repo_caps":{"arena":2,"babylon":3,"tlon":0}},
+    \\"auto":{"on":true,"cap":6,"working":4,"idle":{"slots":2,"why":"next empty"},"repo_caps":{"arena":2,"babylon":3,"tlon":0}},
     \\"plan":{"next":[
     \\{"ticket":655,"repo":"arena","title":"Typing reaches no pane","why":"third sighting","set_by":"human"},
     \\{"ticket":656,"repo":"babylon","title":"Held lines","why":"","set_by":"orchestrator"}]}}

@@ -1334,7 +1334,7 @@ key Escape
 gone ' give #7 to '
 key k
 check "and closing them gives the feed back its keys" await feed_lit '#8 arena  asks'
-jq -c '. + {"hold":false,"auto":{"on":true,"cap":6,"working":2,"idle":1,"repo_caps":{"arena":3,"babylon":2,"tlon":1}},"plan":{"next":[{"ticket":655,"repo":"arena","title":"Typing reaches no pane","why":"third sighting","set_by":"orchestrator"},{"ticket":656,"repo":"babylon","title":"Held lines","why":"","set_by":"orchestrator"}]}}' $tmp/run/babylon/board.json >$tmp/board.tmp && mv $tmp/board.tmp $tmp/run/babylon/board.json
+jq -c '. + {"hold":false,"auto":{"on":true,"cap":6,"working":2,"idle":{"slots":1,"why":"next empty"},"repo_caps":{"arena":3,"babylon":2,"tlon":1}},"plan":{"next":[{"ticket":655,"repo":"arena","title":"Typing reaches no pane","why":"third sighting","set_by":"orchestrator"},{"ticket":656,"repo":"babylon","title":"Held lines","why":"","set_by":"orchestrator"}]}}' $tmp/run/babylon/board.json >$tmp/board.tmp && mv $tmp/board.tmp $tmp/run/babylon/board.json
 see '▷ next 2 · 1 slot idle'
 check "next is under Your move, auto's line at its top" see 'auto on · 2 of 6 · hold off'
 check "and its repos under it" see 'arena 3 · babylon 2 · tlon 1'

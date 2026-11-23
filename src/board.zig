@@ -82,14 +82,16 @@ pub fn epochOf(given: ?[]const u8) ?i64 {
     return days * 86400 + hour * 3600 + minute * 60 + second;
 }
 
+/// The slots auto has free with nothing in next to start, and why.
+pub const Idle = struct { slots: u32, why: []const u8 = "" };
+
 /// babylon's auto mode: while on, it starts a Claude on each free todo card until `cap` are working.
-/// `idle` is the slots auto has free with nothing in next to start; `repo_caps` each repo's own
-/// cap, 0 for one paused.
+/// `repo_caps` is each repo's own cap, 0 for one paused.
 pub const Auto = struct {
     on: bool = false,
     cap: u32 = 0,
     working: u32 = 0,
-    idle: ?u32 = null,
+    idle: ?Idle = null,
     repo_caps: std.json.ArrayHashMap(u32) = .{},
 };
 
@@ -406,12 +408,12 @@ test "auto mode is read while on, and a file without it or with it off has none"
 
 test "next, hold and auto's repo caps are read as babylon gives them" {
     var b = try Board.parse(std.testing.allocator,
-        \\{"tickets":[],"hold":true,"auto":{"on":true,"cap":6,"working":5,"idle":2,"repo_caps":{"arena":3,"tlon":0}},
+        \\{"tickets":[],"hold":true,"auto":{"on":true,"cap":6,"working":5,"idle":{"slots":2,"why":"next empty"},"repo_caps":{"arena":3,"tlon":0}},
         \\"plan":{"next":[{"ticket":655,"repo":"arena","title":"Typing\nreaches","why":"third sighting","set_by":"human"},{"ticket":9}]}}
     );
     defer b.deinit();
     try std.testing.expect(b.hold());
-    try std.testing.expectEqual(@as(?u32, 2), b.autoState().?.idle);
+    try std.testing.expectEqual(@as(u32, 2), b.autoState().?.idle.?.slots);
     try std.testing.expectEqual(@as(u32, 0), b.autoState().?.repo_caps.map.get("tlon").?);
     try std.testing.expectEqual(@as(usize, 2), b.next().len);
     try std.testing.expectEqualStrings("Typing reaches", b.next()[0].title);
