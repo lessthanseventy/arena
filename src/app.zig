@@ -3941,13 +3941,17 @@ pub const App = struct {
         } else app.normal = true;
     }
 
+    /// An arrow is ESC, `[` or `O`, and a letter; anything else, a bare Esc included, is a byte.
+    fn keyLen(text: []const u8) usize {
+        return if (text.len >= 3 and text[0] == 0x1b and (text[1] == '[' or text[1] == 'O')) 3 else 1;
+    }
+
     fn menuKeys(app: *App, text: []const u8) !void {
         var i: usize = 0;
         while (i < text.len) {
             // a key that closed what had the keys leaves the rest of the read to the pane
             if (app.typing()) return app.forward(text[i..]);
-            // an arrow is ESC and two more; anything else is a key a byte
-            const len: usize = if (text[i] == 0x1b and text.len - i >= 3) 3 else 1;
+            const len = keyLen(text[i..]);
             const key = text[i..][0..len];
             i += len;
             if (app.normal) {
@@ -4770,6 +4774,14 @@ test "a card's detail runs its long lines on, cut at the box's width" {
     const want = [_][]const u8{ "#3 Title", "", "one two ", "three fo", "ur" };
     for (want) |line| try std.testing.expectEqualStrings(line, lines.next().?);
     try std.testing.expectEqual(null, lines.next());
+}
+
+test "an Esc read with keys after it is a key of its own, and an arrow is three bytes" {
+    try std.testing.expectEqual(@as(usize, 1), App.keyLen("\x1bi"));
+    try std.testing.expectEqual(@as(usize, 1), App.keyLen("\x1bij"));
+    try std.testing.expectEqual(@as(usize, 3), App.keyLen("\x1b[Aj"));
+    try std.testing.expectEqual(@as(usize, 3), App.keyLen("\x1bOB"));
+    try std.testing.expectEqual(@as(usize, 1), App.keyLen("\x1b["));
 }
 
 test "a review state is read from its number, and what is not one is none" {
