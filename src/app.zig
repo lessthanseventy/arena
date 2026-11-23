@@ -350,6 +350,8 @@ pub const BoardView = struct {
     help: bool = false,
     /// Opened as home: the orchestrator's column beside it while the orchestrator is not running.
     home: bool = false,
+    /// The feed's pick, by its place: Your move's items, then landing's tickets, then building's.
+    pick: usize = 0,
 
     /// Whether a box lies over the board, the keys its own.
     pub fn boxed(view: BoardView) bool {
@@ -458,6 +460,8 @@ pub const App = struct {
     epoch: i64 = 0,
     /// Seconds the local clock is ahead of UTC, for where today began.
     utc_offset: i64 = 0,
+    /// babylon's refusals of what the feed ran for its items, said in their place.
+    refusals: std.ArrayList(feed.Refusal) = .empty,
     /// What the held left button is moving: the line after a pane, to resize it, a window by
     /// its title, along the strip, or a session by its name, along the rail.
     drag: union(enum) {
@@ -510,6 +514,11 @@ pub const App = struct {
         app.guard.deinit(app.gpa);
         app.out.deinit(app.gpa);
         app.plain.deinit(app.gpa);
+        for (app.refusals.items) |r| {
+            app.gpa.free(r.id);
+            app.gpa.free(r.text);
+        }
+        app.refusals.deinit(app.gpa);
         if (app.board) |*b| b.deinit();
     }
 
@@ -1216,8 +1225,139 @@ pub const App = struct {
     pub fn feedOf(app: *const App, f: *feed.Feed) bool {
         const b = if (app.board) |*b| b else return false;
         const today = app.epoch - @mod(app.epoch + app.utc_offset, 86400);
-        feed.build(f, b, app.view_w -| 4, (app.view_h -| 2) / 2, app.epoch, today);
+        feed.build(f, b, app.refusals.items, app.view_w -| 4, (app.view_h -| 2) / 2, app.epoch, today);
         return true;
+    }
+
+    /// Whether the feed has the keys: the column has them, in normal mode while its window is in it.
+    pub fn feedFocused(app: *const App) bool {
+        return app.columnFocused() and (app.normal or !app.sideShown());
+    }
+
+    /// The feed's pick, kept to what the feed has now: none while it has nothing to pick.
+    pub fn feedPick(app: *const App, f: *const feed.Feed) ?feed.Item {
+        const view = app.board_view orelse return null;
+        const n = f.itemCount();
+        return if (n == 0) null else f.item(@min(view.pick, n - 1));
+    }
+
+    /// A key on the feed, while the orchestrator's column has the keys in normal mode: `j` `k`
+    /// move the pick through it and `]` `[` through Your move, the picked card lit on the board;
+    /// on a Your move item, an action's key runs it as babylon gives it, and on a ticket landing
+    /// or building, Enter goes to its Claude. Whether the key was the feed's.
+    fn feedKey(app: *App, key: []const u8) !bool {
+        var f: feed.Feed = undefined;
+        if (!app.feedOf(&f)) return false;
+        const view = &app.board_view.?;
+        const n = f.itemCount();
+        if (n == 0) return false;
+        view.pick = @min(view.pick, n - 1);
+        const moves = f.items_shown;
+        const was = view.pick;
+        if (anyKey(key, &.{ "j", "\x1b[B", "\x1bOB" })) {
+            view.pick = @min(view.pick + 1, n - 1);
+        } else if (anyKey(key, &.{ "k", "\x1b[A", "\x1bOA" })) {
+            view.pick -|= 1;
+        } else if (anyKey(key, &.{"]"})) {
+            if (moves > 0) view.pick = if (view.pick + 1 < moves) view.pick + 1 else 0;
+        } else if (anyKey(key, &.{"["})) {
+            if (moves > 0) view.pick = if (view.pick > 0 and view.pick <= moves) view.pick - 1 else moves - 1;
+        } else return app.feedAct(f.item(view.pick).?, key);
+        app.dirty = true;
+        if (view.pick != was) if (f.item(view.pick).?.ticket) |id| {
+            _ = app.pickCard(id);
+        };
+        return true;
+    }
+
+    fn feedAct(app: *App, item: feed.Item, key: []const u8) !bool {
+        const b = if (app.board) |*b| b else return false;
+        const named: []const u8 = if (std.mem.eql(u8, key, "\r")) "⏎" else key;
+        const at = item.need orelse {
+            if (!std.mem.eql(u8, named, "⏎")) return false;
+            const id = item.ticket orelse return true;
+            for (b.cards()) |card| if (card.id == id) if (card.holder()) |pane| try app.showPane(pane);
+            return true;
+        };
+        const need = b.needsYou()[at];
+        const action = for (need.actions) |action| {
+            if (std.mem.eql(u8, action.key, named)) break action;
+        } else return false;
+        if (action.argv) |argv| return app.runNeed(need.id, argv);
+        const ticket = need.ticket orelse return true;
+        const needs = action.needs orelse return true;
+        if (std.mem.eql(u8, needs, "surface")) {
+            var id_buf: [12]u8 = undefined;
+            return app.runNeed(need.id, &.{ "babylon", "start", std.fmt.bufPrint(&id_buf, "{d}", .{ticket}) catch return true });
+        }
+        if (std.mem.eql(u8, needs, "pick") and app.pickCard(ticket)) {
+            app.board_view.?.giving = 0;
+            app.dirty = true;
+        }
+        return true;
+    }
+
+    /// `argv`, run for Your move item `id` through tmux: babylon's refusal is written beside its
+    /// board, for the feed to say in place of the item's buttons.
+    fn runNeed(app: *App, id: []const u8, argv: []const []const u8) !bool {
+        app.dropRefusal(id);
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const path = app.refusalPath(id, &buf) orelse "/dev/null";
+        var cmd: Writer.Allocating = .init(app.gpa);
+        defer cmd.deinit();
+        try cmd.writer.writeAll("out=$(");
+        for (argv, 0..) |arg, i| {
+            if (i > 0) try cmd.writer.writeAll(" ");
+            try shellQuote(&cmd.writer, arg);
+        }
+        try cmd.writer.writeAll(" 2>&1) || printf '%s\\n' \"$out\" >");
+        try shellQuote(&cmd.writer, path);
+        // tmux reads the line as a format, in double quotes: # is ##, and \, " and $ escaped
+        var line: Writer.Allocating = .init(app.gpa);
+        defer line.deinit();
+        for (cmd.written()) |c| switch (c) {
+            '#' => try line.writer.writeAll("##"),
+            '\\', '"', '$' => try line.writer.print("\\{c}", .{c}),
+            else => try line.writer.writeByte(c),
+        };
+        try app.send(.ignore, "run-shell -b \"{s}\"", .{line.written()});
+        app.dirty = true;
+        return true;
+    }
+
+    /// Where babylon's refusal of Your move item `id` is written for arena to read.
+    pub fn refusalPath(app: *const App, id: []const u8, buf: []u8) ?[]const u8 {
+        const dir = app.board_dir orelse return null;
+        return std.fmt.bufPrint(buf, "{s}/refused-{s}", .{ dir, id }) catch null;
+    }
+
+    /// A refusal read for Your move item `id`, said in its place until it is acted on again or
+    /// leaves the feed.
+    pub fn refuse(app: *App, id: []const u8, text: []const u8) !void {
+        app.dropRefusal(id);
+        const line = std.mem.trim(u8, text, " \n");
+        const first = line[0 .. std.mem.indexOfScalar(u8, line, '\n') orelse line.len];
+        var clean: std.ArrayList(u8) = .empty;
+        errdefer clean.deinit(app.gpa);
+        try @import("text.zig").appendClean(&clean, app.gpa, first);
+        const owned_id = try app.gpa.dupe(u8, id);
+        errdefer app.gpa.free(owned_id);
+        try app.refusals.append(app.gpa, .{ .id = owned_id, .text = try clean.toOwnedSlice(app.gpa) });
+        app.dirty = true;
+    }
+
+    fn dropRefusal(app: *App, id: []const u8) void {
+        var i: usize = 0;
+        while (i < app.refusals.items.len) {
+            const r = app.refusals.items[i];
+            if (!std.mem.eql(u8, r.id, id)) {
+                i += 1;
+                continue;
+            }
+            app.gpa.free(r.id);
+            app.gpa.free(r.text);
+            _ = app.refusals.orderedRemove(i);
+        }
     }
 
     /// The row of window `index` of `s` its panes start on: under its top edge, and in the
@@ -1845,6 +1985,22 @@ pub const App = struct {
         if (app.board == null) try app.closeBoard();
         // the feed's height may change, and the orchestrator's window with it
         app.want_list = true;
+        // a refusal goes with its item
+        var i: usize = 0;
+        while (i < app.refusals.items.len) {
+            const r = app.refusals.items[i];
+            const needs = if (app.board) |*b| b.needsYou() else &.{};
+            const present = for (needs) |need| {
+                if (std.mem.eql(u8, need.id, r.id)) break true;
+            } else false;
+            if (present) {
+                i += 1;
+                continue;
+            }
+            app.gpa.free(r.id);
+            app.gpa.free(r.text);
+            _ = app.refusals.orderedRemove(i);
+        }
         if (app.board_view) |*view| {
             var repos: [max_repos + 1][]const u8 = undefined;
             view.lane = @min(view.lane, app.laneRepos(&repos) -| 1);
@@ -2374,8 +2530,23 @@ pub const App = struct {
         if (anyKey(key, &.{ "\x1b", "q" })) return app.closeBoard();
         if (anyKey(key, &.{ "h", "\x1b[D", "\x1bOD" })) view.focus = .board;
         if (anyKey(key, &.{"\r"}) and app.orchestratorState() == .off) {
-            try app.send(.ignore, "run-shell -b \"babylon orchestrator\"", .{});
+            return app.send(.ignore, "run-shell -b \"babylon orchestrator\"", .{});
         }
+        _ = try app.feedKey(key);
+    }
+
+    /// `]` or `[` from the board: the column's feed takes the keys, in normal mode, with the pick
+    /// on Your move's first item or its last.
+    fn toFeed(app: *App, key: []const u8) !void {
+        const view = &app.board_view.?;
+        if (!app.sided()) return;
+        view.focus = .orchestrator;
+        if (app.sideDue()) app.normal = true;
+        app.dirty = true;
+        var f: feed.Feed = undefined;
+        if (!app.feedOf(&f) or f.items_shown == 0) return;
+        view.pick = if (anyKey(key, &.{"["})) f.items_shown - 1 else 0;
+        if (f.item(view.pick).?.ticket) |id| _ = app.pickCard(id);
     }
 
     /// A key on the board: h, l and the arrows go between columns, j and k along one, r narrows
@@ -2459,6 +2630,7 @@ pub const App = struct {
         if (is(key, &.{"o"})) return app.toOrchestrator();
         if (is(key, &.{"A"})) return app.toggleAuto();
         if (is(key, &.{"P"})) return app.jumpProposed();
+        if (is(key, &.{ "]", "[" })) return app.toFeed(key);
         if (is(key, &.{"x"})) return app.act(.no);
         if (is(key, &.{"n"})) return app.newTicket();
         const keyed = [_]struct { []const u8, CardAction }{
@@ -2612,7 +2784,7 @@ pub const App = struct {
 
     /// A button on the board, where it is drawn and clicked: 0-based, as the mouse has it.
     pub const Button = struct {
-        what: union(enum) { repo: usize, backlog, gate, orch, auto, proposed, new, card: CardAction },
+        what: union(enum) { repo: usize, backlog, gate, orch, auto, needs, new, card: CardAction },
         x: u16,
         y: u16,
         w: u16,
@@ -2669,8 +2841,8 @@ pub const App = struct {
                     std.fmt.bufPrint(buf, " ◐ {s}{d}/{d} ", .{ word, state.working, state.cap }) catch " ◐ "
                 else if (short) " ◐ " else " ◐ auto ";
             },
-            .proposed => blk: {
-                const n = if (b) |board| board.proposedCount() else 0;
+            .needs => blk: {
+                const n = if (b) |board| board.needsYou().len else 0;
                 break :blk if (short) std.fmt.bufPrint(buf, " ▲ {d} ", .{n}) catch " ▲ " else std.fmt.bufPrint(buf, " ▲ {d} need you ", .{n}) catch " ▲ ";
             },
             .new => " + ",
@@ -2709,7 +2881,7 @@ pub const App = struct {
 
         var group: [4]Button = undefined;
         var group_n: usize = 0;
-        group[group_n] = .{ .what = .proposed, .x = 0, .y = 0, .w = 0 };
+        group[group_n] = .{ .what = .needs, .x = 0, .y = 0, .w = 0 };
         group_n += 1;
         if (app.gateSession() != null) {
             group[group_n] = .{ .what = .gate, .x = 0, .y = 0, .w = 0 };
@@ -2831,7 +3003,7 @@ pub const App = struct {
             .gate => try app.toGate(),
             .orch => try app.toOrchestrator(),
             .auto => try app.toggleAuto(),
-            .proposed => app.jumpProposed(),
+            .needs => try app.toFeed("]"),
             .new => try app.newTicket(),
             .card => |action| try app.act(action),
         }
@@ -2882,6 +3054,10 @@ pub const App = struct {
         var found: [give_rows]Agent = undefined;
         const n = app.agents(&found);
         const picked = view.giving.?;
+        // opened from the feed, it gives the feed back its keys
+        defer if (view.giving == null and view.focus == .orchestrator and app.sideDue()) {
+            app.normal = true;
+        };
         if (anyKey(key, &.{ "\x1b", "q" })) view.giving = null;
         if (anyKey(key, &.{ "j", "\x1b[B", "\x1bOB" }) and picked + 1 < n) view.giving = picked + 1;
         if (anyKey(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.giving = picked -| 1;
@@ -3627,6 +3803,7 @@ pub const App = struct {
             const key = text[i..][0..len];
             i += len;
             if (app.normal) {
+                if (app.sideFocused() and try app.feedKey(key)) continue;
                 if (std.mem.eql(u8, key, "i") or std.mem.eql(u8, key, "\x1b")) {
                     app.normal = false;
                     app.dirty = true;
@@ -3991,6 +4168,20 @@ pub fn branchTicket(branch: []const u8) ?[]const u8 {
     while (n < branch.len and std.ascii.isDigit(branch[n])) n += 1;
     if (n == 1 or (n < branch.len and branch[n] != '-')) return null;
     return branch[1..n];
+}
+
+/// `arg` as one word to the shell, whatever is in it.
+fn shellQuote(w: *Writer, arg: []const u8) !void {
+    try w.writeByte('\'');
+    for (arg) |c| if (c == '\'') try w.writeAll("'\\''") else try w.writeByte(c);
+    try w.writeByte('\'');
+}
+
+test shellQuote {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try shellQuote(&out.writer, "{\"id\":27} it's");
+    try std.testing.expectEqualStrings("'{\"id\":27} it'\\''s'", out.written());
 }
 
 /// A todo card no Claude holds, waiting on nothing, of a repo that can name a session and a folder.

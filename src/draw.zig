@@ -1051,7 +1051,7 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
     const bar = if (line.failed) ink(app, "emberdim", 1) else ink(app, "amber", 4);
     const lead: []const u8 = switch (line.kind) {
         .item => "▌ ",
-        .buttons => "▌     ",
+        .buttons, .refused => "▌     ",
         .chips => "  ",
         else => "",
     };
@@ -1062,17 +1062,31 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
     }
     var bold = heading(app);
     bold.flags.bold = true;
-    try pen.set(w, switch (line.kind) {
+    const style: vt.Style = switch (line.kind) {
         .move_head => bold,
         .head => blk: {
-            var style: vt.Style = .{};
-            style.flags.bold = true;
-            break :blk style;
+            var strong: vt.Style = .{};
+            strong.flags.bold = true;
+            break :blk strong;
         },
         .quiet, .more, .landed, .buttons => dim,
+        .refused => ink(app, "emberdim", 1),
         .item, .chips => .{},
-    }, null);
-    try fitted(w, line.text, room);
+    };
+    try pen.set(w, style, null);
+    const picked = if (app.feedFocused()) app.feedPick(f) else null;
+    const on = picked orelse return fitted(w, line.text, room);
+    if (on.line != row) return fitted(w, line.text, room);
+    // the pick's cells lit: the whole line of a Your move item, a ticket's chip of its own
+    const pre = clip(line.text, on.at);
+    const mid = if (on.w == 0) line.text[pre.len..] else clip(line.text[pre.len..], on.w);
+    const pre_w = @min(cellCount(pre), room);
+    try fitted(w, pre, pre_w);
+    try pen.set(w, chip(app), null);
+    const mid_w = @min(cellCount(mid), room - pre_w);
+    try fitted(w, mid, mid_w);
+    try pen.set(w, style, null);
+    try fitted(w, line.text[pre.len + mid.len ..], room - pre_w - mid_w);
 }
 
 /// The orchestrator's column with no window of its in it: its head, and while it is off, how to
@@ -1373,7 +1387,7 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
             .gate => ink(app, "violet", 5),
             .orch => if (app.orchestrator().?.running) ink(app, "violet", 5) else ink(app, "dim", 8),
             .auto => if (app.auto() != null) autoOn(app) else ink(app, "dim", 8),
-            .proposed => if (app.board.?.proposedCount() > 0) heading(app) else ink(app, "dim", 8),
+            .needs => if (app.board.?.needsYou().len > 0) heading(app) else ink(app, "dim", 8),
             .new => heading(app),
             .card => blk: {
                 var lit = if (app.columnFocused()) ink(app, "dim", 8) else ink(app, "amber", 4);

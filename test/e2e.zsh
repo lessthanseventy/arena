@@ -1007,9 +1007,9 @@ print -r -- "${$(<$tmp/board.noauto)%\}}"',"orchestrator":{"on":true,"running":t
 check "and names it running" see '^│ ▤ board orch  '
 cp $tmp/board.noauto $tmp/run/babylon/board.json
 check "with nothing of it in babylon's file again, the row says nothing" gone '^│ ▤ board orch'
-print -r -- "${$(<$tmp/board.noauto)%\}}"',"proposals":[{"id":4,"action":"start","ticket_id":7,"what":"Start #7","why":"Next in line"}]}' >$tmp/run/babylon/board.json
+print -r -- "${$(<$tmp/board.noauto)%\}}"',"proposals":[{"id":4,"action":"start","ticket_id":7,"what":"Start #7","why":"Next in line"}],"needs_you":[{"id":"proposal:4","kind":"proposal","ticket":7,"repo":"tlon","text":"P4 Start #7: Next in line","actions":[]}]}' >$tmp/run/babylon/board.json
 check "a card with an open proposal shows it" see '▲ proposed'
-check "the header counts the proposals" see ' ▲ 1 need you'
+check "the header counts what needs you" see ' ▲ 1 need you'
 check "and the card has a no beside its go" see '╰ go ─ no '
 key Enter
 check "go on it answers the proposal through babylon, not a Claude started" await last 'go 4'
@@ -1301,6 +1301,44 @@ feed_above() {
 check "the feed sits atop the orchestrator's column, Your move above its pane's first line" await feed_above
 check "each item as babylon words it, its actions under it" see '▌     1 Blue   c in words'
 check "the pane under the feed is as tall as what is left of the column" await eval '(( $(inner display -p -t orchestrator:orch "#{pane_height}") == 22 - $(rowof "✓ landed today") - 1 ))'
+print -r -- "${$(jq -c '.tickets += [{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[],"stage":"failed"}]' $tmp/board.pipe)%\}}"',"orchestrator":{"on":true,"running":true},"needs_you":['\
+'{"id":"ask:5","kind":"ask","ticket":8,"repo":"arena","text":"#8 arena  asks: Blue or green?",'\
+'"actions":[{"key":"1","label":"Blue","argv":["babylon","answer","5","1"]},{"key":"c","label":"in words","argv":null,"needs":"words"}]},'\
+'{"id":"sendback:7","kind":"sendback","ticket":7,"repo":"tlon","text":"✗ #7 tlon  sent back, free: red",'\
+'"actions":[{"key":"G","label":"give","argv":null,"needs":"pick"},{"key":"⏎","label":"start","argv":null,"needs":"surface"},'\
+'{"key":"x","label":"close","argv":["babylon","update","7","--status","done"]}]}]}' >$tmp/run/babylon/board.json
+see '▲ your move 2'
+: >$tmp/babylon
+key C-Space
+feed_lit() { [[ $(outer capture-pane -ep -t o | grep -F -- "$1") =~ $'((\e\\[[0-9;]*m)+)'"$1" && $match[1] =~ '[[;]7[;m]' ]] }
+check "normal mode in the column puts the pick on the feed's first item, lit" await feed_lit '#8 arena  asks'
+key 1
+check "an ask's option number runs its answer as babylon gives it" await last 'answer 5 1'
+touch $tmp/refuse
+key 1
+check "and babylon's refusal is said in place of the item's buttons" see '▌     babylon: no session'
+rm $tmp/refuse
+key j
+check "j moves the pick to the next item" await feed_lit '✗ #7 tlon'
+key x
+check "x on a free send-back closes it, as its action says" await last 'update 7 --status done'
+key Enter
+check "and Enter starts a Claude on it through babylon" await last 'start 7'
+key G
+check "G on it shows the running Claudes to give it to" see ' give #7 to '
+key Escape
+gone ' give #7 to '
+key k
+check "and closing them gives the feed back its keys" await feed_lit '#8 arena  asks'
+key i
+key M-h
+await eval '! orch_lit'
+key ']'
+check "] from the board puts the feed's pick on Your move's first item, the column normal" await feed_lit '#8 arena  asks'
+key j
+check "where its keys are the feed's" await feed_lit '✗ #7 tlon'
+key i
+see '│again '
 key M-h
 check "Alt+h gives the board the keys" await eval '! orch_lit'
 key o
