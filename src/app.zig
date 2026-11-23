@@ -422,6 +422,8 @@ pub const App = struct {
     normal: bool = false,
     /// Where the rail's pick was moved to in normal mode; none puts it on what is in view.
     rail_pick: ?RailPick = null,
+    /// The popup over the strip in normal mode, which holds the keys while it is open.
+    popup: ?Popup = null,
     agent_sort: AgentSort = .urgency,
     /// The rail's list of Claudes was scrolled to start at the `n`th, beside the window `at` that
     /// was in view then; going to another puts it back to following the Claude in view.
@@ -1150,8 +1152,123 @@ pub const App = struct {
         return .{ .session = s.id };
     }
 
+    /// The popup over the strip: what it shows, the pick the rail had when it opened, and the
+    /// viewport of the pane it shows, which it scrolls and puts back.
+    pub const Popup = struct {
+        entry: RailPick,
+        from: ?RailPick,
+        /// How many rows of the pane's viewport are cut off its top: those under its last line of
+        /// text are not shown, and this stays while it is scrolled.
+        anchor: usize = 0,
+        saved: ?struct { pane: u32, offset: usize, bottom: bool } = null,
+    };
+
+    /// The pane an entry of the rail stands for: a Claude's, or a session's focused window's active one.
+    fn entryPane(app: *App, entry: RailPick) ?*Pane {
+        switch (entry) {
+            .agent => |id| {
+                const a = app.agentById(id) orelse return null;
+                return app.paneById(a.win.agent_pane) orelse a.win.activePane();
+            },
+            .session => |id| {
+                const s = app.sessionById(id) orelse return null;
+                return (s.focused() orelse return null).activePane();
+            },
+        }
+    }
+
+    /// The pane the popup shows.
+    pub fn popupPane(app: *App) ?*Pane {
+        return app.entryPane((app.popup orelse return null).entry);
+    }
+
+    /// Whether the pane's viewport follows it, rather than being scrolled up into its history.
+    pub fn following(pane: *const Pane) bool {
+        const bar = @constCast(pane).term.screens.active.pages.scrollbar();
+        return bar.offset + bar.len >= bar.total;
+    }
+
+    fn openPopup(app: *App, entry: RailPick) void {
+        if (app.entryPane(entry) == null) return;
+        app.popup = .{ .entry = entry, .from = app.rail_pick };
+        app.popupShow(entry);
+    }
+
+    /// Shows `entry` in the popup: the pane before it has its viewport back, and this one's is kept
+    /// and put at its newest. A pane of a session tmux does not stream is captured again.
+    fn popupShow(app: *App, entry: RailPick) void {
+        const pop = &app.popup.?;
+        app.popupRestore();
+        pop.entry = entry;
+        const pane = app.entryPane(entry) orelse return;
+        const bar = pane.term.screens.active.pages.scrollbar();
+        pop.saved = .{ .pane = pane.id, .offset = bar.offset, .bottom = following(pane) };
+        pane.term.scrollViewport(.bottom);
+        if (!app.watched(pane) and pane.seed == .done) {
+            pane.seed = .wanted;
+            app.want_list = true;
+        }
+        app.dirty = true;
+    }
+
+    fn popupRestore(app: *App) void {
+        const pop = &app.popup.?;
+        const saved = pop.saved orelse return;
+        pop.saved = null;
+        const pane = app.paneById(saved.pane) orelse return;
+        pane.term.scrollViewport(if (saved.bottom) .bottom else .{ .row = saved.offset });
+    }
+
+    /// Puts away the popup: the pane has its viewport back and the pick is where it was.
+    fn closePopup(app: *App) void {
+        if (app.popup == null) return;
+        app.popupRestore();
+        app.rail_pick = app.popup.?.from;
+        app.popup = null;
+        app.dirty = true;
+    }
+
+    /// A key in the popup: `j` `k` `C-d` `C-u` `g` `G` scroll the pane's history, `/` searches it,
+    /// `h` `l` leaf through the rail, Enter goes there into insert, and `q` or Esc close it.
+    fn popupKey(app: *App, key: []const u8) !void {
+        const pop = &app.popup.?;
+        const pane = app.entryPane(pop.entry) orelse return app.closePopup();
+        app.dirty = true;
+        const page: isize = @max(1, pane.term.rows / 2);
+        if (anyKey(key, &.{ "q", "\x1b" })) {
+            app.closePopup();
+        } else if (anyKey(key, &.{"\r"})) {
+            const entry = pop.entry;
+            app.closePopup();
+            app.rail_pick = entry;
+            _ = try app.railKey("\r");
+        } else if (anyKey(key, &.{ "j", "\x1b[B", "\x1bOB" })) {
+            pane.term.scrollViewport(.{ .delta = 1 });
+        } else if (anyKey(key, &.{ "k", "\x1b[A", "\x1bOA" })) {
+            pane.term.scrollViewport(.{ .delta = -1 });
+        } else if (anyKey(key, &.{"\x04"})) {
+            pane.term.scrollViewport(.{ .delta = page });
+        } else if (anyKey(key, &.{"\x15"})) {
+            pane.term.scrollViewport(.{ .delta = -page });
+        } else if (anyKey(key, &.{"g"})) {
+            pane.term.scrollViewport(.top);
+        } else if (anyKey(key, &.{"G"})) {
+            pane.term.scrollViewport(.bottom);
+        } else if (anyKey(key, &.{"/"})) {
+            app.openSearch();
+        } else if (anyKey(key, &.{ "h", "l" })) {
+            var list: [96]RailPick = undefined;
+            const n = app.railPicks(&list);
+            const at = for (list[0..n], 0..) |entry, i| {
+                if (std.meta.eql(entry, pop.entry)) break i;
+            } else return;
+            const to = if (key[0] == 'l') @min(at + 1, n - 1) else at -| 1;
+            if (to != at) app.popupShow(list[to]);
+        }
+    }
+
     /// The Claude whose window has id `id`, in any session.
-    fn agentById(app: *const App, id: u32) ?Agent {
+    pub fn agentById(app: *const App, id: u32) ?Agent {
         for (app.sessions.items, 0..) |s, si| for (s.wins.items) |win| {
             if (win.id == id) return .{ .session = si, .win = win };
         };
@@ -1188,6 +1305,9 @@ pub const App = struct {
             const by: i32 = if (key[0] == ']') 1 else -1;
             const to: i32 = if (from) |i| @mod(@as(i32, @intCast(i)) + by, len) else if (by > 0) 0 else len - 1;
             app.rail_pick = .{ .agent = found[@intCast(to)].win.id };
+        } else if (anyKey(key, &.{" "})) {
+            app.openPopup(here orelse return true);
+            return true;
         } else if (anyKey(key, &.{"\r"})) {
             const pick = here orelse return true;
             app.normal = false;
@@ -2107,20 +2227,23 @@ pub const App = struct {
 
     /// Opens the search prompt. Anything selected is let go, so the search starts from the newest.
     fn openSearch(app: *App) void {
-        if (app.cur()) |s| if (s.focused()) |win| if (win.activePane()) |pane| {
-            pane.term.screens.active.clearSelection();
-        };
+        if (app.searchPane()) |pane| pane.term.screens.active.clearSelection();
         app.prompt = .{ .what = .search };
         app.dirty = true;
+    }
+
+    /// The pane a search looks in: the popup's, else the focused window's active one.
+    fn searchPane(app: *App) ?*Pane {
+        if (app.popup != null) return app.popupPane();
+        const s = app.cur() orelse return null;
+        return (s.focused() orelse return null).activePane();
     }
 
     /// Finds the prompt's text in the active pane's history, the match before the one last
     /// found, selects it and brings it into view. Past the oldest it starts again from the newest.
     fn searchNext(app: *App) !void {
         const prompt = &app.prompt.?;
-        const s = app.cur() orelse return;
-        const win = s.focused() orelse return;
-        const pane = win.activePane() orelse return;
+        const pane = app.searchPane() orelse return;
         const query = prompt.text();
         if (query.len == 0) return;
         const screen = pane.term.screens.active;
@@ -4206,8 +4329,11 @@ pub const App = struct {
     /// Normal mode ends where an overlay has the keys: it is the mode there, and closing it is
     /// back to insert.
     fn settleMode(app: *App) void {
-        if (app.normal and app.overlay() and !app.sideFocused()) app.normal = false;
-        if (!app.normal) app.rail_pick = null;
+        if (app.normal and app.overlay() and !app.sideFocused() and app.popup == null) app.normal = false;
+        if (!app.normal) {
+            app.closePopup();
+            app.rail_pick = null;
+        }
     }
 
     /// Ctrl+Space: normal mode to insert, an overlay closed or the board's orchestrator column
@@ -4242,7 +4368,11 @@ pub const App = struct {
             const len = keyLen(text[i..]);
             const key = text[i..][0..len];
             i += len;
-            if (app.normal) {
+            if (app.normal and app.prompt == null) {
+                if (app.popup != null) {
+                    try app.popupKey(key);
+                    continue;
+                }
                 if (app.sideFocused() and try app.feedKey(key)) continue;
                 if (try app.railKey(key)) continue;
                 if (std.mem.eql(u8, key, "i") or std.mem.eql(u8, key, "\x1b")) {

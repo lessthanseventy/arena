@@ -11,6 +11,7 @@ const sheets = @import("plan.zig");
 const App = app_mod.App;
 const Session = app_mod.Session;
 const Window = app_mod.Window;
+const Pane = app_mod.Pane;
 const Writer = std.Io.Writer;
 
 pub const What = enum { all, focused_border };
@@ -927,8 +928,12 @@ fn cell(app: *const App, pen: *Pen, w: *Writer, win: *const Window, tx: usize, t
         const upright = (ty > 0 and win.paneAt(tx, ty - 1) == null) or (ty + 1 < win.h and win.paneAt(tx, ty + 1) == null);
         return put(w, if (upright) '│' else '─');
     };
-    const px = tx - pane.x;
-    const py = ty - pane.y;
+    return paneCell(app, pen, w, pane, tx - pane.x, ty - pane.y, dim, clip_lo, clip_hi);
+}
+
+/// One cell of `pane`'s screen at (`px`, `py`), as it was last rendered.
+fn paneCell(app: *const App, pen: *Pen, w: *Writer, pane: *const Pane, px: usize, py: usize, dim: ?*const color.Palette, clip_lo: bool, clip_hi: bool) !void {
+    _ = app;
     const rows = pane.render.row_data.items(.cells)[pane.render.viewportStart()..];
     if (py >= rows.len or px >= rows[py].len) {
         try pen.set(w, .{}, null);
@@ -970,7 +975,7 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
     const drop = app.dropAt();
 
     for (s.wins.items, 0..) |win, i| {
-        const focused = i == s.focus and (app.board_view == null or app.sideFocused());
+        const focused = i == s.focus and (app.board_view == null or app.sideFocused()) and app.popup == null;
         if (what == .focused_border and !focused and app.mark(s, win) != .working) continue;
         const col_w = app.colW(s, win);
         const x0 = app.colX(s, i) - s.scroll;
@@ -1367,6 +1372,107 @@ fn thumb(app: *App, w: *Writer, s: *const Session, win: *const Window, number: u
         }
         try w.writeAll("│");
         for (0..tw - 2) |tx| try cell(app, &pen, w, win, tx, row - 1 + off, picked, false, tx + 3 == tw);
+        try pen.set(w, edge, null);
+        try w.writeAll("│");
+    }
+}
+
+fn rowHasText(row: anytype) bool {
+    for (row.items(.raw)) |raw| if (raw.hasText() and raw.content.codepoint.data != ' ') return true;
+    return false;
+}
+
+const popup_keys = " j k scroll  g G ends  / search  h l next  ⏎ go  q close ";
+
+/// The popup, about three quarters of the strip each way and centred on it: its head, what the
+/// Claude is doing and its context, then the pane's own screen from its bottom, `live` while it
+/// follows the pane, and its keys in the foot.
+fn popupBox(app: *App, w: *Writer, pop: App.Popup) !void {
+    const pane = app.popupPane() orelse return;
+    try pane.render.update(app.gpa, &pane.term);
+    const pw: u16 = @max(24, app.view_w / 4 * 3);
+    const ph: u16 = @max(9, app.view_h / 4 * 3);
+    if (pw > app.view_w or ph > app.view_h) return;
+    const x0 = app.term_w - app.view_w + (app.view_w - pw) / 2;
+    const y0 = (app.view_h - ph) / 2;
+    const inner = pw - 2;
+    const edge = ink(app, "amber", 4);
+    const dim = ink(app, "dim", 8);
+    var pen: Pen = .{};
+    var buf: [192]u8 = undefined;
+
+    const win: ?*const Window, const session: ?*const Session = switch (pop.entry) {
+        .agent => |id| if (app.agentById(id)) |a| .{ a.win, app.sessions.items[a.session] } else .{ null, null },
+        .session => |id| .{ if (app.sessionById(id)) |s| s.focused() else null, app.sessionById(id) },
+    };
+    var title: Writer = .fixed(&buf);
+    title.writeAll(" ") catch {};
+    if (win) |it| if (it.agent()) {
+        put(&title, agentGlyph(app, it)) catch {};
+        title.writeAll(" ") catch {};
+        if (app_mod.branchTicket(it.text(.branch))) |n| title.print("#{s} ", .{n}) catch {};
+    };
+    if (win) |it| title.print("{s}", .{clip(it.label(), 40)}) catch {};
+    if (session) |s| title.print(" · {s}", .{clip(s.name, 24)}) catch {};
+    if (win) |it| if (it.agent() and it.claude != .none) {
+        var ago_buf: [8]u8 = undefined;
+        title.print(" · {s} {s}", .{ @tagName(it.claude), ago(&ago_buf, app.epoch, it.since) }) catch {};
+    };
+    title.writeAll(" ") catch {};
+
+    var info: [192]u8 = undefined;
+    var meta: Writer = .fixed(&info);
+    if (win) |it| {
+        if (it.ctx > 0) meta.print("ctx {d}%", .{@min(it.ctx, 999)}) catch {};
+        const branch = it.text(.branch);
+        if (branch.len > 0) meta.print("{s}{s}", .{ if (meta.end > 0) " · " else "", clip(branch, 60) }) catch {};
+        if (it.subs() > 0) meta.print("{s}{d} subagents", .{ if (meta.end > 0) " · " else "", it.subs() }) catch {};
+    }
+
+    const live = App.following(pane);
+    const prows = ph - 5;
+    const rows = pane.render.row_data.items(.cells)[pane.render.viewportStart()..];
+    if (live) {
+        var used = rows.len;
+        while (used > 0 and !rowHasText(rows[used - 1])) used -= 1;
+        app.popup.?.anchor = used -| prows;
+    }
+    const first = app.popup.?.anchor;
+    for (0..ph) |r| {
+        try w.print("\x1b[{d};{d}H", .{ y0 + r + 1, x0 + 1 });
+        const top = r == 0;
+        const bottom = r == ph - 1;
+        const ruled = r == 3;
+        try pen.set(w, edge, null);
+        if (top or bottom or ruled) {
+            try w.writeAll(if (top) "╭─" else if (bottom) "╰─" else "├─");
+            var used: usize = 2;
+            if (top or bottom) {
+                try pen.set(w, if (top) heading(app) else dim, null);
+                const text = clip(if (top) title.buffered() else popup_keys, inner - 3);
+                try w.writeAll(text);
+                used += cellCount(text);
+                try pen.set(w, edge, null);
+            }
+            for (used..inner + 1) |_| try w.writeAll("─");
+            try w.writeAll(if (top) "╮" else if (bottom) "╯" else "┤");
+            continue;
+        }
+        try w.writeAll("│");
+        if (r < 3) {
+            try pen.set(w, if (r == 1) .{} else dim, null);
+            const text = if (r == 1) (if (win) |it| it.detail() else "") else meta.buffered();
+            try w.writeAll(" ");
+            try fitted(w, text, inner - 1);
+        } else {
+            const py = first + (r - 4);
+            const tail: usize = if (live and r == ph - 2) 5 else 0;
+            for (0..inner - tail) |tx| try paneCell(app, &pen, w, pane, tx, py, null, false, tx + 1 == inner - tail);
+            if (tail > 0) {
+                try pen.set(w, dim, null);
+                try w.writeAll(" live");
+            }
+        }
         try pen.set(w, edge, null);
         try w.writeAll("│");
     }
@@ -2145,6 +2251,10 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
     }
     // a narrow rail drawn wide lies over the strip
     if (app.peek) try rail(app, w);
+    if (app.popup) |pop| {
+        try popupBox(app, w, pop);
+        cursor = null;
+    }
     if (app.prompt) |*prompt| {
         cursor = try promptBox(app, w, prompt);
     } else if (app.menu) |open| {

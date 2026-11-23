@@ -758,6 +758,32 @@ mouse 35 72 3 M
 check "and leaving it, narrow again" gone '├─ agents · urgency '
 key M-w
 check "Alt+w again widens it" see '^╭─ sessions ─+╮ '
+
+# the popup: a Claude's pane in another session, read-only, over the strip
+inner send-keys -t alpha:three 'echo three-pane-line' Enter
+shows '^NORMAL' || key C-Space
+see '^NORMAL'
+key -l ']'
+see '^│▌.* three'
+before=$(screen)
+beside() { screen | sed -n '1,2p;24p'; screen | cut -c1-30 }
+beside_before=$(beside)
+key -l ' '
+check "space opens the popup, its head naming the Claude and its window" await shows '^.*╭─ ▲ three .*alpha'
+check "and the pane's own line is in it, from the session arena is not in" await shows '│ ?three-pane-line'
+check "with live while it follows the pane" shows ' live'
+check "and its keys in the foot" shows '╰─ j k scroll .*q close'
+check "no cell outside it has changed its text" eval '[[ $(beside) == $beside_before ]]'
+key -l 'x'
+key -l 'jkgG'
+check "a key of its own is not typed into the pane" eval '! screen | grep -q "three-pane-linex"'
+key -l q
+check "q closes it" await hides '╰─ j k scroll'
+check "and the screen is as it was" eval '[[ $(screen) == $before ]]'
+key -l ' '
+see '╰─ j k scroll'
+key Escape
+check "Esc closes it too" gone '╰─ j k scroll'
 claude alpha:three end
 claude beta:solo end
 
