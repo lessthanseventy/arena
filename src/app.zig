@@ -4269,7 +4269,6 @@ pub fn branchTicket(branch: []const u8) ?[]const u8 {
     return branch[1..n];
 }
 
-/// `arg` as one word to the shell, whatever is in it.
 /// `arg` as one argument of a tmux command: in double quotes, with `\`, `"` and `$` escaped and
 /// `#` doubled, which tmux would read as a format.
 fn tmuxQuote(w: *Writer, arg: []const u8) !void {
@@ -4289,6 +4288,7 @@ test tmuxQuote {
     try std.testing.expectEqualStrings("\"a \\\"b\\\" \\$c ##d\\\\\"", out.written());
 }
 
+/// `arg` as one word to the shell, whatever is in it.
 fn shellQuote(w: *Writer, arg: []const u8) !void {
     try w.writeByte('\'');
     for (arg) |c| if (c == '\'') try w.writeAll("'\\''") else try w.writeByte(c);
