@@ -222,16 +222,17 @@ two=$(screen | awk 'NR == 1 { print index($0, "╭─ 2 two") + 3 }')
 mouse 0 $two 6 M
 mouse 0 $two 6 m
 current() { [[ $(inner display -p -t alpha '#{window_name}') == $1 ]] }
-await current two
+check "the click on window two makes it the current window" await current two
+check "and the strip comes to rest on it" await dots '○ ● ○'
 zselect -t 50
 untouched() { ! inner capture-pane -pJ -t alpha:two | grep -qF '[<0;' }
 check "a click on a window out of focus focuses it, and its program is not clicked" untouched
-await shows '│sh-[0-9.]+\$ +│'
+check "window two shows its prompt" await shows '│sh-[0-9.]+\$ +│'
 inner send-keys -t alpha:two clear Enter
 
 print -rn -- $'\e[?1003h\e[?1006h' >$tmp/any
 inner send-keys -t alpha:two "clear; stty -echo -icanon; echo shift-copy-target; cat $tmp/any; timeout 3 cat -v; printf '\\033[?1006l\\033[?1003l'; stty sane" Enter
-await shows 'shift-copy-target'
+check "window two shows the text to copy, whole" await shows 'shift-copy-target'
 zselect -t 30
 row=$(screen | grep -n 'shift-copy-target' | head -1 | cut -d: -f1)
 col=$(screen | awk -v r=$row 'NR == r { print index($0, "shift-copy-target") }')
