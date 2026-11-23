@@ -347,6 +347,8 @@ pub const BoardView = struct {
     detail_scroll: usize = 0,
     /// The board's keys shown over it, until the next key.
     help: bool = false,
+    /// Opened as home: the orchestrator's column beside it while the orchestrator is not running.
+    home: bool = false,
 
     /// Whether a box lies over the board, the keys its own.
     pub fn boxed(view: BoardView) bool {
@@ -359,6 +361,8 @@ pub const max_cards = 256;
 /// The Claudes a card can be given to, each picked by its number.
 pub const give_rows = 9;
 const max_repos = 32;
+/// The orchestrator's column's width beside the board, kept to 2/5 of what the rail leaves.
+pub const side_w = 60;
 
 fn anyKey(pressed: []const u8, names: []const []const u8) bool {
     for (names) |name| if (std.mem.eql(u8, pressed, name)) return true;
@@ -1175,13 +1179,41 @@ pub const App = struct {
     /// The strip's width, or with the orchestrator beside the board, its window's.
     pub fn fit(app: *App) void {
         const full = app.fullW();
-        app.view_w = if (app.sided()) full * 2 / 5 else full;
+        app.view_w = if (app.sided()) @min(side_w, full * 2 / 5) else full;
     }
 
-    /// Whether the orchestrator's window has a place beside the open board: it runs, and the
-    /// side is not folded.
+    /// Whether the orchestrator's column is beside the open board, unless folded: while the
+    /// orchestrator runs, with its window, and at home always, with what babylon says of it.
     pub fn sided(app: *const App) bool {
-        return app.board_view != null and !app.side_folded and app.orchestratorSession() != null;
+        const view = app.board_view orelse return false;
+        return !app.side_folded and (view.home or app.orchestratorSession() != null);
+    }
+
+    /// Whether the column has the keys: its window's once arena is in its session, else its own.
+    pub fn columnFocused(app: *const App) bool {
+        const view = app.board_view orelse return false;
+        return view.focus == .orchestrator and !view.boxed() and app.sided();
+    }
+
+    pub const OrchestratorState = enum { working, waiting, idle, restarting, off };
+
+    /// The orchestrator as its column's head says it: its window's Claude while its session is
+    /// there, else restarting while babylon keeps it on, else off.
+    pub fn orchestratorState(app: *const App) OrchestratorState {
+        if (app.orchestratorWindow()) |win| return switch (win.claude) {
+            .working => .working,
+            .waiting => .waiting,
+            else => .idle,
+        };
+        const state = app.orchestrator() orelse return .off;
+        return if (state.on) .restarting else .off;
+    }
+
+    /// The orchestrator's own window: its session's first.
+    pub fn orchestratorWindow(app: *const App) ?*Window {
+        const at = app.orchestratorSession() orelse return null;
+        const wins = app.sessions.items[at].wins.items;
+        return if (wins.len > 0) wins[0] else null;
     }
 
     /// Whether it is drawn there, arena in its session.
@@ -1399,7 +1431,6 @@ pub const App = struct {
         }.before);
         if (app.board_view) |*view| {
             const alone = app.orchestratorSession() == null;
-            if (alone) view.focus = .board;
             if (alone or app.sessionIndex(view.back) == null) view.back = null;
         }
         try app.toSide();
@@ -1896,7 +1927,7 @@ pub const App = struct {
         app.reflow();
         if (!app.sided()) return;
         const view = &app.board_view.?;
-        const to = app.sessions.items[app.orchestratorSession().?].id;
+        const to = app.sessions.items[app.orchestratorSession() orelse return].id;
         const from = app.bound();
         if (from == to) return;
         if (view.back == null) view.back = from;
@@ -2263,9 +2294,64 @@ pub const App = struct {
         };
     }
 
-    /// The needs-you inbox, which is the board until the inbox lands.
+    /// Home: the board with the orchestrator's column beside it, which has the keys, in insert.
+    /// With no board there is none.
+    pub fn goHome(app: *App) !void {
+        if (app.board == null) return;
+        app.menu = null;
+        app.prompt = null;
+        app.overview = null;
+        app.orchestrating = false;
+        app.normal = false;
+        app.dirty = true;
+        if (app.board_view == null) app.board_view = .{ .lane = app.firstLane() };
+        const view = &app.board_view.?;
+        view.help = false;
+        view.detail = null;
+        view.giving = null;
+        view.answering = false;
+        app.side_folded = false;
+        view.home = true;
+        view.focus = .orchestrator;
+        try app.toSide();
+    }
+
+    /// The needs-you inbox, which is home until the column's feed lands.
     pub fn showInbox(app: *App) !void {
-        if (app.board_view == null) try app.toggleBoard();
+        try app.goHome();
+    }
+
+    /// What home keeps across tmux ending arena's client, as when the orchestrator's session the
+    /// client was in ends: the board as it was, and the column's fold.
+    pub const Kept = struct { view: BoardView, folded: bool };
+
+    pub fn kept(app: *const App) ?Kept {
+        var view = app.board_view orelse return null;
+        view.help = false;
+        view.detail = null;
+        view.giving = null;
+        view.answering = false;
+        return .{ .view = view, .folded = app.side_folded };
+    }
+
+    /// Home as it was kept, in the new client's sessions.
+    pub fn restore(app: *App, was: Kept) !void {
+        if (app.board == null) return;
+        app.board_view = was.view;
+        app.side_folded = was.folded;
+        app.dirty = true;
+        try app.toSide();
+    }
+
+    /// A key while the column has the keys with no window of the orchestrator's in it: Enter
+    /// starts it when it is off, h gives the board the keys, and Escape and q close the board.
+    fn columnKey(app: *App, key: []const u8) !void {
+        const view = &app.board_view.?;
+        if (anyKey(key, &.{ "\x1b", "q" })) return app.closeBoard();
+        if (anyKey(key, &.{ "h", "\x1b[D", "\x1bOD" })) view.focus = .board;
+        if (anyKey(key, &.{"\r"}) and app.orchestratorState() == .off) {
+            try app.send(.ignore, "run-shell -b \"babylon orchestrator\"", .{});
+        }
     }
 
     /// A key on the board: h, l and the arrows go between columns, j and k along one, r narrows
@@ -2287,6 +2373,7 @@ pub const App = struct {
             if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.detail_scroll -|= 1;
             return;
         }
+        if (app.columnFocused()) return app.columnKey(key);
         if (is(key, &.{" "})) if (app.boardCard(view.col, view.row)) |card| {
             if (try app.openDetail(card.id)) return;
         };
@@ -2501,7 +2588,7 @@ pub const App = struct {
 
     /// A button on the board, where it is drawn and clicked: 0-based, as the mouse has it.
     pub const Button = struct {
-        what: union(enum) { repo: usize, backlog, gate, orchestrator, auto, proposed, new, card: CardAction },
+        what: union(enum) { repo: usize, backlog, gate, auto, proposed, new, card: CardAction },
         x: u16,
         y: u16,
         w: u16,
@@ -2542,7 +2629,6 @@ pub const App = struct {
             },
             .backlog => " backlog ",
             .gate => " gate ",
-            .orchestrator => if (app.orchestrator()) |state| (if (state.running or state.on) " orch " else " orch off ") else " orch ",
             .auto => if (app.auto()) |state| std.fmt.bufPrint(buf, " auto {d}/{d} ", .{ state.working, state.cap }) catch " auto " else " auto ",
             .proposed => std.fmt.bufPrint(buf, " ▲ {d} proposed ", .{if (app.board) |*b| b.proposedCount() else 0}) catch " ▲ ",
             .new => " + ",
@@ -2571,12 +2657,12 @@ pub const App = struct {
         var x: u16 = ox + @as(u16, @intCast(title_w)) + 1;
         const right = ox + app.boardW();
         const proposed = if (app.board) |*b| b.proposedCount() > 0 else false;
-        for (0..count + 6) |i| {
-            const what: @FieldType(Button, "what") = if (i <= count) .{ .repo = i } else if (i == count + 1) .backlog else if (i == count + 2) .gate else if (i == count + 3) .orchestrator else if (i == count + 4) .auto else .proposed;
+        for (0..count + 5) |i| {
+            const what: @FieldType(Button, "what") = if (i <= count) .{ .repo = i } else if (i == count + 1) .backlog else if (i == count + 2) .gate else if (i == count + 3) .auto else .proposed;
             if (what == .gate and app.gateSession() == null) continue;
             if (what == .proposed and !proposed) continue;
             const w: u16 = @intCast(cellCount(app.buttonLabel(what, &buf)));
-            if (what == .gate or (what == .orchestrator and app.gateSession() == null)) x += 2;
+            if (what == .gate or (what == .auto and app.gateSession() == null)) x += 2;
             if (x + w > right or n == out.len) break;
             out[n] = .{ .what = what, .x = x, .y = 0, .w = w };
             n += 1;
@@ -2635,7 +2721,6 @@ pub const App = struct {
                 view.row = 0;
             },
             .gate => try app.toGate(),
-            .orchestrator => try app.toOrchestrator(),
             .auto => try app.toggleAuto(),
             .proposed => app.jumpProposed(),
             .new => try app.newTicket(),
@@ -2713,9 +2798,9 @@ pub const App = struct {
             return false;
         }
         const view = &app.board_view.?;
-        if (m.x >= app.boardX() + app.boardW() and app.sideShown() and !view.boxed()) {
+        if (m.x >= app.boardX() + app.boardW() and app.sided() and !view.boxed()) {
             if (m.y >= app.view_h) return true;
-            if (app.sideFocused() or m.wheel()) return false;
+            if (app.sideShown() and (app.sideFocused() or m.wheel())) return false;
             if (m.leftPress()) {
                 view.focus = .orchestrator;
                 app.drag = .focus;
@@ -2748,7 +2833,7 @@ pub const App = struct {
         view.answering = false;
         if (view.col == at.col and view.row == at.row and view.lane == at.lane) {
             try app.goCard();
-        } else view.* = .{ .back = view.back, .col = at.col, .row = at.row, .lane = at.lane, .repo = view.repo, .backlog = view.backlog };
+        } else view.* = .{ .back = view.back, .col = at.col, .row = at.row, .lane = at.lane, .repo = view.repo, .backlog = view.backlog, .home = view.home };
         return true;
     }
 
@@ -3218,7 +3303,7 @@ pub const App = struct {
                 return true;
             }
             if (m.y == 1 and app.board != null) {
-                try app.toggleBoard();
+                try app.goHome();
                 return true;
             }
             if (m.y == app.railMenuRow()) app.openMenu(&menu.main);
@@ -3434,6 +3519,7 @@ pub const App = struct {
                     app.normal = false;
                     app.dirty = true;
                 }
+                if (std.mem.eql(u8, key, "b")) try app.goHome();
             } else if (app.overview != null) {
                 try app.overviewKey(key);
             } else if (app.board_view != null and !app.sideFocused()) {
@@ -3898,7 +3984,7 @@ fn plainName(name: []const u8) bool {
     return name.len > 0;
 }
 
-test "the session to go back to is forgotten once it, or the orchestrator's, is gone" {
+test "the session to go back to is forgotten once it, or the orchestrator's, is gone, the column keeping the keys" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     defer app.deinit();
     app.current = 2;
@@ -3915,7 +4001,65 @@ test "the session to go back to is forgotten once it, or the orchestrator's, is 
     app.board_view.?.back = 1;
     try app.onSessions("$1 0 work\n");
     try eq(@as(?u32, null), app.board_view.?.back);
-    try eq(.board, app.board_view.?.focus);
+    try eq(.orchestrator, app.board_view.?.focus);
+}
+
+test "home: the board with the orchestrator's column focused, its own keys while no window is in it" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    defer app.deinit();
+    const expect = std.testing.expect;
+    try app.goHome();
+    try expect(app.board_view == null);
+
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1,"repo":"arena","title":"a","status":"todo"}]}
+    );
+    app.normal = true;
+    try app.goHome();
+    try expect(app.board_view.?.home and app.board_view.?.focus == .orchestrator);
+    try expect(app.sided() and app.columnFocused() and !app.normal);
+    try expect(!app.typing());
+    try expect(app.orchestratorState() == .off);
+    _ = try app.onInput("h");
+    try expect(app.board_view.?.focus == .board and !app.columnFocused());
+
+    app.board_view.?.focus = .orchestrator;
+    app.board_view.?.help = true;
+    const was = app.kept().?;
+    try expect(!was.view.help and was.view.home and was.view.focus == .orchestrator);
+    app.board_view.?.help = false;
+    _ = try app.onInput("q");
+    try expect(app.board_view == null);
+    try app.restore(was);
+    try expect(app.board_view.?.home and app.columnFocused());
+}
+
+test "the column's head says the orchestrator's state: its Claude's, else restarting while babylon keeps it on, else off" {
+    var orch: Session = .{ .id = 2, .name = @constCast("orchestrator") };
+    var win: Window = .{ .id = 1, .name = @constCast("orch") };
+    var wins = [_]*Window{&win};
+    orch.wins = .fromOwnedSlice(&wins);
+    var sessions = [_]*Session{&orch};
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    const eq = std.testing.expectEqual;
+    try eq(.off, app.orchestratorState());
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"orchestrator":{"on":true,"running":false}}
+    );
+    defer app.board.?.deinit();
+    try eq(.restarting, app.orchestratorState());
+    app.sessions = .fromOwnedSlice(&sessions);
+    try eq(.idle, app.orchestratorState());
+    win.claude = .working;
+    try eq(.working, app.orchestratorState());
+    win.claude = .waiting;
+    try eq(.waiting, app.orchestratorState());
+    app.sessions = .empty;
+    app.board.?.deinit();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"orchestrator":{"on":false,"running":false}}
+    );
+    try eq(.off, app.orchestratorState());
 }
 
 test "the every view's lanes: their lines, the pick stepping across them, and the scroll" {

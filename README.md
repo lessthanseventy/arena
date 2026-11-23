@@ -53,8 +53,9 @@ always did; arena draws them and leaves them running when it quits.
   `j`, `k` and Enter, gives it the card: babylon types the claim into that Claude as your word,
   and says why when it will not (that Claude is mid-turn, or waits on you). One that waits is dimmed, at the foot of its column. Its first row has the repos as tabs, the one shown lit: a click on one narrows the board to it,
   and `r` goes to the next, then every one again; the gate is a button beside them while babylon
-  runs one, and `?` shows every key. The `orch` button, as `o`, goes to the orchestrator: lit
-  while it runs, dim while it does not, and `orch off` while babylon does not keep it running; the board's row atop the rail says the same after its name. `A`, or the `auto` button beside the tabs, turns babylon's
+  runs one, and `?` shows every key. `o` goes to the orchestrator, started first when it is not
+  running; the board's row atop the rail says after its name whether it runs, and `orch off`
+  while babylon does not keep it running. `A`, or the `auto` button beside the tabs, turns babylon's
   auto mode on and off: while it is on, babylon starts a Claude on each free todo card, up to its
   cap of Claudes working, and the button, the board's header and its row atop the rail say `auto 1/2`, one
   working of a cap of two. A `+` on the to-do column files a ticket, and the picked card
@@ -65,7 +66,15 @@ always did; arena draws them and leaves them running when it quits.
   down or up its column among its repo's cards; one with no repo, or a repo whose name is not
   plain, stays where it is. Space shows the picked card's whole ticket over the board: its body, links,
   stage and the note on it, and the last of its gate's log. The board's row atop the rail counts what is to do and being
-  done, and a click there opens it; it is there while babylon keeps its file. While the
+  done, and a click there goes home; it is there while babylon keeps its file.
+- **Home**: the board with the orchestrator's column pinned on its right (60 cells, less on a
+  narrow screen), the column with the keys. `arena` with no session named opens it, and `b` in
+  normal mode, a click on the board's row atop the rail and `arena inbox` go there. The column's
+  head on its top edge says the orchestrator's state (`working 12s`, `▲ waits on you`, `idle`,
+  `◌ restarting`, `off`) and its context's share; while it is off the column says
+  `orchestrator off · ⏎ start it`, and Enter there runs `babylon orchestrator`. When the
+  orchestrator's session ends, as babylon restarts it, home stays open in the session you were
+  in, and the column comes back on the new one with the keys where you left them. While the
   orchestrator runs, its window shows beside the board, arena in its session to have it live:
   a column like any other, with the board the one before it. Alt+l, or a click on it, focuses it,
   and it is lit: what is typed, the wheel and the mouse are then its own. Alt+h, or a click on the
@@ -110,13 +119,13 @@ by every Claude on the machine, over MCP.
 ## Use
 
 ```sh
-arena             # the most recent session, or a new one when there is none
+arena             # home: the board and the orchestrator's column; with no board, the most recent session
 arena work        # the session called work, made if it is not there
 arena -L socket   # a tmux server other than the default one
 arena board 240   # the board on ticket 240, in the arena that is running
 arena show %290   # pane 290 in front: its session and window, picked in the rail
 arena show '#324' # the pane of the Claude holding ticket 324
-arena inbox       # the needs-you inbox (the board, until the inbox lands)
+arena inbox       # the needs-you inbox (home, until its feed lands)
 ```
 
 `board`, `show` and `inbox` are the only supported way in from outside arena: the shell's popups,
@@ -137,7 +146,7 @@ Everything is on Alt, so it stays out of the way of your shell and your window m
 There are two modes, and a single letter is never arena's in the first. In insert, the default,
 every key goes to the shown pane, apart from the Alt chords. `Ctrl+Space` makes it normal, where
 no key is typed into a pane, `NORMAL` shows at the bottom-left and the row under the strip says
-the keys; `i`, `Esc` or `Ctrl+Space` is insert again. A click on a pane is insert, and one on the
+the keys; `i`, `Esc` or `Ctrl+Space` is insert again, and `b` goes home. A click on a pane is insert, and one on the
 rail is normal. With the board open, `Ctrl+Space` focuses the orchestrator's column, as `Alt+l`.
 
 | Key | Does |

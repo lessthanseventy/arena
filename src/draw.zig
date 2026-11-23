@@ -105,7 +105,6 @@ fn chip(app: *const App) vt.Style {
 
 const Column = struct {
     app: *const App,
-    session: *const Session,
     w: u16,
     focused: bool,
     /// A window held by its title would take this one's place.
@@ -113,6 +112,8 @@ const Column = struct {
     title: []const u21,
     /// The cell of the title that is the window's mark, drawn in amber.
     mark_at: ?usize = null,
+    /// Dim at the right end of its top edge.
+    right: []const u21 = &.{},
 
     /// The border cell at (`cx`, `y`) of the column: the frame and the title in its top edge.
     fn border(col: Column, pen: *Pen, w: *Writer, cx: usize, y: u16) !void {
@@ -125,6 +126,11 @@ const Column = struct {
             const marked = col.mark_at == cx - 2;
             try pen.set(w, if (col.focused or col.drop) chip(app) else if (marked) ink(app, "amber", 4) else ink(app, "dim", 8), null);
             return put(w, col.title[cx - 2]);
+        }
+        const right_at = col.w -| 2 -| col.right.len;
+        if (top and cx >= right_at and cx < col.w -| 2) {
+            try pen.set(w, ink(app, "dim", 8), null);
+            return put(w, col.right[cx - right_at]);
         }
 
         // normal mode stops the focused column's gradient and dims it
@@ -164,7 +170,7 @@ fn dots(app: *const App, w: *Writer, s: *const Session) !void {
 }
 
 const normal_label = "NORMAL";
-const normal_keys = "i insert  Esc insert  Ctrl+Space insert";
+const normal_keys = "i insert  b home  Esc insert  Ctrl+Space insert";
 
 /// `NORMAL` in the accent at the bottom-left corner of the screen while in normal mode, and the
 /// cells it takes blank otherwise.
@@ -948,27 +954,28 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
         if (lo >= hi) continue;
         for (win.panes.items) |pane| try pane.render.update(app.gpa, &pane.term);
 
-        var title_buf: [64]u8 = undefined;
-        const title = std.fmt.bufPrint(&title_buf, " {d} {s} ", .{ i + 1, win.name }) catch title_buf[0..0];
+        var title_buf: [96]u8 = undefined;
         var title_cps: [64]u21 = undefined;
-        var title_len: usize = 0;
-        var view = std.unicode.Utf8View.initUnchecked(title).iterator();
-        while (view.nextCodepoint()) |cp| : (title_len += 1) title_cps[title_len] = cp;
-        const mark = app.mark(s, win);
+        var right_cps: [8]u21 = undefined;
+        const headed = i == 0 and s.orchestrator() and app.sided();
+        const title = if (headed) sideHead(app, &title_buf) else std.fmt.bufPrint(&title_buf, " {d} {s} ", .{ i + 1, win.name }) catch title_buf[0..0];
+        var title_len = codepoints(title, &title_cps);
+        const mark = if (headed) .none else app.mark(s, win);
         if (mark != .none and title_len + 2 <= title_cps.len) {
             title_cps[title_len] = glyph(app, mark);
             title_cps[title_len + 1] = ' ';
             title_len += 2;
         }
         if (title_len + 4 > col_w) title_len = 0;
+        const right = if (headed) right_cps[0..codepoints(fold_hint, &right_cps)] else right_cps[0..0];
         const col: Column = .{
             .app = app,
-            .session = s,
             .w = col_w,
             .focused = focused,
             .drop = drop == .column and drop.column == i,
             .title = title_cps[0..title_len],
-            .mark_at = if (mark != .none and title_len > 0) title_len - 2 else null,
+            .mark_at = if (headed and title_len > 0) 1 else if (mark != .none and title_len > 0) title_len - 2 else null,
+            .right = if (title_len + right.len + 6 <= col_w) right else right[0..0],
         };
 
         var pen: Pen = .{};
@@ -1010,6 +1017,83 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
         if (sx >= lo and sx < hi) cursor = .{ .x = ox + sx, .y = 1 + pane.y + at.y };
     }
     return cursor;
+}
+
+const fold_hint = " ` fold ";
+
+/// The orchestrator's column with no window of its in it: its head, and while it is off, how to
+/// start it.
+fn sideEmpty(app: *const App, w: *Writer) !void {
+    const ox = app.term_w - app.view_w;
+    var title_buf: [96]u8 = undefined;
+    var title_cps: [64]u21 = undefined;
+    var right_cps: [8]u21 = undefined;
+    var title_len = codepoints(sideHead(app, &title_buf), &title_cps);
+    if (title_len + 4 > app.view_w) title_len = 0;
+    const right = right_cps[0..codepoints(fold_hint, &right_cps)];
+    const col: Column = .{
+        .app = app,
+        .w = app.view_w,
+        .focused = app.columnFocused(),
+        .title = title_cps[0..title_len],
+        .mark_at = if (title_len > 0) 1 else null,
+        .right = if (title_len + right.len + 6 <= app.view_w) right else right[0..0],
+    };
+    var pen: Pen = .{};
+    for (0..app.view_h) |y| {
+        try w.print("\x1b[{d};{d}H", .{ y + 1, ox + 1 });
+        for (0..app.view_w) |x| {
+            if (y == 0 or y + 1 == app.view_h or x == 0 or x + 1 == app.view_w) {
+                try col.border(&pen, w, x, @intCast(y));
+            } else {
+                try pen.set(w, .{}, null);
+                try w.writeAll(" ");
+            }
+        }
+    }
+    if (app.orchestratorState() != .off) return;
+    const off = "orchestrator off · ⏎ start it";
+    if (cellCount(off) + 4 > app.view_w) return;
+    try pen.set(w, ink(app, "dim", 8), null);
+    try w.print("\x1b[{d};{d}H{s}", .{ 3, ox + 3, off });
+}
+
+fn codepoints(text: []const u8, out: []u21) usize {
+    var n: usize = 0;
+    var it = std.unicode.Utf8View.initUnchecked(text).iterator();
+    while (it.nextCodepoint()) |cp| : (n += 1) {
+        if (n == out.len) break;
+        out[n] = cp;
+    }
+    return n;
+}
+
+/// The orchestrator's column's head, on its top edge: its mark, its state in words and the
+/// share of its context used.
+fn sideHead(app: *const App, buf: []u8) []const u8 {
+    var out: Writer = .fixed(buf);
+    const win = app.orchestratorWindow();
+    const state = app.orchestratorState();
+    const mark: u21 = switch (state) {
+        .working => glyph(app, .working),
+        .waiting => '▲',
+        .idle, .off => '○',
+        .restarting => '◌',
+    };
+    var when: [16]u8 = undefined;
+    out.writeAll(" ") catch {};
+    put(&out, mark) catch {};
+    out.writeAll(" orchestrator · ") catch {};
+    switch (state) {
+        .working => out.print("working {s}", .{ago(&when, app.epoch, win.?.since)}) catch {},
+        .waiting => out.writeAll("waits on you") catch {},
+        .idle => out.writeAll("idle") catch {},
+        .restarting => out.writeAll("restarting") catch {},
+        .off => out.writeAll("off") catch {},
+    }
+    if (win) |it| if (it.ctx > 0) out.print(" · ctx {d}%", .{@min(it.ctx, 999)}) catch {};
+    out.writeAll(" ") catch {};
+    return out.buffered();
 }
 
 /// A window's picture in the overview, its top left corner at (`x`, `y`): a small frame with its
@@ -1230,11 +1314,10 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
             .repo => |i| if (i == view.repo and !view.backlog) chip(app) else if (app.tabLive(i)) .{} else ink(app, "dim", 8),
             .backlog => if (view.backlog) chip(app) else ink(app, "dim", 8),
             .gate => ink(app, "violet", 5),
-            .orchestrator => if (app.orchestrator()) |state| (if (state.running) ink(app, "violet", 5) else ink(app, "dim", 8)) else ink(app, "violet", 5),
             .auto => if (app.auto() != null) autoOn(app) else ink(app, "dim", 8),
             .proposed, .new => heading(app),
             .card => blk: {
-                var lit = if (app.sideFocused()) ink(app, "dim", 8) else ink(app, "amber", 4);
+                var lit = if (app.columnFocused()) ink(app, "dim", 8) else ink(app, "amber", 4);
                 lit.flags.inverse = true;
                 break :blk lit;
             },
@@ -1476,7 +1559,7 @@ fn laneColumn(app: *const App, w: *Writer, pen: *Pen, view: app_mod.BoardView, c
             const hovered = hovers(app, line.lane, c, k);
             if (each == 1) {
                 var buf: [160]u8 = undefined;
-                var style = if (picked and !app.sideFocused()) heading(app) else if (picked) vt.Style{} else ink(app, "dim", 8);
+                var style = if (picked and !app.columnFocused()) heading(app) else if (picked) vt.Style{} else ink(app, "dim", 8);
                 try pen.set(w, style, null);
                 try w.writeAll(" ");
                 if (hovered) style.flags.underline = .single;
@@ -1508,7 +1591,7 @@ fn cardLine(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, p
     if (inner < 4) return fitted(w, "", inner);
     var buf: [160]u8 = undefined;
     const dim = ink(app, "dim", 8);
-    const border: vt.Style = if (picked and app.sideFocused()) dim else if (picked) heading(app) else .{};
+    const border: vt.Style = if (picked and app.columnFocused()) dim else if (picked) heading(app) else .{};
     const left: vt.Style = if (picked) border else if (std.mem.eql(u8, card.priority, "high")) ink(app, "amber", 4) else if (std.mem.eql(u8, card.priority, "low")) dim else border;
     const ends: [2][]const u8 = switch (part) {
         .top => .{ "╭", "╮" },
@@ -1679,7 +1762,9 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
     } else if (app.board_view) |view| {
         try boardView(app, w, view);
         // the orchestrator's window beside it, once arena is in its session
-        if (app.sideShown()) cursor = try strip(app, w, app.cur().?, 0, what);
+        if (app.sideShown()) {
+            cursor = try strip(app, w, app.cur().?, 0, what);
+        } else if (app.sided()) try sideEmpty(app, w);
     } else {
         if (app.yoff != 0) if (app.sessionById(app.prev)) |leaving| {
             const way: i32 = if (app.yoff > 0) 1 else -1;
