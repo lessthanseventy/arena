@@ -400,14 +400,16 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
 fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: u16, wide: bool) !void {
     const dim = ink(app, "dim", 8);
     var filled: usize = 0;
-    // the selected Claude's rows are one solid bar, and so is the subagent it shows; its
-    // session's header only says it holds it
+    // the selected Claude's rows are one solid bar, its shown subagent's in bold; its session's
+    // header only says it holds it
     switch (line) {
         .agent, .detail, .meta, .background => |a| if (app.agentSelected(a)) {
             pen.over = chip(app);
         },
-        .sub => |sub| if (app.subShown(sub)) {
-            pen.over = chip(app);
+        .sub => |sub| if (app.agentSelected(sub.agent)) {
+            var bar = chip(app);
+            bar.flags.bold = app.subShown(sub);
+            pen.over = bar;
         },
         else => {},
     }
@@ -468,6 +470,7 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
         },
         .sub => |sub| {
             const win = sub.agent.win;
+            try pen.set(w, dim, null);
             try w.writeAll("   ");
             try pen.set(w, ink(app, "amber", 4), null);
             try put(w, if (win.stirring) glyph(app, .working) else '◔');
@@ -478,6 +481,7 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
             filled = inner - 1;
         },
         .background => |a| {
+            try pen.set(w, dim, null);
             try w.writeAll("   ");
             try pen.set(w, ink(app, "amber", 4), null);
             // its subagents' rows spin for them; with none listed, this row is a subagent's
@@ -489,6 +493,7 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
         },
         .meta => |a| {
             const win = a.win;
+            try pen.set(w, dim, null);
             try w.writeAll("   ");
             var count: [8]u8 = undefined;
             // the share of its budget, when its status line says, else the tokens

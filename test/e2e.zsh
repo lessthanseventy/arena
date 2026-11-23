@@ -455,9 +455,11 @@ check "the rail lists each session's Claudes under a rule of their own, each ove
 inked() { sed -n $1p <<<$(outer capture-pane -ep -t o) }
 lit() { [[ $(inked 14) == *$'\e[1;7m'*' ◐ solo '* && $(inked 15) == *$'\e[1;7m'*' Read b.zig '* && $(inked 13) != *$'\e[1;7m'* && $(inked 11) != *$'\e[1;7m'* ]] }
 check "the Claude in view has all its rows lit, and its session's header is not" lit
+bar_whole() { [[ $(inked 17) =~ $'\e\\[1;7m(\e\\[[0-9;]*m)*   ◔ a shell' ]] }
 claude alpha:renamed prompt '{"prompt": "more"}'
 for w in alpha:one alpha:renamed beta:solo; inner set -p -t $w @arena_claude_background 'a shell'
 check "more than it has rows for, the list scrolls to the Claude in view" await eval '[[ $(line 15) =~ "^│ ◐ solo " && $(line 17) =~ "^│   ◔ a shell +│" ]] && ! screen | grep -q "▲ three"'
+check "and the bar runs unbroken from the left through its background row" bar_whole
 for w in alpha:one beta:solo; inner set -pu -t $w @arena_claude_background
 claude alpha:renamed end
 inner set -pu -t alpha:three @arena_review
@@ -615,10 +617,10 @@ check "a click on a subagent's row in the rail goes to its Claude's window" awai
 fake() { inner capture-pane -p -t alpha:subs | grep -qx -- "$1" }
 check "and steps that Claude's list of agents to it: past the shells, down to its row, Enter" await fake '❯ ● general-purpose  Review it'
 # a lit row has its text in its mark's ink, a dim one a change of ink between the two
-sub_lit() { [[ $(inked $(row "│   ◔ $1 ")) == *"◔ $1 "* ]] }
-sub_dim() { [[ $(inked $(row "│   ◔ $1 ")) != *"◔ $1 "* ]] }
-check "the subagent its Claude shows has its row lit" await sub_lit 'Review it'
-check "and no other" sub_dim 'Explore the rail'
+sub_lit() { [[ $(inked $(row "│   ◔ $1 ")) == *$'\e[1;7m'* ]] }
+sub_dim() { [[ $(inked $(row "│   ◔ $1 ")) != *$'\e[1;7m'* && $(inked $(row "│   ◔ $1 ")) == *$'\e[7m'* ]] }
+check "the subagent its Claude shows has its row in bold on the Claude's bar" await sub_lit 'Review it'
+check "and no other, though the bar runs through it" sub_dim 'Explore the rail'
 y=$(row '│   ◔ Explore the rail ')
 mouse 0 8 $y M
 mouse 0 8 $y m
