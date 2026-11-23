@@ -1466,6 +1466,7 @@ pub const App = struct {
         var clean: std.ArrayList(u8) = .empty;
         errdefer clean.deinit(app.gpa);
         try @import("text.zig").appendClean(&clean, app.gpa, first);
+        if (clean.items.len == 0) try clean.appendSlice(app.gpa, "babylon refused to start it");
         app.clearStartRefusal();
         app.start_refused = try clean.toOwnedSlice(app.gpa);
         app.dirty = true;
