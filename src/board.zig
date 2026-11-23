@@ -237,8 +237,13 @@ pub const Board = struct {
             for (need.actions) |*action| action.label = try cleanLine(arena, action.label);
         }
         if (parsed.value.plan) |*given| {
-            for (given.now) |*item| item.title = try cleanLine(arena, item.title);
+            for (given.now) |*item| {
+                item.title = try cleanLine(arena, item.title);
+                item.repo = try cleanLine(arena, item.repo);
+                if (item.stalled) |why| item.stalled = try cleanLine(arena, why);
+            }
             for (given.next) |*item| {
+                item.repo = try cleanLine(arena, item.repo);
                 item.title = try cleanLine(arena, item.title);
                 item.why = try cleanLine(arena, item.why);
             }

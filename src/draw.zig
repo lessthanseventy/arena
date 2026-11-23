@@ -1396,10 +1396,6 @@ fn overview(app: *App, w: *Writer, spot: App.Spot) !void {
     }
 }
 
-/// babylon's board in place of the strip: a row naming the repo it is narrowed to and its keys,
-/// then a column a status, each a box of its cards, a card a box of its own: the ticket's number
-/// and title on two rows, a footer of what else is so of it, its left edge its priority, and
-/// the picked one's border lit.
 fn planStyle(app: *const App, style: sheets.Style) vt.Style {
     return switch (style) {
         .normal => .{},
@@ -1496,6 +1492,10 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     if (view.help) try helpBox(app, w);
 }
 
+/// babylon's board in place of the strip: a row naming the repo it is narrowed to and its keys,
+/// then a column a status, each a box of its cards, a card a box of its own: the ticket's number
+/// and title on two rows, a footer of what else is so of it, its left edge its priority, and
+/// the picked one's border lit.
 fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     if (app.planShown()) return planView(app, w, view);
     const ox = app.boardX();
