@@ -2,7 +2,8 @@
 
 This design is for #587, held to [the principles](principles.md), and read with
 [the orchestrator](orchestrator.md), whose words (needs you, ask, look at, proposal, your move,
-notice, tell) it keeps. Nothing in it is built yet, and it is not yet approved.
+notice, tell) it keeps. The human approved it as drawn on 2026-11-23, notices with go/no and an
+ask's options included (ask #27). Nothing in it is built yet. The build is the tickets at the end.
 
 The human, 2026-11-23, after asking whether their inbox belongs in ficciones: "we need to take a
 look at all the layers/seams here and make sure everything is where it belongs. there are parts
@@ -92,24 +93,22 @@ settled anywhere.
 This reverses one line of the human's from 2026-11-22 (#349): "notices … only say `▲ N need you`
 and open the needs-you inbox. They don't carry the question themselves." The reason is rule 3:
 a go/no is quick, and opening a terminal to press `⏎` costs more than the decision. The house's
-decision banners already do this. If the line stands, notices stay `▲ N need you · <first row>`
-with only *open*, and nothing else in this design changes.
+decision banners already do this. The human approved the reversal on 2026-11-23.
 
 ## The ticket changes
 
-To make once this is approved.
 
 | ticket | change |
 | --- | --- |
-| **new, babylon** | `board.json` carries `needs_you`: each item's id, kind, ticket, repo, first row and actions (`label`, `argv`), in the order the feed shows them, with #480's free send-back rule. `Proposals.noticed`'s count goes |
-| **new, babylon** | Remove the notifier (`Notice.desktop`, `:notify`). Asks and proposals still tell the orchestrator |
-| **new, babylon** | `babylon start N`: what `Auto.start` does, as a CLI verb, never a Claude's |
-| **new, babylon** | A repo's install names what must restart. babylon turns that into a `needs_you` item |
-| **new, arena** | The plugin's hook writes the session record (`$XDG_RUNTIME_DIR/sessions`) as well as the pane options, from one state machine with `stopfailure` |
-| **new, ficciones** | Drop `session-state.sh` and its hooks from `claude.nix` once arena's hook writes the record. `session`, `/goal` and `/brief` stay |
-| **new, arena** | The board's `⏎ start` runs `babylon start N` |
-| **#349** (ficciones) | Rescoped: ficciones raises the notices from `board.json`'s `needs_you`. It raises one per new id, closes it when the id leaves, and raises none while arena home is in front. Each notice carries the item's quick actions (or only *open*, if the 11-22 line stands). Blocked by the `needs_you` ticket |
-| **#531** (ficciones, landed) | Follow-up: the bar's N reads `needs_you`'s length; `orchestrator-core.ts`'s count goes |
+| **#588** (babylon) | `board.json` carries `needs_you`: each item's id, kind, ticket, repo, first row and actions (`label`, `argv`), in the order the feed shows them, with #480's free send-back rule. `Proposals.noticed`'s count goes |
+| **#592** (babylon) | Remove the notifier (`Notice.desktop`, `:notify`). Asks and proposals still tell the orchestrator. After #349 |
+| **#589** (babylon) | `babylon start N`: what `Auto.start` does, as a CLI verb, never a Claude's |
+| **#590** (babylon) | A repo's install names what must restart. babylon turns that into a `needs_you` item |
+| **#591** (arena) | The plugin's hook writes the session record (`$XDG_RUNTIME_DIR/sessions`) as well as the pane options, from one state machine with `stopfailure` |
+| **#593** (ficciones) | Drop `session-state.sh` and its hooks from `claude.nix` once arena's hook writes the record. `session`, `/goal` and `/brief` stay |
+| **#594** (arena) | The board's `⏎ start` runs `babylon start N` |
+| **#349** (ficciones) | Rescoped: ficciones raises the notices from `board.json`'s `needs_you`. It raises one per new id, closes it when the id leaves, and raises none while arena home is in front. Each notice carries the item's quick actions. Blocked by the `needs_you` ticket |
+| **#595** (ficciones), after #531 | the bar's N reads `needs_you`'s length; `orchestrator-core.ts`'s count goes |
 | **#479** (arena) | Unheld. It draws `needs_you` as babylon gives it, instead of deriving it. Its rows come from the item's first row and actions. Blocked by the `needs_you` ticket |
 | **#341, #342, #343** (arena) | Unheld, as rescoped by #500. Each one's keys run the item's actions from `needs_you`, not their own calls |
 | **#530** (babylon, landed) | Nothing. Its proposal notice goes with the notifier |
