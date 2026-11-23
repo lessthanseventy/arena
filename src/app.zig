@@ -2344,6 +2344,8 @@ pub const App = struct {
         if (is(key, &.{"g"})) return app.toGate();
         if (is(key, &.{"o"})) return app.toOrchestrator();
         if (is(key, &.{"A"})) return app.toggleAuto();
+        if (is(key, &.{"P"})) return app.jumpProposed();
+        if (is(key, &.{"x"})) return app.act(.no);
         if (is(key, &.{"n"})) return app.newTicket();
         const keyed = [_]struct { []const u8, CardAction }{
             .{ "\r", .go },    .{ "e", .edit }, .{ "p", .priority }, .{ ">", .close },
@@ -2410,6 +2412,7 @@ pub const App = struct {
     /// What can be done to a card from the board, by its key or its chip.
     pub const CardAction = enum {
         go,
+        no,
         answer,
         give,
         edit,
@@ -2423,6 +2426,7 @@ pub const App = struct {
         pub fn label(action: CardAction) []const u8 {
             return switch (action) {
                 .go => "go",
+                .no => "no",
                 .answer => "answer",
                 .give => "give",
                 .edit => "edit",
@@ -2441,14 +2445,14 @@ pub const App = struct {
     /// do and reopen once done, to todo while in the backlog, and edit and priority always, and
     /// moving it along its column but in the backlog or without a repo the move can be narrowed
     /// to, babylon having no move among the cards of none alone.
-    pub fn cardActions(card: *const tickets.Card, out: *[8]CardAction) []CardAction {
+    pub fn cardActions(card: *const tickets.Card, out: *[10]CardAction) []CardAction {
         var n: usize = 0;
         const movable = card.status != .backlog and plainName(card.repo orelse "");
         const all = [_]struct { CardAction, bool }{
-            .{ .go, card.holder() != null or startable(card) }, .{ .answer, card.ask != null },         .{ .give, givable(card) },
-            .{ .edit, true },                                   .{ .priority, true },                   .{ .close, card.status == .todo },
-            .{ .reopen, card.status == .done },                 .{ .to_todo, card.status == .backlog }, .{ .up, movable },
-            .{ .down, movable },
+            .{ .go, card.proposal != null or card.holder() != null or startable(card) }, .{ .no, card.proposal != null },    .{ .answer, card.ask != null },
+            .{ .give, givable(card) },                                                   .{ .edit, true },                   .{ .priority, true },
+            .{ .close, card.status == .todo },                                           .{ .reopen, card.status == .done }, .{ .to_todo, card.status == .backlog },
+            .{ .up, movable },                                                           .{ .down, movable },
         };
         for (all) |pair| if (pair[1]) {
             out[n] = pair[0];
@@ -2464,12 +2468,13 @@ pub const App = struct {
     fn act(app: *App, action: CardAction) !void {
         const view = if (app.board_view) |*open| open else return;
         const card = app.boardCard(view.col, view.row) orelse return;
-        var have: [8]CardAction = undefined;
+        var have: [10]CardAction = undefined;
         if (std.mem.indexOfScalar(CardAction, cardActions(card, &have), action) == null) return;
         var buf: [80]u8 = undefined;
         const narrowed = if (app.pickRepo()) |r| (if (plainName(r)) std.fmt.bufPrint(&buf, " --repo {s}", .{r}) catch "" else "") else "";
         switch (action) {
-            .go => try app.goCard(),
+            .go => if (card.proposal) |proposal| try app.settleProposal("go", proposal.id) else try app.goCard(),
+            .no => if (card.proposal) |proposal| try app.settleProposal("no", proposal.id),
             .answer => view.answering = true,
             .give => view.giving = 0,
             .edit => try app.ticketWindow("babylon edit {d}", .{card.id}),
@@ -2492,7 +2497,7 @@ pub const App = struct {
 
     /// A button on the board, where it is drawn and clicked: 0-based, as the mouse has it.
     pub const Button = struct {
-        what: union(enum) { repo: usize, backlog, gate, orchestrator, auto, new, card: CardAction },
+        what: union(enum) { repo: usize, backlog, gate, orchestrator, auto, proposed, new, card: CardAction },
         x: u16,
         y: u16,
         w: u16,
@@ -2510,6 +2515,7 @@ pub const App = struct {
             .gate => " gate ",
             .orchestrator => if (app.orchestrator()) |state| (if (state.running or state.on) " orch " else " orch off ") else " orch ",
             .auto => if (app.auto()) |state| std.fmt.bufPrint(buf, " auto {d}/{d} ", .{ state.working, state.cap }) catch " auto " else " auto ",
+            .proposed => std.fmt.bufPrint(buf, " ▲ {d} proposed ", .{if (app.board) |*b| b.proposedCount() else 0}) catch " ▲ ",
             .new => " + ",
             .card => |action| std.fmt.bufPrint(buf, " {s} ", .{action.label()}) catch " ? ",
         };
@@ -2522,7 +2528,7 @@ pub const App = struct {
     pub fn boardTitle(app: *const App, buf: []u8) []const u8 {
         const state = app.auto() orelse return board_title;
         const long = std.fmt.bufPrint(buf, " board auto {d}/{d} ", .{ state.working, state.cap }) catch return board_title;
-        var row: [max_repos + 5]Button = undefined;
+        var row: [max_repos + 6]Button = undefined;
         return if (app.tabRow(&row, cellCount(long)) < app.tabRow(&row, cellCount(board_title))) board_title else long;
     }
 
@@ -2535,9 +2541,11 @@ pub const App = struct {
         const ox = app.boardX();
         var x: u16 = ox + @as(u16, @intCast(title_w)) + 1;
         const right = ox + app.boardW();
-        for (0..count + 5) |i| {
-            const what: @FieldType(Button, "what") = if (i <= count) .{ .repo = i } else if (i == count + 1) .backlog else if (i == count + 2) .gate else if (i == count + 3) .orchestrator else .auto;
+        const proposed = if (app.board) |*b| b.proposedCount() > 0 else false;
+        for (0..count + 6) |i| {
+            const what: @FieldType(Button, "what") = if (i <= count) .{ .repo = i } else if (i == count + 1) .backlog else if (i == count + 2) .gate else if (i == count + 3) .orchestrator else if (i == count + 4) .auto else .proposed;
             if (what == .gate and app.gateSession() == null) continue;
+            if (what == .proposed and !proposed) continue;
             const w: u16 = @intCast(cellCount(app.buttonLabel(what, &buf)));
             if (what == .gate or (what == .orchestrator and app.gateSession() == null)) x += 2;
             if (x + w > right or n == out.len) break;
@@ -2569,7 +2577,7 @@ pub const App = struct {
             break :blk @intCast(@min(2 + line - scroll, app.view_h));
         } else cardTop(view.row - app.boardFirst(view.col)) + @backingInt(CardRow.bottom);
         if (!strip and y + 1 >= app.view_h) return out[0..n];
-        var have: [8]CardAction = undefined;
+        var have: [10]CardAction = undefined;
         var x: u16 = app.boardColX(view.col) + 2;
         const edge = app.boardColX(view.col) + app.boardColW(view.col) -| 2;
         for (cardActions(card, &have)) |action| {
@@ -2600,6 +2608,7 @@ pub const App = struct {
             .gate => try app.toGate(),
             .orchestrator => try app.toOrchestrator(),
             .auto => try app.toggleAuto(),
+            .proposed => app.jumpProposed(),
             .new => try app.newTicket(),
             .card => |action| try app.act(action),
         }
@@ -2610,6 +2619,20 @@ pub const App = struct {
     fn ticketWindow(app: *App, comptime cmd: []const u8, args: anytype) !void {
         try app.closeBoard();
         try app.send(.ignore, "new-window -a -n ticket \"" ++ cmd ++ " || read _\"", args);
+    }
+
+    /// Proposal `id` settled as `word`, go or no, through babylon, which only a human's own
+    /// command line may do; its refusal is said.
+    fn settleProposal(app: *App, comptime word: []const u8, id: u32) !void {
+        try app.send(.ignore, "run-shell -b \"out=\\$(babylon " ++ word ++ " {d} 2>&1) || " ++
+            "{{ command -v notify-send >/dev/null && notify-send -a arena -- \\\"\\$out\\\"; }}\"", .{id});
+    }
+
+    /// The pick on the card with the oldest open proposal, when the board has one.
+    fn jumpProposed(app: *App) void {
+        const id = (if (app.board) |*b| b.oldestProposed() else null) orelse return;
+        _ = app.pickCard(id);
+        app.dirty = true;
     }
 
     /// A key while a question is shown: its option's number answers it through babylon, which
@@ -4012,9 +4035,9 @@ test "the board opens on a ticket by its id: its lane, its repo's columns or the
 }
 
 test "a card moves along its column only with a repo, out of the backlog" {
-    var have: [8]App.CardAction = undefined;
+    var have: [10]App.CardAction = undefined;
     const has = struct {
-        fn up(card: tickets.Card, out: *[8]App.CardAction) bool {
+        fn up(card: tickets.Card, out: *[10]App.CardAction) bool {
             return std.mem.indexOfScalar(App.CardAction, App.cardActions(&card, out), .up) != null;
         }
     }.up;

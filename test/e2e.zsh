@@ -1003,6 +1003,16 @@ check "running, it is lit" await orch_ink 5 ' '
 check "and the board's row names it" see '^│ ▤ board orch  '
 cp $tmp/board.noauto $tmp/run/babylon/board.json
 check "with nothing of it in babylon's file again, the row says nothing" gone '^│ ▤ board orch'
+print -r -- "${$(<$tmp/board.noauto)%\}}"',"proposals":[{"id":4,"action":"start","ticket_id":7,"what":"Start #7","why":"Next in line"}]}' >$tmp/run/babylon/board.json
+check "a card with an open proposal shows it" see '▲ proposed'
+check "the header counts the proposals" see ' ▲ 1 proposed'
+check "and the card has a no beside its go" see '╰ go ─ no '
+key Enter
+check "go on it answers the proposal through babylon, not a Claude started" await last 'go 4'
+key x
+check "and x says no to it" await last 'no 4'
+cp $tmp/board.noauto $tmp/run/babylon/board.json
+check "with it settled, the card and the header say nothing of it" gone '▲'
 key J
 check "J moves it down its column, among its lane's" await last 'move 7 down --repo tlon'
 key '>'

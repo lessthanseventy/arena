@@ -33,6 +33,9 @@ pub const Card = struct {
     /// Why babylon left its Claude running once it landed, empty when there is nothing to say:
     /// one line, safe to draw.
     session_note: []const u8 = "",
+    /// The orchestrator's open proposal about it, the oldest when there are several; set as the
+    /// board is parsed, never read from a card's own fields.
+    proposal: ?Proposal = null,
 
     /// The id of the pane holding it, if one does.
     pub fn holder(card: *const Card) ?u32 {
@@ -68,7 +71,20 @@ pub const Auto = struct { on: bool = false, cap: u32 = 0, working: u32 = 0 };
 /// babylon's orchestrator: `running` while its session is there, `on` while babylon keeps it so.
 pub const Orchestrator = struct { on: bool = true, running: bool = true };
 
-const File = struct { tickets: []Card, backlog: []Card = &.{}, auto: ?Auto = null, orchestrator: ?Orchestrator = null };
+/// A move the orchestrator proposes, waiting on the human's go or no.
+pub const Proposal = struct {
+    id: u32,
+    ticket_id: ?u32 = null,
+    why: []const u8 = "",
+};
+
+const File = struct {
+    tickets: []Card,
+    backlog: []Card = &.{},
+    auto: ?Auto = null,
+    orchestrator: ?Orchestrator = null,
+    proposals: []Proposal = &.{},
+};
 
 pub const Board = struct {
     parsed: std.json.Parsed(File),
@@ -82,6 +98,13 @@ pub const Board = struct {
             card.session_note = try cleanLine(arena, card.session_note);
         }
         for (parsed.value.backlog) |*card| card.title = try cleanLine(arena, card.title);
+        for (parsed.value.proposals) |*proposal| {
+            proposal.why = try cleanLine(arena, proposal.why);
+            const id = proposal.ticket_id orelse continue;
+            for ([_][]Card{ parsed.value.tickets, parsed.value.backlog }) |list| for (list) |*card| {
+                if (card.id == id and card.proposal == null) card.proposal = proposal.*;
+            };
+        }
         return .{ .parsed = parsed };
     }
 
@@ -110,6 +133,26 @@ pub const Board = struct {
     /// What babylon says of its orchestrator, when its file does.
     pub fn orchestrator(b: *const Board) ?Orchestrator {
         return b.parsed.value.orchestrator;
+    }
+
+    /// The cards with a proposal on them.
+    pub fn proposedCount(b: *const Board) usize {
+        var n: usize = 0;
+        for ([_][]const Card{ b.cards(), b.backlog() }) |list| for (list) |card| {
+            if (card.proposal != null) n += 1;
+        };
+        return n;
+    }
+
+    /// The id of the card with the oldest open proposal on it.
+    pub fn oldestProposed(b: *const Board) ?u32 {
+        for (b.parsed.value.proposals) |proposal| {
+            const id = proposal.ticket_id orelse continue;
+            for ([_][]const Card{ b.cards(), b.backlog() }) |list| for (list) |card| {
+                if (card.id == id) return id;
+            };
+        }
+        return null;
     }
 
     /// The cards waiting to be put on the board, by repo then board order.
@@ -285,6 +328,24 @@ test "the cards the pipeline is working on are those verifying, reviewing or lan
     try std.testing.expectEqual(@as(usize, 2), busy.running(&out));
     try std.testing.expectEqual(@as(u32, 3), out[0].id);
     try std.testing.expectEqual(@as(u32, 4), out[1].id);
+}
+
+test "proposals are read, each found by its ticket, and counted only where the board has the ticket" {
+    var b = try Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1,"title":"a","status":"todo"},{"id":2,"title":"b","status":"doing"}],
+        \\"proposals":[{"id":9,"action":"close","ticket_id":3,"what":"x","why":"gone"},
+        \\{"id":10,"action":"start","ticket_id":2,"what":"y","why":"Next\nin line"},
+        \\{"id":11,"action":"start","ticket_id":1,"what":"z"},{"id":12,"action":"note","what":"w"}]}
+    );
+    defer b.deinit();
+    try std.testing.expectEqual(@as(usize, 2), b.proposedCount());
+    try std.testing.expectEqual(@as(?u32, 2), b.oldestProposed());
+    try std.testing.expectEqual(@as(u32, 11), b.cards()[0].proposal.?.id);
+    try std.testing.expectEqualStrings("Next in line", b.cards()[1].proposal.?.why);
+    var old = try Board.parse(std.testing.allocator, sample);
+    defer old.deinit();
+    try std.testing.expectEqual(@as(usize, 0), old.proposedCount());
+    try std.testing.expectEqual(@as(?u32, null), old.oldestProposed());
 }
 
 test "the repos are each named once, in order" {

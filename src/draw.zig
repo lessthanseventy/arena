@@ -1225,7 +1225,7 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
             .gate => ink(app, "violet", 5),
             .orchestrator => if (app.orchestrator()) |state| (if (state.running) ink(app, "violet", 5) else ink(app, "dim", 8)) else ink(app, "violet", 5),
             .auto => if (app.auto() != null) autoOn(app) else ink(app, "dim", 8),
-            .new => heading(app),
+            .proposed, .new => heading(app),
             .card => blk: {
                 var lit = ink(app, "amber", 4);
                 lit.flags.inverse = true;
@@ -1249,7 +1249,7 @@ const board_keys = [_][2][]const u8{
     .{ "hjkl, arrows", "pick a card" },
     .{ "⏎, click it", "go to the Claude holding it, or start one on a free todo card" },
     .{ "space", "its whole ticket: body, links, gate log" },
-    .{ "a G", "answer what it asks, give it to a running Claude" },
+    .{ "a G x P", "answer, give to a Claude, no to a proposal (⏎ is go), oldest proposed" },
     .{ "e", "edit its title, repo and body" },
     .{ "p", "raise its priority, high back to low" },
     .{ "> <", "close a ticket to do, reopen a done one" },
@@ -1544,6 +1544,7 @@ fn cardText(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, w
     var buf: [160]u8 = undefined;
     var held: [96]u8 = undefined;
     var spun: [32]u8 = undefined;
+    var proposed: [160]u8 = undefined;
     const dim = ink(app, "dim", 8);
     const who = cardWho(card);
     const rest = (who == .none) == (on == .footer);
@@ -1551,7 +1552,9 @@ fn cardText(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, w
         .{ s.style, if (s.glyph == 0) s.word else std.fmt.bufPrint(&spun, "{u} {s}", .{ s.glyph, s.word }) catch s.word }
     else
         .{ dim, "" };
+    const proposal = if (rest) (if (card.proposal) |p| std.fmt.bufPrint(&proposed, "▲ proposed: {s}", .{p.why}) catch "▲ proposed" else "") else "";
     const parts = [_]struct { vt.Style, []const u8 }{
+        .{ heading(app), proposal },
         .{ ink(app, "amber", 4), if (rest and card.ask != null) "? asks" else "" },
         if (if (who == .stage) on == .footer else rest) stage else .{ dim, "" },
         .{ dim, if (who == .holder and on == .footer) cardHolder(app, card, &held) else "" },
