@@ -1075,17 +1075,8 @@ check "t moves a backlog card to todo through babylon" await told
 key r
 check "r from the backlog goes back to every repo" await tablit every
 check "which does not show the backlog" gone '#12 Someday'
-started() { [[ $(inner list-panes -t '=tlon:t7' -F '#{pane_start_command}' 2>/dev/null) == *'Claim ticket #7 with claim_ticket'* ]] }
 key Enter
-check "Enter on a free todo card starts a Claude on it, in its repo's session" await started
-key M-b
-check "the board opens again" await tablit every
-key Enter
-# nothing to wait on for what must not happen: a second for its run-shell to be done
-zselect -t 100
-check "and a second go before the claim shows starts no second one" \
-  test "$(inner list-windows -t '=tlon' -F '#{window_name}' | grep -cx t7)" = 1
-inner kill-session -t '=tlon'
+check "Enter on a free todo card runs babylon start on it" await last 'start 7'
 key M-b
 check "and the board opens again on every repo" await tablit every
 key r
@@ -1128,16 +1119,11 @@ check "g on the board shows the gate" see '╭─ 1 gate '
 cp $tmp/run/babylon/board.json $tmp/board.kept
 print -r -- '{"tickets":[{"id":13,"repo":"babylon","title":"Gatekeeping","kind":"ticket","status":"todo","priority":"med","blocked_by":[]}]}' \
   >$tmp/run/babylon/board.json
-inner new-session -d -s work/babylon -n w sh
 key M-b
 see '#13 Gatekeepi'
 key Enter
-started_in() { [[ $(inner list-panes -t "=${1}:t13" -F '#{pane_start_command}' 2>/dev/null) == *'Claim ticket #13 with claim_ticket'* ]] }
-check "a babylon card's Claude starts in the rail's session holding babylon among others" await started_in work/babylon
+check "Enter on a babylon card starts it through babylon too" await last 'start 13'
 
-not_started_in() { ! started_in $1 }
-check "not in babylon's own, off the rail" not_started_in babylon
-inner kill-session -t '=work/babylon'
 cp $tmp/board.kept $tmp/run/babylon/board.json
 key M-b
 key o

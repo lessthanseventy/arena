@@ -2524,14 +2524,9 @@ pub const App = struct {
         const card = app.boardCard(view.col, view.row) orelse return;
         const pane = card.holder() orelse {
             if (!startable(card)) return;
-            const repo = card.repo.?;
-            var named: [session_name + "-work".len]u8 = undefined;
-            const session = repoSession(app.sessions.items[0..app.railSessions()], repo, &named);
-            // tmux reads # as a format in run-shell's command: ## is one #. A second go before the
-            // claim shows finds the window the first made
-            try app.send(.ignore, "run-shell -b \"tmux has-session -t ={s} 2>/dev/null || tmux new-session -d -s {s} -c $HOME/projects/{s}; " ++
-                "tmux list-windows -t ={s} -F '##{{window_name}}' | grep -qx t{d} || " ++
-                "tmux new-window -t ={s}: -n t{d} -c $HOME/projects/{s} claude 'Claim ticket ##{d} with claim_ticket, run the start command its answer gives, and work it to submit_ticket.'\"", .{ session, session, repo, session, card.id, session, card.id, repo, card.id });
+            // babylon refuses what it will not start, and says why
+            try app.send(.ignore, "run-shell -b \"out=\\$(babylon start {d} 2>&1) || " ++
+                "{{ command -v notify-send >/dev/null && notify-send -a arena -- \\\"\\$out\\\"; }}\"", .{card.id});
             return app.closeBoard();
         };
         try app.showPane(pane);
@@ -4353,50 +4348,6 @@ test "a Claude is started only on a free todo card of a plain repo" {
     c = free;
     c.repo = null;
     try std.testing.expect(!startable(&c));
-}
-
-/// The tmux session named for `repo`: tmux makes a . in a session name a _.
-fn sessionNamed(repo: []const u8, buf: []u8) []const u8 {
-    const out = buf[0..@min(repo.len, buf.len)];
-    for (out, repo[0..out.len]) |*to, from| to.* = if (from == '.') '_' else from;
-    return out;
-}
-
-/// The session a card of `repo` starts its Claude in: the rail's named for it, else the rail's
-/// with it between slashes in its name, else a new one named for it, or for it and `-work`
-/// where babylon or the orchestrator has that name.
-fn repoSession(rail: []const *Session, repo: []const u8, buf: *[session_name + "-work".len]u8) []const u8 {
-    const name = sessionNamed(repo, buf[0 .. buf.len - "-work".len]);
-    for (rail) |s| if (std.mem.eql(u8, s.name, name)) return name;
-    for (rail) |s| {
-        var parts = std.mem.splitScalar(u8, s.name, '/');
-        while (parts.next()) |part| if (std.mem.eql(u8, part, name)) return s.name;
-    }
-    const taken: Session = .{ .id = 0, .name = @constCast(name) };
-    if (!taken.offRail()) return name;
-    @memcpy(buf[name.len..][0.."-work".len], "-work");
-    return buf[0 .. name.len + "-work".len];
-}
-
-test "a card's Claude starts on the rail, in a session named for its repo or holding it among others" {
-    var buf: [session_name + "-work".len]u8 = undefined;
-    var tlon: Session = .{ .id = 1, .name = @constCast("tlon") };
-    var both: Session = .{ .id = 2, .name = @constCast("arena/babylon") };
-    const rail = [_]*Session{ &tlon, &both };
-    try std.testing.expectEqualStrings("tlon", repoSession(&rail, "tlon", &buf));
-    try std.testing.expectEqualStrings("arena/babylon", repoSession(&rail, "babylon", &buf));
-    try std.testing.expectEqualStrings("arena/babylon", repoSession(&rail, "arena", &buf));
-    try std.testing.expectEqualStrings("menard", repoSession(&rail, "menard", &buf));
-    try std.testing.expectEqualStrings("babylon-work", repoSession(rail[0..1], "babylon", &buf));
-    try std.testing.expectEqualStrings("orchestrator-work", repoSession(rail[0..1], "orchestrator", &buf));
-    const longest: [session_name]u8 = @splat('r');
-    try std.testing.expectEqualStrings(&longest, repoSession(rail[0..1], &longest, &buf));
-}
-
-test "a repo's session is named as tmux would have it, a dot a _" {
-    var buf: [16]u8 = undefined;
-    try std.testing.expectEqualStrings("a_b-c", sessionNamed("a.b-c", &buf));
-    try std.testing.expectEqualStrings("tlon", sessionNamed("tlon", &buf));
 }
 
 /// A repo's name safe in a tmux command unquoted, as directory names are.
