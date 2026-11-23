@@ -528,6 +528,7 @@ test {
     _ = @import("theme.zig");
     _ = @import("board.zig");
     _ = @import("feed.zig");
+    _ = @import("plan.zig");
     _ = @import("keys.zig");
     _ = @import("menu.zig");
     _ = @import("pass.zig");

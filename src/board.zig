@@ -103,13 +103,13 @@ pub const Next = struct {
     title: []const u8 = "",
     why: []const u8 = "",
     set_by: []const u8 = "",
+    waits_on: []Wait = &.{},
+    actions: []NextAction = &.{},
 
     pub fn pinned(n: Next) bool {
         return std.mem.eql(u8, n.set_by, "human");
     }
 };
-
-const Plan = struct { next: []Next = &.{} };
 
 /// babylon's orchestrator: `running` while its session is there, `on` while babylon keeps it so.
 pub const Orchestrator = struct { on: bool = true, running: bool = true };
@@ -142,15 +142,82 @@ pub const Proposal = struct {
     why: []const u8 = "",
 };
 
+/// What a ticket in next, or a goal's step, waits on: another ticket, or its repo's lane until a
+/// ticket lands.
+pub const Wait = struct {
+    ticket: ?u32 = null,
+    lane: ?[]const u8 = null,
+    until: ?u32 = null,
+};
+
+/// One ticket in `plan.now`: building under a Claude's pane, or in the pipeline at a stage.
+pub const NowItem = struct {
+    ticket: u32,
+    repo: []const u8 = "",
+    title: []const u8 = "",
+    state: []const u8 = "",
+    stage: ?[]const u8 = null,
+    since: ?[]const u8 = null,
+    pane: ?[]const u8 = null,
+    place: ?u32 = null,
+    /// Why nothing is moving it (`idle 9m`, `no Claude`), when nothing is.
+    stalled: ?[]const u8 = null,
+
+    /// The id of the pane working it, if babylon names one.
+    pub fn holder(item: *const NowItem) ?u32 {
+        const pane = item.pane orelse return null;
+        if (pane.len < 2 or pane[0] != '%') return null;
+        return std.fmt.parseInt(u32, pane[1..], 10) catch null;
+    }
+};
+
+pub const NextAction = struct {
+    label: []const u8,
+    argv: []const []const u8 = &.{},
+};
+
+pub const Step = struct {
+    ticket: u32,
+    state: []const u8 = "",
+    waits_on: []Wait = &.{},
+};
+
+pub const Goal = struct {
+    epic: u32,
+    title: []const u8 = "",
+    doc: ?[]const u8 = null,
+    landed: u32 = 0,
+    total: u32 = 0,
+    steps: []Step = &.{},
+};
+
+pub const LandedToday = struct { count: u32 = 0, newest: []u32 = &.{} };
+
+pub const NotPlanned = struct {
+    count: u32 = 0,
+    follow_ups: u32 = 0,
+    by_repo: std.json.ArrayHashMap(u32) = .{},
+};
+
+/// What babylon says the plan is: what is running, what comes next and why, how far each goal
+/// has got, what landed and what is not planned, each in the order to draw it.
+pub const Plan = struct {
+    now: []NowItem = &.{},
+    next: []Next = &.{},
+    goals: []Goal = &.{},
+    landed_today: LandedToday = .{},
+    not_planned: NotPlanned = .{},
+};
+
 const File = struct {
     tickets: []Card,
     backlog: []Card = &.{},
     auto: ?Auto = null,
     hold: bool = false,
-    plan: Plan = .{},
     orchestrator: ?Orchestrator = null,
     proposals: []Proposal = &.{},
     needs_you: []Need = &.{},
+    plan: ?Plan = null,
 };
 
 pub const Board = struct {
@@ -169,9 +236,13 @@ pub const Board = struct {
             need.text = try cleanLine(arena, need.text);
             for (need.actions) |*action| action.label = try cleanLine(arena, action.label);
         }
-        for (parsed.value.plan.next) |*item| {
-            item.title = try cleanLine(arena, item.title);
-            item.why = try cleanLine(arena, item.why);
+        if (parsed.value.plan) |*given| {
+            for (given.now) |*item| item.title = try cleanLine(arena, item.title);
+            for (given.next) |*item| {
+                item.title = try cleanLine(arena, item.title);
+                item.why = try cleanLine(arena, item.why);
+            }
+            for (given.goals) |*goal| goal.title = try cleanLine(arena, goal.title);
         }
         for (parsed.value.proposals) |*proposal| {
             proposal.why = try cleanLine(arena, proposal.why);
@@ -204,6 +275,11 @@ pub const Board = struct {
         return b.parsed.value.needs_you;
     }
 
+    /// What babylon says the plan is, when its file says one.
+    pub fn plan(b: *const Board) ?*const Plan {
+        return if (b.parsed.value.plan) |*p| p else null;
+    }
+
     /// Auto mode's cap and the Claudes working, while it is on.
     pub fn auto(b: *const Board) ?Auto {
         const state = b.parsed.value.auto orelse return null;
@@ -222,7 +298,7 @@ pub const Board = struct {
 
     /// The plan's next, in order.
     pub fn next(b: *const Board) []const Next {
-        return b.parsed.value.plan.next;
+        return if (b.parsed.value.plan) |given| given.next else &.{};
     }
 
     /// What babylon says of its orchestrator, when its file does.

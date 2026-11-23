@@ -34,6 +34,19 @@ pub fn appendClean(out: *std.ArrayList(u8), gpa: Allocator, text: []const u8) !v
     }
 }
 
+/// How many cells `text` takes, a cell to a character.
+pub fn cells(text: []const u8) usize {
+    return std.unicode.utf8CountCodepoints(text) catch text.len;
+}
+
+/// The first `max` characters of `text`.
+pub fn clip(text: []const u8, max: usize) []const u8 {
+    var it = std.unicode.Utf8View.initUnchecked(text).iterator();
+    var n: usize = 0;
+    while (n < max) : (n += 1) _ = it.nextCodepointSlice() orelse break;
+    return text[0..it.i];
+}
+
 test "text to draw loses its escapes and controls, and a byte not UTF-8 is a ?" {
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(std.testing.allocator);

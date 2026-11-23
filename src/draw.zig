@@ -7,6 +7,7 @@ const theme = @import("theme.zig");
 const app_mod = @import("app.zig");
 const tickets = @import("board.zig");
 const feed = @import("feed.zig");
+const sheets = @import("plan.zig");
 const App = app_mod.App;
 const Session = app_mod.Session;
 const Window = app_mod.Window;
@@ -171,7 +172,7 @@ fn dots(app: *const App, w: *Writer, s: *const Session) !void {
 }
 
 const normal_label = "NORMAL";
-const normal_keys = "j k pick  ] [ next waiting  ⏎ go  b home  i insert";
+const normal_keys = "j k pick  ] [ next waiting  ⏎ go  b home  B board  i insert";
 
 /// The first cell of a rail row: the pick's bar in the accent, else a space.
 fn pickBar(app: *const App, w: *Writer, pen: *Pen, picked: bool, base: vt.Style) !void {
@@ -1399,7 +1400,104 @@ fn overview(app: *App, w: *Writer, spot: App.Spot) !void {
 /// then a column a status, each a box of its cards, a card a box of its own: the ticket's number
 /// and title on two rows, a footer of what else is so of it, its left edge its priority, and
 /// the picked one's border lit.
+fn planStyle(app: *const App, style: sheets.Style) vt.Style {
+    return switch (style) {
+        .normal => .{},
+        .dim => ink(app, "dim", 8),
+        .heading => heading(app),
+        .attention => ink(app, "emberdim", 1),
+    };
+}
+
+/// Home's plan in the board's place: its head, a rule, then its rows from the one the pick keeps
+/// in view, the pick a bar at the left edge. What lies over the board lies over it.
+fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
+    var sheet: sheets.Sheet = undefined;
+    if (!app.planSheet(&sheet)) return;
+    const ox = app.boardX();
+    const width = app.boardW();
+    const dim = ink(app, "dim", 8);
+    const b = &app.board.?;
+    var pen: Pen = .{};
+    var buf: [96]u8 = undefined;
+
+    // the head: the title and the way to the board, then babylon's state against the right edge
+    try w.print("\x1b[1;{d}H", .{ox + 1});
+    try pen.set(w, heading(app), null);
+    try w.writeAll(App.plan_title);
+    try pen.set(w, .{}, null);
+    try w.writeAll("  ");
+    var link = dim;
+    if (app.hovered() == .none and app.pointer.y == 0 and app.pointer.x >= app.planLink().x and app.pointer.x < app.planLink().x + app.planLink().w) link.flags.underline = .single;
+    try pen.set(w, link, null);
+    try w.writeAll(App.board_link);
+    const given = b.plan().?;
+    var landing: usize = 0;
+    for (given.now) |item| landing += @intFromBool(!std.mem.eql(u8, item.state, "building"));
+    const auto = if (app.auto()) |state|
+        std.fmt.bufPrint(&buf, "◐ auto {d}/{d}", .{ state.working, state.cap }) catch "◐"
+    else
+        "◐ auto";
+    var landing_buf: [32]u8 = undefined;
+    var today_buf: [32]u8 = undefined;
+    var needs_buf: [16]u8 = undefined;
+    const needs_n = b.needsYou().len;
+    const pieces = [_]struct { []const u8, vt.Style }{
+        .{ auto, if (app.auto() != null) autoOn(app) else dim },
+        .{ std.fmt.bufPrint(&landing_buf, "◒ landing {d}", .{landing}) catch "", dim },
+        .{ std.fmt.bufPrint(&today_buf, "✓ {d} today", .{given.landed_today.count}) catch "", dim },
+        .{ std.fmt.bufPrint(&needs_buf, "▲ {d}", .{needs_n}) catch "", if (needs_n > 0) heading(app) else dim },
+    };
+    var right_w: usize = 0;
+    for (pieces) |piece| right_w += cellCount(piece[0]) + 3;
+    const left_w = cellCount(App.plan_title) + 2 + cellCount(App.board_link);
+    const start = width -| right_w;
+    try pen.set(w, .{}, null);
+    if (start > left_w) {
+        for (left_w..start) |_| try w.writeAll(" ");
+        for (pieces) |piece| {
+            try pen.set(w, piece[1], null);
+            try w.writeAll(piece[0]);
+            try pen.set(w, .{}, null);
+            try w.writeAll("   ");
+        }
+    } else for (left_w..width) |_| try w.writeAll(" ");
+
+    try w.print("\x1b[2;{d}H", .{ox + 1});
+    try pen.set(w, dim, null);
+    for (0..width) |_| try w.writeAll("─");
+
+    const top = app.planTop(&sheet);
+    var y: u16 = 2;
+    while (y < app.view_h) : (y += 1) {
+        try w.print("\x1b[{d};{d}H", .{ y + 1, ox + 1 });
+        const at = top + (y - 2);
+        try pen.set(w, .{}, null);
+        if (at >= sheet.n) {
+            try fitted(w, "", width);
+            continue;
+        }
+        const row = sheet.rows[at];
+        if (row.pick != null and row.pick.? == view.plan_pick) {
+            var bar = if (app.columnFocused()) dim else ink(app, "amber", 4);
+            bar.flags.bold = true;
+            try pen.set(w, bar, null);
+            try w.writeAll("▌");
+        } else try w.writeAll(" ");
+        const split = @min(row.tail_at, row.text.len);
+        try pen.set(w, planStyle(app, row.style), null);
+        try w.writeAll(row.text[0..split]);
+        try pen.set(w, planStyle(app, if (split < row.text.len) row.tail_style else row.style), null);
+        try w.writeAll(row.text[split..]);
+        try pen.set(w, .{}, null);
+        for (cellCount(row.text) + 1..width) |_| try w.writeAll(" ");
+    }
+    if (view.detail) |id| try detailBox(app, w, id, view.detail_scroll);
+    if (view.help) try helpBox(app, w);
+}
+
 fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
+    if (app.planShown()) return planView(app, w, view);
     const ox = app.boardX();
     const dim = ink(app, "dim", 8);
     const edge: vt.Style = .{ .fg_color = .palette(8) };
@@ -1604,23 +1702,38 @@ const board_keys = [_][2][]const u8{
     .{ "◐ » ✗ ◆ ?", "working, queued, sent back, landed, asks" },
 };
 
-/// The board's keys, boxed over its middle until the next key.
+const plan_keys = [_][2][]const u8{
+    .{ "j k, arrows", "pick a row: now, next, goals, landed, not planned" },
+    .{ "⏎, click it", "go: its Claude, the gate, start it, unfold a row, the board on it" },
+    .{ "space, t", "its whole ticket" },
+    .{ "B, b", "the board, and back to the plan" },
+    .{ "] [", "your move, first or last" },
+    .{ "l, h", "the orchestrator's column, and back" },
+    .{ "g o A", "the gate, the orchestrator, babylon's auto mode" },
+    .{ "`", "fold the orchestrator's column, or unfold" },
+    .{ "esc, q", "close home" },
+    .{ "◐ ◒ » ◇", "building, in the pipeline, queued, stalled" },
+};
+
+/// The board's keys, or the plan's, boxed over its middle until the next key.
 fn helpBox(app: *App, w: *Writer) !void {
+    const list: []const [2][]const u8 = if (app.planShown()) &plan_keys else &board_keys;
+    const title = if (app.planShown()) " the plan's keys " else " the board's keys ";
     const bw: u16 = @min(app.boardW() -| 4, 60);
     const inner = bw -| 4;
     const x = app.boardX() + (app.boardW() -| bw) / 2;
     const edge = ink(app, "amber", 4);
     var pen: Pen = .{};
-    var y: u16 = @min(3, app.view_h -| (board_keys.len + 3));
+    var y: u16 = @min(3, app.view_h -| (list.len + 3));
     if (y == 0 or bw < 32) return;
     try pen.set(w, edge, null);
     try w.print("\x1b[{d};{d}H╭─", .{ y, x + 1 });
     try pen.set(w, heading(app), null);
-    try w.writeAll(" the board's keys ");
+    try w.writeAll(title);
     try pen.set(w, edge, null);
-    for (cellCount(" the board's keys ") + 1..bw - 2) |_| try w.writeAll("─");
+    for (cellCount(title) + 1..bw - 2) |_| try w.writeAll("─");
     try w.writeAll("╮");
-    for (board_keys) |pair| {
+    for (list) |pair| {
         y += 1;
         try pen.set(w, edge, null);
         try w.print("\x1b[{d};{d}H│ ", .{ y, x + 1 });

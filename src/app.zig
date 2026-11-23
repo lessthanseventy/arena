@@ -9,6 +9,7 @@ const Theme = @import("theme.zig").Theme;
 const Pass = @import("pass.zig").Pass;
 const tickets = @import("board.zig");
 const feed = @import("feed.zig");
+const sheets = @import("plan.zig");
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 
@@ -355,6 +356,11 @@ pub const BoardView = struct {
     pick: usize = 0,
     /// The repo of auto's line that is lit, by its place among its caps.
     auto_repo: usize = 0,
+    /// Home drawn as the plan, when babylon's file has one, in the board's place.
+    plan: bool = false,
+    /// The plan's pick among its rows that can be picked, and the stages unfolded, a bit each.
+    plan_pick: usize = 0,
+    unfolded: u8 = 0,
 
     /// Whether a box lies over the board, the keys its own.
     pub fn boxed(view: BoardView) bool {
@@ -2733,8 +2739,165 @@ pub const App = struct {
         view.answering = false;
         app.side_folded = false;
         view.home = true;
+        view.plan = app.hasPlan();
         view.focus = .orchestrator;
         try app.toSide();
+    }
+
+    /// The board, from anywhere in normal mode: where home's plan goes to find, read or move a
+    /// ticket. With no board there is none.
+    pub fn toBoard(app: *App) !void {
+        if (app.board == null) return;
+        app.menu = null;
+        app.prompt = null;
+        app.overview = null;
+        app.orchestrating = false;
+        app.normal = false;
+        app.dirty = true;
+        if (app.board_view == null) app.board_view = .{ .lane = app.firstLane() };
+        const view = &app.board_view.?;
+        view.help = false;
+        view.detail = null;
+        view.giving = null;
+        view.answering = false;
+        view.plan = false;
+        view.focus = .board;
+        try app.toSide();
+    }
+
+    /// Whether babylon's file carries a plan.
+    pub fn hasPlan(app: *const App) bool {
+        return if (app.board) |*b| b.plan() != null else false;
+    }
+
+    /// Whether home draws the plan, in the board's place.
+    pub fn planShown(app: *const App) bool {
+        const view = app.board_view orelse return false;
+        return view.plan and app.hasPlan();
+    }
+
+    /// The plan laid out in rows for the board's width, less the cell the pick bar takes; false
+    /// when it is not shown.
+    pub fn planSheet(app: *const App, sheet: *sheets.Sheet) bool {
+        if (!app.planShown()) return false;
+        const b = &app.board.?;
+        sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, app.board_view.?.unfolded);
+        return true;
+    }
+
+    /// The first of the plan's rows that is drawn: the row picked kept in view, two rows more
+    /// below it.
+    pub fn planTop(app: *const App, sheet: *const sheets.Sheet) usize {
+        const view = app.board_view orelse return 0;
+        const at = sheet.rowOf(view.plan_pick) orelse return 0;
+        return (at + 3) -| (app.view_h -| 2);
+    }
+
+    pub const plan_title = " ◆ plan";
+    pub const board_link = "B board";
+
+    /// Where the head's `B board` is drawn and clicked.
+    pub fn planLink(app: *const App) struct { x: u16, w: u16 } {
+        return .{ .x = app.boardX() + @as(u16, @intCast(cellCount(plan_title))) + 2, .w = @intCast(cellCount(board_link)) };
+    }
+
+    /// A key on the plan, while it has the keys: `j` `k` pick through every row; Enter goes, and
+    /// space or `t` opens the ticket; `B` is the board. What the board's keys do to a card is not
+    /// the plan's, the card under them being out of sight.
+    fn planKey(app: *App, key: []const u8) !void {
+        const view = &app.board_view.?;
+        const is = anyKey;
+        var sheet: sheets.Sheet = undefined;
+        if (!app.planSheet(&sheet)) return;
+        view.plan_pick = @min(view.plan_pick, sheet.picks -| 1);
+        if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) view.plan_pick = @min(view.plan_pick + 1, sheet.picks -| 1);
+        if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.plan_pick -|= 1;
+        if (is(key, &.{"?"})) view.help = true;
+        if (is(key, &.{"B"})) return app.toBoard();
+        if (is(key, &.{ "\r", " ", "t" })) {
+            const row = sheet.picked(view.plan_pick) orelse return;
+            return app.planAct(row, key);
+        }
+        if (is(key, &.{ "\x1b", "q" })) return app.closeBoard();
+        if (is(key, &.{"`"})) return app.foldSide();
+        if (is(key, &.{"g"})) return app.toGate();
+        if (is(key, &.{"o"})) return app.toOrchestrator();
+        if (is(key, &.{"A"})) return app.toggleAuto();
+        if (is(key, &.{"P"})) return app.jumpProposed();
+        if (is(key, &.{ "]", "[" })) return app.toFeed(key);
+        if (is(key, &.{ "l", "\x1b[C", "\x1bOC" }) and app.sided()) {
+            view.focus = .orchestrator;
+            if (app.sideDue()) app.normal = true;
+        }
+    }
+
+    /// What a key does on a row of the plan. Space and `t` open its ticket's whole detail. Enter
+    /// goes: to the Claude building it, or with none and nothing moving it, starts one; to the
+    /// gate for a ticket in the pipeline; unfolds a folded row; starts a ticket of next now;
+    /// and from a goal, landed or not planned, to the board on it.
+    fn planAct(app: *App, row: *const sheets.Row, key: []const u8) !void {
+        const view = &app.board_view.?;
+        const given = app.board.?.plan().?;
+        app.dirty = true;
+        if (!std.mem.eql(u8, key, "\r")) {
+            if (row.ticket) |id| _ = try app.openDetail(id);
+            return;
+        }
+        switch (row.kind) {
+            .folded => if (row.fold) |bit| {
+                view.unfolded ^= @as(u8, 1) << bit;
+            },
+            .now => {
+                const id = row.ticket orelse return;
+                const item = for (given.now) |item| {
+                    if (item.ticket == id) break item;
+                } else return;
+                const pane = if (item.holder()) |held| (if (app.paneWindow(held) != null) held else null) else null;
+                if (pane) |held| return app.showPane(held);
+                if (item.stalled != null) return app.send(.ignore, "run-shell -b \"babylon start {d}\"", .{id});
+                if (!std.mem.eql(u8, item.state, "building")) try app.toGate();
+            },
+            .next => if (row.ticket) |id| try app.send(.ignore, "run-shell -b \"babylon start {d}\"", .{id}),
+            .goal => {
+                try app.toBoard();
+                for (given.goals) |goal| {
+                    if (goal.epic != row.ticket) continue;
+                    for (goal.steps) |step| {
+                        if (std.mem.eql(u8, step.state, "landed")) continue;
+                        _ = app.pickCard(step.ticket);
+                        return;
+                    }
+                }
+            },
+            .landed, .unplanned => {
+                try app.toBoard();
+                const bv = &app.board_view.?;
+                bv.repo = 0;
+                bv.backlog = false;
+                bv.row = 0;
+                bv.lane = app.firstLane();
+                bv.col = if (row.kind == .landed) @min(3, app.boardCols() -| 1) else 0;
+            },
+            else => {},
+        }
+    }
+
+    /// A left click on the plan: on the head's `B board` the board, on a row its pick, and on
+    /// the row picked already what Enter does.
+    fn planClick(app: *App, m: keys.Mouse) !void {
+        const view = &app.board_view.?;
+        if (m.y == 0) {
+            const link = app.planLink();
+            if (m.x >= link.x and m.x < link.x + link.w) try app.toBoard();
+            return;
+        }
+        var sheet: sheets.Sheet = undefined;
+        if (m.y < 2 or !app.planSheet(&sheet)) return;
+        const at = app.planTop(&sheet) + (m.y - 2);
+        if (at >= sheet.n) return;
+        const row = sheet.rows[at];
+        const pick = row.pick orelse return;
+        if (view.plan_pick == pick) try app.planAct(&row, "\r") else view.plan_pick = pick;
     }
 
     /// The needs-you inbox: home, the feed atop its column.
@@ -2773,6 +2936,7 @@ pub const App = struct {
         var f: feed.Feed = undefined;
         const on_auto = app.feedOf(&f) and (if (app.feedPick(&f)) |picked| picked.auto else false);
         if (anyKey(key, &.{"h"}) or (!on_auto and anyKey(key, &.{ "\x1b[D", "\x1bOD" }))) view.focus = .board;
+        if (anyKey(key, &.{"B"})) return app.toBoard();
         if (anyKey(key, &.{"\r"}) and app.orchestratorState() == .off) {
             return app.send(.ignore, "run-shell -b \"babylon orchestrator\"", .{});
         }
@@ -2814,6 +2978,8 @@ pub const App = struct {
             return;
         }
         if (app.columnFocused()) return app.columnKey(key);
+        if (app.planShown()) return app.planKey(key);
+        if (is(key, &.{"b"}) and app.hasPlan()) return app.goHome();
         if (is(key, &.{" "})) if (app.boardCard(view.col, view.row)) |card| {
             if (try app.openDetail(card.id)) return;
         };
@@ -3363,6 +3529,15 @@ pub const App = struct {
             open.detail = null;
             open.answering = false;
             open.giving = null;
+            return true;
+        }
+        if (app.planShown()) {
+            try app.planClick(m);
+            return true;
+        }
+        // the board's own title is the way back to the plan
+        if (m.y == 0 and m.x < app.boardX() + cellCount(board_title) and app.hasPlan()) {
+            try app.goHome();
             return true;
         }
         var buttons: [48]Button = undefined;
@@ -4075,6 +4250,7 @@ pub const App = struct {
                     app.dirty = true;
                 }
                 if (std.mem.eql(u8, key, "b")) try app.goHome();
+                if (std.mem.eql(u8, key, "B")) try app.toBoard();
             } else if (app.overview != null) {
                 try app.overviewKey(key);
             } else if (app.board_view != null and !app.sideFocused()) {

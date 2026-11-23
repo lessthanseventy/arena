@@ -1614,7 +1614,9 @@ check "and leaves the sessions running" inner has-session -t alpha
 check "with nothing on stderr" test ! -s $tmp/err
 
 print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[],'\
-'"ask":{"id":5,"question":"Which colour?","options":["red","blue"]}}]}' >$tmp/run/babylon/board.json
+'"ask":{"id":5,"question":"Which colour?","options":["red","blue"]}}],'\
+'"plan":{"now":[],"next":[{"ticket":7,"repo":"tlon","title":"Lights","why":"the light switch","set_by":"orchestrator","waits_on":[]}],'\
+'"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}' >$tmp/run/babylon/board.json
 # a control-mode client that is no arena, as iTerm is
 mkfifo $tmp/other
 inner -C attach <$tmp/other >$tmp/other-out 2>&1 &
@@ -1634,9 +1636,17 @@ check "and arena inbox does too" none inbox
 check "arena --help lists the doors" test -n "$($bin --help | grep -F 'arena [-L socket] show')"
 outer new-window -t o \
   "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 $bin -L $in; echo EXIT \$?; cat"
-check "arena with no session named opens home: the board, the orchestrator's column beside it" see '╭─ ○ orchestrator · idle '
-check "and the board" see ' board  every'
+check "arena with no session named opens home: the plan, the orchestrator's column pinned beside it" see '╭─ ○ orchestrator · idle '
+check "the plan, with its head" see '◆ plan  B board'
+check "next as babylon gives it" see '1 #7 +tlon +Lights +free now'
+check "and its why under it" see 'the light switch'
 check "the column with the keys" await orch_lit
+key C-Space
+key B
+check "B shows the board" see ' board  every'
+check "in the plan's place" gone '◆ plan'
+key b
+check "and b comes home to the plan" see '◆ plan  B board'
 # the click that focuses a new terminal window lands anywhere in it
 mouse 0 100 24 M
 mouse 0 100 24 m
