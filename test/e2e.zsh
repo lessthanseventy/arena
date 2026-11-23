@@ -1073,19 +1073,22 @@ check "and unfolds it" see '╭─ 1 orch ─'
 key Escape
 check "closing the board goes back to the session the human was in" await in_session alpha
 check "the strip its whole width again" see '╭─ 1 one ─'
-key M-b q
-# nothing to wait on for a switch that must not stick: a second for tmux to have made it
-zselect -t 100
-check "opened and closed before tmux has switched, it comes back all the same" in_session alpha
-key M-b
-await in_session orchestrator
-key '`' '`' q
-zselect -t 100
-check "folded, unfolded and closed before tmux has switched back, it comes back all the same" in_session alpha
-said() { inner capture-pane -p -t $1 | grep -qx $2 }
 # The sessions' server stopped answers nothing: arena reads what is typed with its switch unanswered.
 # Nothing shows that arena has read it, so it is given half a second to.
 server=$(inner display -p '#{pid}')
+kill -STOP $server
+key M-b q
+zselect -t 50
+kill -CONT $server
+check "opened and closed before tmux has switched, it comes back all the same" await in_session alpha
+key M-b
+await in_session orchestrator
+kill -STOP $server
+key '`' '`' q
+zselect -t 50
+kill -CONT $server
+check "folded, unfolded and closed before tmux has switched back, it comes back all the same" await in_session alpha
+said() { inner capture-pane -p -t $1 | grep -qx $2 }
 kill -STOP $server
 key M-b
 see ' board   every'
