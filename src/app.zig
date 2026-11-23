@@ -414,6 +414,8 @@ pub const App = struct {
     /// over the strip, or the orchestrator's column beside the board is focused; otherwise the
     /// overlay is the mode.
     normal: bool = false,
+    /// Where the rail's pick was moved to in normal mode; none puts it on what is in view.
+    rail_pick: ?RailPick = null,
     agent_sort: AgentSort = .urgency,
     /// The rail's list of Claudes was scrolled to start at the `n`th, beside the window `at` that
     /// was in view then; going to another puts it back to following the Claude in view.
@@ -1083,18 +1085,8 @@ pub const App = struct {
     /// first or the last.
     fn stepAgent(app: *App, by: i32) !void {
         var found: [64]Agent = undefined;
-        var n: usize = 0;
-        for (app.sessions.items, 0..) |s, si| for (s.wins.items) |win| {
-            if ((win.claude != .waiting and win.claude != .done) or n == found.len) continue;
-            found[n] = .{ .session = si, .win = win };
-            n += 1;
-        };
+        const n = app.needy(&found);
         if (n == 0) return;
-        std.sort.insertion(Agent, found[0..n], {}, struct {
-            fn before(_: void, a: Agent, b: Agent) bool {
-                return urgency(a.win) > urgency(b.win);
-            }
-        }.before);
         const s = app.cur();
         const here = for (found[0..n], 0..) |a, i| {
             if (s != null and app.sessions.items[a.session] == s.? and s.?.focused() == a.win) break i;
@@ -1102,6 +1094,126 @@ pub const App = struct {
         const len: i32 = @intCast(n);
         const to: i32 = if (here) |i| @mod(@as(i32, @intCast(i)) + by, len) else if (by > 0) 0 else len - 1;
         try app.goAgent(found[@intCast(to)]);
+    }
+
+    /// The Claudes waiting or done, as many as `out` holds, the one that most wants looking at first.
+    fn needy(app: *const App, out: []Agent) usize {
+        var n: usize = 0;
+        for (app.sessions.items, 0..) |s, si| for (s.wins.items) |win| {
+            if ((win.claude != .waiting and win.claude != .done) or n == out.len) continue;
+            out[n] = .{ .session = si, .win = win };
+            n += 1;
+        };
+        std.sort.insertion(Agent, out[0..n], {}, struct {
+            fn before(_: void, a: Agent, b: Agent) bool {
+                return urgency(a.win) > urgency(b.win);
+            }
+        }.before);
+        return n;
+    }
+
+    /// What the rail's pick is on, by id: a session in its list or a Claude's window in its own.
+    pub const RailPick = union(enum) { session: u32, agent: u32 };
+
+    /// The rail as one list, as it is drawn: each session, then its Claudes.
+    fn railPicks(app: *const App, out: []RailPick) usize {
+        var n: usize = 0;
+        for (app.sessions.items[0..app.railShown()]) |s| {
+            if (n == out.len) return n;
+            out[n] = .{ .session = s.id };
+            n += 1;
+        }
+        var found: [64]Agent = undefined;
+        var folds: [max_folds]Fold = undefined;
+        const count, _ = app.railList(&found, &folds);
+        for (found[0..count]) |a| {
+            if (n == out.len) break;
+            out[n] = .{ .agent = a.win.id };
+            n += 1;
+        }
+        return n;
+    }
+
+    /// The rail's pick in normal mode over the strip: where the human put it, else on what is in
+    /// view, the Claude in the list or its session. Null otherwise.
+    pub fn railPicked(app: *const App) ?RailPick {
+        if (!app.normal or app.board_view != null) return null;
+        if (app.rail_pick) |pick| return pick;
+        const s = app.cur() orelse return null;
+        if (s.focused()) |win| if (win.agent()) return .{ .agent = win.id };
+        return .{ .session = s.id };
+    }
+
+    /// The Claude whose window has id `id`, in any session.
+    fn agentById(app: *const App, id: u32) ?Agent {
+        for (app.sessions.items, 0..) |s, si| for (s.wins.items) |win| {
+            if (win.id == id) return .{ .session = si, .win = win };
+        };
+        return null;
+    }
+
+    /// A key on the rail's pick, in normal mode over the strip: `j` `k` step it through the rail,
+    /// `]` `[` to the next or previous Claude waiting or done, and Enter goes to it, into insert.
+    /// Moving it changes nothing in the strip. Whether the key was the pick's.
+    fn railKey(app: *App, key: []const u8) !bool {
+        if (app.board_view != null) return false;
+        var list: [96]RailPick = undefined;
+        const n = app.railPicks(&list);
+        if (n == 0) return false;
+        const here = app.railPicked();
+        const at = for (list[0..n], 0..) |entry, i| {
+            if (here != null and std.meta.eql(entry, here.?)) break i;
+        } else null;
+        if (anyKey(key, &.{ "j", "\x1b[B", "\x1bOB" })) {
+            app.rail_pick = list[if (at) |i| @min(i + 1, n - 1) else 0];
+        } else if (anyKey(key, &.{ "k", "\x1b[A", "\x1bOA" })) {
+            app.rail_pick = list[if (at) |i| i -| 1 else n - 1];
+        } else if (anyKey(key, &.{ "]", "[" })) {
+            var found: [64]Agent = undefined;
+            const m = app.needy(&found);
+            if (m == 0) return true;
+            const from = if (here) |pick| switch (pick) {
+                .agent => |id| for (found[0..m], 0..) |a, i| {
+                    if (a.win.id == id) break i;
+                } else null,
+                .session => null,
+            } else null;
+            const len: i32 = @intCast(m);
+            const by: i32 = if (key[0] == ']') 1 else -1;
+            const to: i32 = if (from) |i| @mod(@as(i32, @intCast(i)) + by, len) else if (by > 0) 0 else len - 1;
+            app.rail_pick = .{ .agent = found[@intCast(to)].win.id };
+        } else if (anyKey(key, &.{"\r"})) {
+            const pick = here orelse return true;
+            app.normal = false;
+            app.rail_pick = null;
+            app.dirty = true;
+            switch (pick) {
+                .agent => |id| if (app.agentById(id)) |a| try app.goAgent(a),
+                .session => |id| if (app.sessionIndex(id)) |i| try app.sessionTo(i),
+            }
+            return true;
+        } else return false;
+        app.dirty = true;
+        app.showPick();
+        return true;
+    }
+
+    /// Scrolls the rail's list of Claudes to start at the pick when it is one the list has scrolled off.
+    fn showPick(app: *App) void {
+        const id = switch (app.rail_pick orelse return) {
+            .agent => |id| id,
+            .session => return,
+        };
+        var lines: [64]AgentLine = undefined;
+        const shown = app.railAgents(&lines);
+        for (lines[0..shown]) |line| if (line == .agent and line.agent.win.id == id) return;
+        var found: [64]Agent = undefined;
+        var folds: [max_folds]Fold = undefined;
+        const count, _ = app.railList(&found, &folds);
+        const to = for (found[0..count], 0..) |a, i| {
+            if (a.win.id == id) break i;
+        } else return;
+        app.agent_skip = .{ .n = to, .at = if (app.cur()) |s| s.focused() else null };
     }
 
     fn toggleRail(app: *App) void {
@@ -3920,6 +4032,7 @@ pub const App = struct {
     /// back to insert.
     fn settleMode(app: *App) void {
         if (app.normal and app.overlay() and !app.sideFocused()) app.normal = false;
+        if (!app.normal) app.rail_pick = null;
     }
 
     /// Ctrl+Space: normal mode to insert, an overlay closed or the board's orchestrator column
@@ -3956,6 +4069,7 @@ pub const App = struct {
             i += len;
             if (app.normal) {
                 if (app.sideFocused() and try app.feedKey(key)) continue;
+                if (try app.railKey(key)) continue;
                 if (std.mem.eql(u8, key, "i") or std.mem.eql(u8, key, "\x1b")) {
                     app.normal = false;
                     app.dirty = true;

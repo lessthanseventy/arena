@@ -146,7 +146,6 @@ check "in insert a sentence with j h k l q n b reaches the pane whole" await typ
 key C-Space
 check "Ctrl+Space is normal mode, NORMAL in the corner and its key in the dots' row" await shows '^NORMAL .*i insert'
 key -l 'echo xjhklqnb'
-key Enter
 zselect -t 50
 check "in normal none of it reaches the pane, and q does not quit" hides 'xjhklqnb'
 key -l i
@@ -167,6 +166,28 @@ mouse 0 5 3 M
 mouse 0 5 3 m
 check "a click on the rail is normal" see '^NORMAL'
 key -l i
+
+# the rail's pick in normal mode: it moves, the strip does not, and Enter goes
+strip() { screen | sed -n '1,22s/^.\{22\}//p' }
+key C-Space
+see '^NORMAL'
+before=$(strip)
+key -l j
+check "in normal mode j puts the pick on the next session, and the keys are written under the strip" await shows '^│▌beta '
+check "and the key bar replaces the dots" shows '^NORMAL .*j k pick'
+key -l k
+check "k moves it back" await shows '^│▌alpha '
+key -l j
+see '^│▌beta '
+check "the strip's text is unchanged" eval '[[ $(strip) == $before ]]'
+key Enter
+check "Enter goes to the pick, in insert" await shows '^│ beta'
+check "and into insert" gone '^NORMAL'
+key C-Space
+see '^NORMAL'
+key -l k
+key Enter
+see '^│ alpha'
 
 # A tmux with the pixels patch gives arena's terminal cells of 9x19 pixels, as a real one has.
 mkfifo $tmp/sizer
@@ -725,7 +746,7 @@ see '├─ agents · urgency '
 key M-w
 inner set -p -t beta:solo @arena_claude_branch t324-lights
 check "Alt+w narrows the rail to a session's short name, its mark and its windows" see '^│ alpha.3│ '
-check "a Claude by its mark and its ticket's number" see '^│ . 324 +│ '
+check "a Claude by its mark and its ticket's number" see '^│[ ▌]. 324 +│ '
 check "or its window's place when it has no ticket" see '^│ . w3 +│ '
 check "a session over its Claudes is a rule with its name" see '^│─alpha──│ '
 sel() { [[ $(inked $(row "$1")) == *$'\e[1;7m'* ]] }

@@ -171,7 +171,13 @@ fn dots(app: *const App, w: *Writer, s: *const Session) !void {
 }
 
 const normal_label = "NORMAL";
-const normal_keys = "i insert  b home  Esc insert  Ctrl+Space insert";
+const normal_keys = "j k pick  ] [ next waiting  ⏎ go  b home  i insert";
+
+/// The first cell of a rail row: the pick's bar in the accent, else a space.
+fn pickBar(app: *const App, w: *Writer, pen: *Pen, picked: bool, base: vt.Style) !void {
+    try pen.set(w, if (picked) ink(app, "amber", 4) else base, null);
+    try w.writeAll(if (picked) "▌" else " ");
+}
 
 /// `NORMAL` in the accent at the bottom-left corner of the screen while in normal mode, and the
 /// cells it takes blank otherwise.
@@ -190,10 +196,10 @@ fn modeCorner(app: *const App, w: *Writer, pen: *Pen) !void {
 /// In normal mode the row of dots is the keys that can be pressed, written out.
 fn normalKeys(app: *const App, w: *Writer, pen: *Pen) !void {
     const ox = app.term_w - app.view_w;
-    const start = (app.view_w -| normal_keys.len) / 2;
+    const start = (app.view_w -| cellCount(normal_keys)) / 2;
     try w.print("\x1b[{d};{d}H", .{ app.view_h + 1, ox + start + 1 });
     try pen.set(w, ink(app, "dim", 8), null);
-    try w.writeAll(normal_keys[0..@min(normal_keys.len, app.view_w)]);
+    try w.writeAll(clip(normal_keys, app.view_w));
 }
 
 /// With the pointer on the row of dots, each window's number and name in their place, the one in
@@ -405,10 +411,10 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
         const drop = app.dropAt();
         // lit as the current one is: a window held by its title would go to it
         const here = (s.id == app.current and app.board_view == null) or (drop == .session and drop.session == index);
+        const picked = if (app.railPicked()) |pick| pick == .session and pick.session == s.id else false;
         if (!wide) {
             const name = shortName(s.name);
-            try pen.set(w, if (here) chip(app) else .{}, null);
-            try w.writeAll(" ");
+            try pickBar(app, w, pen, picked, if (here) chip(app) else .{});
             try w.writeAll(name);
             for (0..inner - 3 - cellCount(name)) |_| try w.writeAll(" ");
             try pen.set(w, if (here) chip(app) else ink(app, "amber", 4), null);
@@ -422,8 +428,7 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
             const room = inner - 6 - @intFromBool(review != .none) - @intFromBool(many);
             const cut = cellCount(s.name) > room;
             const name = clip(s.name, room - @intFromBool(cut));
-            try pen.set(w, if (here) chip(app) else .{}, null);
-            try w.writeAll(" ");
+            try pickBar(app, w, pen, picked, if (here) chip(app) else .{});
             try w.writeAll(name);
             if (cut) try w.writeAll("…");
             for (0..inner - 5 - @intFromBool(review != .none) - @intFromBool(many) - cellCount(name) - @intFromBool(cut)) |_| try w.writeAll(" ");
@@ -484,8 +489,9 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
             const win = a.win;
             var buf: [8]u8 = undefined;
             const time = ago(&buf, app.epoch, win.since);
+            const picked = if (app.railPicked()) |pick| pick == .agent and pick.agent == win.id else false;
+            try pickBar(app, w, pen, picked, if (win.claude == .none) dim else ink(app, "amber", 4));
             try pen.set(w, if (win.claude == .none) dim else ink(app, "amber", 4), null);
-            try w.writeAll(" ");
             try put(w, agentGlyph(app, win));
             filled = 2;
             if (!wide) {
