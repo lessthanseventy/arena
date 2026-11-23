@@ -29,26 +29,28 @@ const card = (id: number, title: string, status: string, rest: object = {}) => (
 })
 
 const BOARD = {
+  auto: { on: true, working: 3, cap: 4 },
+  hold: false,
+  proposals: [{ id: 4, action: 'start', ticket_id: 7, what: 'Start #7: A todo card', why: 'Next in line\nmore' }],
   tickets: [
     card(7, 'A todo card', 'todo'),
     card(12, 'The rail draws twice', 'doing', {
-      claimed_by: '%4',
       stage: 'failed',
       stage_note: 'the gate is red: e2e timed out\nmore of the log',
     }),
-    card(14, 'A pane for the board', 'doing', { claimed_by: '%5', claimed_at: '2026-11-21T10:00:00Z' }),
-    card(15, 'Keys under a box', 'review', {
-      claimed_by: '%6',
-      claimed_at: '2026-11-21T11:00:00Z',
-      stage: 'verifying',
-    }),
+    card(360, 'Released after a send-back', 'todo', { repo: 'ficciones', stage: 'failed', stage_note: 'needs the human' }),
+    card(14, 'A pane for the board', 'doing', { claimed_at: '2026-11-21T10:00:00Z' }),
+    card(15, 'Keys under a box', 'review', { claimed_at: '2026-11-21T09:00:00Z', stage: 'verifying' }),
+    card(17, 'Queued later', 'review', { submitted_at: '2026-11-21T11:30:00Z' }),
+    card(18, 'Queued first', 'review', { repo: 'tlon', submitted_at: '2026-11-21T11:10:00Z' }),
     card(16, 'Which colour is the rail', 'doing', {
-      claimed_by: '%9',
       claimed_at: '2026-11-21T09:00:00Z',
-      ask: { id: 3, question: 'Blue or green?', options: ['Blue', 'Green'], asked_at: '2026-11-21T11:48:00Z' },
+      ask: { id: 3, question: 'Blue or green?\nmore', options: ['Blue', 'Green'], asked_at: '2026-11-21T11:48:00Z' },
     }),
-    card(9, 'The strip keeps its width', 'done', { stage: 'landed', closed_at: '2026-11-21T09:00:00Z' }),
-    card(8, 'An older landing', 'done', { stage: 'landed', closed_at: '2026-11-21T08:00:00Z' }),
+    card(20, 'An epic', 'doing', { kind: 'epic' }),
+    card(9, 'Landed today', 'done', { stage: 'landed', closed_at: '2026-11-21T11:30:00Z' }),
+    card(8, 'Landed long ago', 'done', { stage: 'landed', closed_at: '2026-11-19T08:00:00Z' }),
+    card(6, 'Failed and done', 'done', { stage: 'failed' }),
   ],
 }
 
@@ -103,7 +105,7 @@ const world = (on: Parameters<Parameters<typeof test>[1]>[1], { session, boards 
   return { clock, opened, read, change: () => changes.shift()?.() }
 }
 
-test('in the orchestrator, the pane shows asks, send-backs, work and landings', async ($, on) => {
+test('in the orchestrator, the pane shows what needs the human, then landing and building', async ($, on) => {
   const { opened, read } = world(on, { session: 'orchestrator', boards: [BOARD] })
 
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -113,16 +115,51 @@ test('in the orchestrator, the pane shows asks, send-backs, work and landings', 
   const ui = await $.ui.mount(PANE)
   const row = async (text: RegExp) => (await ui.find({ type: 'Text', text }))?.text
 
-  expect(await row(/#16 asks/)).toBe('#16 asks 12m Blue or green?')
-  expect(await row(/#12/)).toBe('#12 sent back the gate is red: e2e timed out')
-  expect(await row(/#14/)).toBe('#14 doing claudes:t14-a-pane A pane for the board')
-  expect(await row(/#15/)).toBe('#15 review verifying claudes:keys Keys under a box')
-  expect(await row(/#16 doing/)).toBe('#16 doing %9 Which colour is the rail')
-  expect(await row(/#9/)).toBe('#9 landed 3h The strip keeps its width')
-  expect(await row(/#7/)).toBe(undefined)
+  expect(await row(/auto/)).toBe('auto 3/4 · hold off · landed today 1')
+  expect(await row(/^P4/)).toBe('P4 start #7 arena · A todo card — Next in line')
+  expect(await row(/^#16 arena · ask/)).toBe('#16 arena · ask 12m · Blue or green?')
+  expect(await row(/^#12/)).toBe('#12 arena · sent back · the gate is red: e2e timed out')
+  expect(await row(/^#360/)).toBe('#360 ficciones · sent back · needs the human')
+  expect(await row(/^#15/)).toBe('#15 arena · verifying · Keys under a box')
+  expect(await row(/^#18/)).toBe('#18 tlon · queued 2nd · Queued first')
+  expect(await row(/^#17/)).toBe('#17 arena · queued 3rd · Queued later')
+  expect(await row(/^#14/)).toBe('#14 arena · 2h · A pane for the board')
+  expect(await row(/say go/)).toBe('say go: babylon go 4 · go all, in a plain terminal')
+  expect(await row(/^#20/)).toBe(undefined)
+  expect(await row(/^#6 /)).toBe(undefined)
 
-  const all = await ui.findAll({ type: 'Text', text: /^#/ })
-  expect(all.map(one => one.text?.split(' ')[0])).toEqual(['#16', '#12', '#15', '#14', '#16', '#9', '#8'])
+  const all = await ui.findAll({ type: 'Text', text: /^[#P]\d+ / })
+  expect(all.map(one => one.text?.split(' ')[0])).toEqual(['P4', '#16', '#12', '#360', '#15', '#18', '#17', '#14'])
+  await ui.unmount()
+})
+
+test('an empty board says nothing needs the human', async ($, on) => {
+  world(on, { session: 'orchestrator', boards: [{ tickets: [card(7, 'A todo card', 'todo')] }] })
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(PANE)
+
+  expect(await ui.find({ type: 'Text', text: 'nothing needs you' })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /say go/ })).toBe(undefined)
+  await ui.unmount()
+})
+
+test('landing and building show five rows each, then how many more', async ($, on) => {
+  const many = Array.from({ length: 7 }, (_, i) => i)
+  const board = {
+    tickets: [
+      ...many.map(i => card(100 + i, `Building ${i}`, 'doing', { claimed_at: `2026-11-21T10:0${i}:00Z` })),
+      ...many.map(i => card(200 + i, `Landing ${i}`, 'review', { submitted_at: `2026-11-21T11:0${i}:00Z` })),
+    ],
+  }
+  world(on, { session: 'orchestrator', boards: [board] })
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(PANE)
+
+  expect((await ui.findAll({ type: 'Text', text: /^#1\d\d / })).length).toBe(5)
+  expect((await ui.findAll({ type: 'Text', text: /^#2\d\d / })).length).toBe(5)
+  expect((await ui.findAll({ type: 'Text', text: '+2 more' })).length).toBe(2)
   await ui.unmount()
 })
 
@@ -134,14 +171,14 @@ test('the pane is drawn again when the board file changes, and a wait grows by t
   const ui = await $.ui.mount(PANE)
 
   await clock.advance(60_000)
-  expect((await ui.find({ type: 'Text', text: /#16 asks/ }))?.text).toBe('#16 asks 13m Blue or green?')
+  expect((await ui.find({ type: 'Text', text: /^#16/ }))?.text).toBe('#16 arena · ask 13m · Blue or green?')
   expect(read.length).toBe(2)
 
   change()
   await clock.settle()
   expect(read.length).toBe(3)
-  expect((await ui.find({ type: 'Text', text: /#14/ }))?.text).toBe('#14 landed 1m A pane for the board')
-  expect(await ui.find({ type: 'Text', text: /#16/ })).toBe(undefined)
+  expect(await ui.find({ type: 'Text', text: /^#16/ })).toBe(undefined)
+  expect((await ui.find({ type: 'Text', text: /landed today/ }))?.text).toBe('auto off · hold off · landed today 1')
   await ui.unmount()
 })
 
@@ -154,11 +191,11 @@ test('a read of the board that fails leaves the pane as it was, and the next cha
 
   change()
   await clock.settle()
-  expect((await ui.find({ type: 'Text', text: /#14/ }))?.text).toBe('#14 doing claudes:t14-a-pane A pane for the board')
+  expect((await ui.find({ type: 'Text', text: /^#14/ }))?.text).toBe('#14 arena · 2h · A pane for the board')
 
   change()
   await clock.settle()
-  expect((await ui.find({ type: 'Text', text: /#14/ }))?.text).toBe('#14 landed A pane for the board')
+  expect(await ui.find({ type: 'Text', text: /^#14/ })).toBe(undefined)
   await ui.unmount()
 })
 

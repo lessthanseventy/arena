@@ -5,70 +5,148 @@ import type { Feed, Row } from '../types'
 
 const PANE = 'board-feed'
 const ORCHESTRATOR = 'orchestrator'
-const LANDED = 10
-const NONE: Feed = { asks: [], sentBack: [], running: [], landed: [] }
+const CAP = 5
+const NONE: Feed = { move: [], landing: [], building: [], landing_more: 0, building_more: 0, status: '' }
 
-const feed = atom({ plugin: 'arena', key: 'feed' } as const, NONE, { shape: 'feed-1' })
+const feed = atom({ plugin: 'arena', key: 'feed' } as const, NONE, { shape: 'feed-2' })
 const now = atom({ plugin: 'arena', key: 'now' } as const, 0)
+
+const REPO_COLORS: Record<string, string> = {
+  arena: '#5fafd7',
+  babylon: '#d7af5f',
+  tlon: '#87d787',
+  ficciones: '#d787d7',
+}
+const repoColor = (repo: string) => REPO_COLORS[repo] ?? '#a8a8a8'
 
 type Ask = { question: string; asked_at?: string }
 type Card = {
   id: number
   title: string
   status: string
+  kind?: string
   repo?: string | null
-  claimed_by?: string | null
   stage?: string | null
   stage_note?: string
   claimed_at?: string | null
+  submitted_at?: string | null
   closed_at?: string | null
   ask?: Ask | null
 }
+type Proposal = { id: number; action: string; ticket_id?: number | null; what: string; why?: string }
+type Board = {
+  tickets: Card[]
+  proposals?: Proposal[]
+  hold?: boolean
+  auto?: { on: boolean; working: number; cap: number }
+}
 
 const time = (iso?: string | null) => (iso ? Date.parse(iso) : undefined)
-const newest = (a: Row, b: Row) => (b.at ?? 0) - (a.at ?? 0) || b.id - a.id
-const lastClaimed = (a: Card, b: Card) => (time(b.claimed_at) ?? 0) - (time(a.claimed_at) ?? 0)
 const line = (text: string) => text.split('\n')[0] ?? ''
+const byTime = (at: (card: Card) => number | undefined) => (a: Card, b: Card) =>
+  (at(a) ?? 0) - (at(b) ?? 0) || a.id - b.id
+const ordinal = (n: number) => `${n}${['th', 'st', 'nd', 'rd'][n % 100 > 10 && n % 100 < 14 ? 0 : n % 10] ?? 'th'}`
+const RUNNING = ['verifying', 'reviewing']
 
-/** The feed's rows from the board file's text; `windows` names each holding pane's window. */
-export const rows = (text: string, windows: Record<string, string>): Feed => {
-  const cards = (JSON.parse(text) as { tickets: Card[] }).tickets
-  const working = cards.filter(card => card.status === 'doing' || card.status === 'review')
-  const isSentBack = (card: Card) => card.status === 'doing' && card.stage === 'failed'
-  const holder = (card: Card) =>
-    card.claimed_by ? (windows[card.claimed_by] ?? card.claimed_by) : 'nobody'
+const capped = (list: Row[]) => ({ shown: list.slice(0, CAP), more: Math.max(0, list.length - CAP) })
+
+/** The feed's rows from the board file's text, as of `at_now`. */
+export const rows = (text: string, at_now: number): Feed => {
+  const board = JSON.parse(text) as Board
+  const cards = board.tickets.filter(card => card.kind !== 'epic')
+  const repoOf = (card: Card) => card.repo ?? ''
+  const byId = new Map(cards.map(card => [card.id, card]))
+
+  const proposals: Row[] = (board.proposals ?? []).map(proposal => {
+    const card = proposal.ticket_id ? byId.get(proposal.ticket_id) : undefined
+
+    return {
+      label: `P${proposal.id}`,
+      pre: card ? `${proposal.action} #${card.id}` : proposal.action,
+      repo: card ? repoOf(card) : '',
+      mid: '',
+      text: card?.title ?? line(proposal.what),
+      why: proposal.why ? line(proposal.why) : undefined,
+      tone: 'move',
+    }
+  })
+  const asks: Row[] = cards
+    .filter(card => card.ask)
+    .sort(byTime(card => time(card.ask?.asked_at)))
+    .map(card => ({
+      label: `#${card.id}`,
+      repo: repoOf(card),
+      mid: 'ask',
+      text: line(card.ask?.question ?? ''),
+      at: time(card.ask?.asked_at),
+      tone: 'move',
+    }))
+  const sentBack: Row[] = cards
+    .filter(card => card.stage === 'failed' && card.status !== 'done')
+    .map(card => ({
+      label: `#${card.id}`,
+      repo: repoOf(card),
+      mid: 'sent back',
+      text: line(card.stage_note ?? '') || card.title,
+      tone: 'failed',
+    }))
+
+  // board.json carries no queue order: the pipeline takes a repo's tickets in submitted order, so
+  // submitted_at stands for it, and claimed_at for a ticket not yet stamped.
+  const queue = cards
+    .filter(card => card.status === 'review' && card.stage !== 'failed')
+    .sort(
+      (a, b) =>
+        Number(RUNNING.includes(b.stage ?? '')) - Number(RUNNING.includes(a.stage ?? '')) ||
+        byTime(card => time(card.submitted_at) ?? time(card.claimed_at))(a, b),
+    )
+  const landing: Row[] = queue.map((card, index) => ({
+    label: `#${card.id}`,
+    repo: repoOf(card),
+    mid: RUNNING.includes(card.stage ?? '') ? (card.stage ?? '') : `queued ${ordinal(index + 1)}`,
+    text: card.title,
+    tone: RUNNING.includes(card.stage ?? '') ? 'running' : 'queued',
+  }))
+  const building: Row[] = cards
+    .filter(card => card.status === 'doing' && card.stage !== 'failed' && !card.ask)
+    .sort(byTime(card => time(card.claimed_at)))
+    .map(card => ({
+      label: `#${card.id}`,
+      repo: repoOf(card),
+      mid: '',
+      text: card.title,
+      at: time(card.claimed_at),
+      tone: 'plain',
+    }))
+
+  const midnight = new Date(at_now).setHours(0, 0, 0, 0)
+  const landed = cards.filter(card => card.stage === 'landed' && (time(card.closed_at) ?? 0) >= midnight).length
+  const auto = board.auto
+  const status = [
+    auto?.on ? `auto ${auto.working}/${auto.cap}` : 'auto off',
+    `hold ${board.hold ? 'on' : 'off'}`,
+    `landed today ${landed}`,
+  ].join(' · ')
+
+  const move = [...proposals, ...asks, ...sentBack]
+  const lands = capped(landing)
+  const builds = capped(building)
 
   return {
-    asks: cards
-      .flatMap(card =>
-        card.ask
-          ? [{ id: card.id, lead: 'asks', text: line(card.ask.question), at: time(card.ask.asked_at) }]
-          : [],
-      )
-      .sort(newest),
-    sentBack: working
-      .filter(isSentBack)
-      .map(card => ({ id: card.id, lead: 'sent back', text: line(card.stage_note ?? '') || card.title })),
-    running: working
-      .filter(card => !isSentBack(card))
-      .sort(lastClaimed)
-      .map(card => ({
-        id: card.id,
-        lead: [card.status, card.stage, holder(card)].filter(Boolean).join(' '),
-        text: card.title,
-      })),
-    landed: cards
-      .filter(card => card.stage === 'landed')
-      .map(card => ({ id: card.id, lead: 'landed', text: card.title, at: time(card.closed_at) }))
-      .sort(newest)
-      .slice(0, LANDED),
+    move,
+    landing: lands.shown,
+    building: builds.shown,
+    landing_more: lands.more,
+    building_more: builds.more,
+    status,
+    go: board.proposals?.[0]?.id,
   }
 }
 
 const ago = (at: number | undefined, at_now: number) => {
   if (at === undefined || at_now === 0) return ''
   const minutes = Math.max(0, Math.floor((at_now - at) / 60_000))
-  return minutes < 60 ? ` ${minutes}m` : ` ${Math.floor(minutes / 60)}h`
+  return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h`
 }
 
 export const register: Register = on => {
@@ -89,12 +167,8 @@ export const register: Register = on => {
 
     const load = async () => {
       const text = await $.fs.read(`${dir}/board.json`)
-      const panes = await tmux('list-panes', '-a', '-F', '#{pane_id} #{session_name}:#{window_name}')
-      const windows = Object.fromEntries(
-        panes.split('\n').map(one => [one.split(' ')[0], one.slice(one.indexOf(' ') + 1)]),
-      )
       const read_at = await $.clock.now()
-      await update($, feed, () => rows(text, windows))
+      await update($, feed, () => rows(text, read_at))
       await update($, now, () => read_at)
     }
 
@@ -123,30 +197,48 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
-    const { asks, sentBack, running, landed } = await read($, feed)
+    const { move, landing, building, landing_more, building_more, status, go } = await read($, feed)
     const at_now = await read($, now)
-    const section = (title: string, list: Row[]) =>
+
+    const item = (row: Row) => {
+      const mid = [row.mid, ago(row.at, at_now)].filter(Boolean).join(' ')
+      const color = row.tone === 'move' ? 'warning' : row.tone === 'failed' ? 'error' : undefined
+
+      return (
+        <Text wrap="truncate-end" color={color} dimColor={row.tone === 'queued'} bold={row.tone === 'running'}>
+          <Text bold>{row.label}</Text>
+          {row.pre ? ` ${row.pre}` : ''}
+          {row.repo ? <Text color={repoColor(row.repo)}> {row.repo}</Text> : ''}
+          {mid ? ` · ${mid}` : ''} · {row.text}
+          {row.why ? ` — ${row.why}` : ''}
+        </Text>
+      )
+    }
+    const more = (n: number) => n > 0 && <Text dimColor>+{n} more</Text>
+    const section = (title: string, list: Row[], extra: number, color?: 'warning') =>
       list.length > 0 && (
         <Box flexDirection="column">
-          <Text dimColor>{title}</Text>
-          {list.map(row => (
-            <Text wrap="truncate-end">
-              #{row.id} {row.lead}
-              {ago(row.at, at_now)} {row.text}
-            </Text>
-          ))}
+          <Text bold color={color}>
+            {title}
+          </Text>
+          {list.map(item)}
+          {more(extra)}
         </Box>
       )
 
     return (
       <Box flexDirection="column" gap={1}>
-        {asks.length + sentBack.length + running.length + landed.length === 0 && (
-          <Text dimColor>Nothing on the board.</Text>
-        )}
-        {section('Waiting on you', asks)}
-        {section('Sent back', sentBack)}
-        {section('Doing and in review', running)}
-        {section('Landed', landed)}
+        <Text dimColor>{status}</Text>
+        <Box flexDirection="column">
+          <Text bold color="warning">
+            Your move
+          </Text>
+          {move.length === 0 && <Text dimColor>nothing needs you</Text>}
+          {move.map(item)}
+          {go !== undefined && <Text dimColor>say go: babylon go {go} · go all, in a plain terminal</Text>}
+        </Box>
+        {section('Landing', landing, landing_more)}
+        {section('Building', building, building_more)}
       </Box>
     )
   })

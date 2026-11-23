@@ -1,6 +1,25 @@
-export type Row = { id: number; lead: string; text: string; at?: number }
+export type Tone = 'move' | 'failed' | 'running' | 'queued' | 'plain'
 
-export type Feed = { asks: Row[]; sentBack: Row[]; running: Row[]; landed: Row[] }
+export type Row = {
+  label: string
+  pre?: string
+  repo: string
+  mid: string
+  text: string
+  why?: string
+  at?: number
+  tone: Tone
+}
+
+export type Feed = {
+  move: Row[]
+  landing: Row[]
+  building: Row[]
+  landing_more: number
+  building_more: number
+  status: string
+  go?: number
+}
 
 declare module 'claude-code' {
   interface PluginState {
