@@ -1052,7 +1052,7 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
     const lead: []const u8 = switch (line.kind) {
         .item => "▌ ",
         .buttons, .refused => "▌     ",
-        .chips => "  ",
+        .landing_chips, .building_chips => "  ",
         else => "",
     };
     if (lead.len > 0 and room > cellCount(lead)) {
@@ -1064,29 +1064,93 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
     bold.flags.bold = true;
     const style: vt.Style = switch (line.kind) {
         .move_head => bold,
-        .head => blk: {
-            var strong: vt.Style = .{};
+        .landing_head => blk: {
+            var strong = ink(app, "violet", 5);
             strong.flags.bold = true;
             break :blk strong;
         },
+        .building_head => ink(app, "amber", 4),
         .quiet, .more, .landed, .buttons => dim,
         .refused => ink(app, "emberdim", 1),
-        .item, .chips => .{},
+        .item, .landing_chips, .building_chips => .{},
     };
-    try pen.set(w, style, null);
-    const picked = if (app.feedFocused()) app.feedPick(f) else null;
-    const on = picked orelse return fitted(w, line.text, room);
-    if (on.line != row) return fitted(w, line.text, room);
+    if (room == 0) return;
     // the pick's cells lit: the whole line of a Your move item, a ticket's chip of its own
-    const pre = clip(line.text, on.at);
-    const mid = if (on.w == 0) line.text[pre.len..] else clip(line.text[pre.len..], on.w);
-    const pre_w = @min(cellCount(pre), room);
-    try fitted(w, pre, pre_w);
-    try pen.set(w, chip(app), null);
-    const mid_w = @min(cellCount(mid), room - pre_w);
-    try fitted(w, mid, mid_w);
+    var lit_from: usize = 0;
+    var lit_to: usize = 0;
+    if (if (app.feedFocused()) app.feedPick(f) else null) |on| if (on.line == row) {
+        lit_from = clip(line.text, on.at).len;
+        lit_to = lit_from + (if (on.w == 0) line.text.len - lit_from else clip(line.text[lit_from..], on.w).len);
+    };
+    const cut = cellCount(line.text) > room;
+    const avail = if (cut) room - 1 else room;
+    var used: usize = 0;
+    var at: usize = 0;
+    while (at < line.text.len and used < avail) {
+        const run = feedRun(app, line.kind, line.text, at, style);
+        var end = run.end;
+        var run_style = run.style;
+        if (lit_from > at) end = @min(end, lit_from);
+        if (at >= lit_from and at < lit_to) {
+            end = @min(end, lit_to);
+            run_style = chip(app);
+        }
+        const text = clip(line.text[at..end], avail - used);
+        if (text.len == 0) break;
+        try pen.set(w, run_style, null);
+        try w.writeAll(text);
+        used += cellCount(text);
+        at += text.len;
+    }
     try pen.set(w, style, null);
-    try fitted(w, line.text[pre.len + mid.len ..], room - pre_w - mid_w);
+    if (cut) try w.writeAll("…");
+    for (used + @intFromBool(cut)..room) |_| try w.writeAll(" ");
+}
+
+/// The run of one style that starts at byte `at` of a feed line: all of it, but for the chips of
+/// landing and building, whose ticket number, repo, age and stage word each have a style of
+/// their own. The stage word is coloured as the board's cards colour it.
+fn feedRun(app: *const App, kind: feed.Kind, text: []const u8, at: usize, base: vt.Style) struct { end: usize, style: vt.Style } {
+    if (kind != .landing_chips and kind != .building_chips) return .{ .end = text.len, .style = base };
+    if (text[at] == ' ') return .{ .end = std.mem.indexOfNonePos(u8, text, at, " ") orelse text.len, .style = .{} };
+    // a chip's words, counted from where the run of three spaces before it ends
+    var idx: usize = 0;
+    var failed = false;
+    var pos: usize = 0;
+    while (true) {
+        const end = std.mem.indexOfScalarPos(u8, text, pos, ' ') orelse text.len;
+        if (idx == 0) failed = std.mem.eql(u8, text[pos..end], "✗");
+        if (pos == at) {
+            const word = text[pos..end];
+            return .{ .end = end, .style = feedWord(app, kind, word, idx, failed) };
+        }
+        const next = std.mem.indexOfNonePos(u8, text, end, " ") orelse text.len;
+        idx = if (next - end >= 3) 0 else idx + 1;
+        pos = next;
+    }
+}
+
+fn feedWord(app: *const App, kind: feed.Kind, word: []const u8, idx: usize, failed: bool) vt.Style {
+    const dim = ink(app, "dim", 8);
+    const error_ink = ink(app, "emberdim", 1);
+    const first = @intFromBool(failed);
+    if (idx < first) return error_ink;
+    if (idx == first) return if (failed) error_ink else ink(app, "amber", 4);
+    if (idx == first + 1 or word[0] == '+' or isAge(word)) return dim;
+    if (failed) return error_ink;
+    if (kind == .landing_chips) {
+        const stage = stageStyle(app, word);
+        return if (stage) |s| s else dim;
+    }
+    return if (std.mem.eql(u8, word, "▲")) ink(app, "amber", 4) else dim;
+}
+
+/// A ticket's age (`3h`) or its place in the queue (`2nd`).
+fn isAge(word: []const u8) bool {
+    const digits = std.mem.indexOfNone(u8, word, "0123456789") orelse return false;
+    return digits > 0 and (std.mem.eql(u8, word[digits..], "m") or std.mem.eql(u8, word[digits..], "h") or
+        std.mem.eql(u8, word[digits..], "d") or std.mem.eql(u8, word[digits..], "st") or
+        std.mem.eql(u8, word[digits..], "nd") or std.mem.eql(u8, word[digits..], "rd") or std.mem.eql(u8, word[digits..], "th"));
 }
 
 /// The orchestrator's column with no window of its in it: its head, and while it is off, how to
@@ -1718,6 +1782,13 @@ fn stageOf(app: *const App, card: *const tickets.Card) ?struct { style: vt.Style
     return .{ .style = ink(app, "dim", 8), .glyph = 0, .word = s };
 }
 
+/// The colour the board gives a pipeline stage's word, none for one it leaves dim.
+fn stageStyle(app: *const App, word: []const u8) ?vt.Style {
+    if (std.mem.eql(u8, word, "queued")) return ink(app, "violet", 5);
+    if (std.mem.eql(u8, word, "verifying") or std.mem.eql(u8, word, "reviewing")) return ink(app, "amber", 4);
+    return null;
+}
+
 /// What has a card's footer to itself: the Claude holding it or, in review, where the pipeline
 /// has it. Nothing has a card nobody holds.
 fn cardWho(card: *const tickets.Card) enum { none, holder, stage } {
@@ -1874,6 +1945,65 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
     try w.writeAll(app.out.items);
     app.out.clearRetainingCapacity();
     try w.writeAll("\x1b[?2026l");
+}
+
+fn sgr(buf: []u8, style: vt.Style) ![]const u8 {
+    var out: Writer = .fixed(buf);
+    var pen: Pen = .{};
+    try pen.set(&out, style, null);
+    return out.buffered();
+}
+
+test "the feed's headers and a landing row's stage word are drawn in their state's colour" {
+    var b = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":14,"repo":"arena","title":"a","status":"doing","claimed_by":"%3","claimed_at":"2026-11-21T10:00:00Z"},
+        \\{"id":17,"repo":"arena","title":"b","status":"review","stage":"queued","submitted_at":"2026-11-21T11:30:00Z"},
+        \\{"id":15,"repo":"babylon","title":"c","status":"review","stage":"reviewing","submitted_at":"2026-11-21T11:58:00Z"}],
+        \\"needs_you":[]}
+    );
+    defer b.deinit();
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    var f: feed.Feed = undefined;
+    feed.build(&f, &b, &.{}, 56, 40, 1795262400, 0);
+
+    var buf: [2048]u8 = undefined;
+    var pen: Pen = .{};
+    var want: [64]u8 = undefined;
+    var violet_head = ink(&app, "violet", 5);
+    violet_head.flags.bold = true;
+    const at = struct {
+        fn row(app_: *const App, f_: *const feed.Feed, pen_: *Pen, out_: []u8, i: usize) ![]const u8 {
+            var out: Writer = .fixed(out_);
+            try feedRow(app_, &out, pen_, f_, i, 56);
+            return out.buffered();
+        }
+    };
+    // row 0 is the quiet line; landing's header, its chips, building's header follow
+    const quiet = try at.row(&app, &f, &pen, &buf, 0);
+    try std.testing.expect(std.mem.indexOf(u8, quiet, "nothing needs you") != null);
+
+    pen = .{};
+    var head = try at.row(&app, &f, &pen, &buf, 1);
+    try std.testing.expect(std.mem.indexOf(u8, head, try sgr(&want, violet_head)) != null);
+    try std.testing.expect(std.mem.indexOf(u8, head, "◒ landing 2") != null);
+
+    pen = .{};
+    const chips = try at.row(&app, &f, &pen, &buf, 2);
+    const reviewing = try std.fmt.allocPrint(std.testing.allocator, "{s}reviewing", .{try sgr(&want, ink(&app, "amber", 4))});
+    defer std.testing.allocator.free(reviewing);
+    try std.testing.expect(std.mem.indexOf(u8, chips, reviewing) != null);
+    const queued = try std.fmt.allocPrint(std.testing.allocator, "{s}queued", .{try sgr(&want, ink(&app, "violet", 5))});
+    defer std.testing.allocator.free(queued);
+    try std.testing.expect(std.mem.indexOf(u8, chips, queued) != null);
+    const repo = try std.fmt.allocPrint(std.testing.allocator, "{s}babylon", .{try sgr(&want, ink(&app, "dim", 8))});
+    defer std.testing.allocator.free(repo);
+    try std.testing.expect(std.mem.indexOf(u8, chips, repo) != null);
+
+    pen = .{};
+    head = try at.row(&app, &f, &pen, &buf, 3);
+    try std.testing.expect(std.mem.indexOf(u8, head, try sgr(&want, ink(&app, "amber", 4))) != null);
+    try std.testing.expect(std.mem.indexOf(u8, head, "◐ building 1") != null);
 }
 
 test "a queued card with a question open is held, and one without is queued" {

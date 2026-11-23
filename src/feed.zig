@@ -4,7 +4,7 @@ const std = @import("std");
 const tickets = @import("board.zig");
 const Card = tickets.Card;
 
-pub const Kind = enum { move_head, quiet, item, buttons, refused, more, head, chips, landed };
+pub const Kind = enum { move_head, quiet, item, buttons, refused, more, landing_head, building_head, landing_chips, building_chips, landed };
 
 /// babylon's refusal of what was asked of a Your move item, by the item's id: said in place of
 /// its buttons.
@@ -54,7 +54,7 @@ const Part = struct {
 
     /// `chips` laid along at most `rows` lines of `width` cells, three spaces apart, then `+N`
     /// for those left over. With `ids`, each chip laid is a spot for that ticket.
-    fn flow(p: *Part, chips: []const []const u8, ids: []const u32, rows: usize, width: usize) void {
+    fn flow(p: *Part, kind: Kind, chips: []const []const u8, ids: []const u32, rows: usize, width: usize) void {
         var at: usize = 0;
         for (0..rows) |row| {
             if (at == chips.len) return;
@@ -79,7 +79,7 @@ const Part = struct {
                 cells += gap + chip;
             }
             if (last and at < chips.len) w.print("   +{d}", .{chips.len - at}) catch {};
-            p.add(.chips, false, "{s}", .{w.buffered()});
+            p.add(kind, false, "{s}", .{w.buffered()});
         }
     }
 };
@@ -160,9 +160,8 @@ pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, wi
             n += 1;
         }
         const before = f.move.n;
-        f.move.flow(chips[0..n], &.{}, 4, width -| 4);
+        f.move.flow(.buttons, chips[0..n], &.{}, 4, width -| 4);
         for (f.move.lines[before..f.move.n]) |*l| {
-            l.kind = .buttons;
             l.failed = failed;
         }
     }
@@ -214,7 +213,7 @@ fn landing(p: *Part, board: *const tickets.Board, width: usize, epoch: i64) void
             return handedIn(a) < handedIn(z) or (handedIn(a) == handedIn(z) and a.id < z.id);
         }
     }.before);
-    p.add(.head, false, "◒ landing {d}", .{n});
+    p.add(.landing_head, false, "◒ landing {d}", .{n});
     var chips: [64][]const u8 = undefined;
     var bufs: [64][80]u8 = undefined;
     var ids: [64]u32 = undefined;
@@ -230,7 +229,7 @@ fn landing(p: *Part, board: *const tickets.Board, width: usize, epoch: i64) void
             break :blk std.fmt.bufPrint(&bufs[i], "#{d} {s} queued {d}{s}", .{ card.id, card.repo orelse "", queued, ordinal(queued) }) catch "";
         };
     }
-    p.flow(chips[0..n], ids[0..n], 2, width);
+    p.flow(.landing_chips, chips[0..n], ids[0..n], 2, width);
 }
 
 fn building(p: *Part, board: *const tickets.Board, width: usize, epoch: i64) void {
@@ -253,7 +252,7 @@ fn building(p: *Part, board: *const tickets.Board, width: usize, epoch: i64) voi
             return at_a < at_z or (at_a == at_z and a.id < z.id);
         }
     }.before);
-    p.add(.head, false, "◐ building {d}", .{n});
+    p.add(.building_head, false, "◐ building {d}", .{n});
     var chips: [64][]const u8 = undefined;
     var bufs: [64][80]u8 = undefined;
     var ids: [64]u32 = undefined;
@@ -273,7 +272,7 @@ fn building(p: *Part, board: *const tickets.Board, width: usize, epoch: i64) voi
         else
             std.fmt.bufPrint(&bufs[i], "#{d} {s} {s}", .{ card.id, repo, at })) catch "";
     }
-    p.flow(chips[0..n], ids[0..n], 2, width);
+    p.flow(.building_chips, chips[0..n], ids[0..n], 2, width);
 }
 
 fn isFailed(card: *const Card) bool {
