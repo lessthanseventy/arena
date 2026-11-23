@@ -6,17 +6,60 @@
 # @arena_claude_title, what the conversation is about, @arena_claude_said, the first line of its
 # last answer, @arena_claude_tokens, its context in tokens, @arena_claude_agents, its subagents in
 # the background, @arena_claude_background, what its shells there are doing, and
-# @arena_claude_branch, the git branch it works on. $1 is the
-# event (prompt | tool | stop | stopfailure | waiting |
+# @arena_claude_branch, the git branch it works on. The same state, as idle |
+# working | done | waiting, goes to the session's record at $XDG_RUNTIME_DIR/sessions/<id>.json,
+# which the desktop shell, `session` and babylon's meter read. $1 is the
+# event (start | prompt | tool | stop | stopfailure | waiting |
 # end), the hook's JSON is on stdin. A hook must never fail a turn: every miss is silent and the
 # exit is 0. Without jq the text is left out.
 pane=${TMUX_PANE:-}
-[ -n "$pane" ] || exit 0
+# a session outside tmux still has its record; only the pane options are skipped
+[ -n "$pane" ] || tmux() { return 0; }
 json=$(cat)
 now=$(date +%s)
 # when the session or one of its subagents last did anything, for arena to tell a quiet one
 [ "${1:-}" = end ] || tmux set -p -t "$pane" @arena_claude_at "$now" 2>/dev/null
 opt() { tmux set -p -t "$pane" "$1" "$2" 2>/dev/null; }
+sessions="${XDG_RUNTIME_DIR:-/tmp}/sessions"
+sid=$(printf '%s' "$json" | jq -r '.session_id // empty' 2>/dev/null)
+case $sid in "" | */* | .*) sid= ;; esac
+# The session's record, in state $1 (idle | working | done | waiting). `session set` writes goal
+# and next into the same file, so it is read and written under the lock or they are lost.
+record() {
+	[ -n "$sid" ] || return 0
+	(
+		cwd=$(printf '%s' "$json" | jq -r '.cwd // empty')
+		top=$(git -C "${cwd:-.}" rev-parse --show-toplevel 2>/dev/null) || top=$cwd
+		[ -d "$sessions" ] || mkdir -m 700 "$sessions" 2>/dev/null
+		exec 9>"$sessions/.$sid.lock" && flock -w 2 9 2>/dev/null
+		prev=$(jq -c . "$sessions/$sid.json" 2>/dev/null)
+		[ -n "$prev" ] || prev='{}'
+		tmp=$(mktemp "$sessions/.$sid.XXXXXX") || exit 0
+		if printf '%s' "$json" | jq --argjson prev "$prev" --arg event "${event:-}" --arg state "$1" \
+			--arg repo "${top##*/}" --arg socket "${TMUX%%,*}" --arg pane "$pane" --argjson now "$now" '
+			def short: gsub("\\s+"; " ") | if length > 72 then .[:71] + "…" else . end;
+			def said: gsub("\\s+"; " ") | capture("^ ?<cross-session-message(?<attrs>[^>]*)>(?<text>.*?)(</cross-session-message>|$)") as $m
+				| ($m.attrs | capture("from-name=\"(?<n>[^\"]+)\"").n // "another session") + ": " + ($m.text | sub(" $"; ""))
+				| short;
+			def doing: (.tool_input // {}) as $t | .tool_name as $tool
+				| if $t.description then $t.description
+					elif $t.file_path then "\($tool) \($t.file_path | sub(".*/"; ""))"
+					elif ($t.pattern // $t.url // $t.command) then "\($tool) \($t.pattern // $t.url // $t.command)"
+					else $tool end | tostring | short;
+			. as $in | { id: $in.session_id, state: $state,
+			  since: (if $prev.state == $state then $prev.since else $now end),
+			  at: $now, cwd: $in.cwd, repo: $repo, socket: $socket, pane: $pane,
+			  said: (if $event == "prompt" then ($in.prompt // "" | said // short) else $prev.said end),
+			  doing: (if $event == "tool" then ($in | doing) elif $event == "prompt" then null else $prev.doing end),
+			  goal: $prev.goal, next: $prev.next }
+			' >"$tmp" 2>/dev/null; then
+			mv -f "$tmp" "$sessions/$sid.json"
+		else
+			rm -f "$tmp"
+		fi
+	)
+}
+event=${1:-}
 # A line of the hook's JSON, picked out by jq, at most 80 characters. arena reads it between tabs.
 text() { command -v jq >/dev/null && printf '%s' "$json" | jq -r "$1"' | tostring | gsub("\t"; " ") | .[0:80]' 2>/dev/null; }
 transcript=$(printf '%s' "$json" | jq -r '.transcript_path // ""' 2>/dev/null)
@@ -106,6 +149,10 @@ keep() {
 # The JSON of `running` with $1, a jq filter on the hook's JSON, done to it as $list.
 change() { printf '%s' "$json" | jq -c --argjson list "$(running)" "$1" 2>/dev/null; }
 case ${1:-} in
+start)
+	[ -e "$sessions/$sid.json" ] || record idle
+	exit 0
+	;;
 # A shell or subagent finishing comes as a prompt, which nobody typed: it is taken off the list.
 prompt)
 	mark=working
@@ -114,6 +161,7 @@ prompt)
 			$list | map(select(.id as $id | $done | index($id) | not))') && keep "$l"
 		[ "$(tmux show -pqv -t "$pane" @arena_claude 2>/dev/null)" = "$mark" ] || opt @arena_claude_since "$now"
 		opt @arena_claude "$mark"
+		record working
 		exit 0
 	fi
 	opt @arena_claude_began "$now"
@@ -169,6 +217,7 @@ stop | stopfailure)
 	branch
 	;;
 end)
+	[ -z "$sid" ] || rm -f "$sessions/$sid.json" "$sessions/$sid.meter" "$sessions/.$sid.lock"
 	for o in @arena_claude @arena_claude_since @arena_claude_prompt @arena_claude_doing @arena_claude_title \
 		@arena_claude_topic @arena_claude_prompts @arena_claude_said @arena_claude_tokens @arena_claude_agents @arena_claude_background \
 		@arena_claude_running \
@@ -182,4 +231,5 @@ end)
 esac
 [ "$(tmux show -pqv -t "$pane" @arena_claude 2>/dev/null)" = "$mark" ] || opt @arena_claude_since "$now"
 opt @arena_claude "$mark"
+case $mark in background) record working ;; *) record "$mark" ;; esac
 exit 0

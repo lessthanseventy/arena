@@ -1,6 +1,7 @@
 {
   "modules": ["./board-feed.tsx"],
   "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/claude-state.sh\" start" }] }],
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/claude-state.sh\" prompt" }] }],
     "PreToolUse": [
       { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/claude-state.sh\" tool" }] },
@@ -18,6 +19,7 @@
         "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/ask-reminder.sh\"" }]
       }
     ],
+    "PostToolUseFailure": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/claude-state.sh\" tool" }] }],
     "Stop": [
       {
         "hooks": [

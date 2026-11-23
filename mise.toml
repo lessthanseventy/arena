@@ -30,6 +30,7 @@ run = [
   "zsh test/inbox-hook.zsh",
   "zsh test/tmux-guard.zsh",
   "zsh test/ask-reminder.zsh",
+  "zsh test/session-record.zsh",
 ]
 
 [tasks.mod]
