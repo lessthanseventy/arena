@@ -196,11 +196,28 @@ fn modeCorner(app: *const App, w: *Writer, pen: *Pen) !void {
 
 /// In normal mode the row of dots is the keys that can be pressed, written out.
 fn normalKeys(app: *const App, w: *Writer, pen: *Pen) !void {
+    try keysLine(app, w, pen, normal_keys);
+}
+
+fn keysLine(app: *const App, w: *Writer, pen: *Pen, text: []const u8) !void {
     const ox = app.term_w - app.view_w;
-    const start = (app.view_w -| cellCount(normal_keys)) / 2;
+    const start = (app.view_w -| cellCount(text)) / 2;
     try w.print("\x1b[{d};{d}H", .{ app.view_h + 1, ox + start + 1 });
     try pen.set(w, ink(app, "dim", 8), null);
-    try w.writeAll(clip(normal_keys, app.view_w));
+    try w.writeAll(clip(text, app.view_w));
+}
+
+const type_hint = "Ctrl+Space / i to type";
+
+/// The row under the overview and the board: no dots there, but the mode is shown all the same.
+fn modeRow(app: *const App, w: *Writer) !void {
+    const ox = app.term_w - app.view_w;
+    var pen: Pen = .{};
+    try w.print("\x1b[{d};{d}H", .{ app.view_h + 1, ox + 1 });
+    try pen.set(w, .{}, null);
+    for (0..app.view_w) |_| try w.writeAll(" ");
+    try modeCorner(app, w, &pen);
+    if (app.normal) try keysLine(app, w, &pen, type_hint);
 }
 
 /// With the pointer on the row of dots, each window's number and name in their place, the one in
@@ -1995,8 +2012,10 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
     var cursor: ?Cursor = null;
     if (app.overview) |spot| {
         try overview(app, w, spot);
+        try modeRow(app, w);
     } else if (app.board_view) |view| {
         try boardView(app, w, view);
+        try modeRow(app, w);
         // the orchestrator's window beside it, once arena is in its session
         if (app.sideShown()) {
             cursor = try strip(app, w, app.cur().?, 0, what);

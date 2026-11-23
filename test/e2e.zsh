@@ -1161,6 +1161,7 @@ starting() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == orchestrator ]] }
 check "o on the board starts the orchestrator when it is not running" await starting
 key M-b
 check "the board opened in the meantime" see ' board  every'
+
 key M-b
 check "and closed" gone ' board  every'
 inner new-session -d -s orchestrator -n orch sh
@@ -1265,6 +1266,7 @@ key -l 'echo nojkdu'
 key Enter
 zselect -t 50
 check "Ctrl+Space makes that column normal: none of it reaches the pane" eval '! said orchestrator:orch nojkdu'
+check "home in normal mode shows NORMAL and how to type" see '^NORMAL .*Ctrl\+Space / i to type'
 key -l i
 check "and i is insert again" gone '^NORMAL'
 kill -STOP $server
@@ -1300,6 +1302,7 @@ key C-Space
 see '^NORMAL .*b home'
 key b
 check "b in normal mode goes home: the orchestrator's column beside the board, with the keys" await orch_lit
+
 check "in insert" hides '^NORMAL'
 await in_session orchestrator
 inner kill-session -t '=orchestrator'
