@@ -3941,7 +3941,7 @@ pub const App = struct {
         } else app.normal = true;
     }
 
-    /// An arrow is ESC, `[` or `O`, and a letter; anything else, a bare Esc included, is a byte.
+    /// An arrow is ESC, `[` or `O`, and one more byte; anything else, a bare Esc included, is a byte.
     fn keyLen(text: []const u8) usize {
         return if (text.len >= 3 and text[0] == 0x1b and (text[1] == '[' or text[1] == 'O')) 3 else 1;
     }
