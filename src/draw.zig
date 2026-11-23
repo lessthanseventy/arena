@@ -1396,8 +1396,10 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         try w.print("\x1b[1;{d}H…", .{at + 1});
         end = at + 1;
     }
-    const hint = "? keys · esc close";
-    if (end + 2 + cellCount(hint) + 1 <= right) {
+    const hint = for ([_][]const u8{ "? keys · esc close", "? keys" }) |text| {
+        if (end + 2 + cellCount(text) + 1 <= right) break text;
+    } else "";
+    if (hint.len > 0) {
         try pen.set(w, ink(app, "dim", 8), null);
         try w.print("\x1b[1;{d}H{s}", .{ right - 1 - cellCount(hint), hint });
     }

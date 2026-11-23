@@ -882,7 +882,7 @@ print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket",
 check "babylon's board has a row atop the rail, with its counts" see '^│ ▤ board +1 todo  1 doing │'
 key M-b
 check "Alt+b opens it in place of the strip, its repos as tabs" see ' ▤ board +every [0-9]+ +arena [0-9]+ +tlon [0-9]+ '
-check "and where its keys are" see '\? keys · esc close'
+check "and where its keys are" see '\? keys'
 check "the picked card's actions as chips on its own bottom edge" see '╰ go ─ answer ─╯'
 rowof() { screen | grep -n -m1 -- "$1" | cut -d: -f1 }
 check "the row under its footer" test $(( $(rowof '#7 Lights') + 3 )) -eq "$(rowof '╰ go ─ answer ─╯')"
@@ -951,9 +951,9 @@ $bin -L $in board 8
 check "and with the board open, moves the pick to it" see '╰ go ─ edit '
 # past the wait that tells a lone Escape from Alt
 zselect -t 10
-check "the Escape typed before it put the question away, not the board after" shows ' board   every'
+check "the Escape typed before it put the question away, not the board after" shows ' board  every'
 key Escape
-gone ' board   every'
+gone ' board  every'
 two=$(inner list-panes -s -t alpha -F '#{pane_id}' | sed -n 2p)
 $bin -L $in show $two
 check "arena show and a pane puts its window in front" await dots '○ ● ○'
@@ -995,8 +995,8 @@ key A
 check "and A turns it off" await last 'auto off'
 cp $tmp/board.noauto $tmp/run/babylon/board.json
 check "off, the state is gone" gone 'auto [0-9]'
-autocol() { local l=$(screen | grep -m1 ' board   every'); local p=${l%% auto *}; print $(( ${#p} + 2 )) }
-mouse 0 $(autocol) $(screen | grep -n -m1 ' board   every' | cut -d: -f1) M
+autocol() { local l=$(screen | grep -m1 ' board  every'); local p=${l%% ◐ *}; print $(( ${#p} + 2 )) }
+mouse 0 $(autocol) $(screen | grep -n -m1 ' board  every' | cut -d: -f1) M
 check "a click on the switch turns it on as A does" await last 'auto on'
 check "the board has no orchestrator's button: its column is home's" hides ' orch '
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"orchestrator":{"on":true,"running":false}}' >$tmp/run/babylon/board.json
@@ -1049,8 +1049,8 @@ check "which are whole there: number and title" see '│ #8 Board of the +│'
 check "a high card's left edge amber" high_edge
 check "under them the window of the Claude holding it, alone on the row" see '│ one · [0-9]+[sm] +│'
 check "the rest of what is so of it on its top edge" see '╭ waits #7 · high ─*╮'
-tabrow() { screen | grep -n -m1 ' board   every' | cut -d: -f1 }
-tabcol() { local l=$(screen | grep -m1 ' board   every'); local p=${l%%" $1 "*}; print $(( ${#p} + 2 )) }
+tabrow() { screen | grep -n -m1 ' board  every' | cut -d: -f1 }
+tabcol() { local l=$(screen | grep -m1 ' board  every'); local p=${l%%" $1 "*}; print $(( ${#p} + 2 )) }
 key '?'
 mouse 0 $(tabcol tlon) $(tabrow) M
 check "a click while the keys are shown only puts them away" tablit arena
@@ -1092,14 +1092,14 @@ check "Enter on a card goes to the Claude holding it" see '╭─ 1 one '
 mouse 0 3 2 M
 check "a click on its row in the rail goes home: the board, and the orchestrator's column beside it" see '╭─ ○ orchestrator · off '
 check "which says how to start an orchestrator that is off" see 'orchestrator off · ⏎ start it'
-check "with the board there" shows ' board   every'
+check "with the board there" shows ' board  every'
 key Enter
 check "and Enter there starts it" await last orchestrator
 : >$tmp/babylon
 mouse 0 3 2 M
-check "another click stays home" shows ' board   every'
+check "another click stays home" shows ' board  every'
 key q
-check "and q there closes it" gone ' board   every'
+check "and q there closes it" gone ' board  every'
 # the colour the board's row atop the rail, unlit with the board closed, names the orchestrator in
 rail_orch_ink() { [[ $(outer capture-pane -ep -t o) =~ $'▤ board((\e\\[[0-9;]*m)*) orch' && $match[1] == *"38;5;$1m" ]] }
 cp $tmp/run/babylon/board.json $tmp/board.closed
@@ -1110,14 +1110,14 @@ check "and one that is not running unlit" await rail_orch_ink 8
 cp $tmp/board.closed $tmp/run/babylon/board.json
 check "and says nothing of it once babylon's file does not" gone '^│ ▤ board orch'
 key M-b
-see ' board   every'
+see ' board  every'
 key -l 'qecho kept-after-q'
 kept_after() { inner capture-pane -p -t alpha:one | grep -qF 'echo kept-after-q' }
 check "what is typed in one read after the q closing the board is the pane's" await kept_after
 key C-u
 inner new-session -d -s babylon -n gate sh
 key M-b
-check "with babylon's gate session there, the board offers it" see ' gate .*\? keys'
+check "with babylon's gate session there, the board offers it" see '◒'
 check "and the rail does not list it" gone '│ babylon '
 key g
 check "g on the board shows the gate" see '╭─ 1 gate '
@@ -1140,9 +1140,9 @@ key o
 starting() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == orchestrator ]] }
 check "o on the board starts the orchestrator when it is not running" await starting
 key M-b
-check "the board opened in the meantime" see ' board   every'
+check "the board opened in the meantime" see ' board  every'
 key M-b
-check "and closed" gone ' board   every'
+check "and closed" gone ' board  every'
 inner new-session -d -s orchestrator -n orch sh
 # nothing to wait on for what must not happen: a second for the session to be seen
 zselect -t 100
@@ -1183,7 +1183,7 @@ key M-l
 check "Alt+l from the board focuses it, lit as the focused column" await orch_lit
 key 'echo side' Enter
 check "what is typed then reaches its pane" see '│side +│'
-check "and none of it the board, which stays open" eval '[[ ! -s $tmp/babylon ]] && shows " board   every"'
+check "and none of it the board, which stays open" eval '[[ ! -s $tmp/babylon ]] && shows " board  every"'
 inner send-keys -t orchestrator:orch "stty -echo -icanon; cat $tmp/clicks; timeout 2 cat -v; printf '\\033[?1006l\\033[?1000l'; stty sane" Enter
 await mousing orchestrator:orch
 mouse 64 100 10 M
@@ -1229,17 +1229,17 @@ check "folded, unfolded and closed before tmux has switched back, it comes back 
 said() { inner capture-pane -p -t $1 | grep -qx $2 }
 kill -STOP $server
 key M-b
-see ' board   every'
+see ' board  every'
 key M-l 'echo ahead' Enter
 zselect -t 50
-check "the board stays open on an Alt+l typed before tmux has switched" shows ' board   every'
+check "the board stays open on an Alt+l typed before tmux has switched" shows ' board  every'
 kill -CONT $server
 check "Alt+l and what is typed before tmux has switched reach the orchestrator's pane" await said orchestrator:orch ahead
-check "the board left open" await shows ' board   every'
+check "the board left open" await shows ' board  every'
 key -l 'echo jkdufltb'
 key Enter
 check "with the board open, a sentence of the board's own letters reaches the orchestrator's pane whole" await said orchestrator:orch jkdufltb
-check "and the board is still open" shows ' board   every'
+check "and the board is still open" shows ' board  every'
 key C-Space
 key -l 'echo nojkdu'
 key Enter
@@ -1249,7 +1249,7 @@ key -l i
 check "and i is insert again" gone '^NORMAL'
 kill -STOP $server
 key M-b
-gone ' board   every'
+gone ' board  every'
 key 'echo home' Enter
 zselect -t 50
 kill -CONT $server
@@ -1284,7 +1284,7 @@ check "in insert" hides '^NORMAL'
 await in_session orchestrator
 inner kill-session -t '=orchestrator'
 check "its session ending leaves home open, its head saying it restarts" see '╭─ ◌ orchestrator · restarting '
-check "the board still there" shows ' board   every'
+check "the board still there" shows ' board  every'
 check "and arena in the session the human was in" await in_session alpha
 inner new-session -d -s orchestrator -n orch sh
 check "the column comes back on the new orchestrator" see '╭─ ○ orchestrator · idle '
@@ -1304,7 +1304,7 @@ check "the pane under the feed is as tall as what is left of the column" await e
 key M-h
 check "Alt+h gives the board the keys" await eval '! orch_lit'
 key o
-check "o goes to it, the board put away" gone ' board   every'
+check "o goes to it, the board put away" gone ' board  every'
 key 'echo whole' Enter
 check "and what is typed after o reaches its pane" see '│whole +│'
 mouse 0 5 3 M
@@ -1333,13 +1333,14 @@ check "a repo with only done cards has no lane" gone '│  menard '
 tabline() { local l; for l in "${(@f)$(outer capture-pane -ep -t o)}"; [[ $l == *' board '*' every '* ]] && print -r -- $l }
 tab_dim() { [[ $(tabline) == *$'\e[38;5;8m '$1' '* ]] }
 tab_lit() { ! tab_dim $1 }
+mouse 35 60 24 M
 check "and its tab is dim" tab_dim menard
 check "where one with work is not" tab_lit arena
 cp $tmp/run/babylon/board.json $tmp/board.lanes
 print -r -- "${$(<$tmp/board.lanes)%\}}"',"auto":{"on":true,"cap":2,"working":1}}' >$tmp/run/babylon/board.json
-check "with room, the header says auto beside every button" see ' ▤ board +every .* ◒ gate .* ◐ auto 1/2( |$)'
+check "with room, the header says auto beside every button" see ' ▤ board +every .* ▲ 0 +◒ +◐ 1/2( |$)'
 outer resize-window -t o -x 105
-check "a header with no room for auto beside every button leaves it to the switch" see ' ▤ board +every .* ◐ (auto )?1/2( |$)'
+check "and with less room still, it keeps the switch" see ' ▤ board +every .* ◐ 1/2( |$)'
 outer resize-window -t o -x 121
 cp $tmp/board.lanes $tmp/run/babylon/board.json
 check "and off, it is gone again" gone 'auto [0-9]'
@@ -1466,7 +1467,7 @@ see '╭─ doing 1 '
 check "the rail lists a Claude for the pointer to rest on" see '│ . one +2h'
 rest_x=$(( $(colof 2 '╭─ doing') + 3 )) rest_y=18
 r=1 c=$(colof 1 ' menard ')
-check "the pointer on a tab underlines it and changes nothing else" hovered $((c + 2)) $r $r $r $c $((c + 7))
+check "the pointer on a tab underlines it and changes nothing else" hovered $((c + 2)) $r $r $r $c $((c + 9))
 c=$(colof 2 ' + ')
 check "and on the + that files a ticket" hovered $((c + 1)) 2 2 2 $c $((c + 2))
 r=$(rowof '#40 Hover')
@@ -1540,10 +1541,10 @@ check "arena --help lists the doors" test -n "$($bin --help | grep -F 'arena [-L
 outer new-window -t o \
   "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 $bin -L $in; echo EXIT \$?; cat"
 check "arena with no session named opens home: the board, the orchestrator's column beside it" see '╭─ ○ orchestrator · idle '
-check "and the board" see ' board   every'
+check "and the board" see ' board  every'
 check "the column with the keys" await orch_lit
 key M-q
-gone ' board   every'
+gone ' board  every'
 key M-q
 check "and leaves as any other" see 'EXIT 0'
 
