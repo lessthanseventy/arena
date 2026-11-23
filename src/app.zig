@@ -350,8 +350,11 @@ pub const BoardView = struct {
     help: bool = false,
     /// Opened as home: the orchestrator's column beside it while the orchestrator is not running.
     home: bool = false,
-    /// The feed's pick, by its place: Your move's items, then landing's tickets, then building's.
+    /// The feed's pick, by its place: Your move's items, then next's and auto's line, then
+    /// landing's tickets, then building's.
     pick: usize = 0,
+    /// The repo of auto's line that is lit, by its place among its caps.
+    auto_repo: usize = 0,
 
     /// Whether a box lies over the board, the keys its own.
     pub fn boxed(view: BoardView) bool {
@@ -1225,7 +1228,7 @@ pub const App = struct {
     pub fn feedOf(app: *const App, f: *feed.Feed) bool {
         const b = if (app.board) |*b| b else return false;
         const today = app.epoch - @mod(app.epoch + app.utc_offset, 86400);
-        feed.build(f, b, app.refusals.items, app.view_w -| 4, (app.view_h -| 2) / 2, app.epoch, today);
+        feed.build(f, b, app.refusals.items, app.view_w -| 4, (app.view_h -| 2) / 2, app.epoch, today, if (app.board_view) |view| view.auto_repo else 0);
         return true;
     }
 
@@ -1273,6 +1276,8 @@ pub const App = struct {
     fn feedAct(app: *App, item: feed.Item, key: []const u8) !bool {
         const b = if (app.board) |*b| b else return false;
         const named: []const u8 = if (std.mem.eql(u8, key, "\r")) "⏎" else key;
+        if (item.auto) return app.autoKey(item, key);
+        if (item.next) |at| return app.nextKey(at, key);
         const at = item.need orelse {
             if (!std.mem.eql(u8, named, "⏎")) return false;
             const id = item.ticket orelse return true;
@@ -1295,6 +1300,58 @@ pub const App = struct {
             app.dirty = true;
         }
         return true;
+    }
+
+    /// A key on auto's line: `a` turns auto on or off, `H` hold, the arrows pick a repo of its
+    /// caps and `+` `-` raise or lower the one picked, 0 pausing it. Each runs babylon as the
+    /// human, and the line is drawn again from the board once babylon has written it.
+    fn autoKey(app: *App, item: feed.Item, key: []const u8) !bool {
+        const b = if (app.board) |*b| b else return false;
+        const view = &app.board_view.?;
+        const state = b.autoState() orelse return false;
+        if (anyKey(key, &.{ "\x1b[C", "\x1bOC" })) {
+            view.auto_repo = item.repo + 1;
+        } else if (anyKey(key, &.{ "\x1b[D", "\x1bOD" })) {
+            view.auto_repo = item.repo -| 1;
+        } else if (anyKey(key, &.{"a"})) {
+            return app.runNeed("auto", &.{ "babylon", "auto", if (state.on) "off" else "on" });
+        } else if (anyKey(key, &.{"H"})) {
+            return app.runNeed("auto", &.{ "babylon", "hold", if (b.hold()) "off" else "on" });
+        } else if (anyKey(key, &.{ "+", "=", "-" })) {
+            const caps = state.repo_caps.map;
+            if (item.repo >= caps.count()) return true;
+            const cap = caps.values()[item.repo];
+            if (anyKey(key, &.{"-"}) and cap == 0) return true;
+            var arg: [96]u8 = undefined;
+            const set = std.fmt.bufPrint(&arg, "{s}={d}", .{ caps.keys()[item.repo], if (anyKey(key, &.{"-"})) cap - 1 else cap + 1 }) catch return true;
+            return app.runNeed("auto", &.{ "babylon", "auto", "--repo-cap", set });
+        } else return false;
+        app.dirty = true;
+        return true;
+    }
+
+    /// A key on a ticket of next, the `at`th: `J` and `K` move it down and up, `x` drops it from
+    /// next and `p` pins it where it is. Each goes through babylon as the human, which marks the
+    /// ticket as the human's, so the orchestrator moves it only with a proposal.
+    fn nextKey(app: *App, at: usize, key: []const u8) !bool {
+        const b = if (app.board) |*b| b else return false;
+        const plan = b.next();
+        if (at >= plan.len) return false;
+        var id: [12]u8 = undefined;
+        var place: [12]u8 = undefined;
+        const ticket = std.fmt.bufPrint(&id, "{d}", .{plan[at].ticket}) catch return true;
+        const view = &app.board_view.?;
+        if (anyKey(key, &.{"x"})) return app.runNeed("next", &.{ "babylon", "next", ticket, "--drop" });
+        if (anyKey(key, &.{"p"})) {
+            const here = std.fmt.bufPrint(&place, "{d}", .{at + 1}) catch return true;
+            return app.runNeed("next", &.{ "babylon", "next", ticket, "--at", here });
+        }
+        const down = anyKey(key, &.{"J"});
+        if (!down and !anyKey(key, &.{"K"})) return false;
+        if (if (down) at + 1 >= plan.len else at == 0) return true;
+        const to = std.fmt.bufPrint(&place, "{d}", .{if (down) at + 2 else at}) catch return true;
+        view.pick = if (down) view.pick + 1 else view.pick - 1;
+        return app.runNeed("next", &.{ "babylon", "next", ticket, "--at", to });
     }
 
     /// `argv`, run for Your move item `id` through tmux: babylon's refusal is written beside its
@@ -2528,7 +2585,10 @@ pub const App = struct {
     fn columnKey(app: *App, key: []const u8) !void {
         const view = &app.board_view.?;
         if (anyKey(key, &.{ "\x1b", "q" })) return app.closeBoard();
-        if (anyKey(key, &.{ "h", "\x1b[D", "\x1bOD" })) view.focus = .board;
+        // the arrows pick a repo on auto's line, and only h goes back to the board from it
+        var f: feed.Feed = undefined;
+        const on_auto = app.feedOf(&f) and (if (app.feedPick(&f)) |picked| picked.auto else false);
+        if (anyKey(key, &.{"h"}) or (!on_auto and anyKey(key, &.{ "\x1b[D", "\x1bOD" }))) view.focus = .board;
         if (anyKey(key, &.{"\r"}) and app.orchestratorState() == .off) {
             return app.send(.ignore, "run-shell -b \"babylon orchestrator\"", .{});
         }
@@ -2632,11 +2692,14 @@ pub const App = struct {
         if (is(key, &.{"P"})) return app.jumpProposed();
         if (is(key, &.{ "]", "[" })) return app.toFeed(key);
         if (is(key, &.{"x"})) return app.act(.no);
+        if (is(key, &.{"W"})) if (app.boardCard(view.col, view.row)) |card| {
+            if (card.status == .todo) return app.toNext(card.id, true);
+        };
         if (is(key, &.{"n"})) return app.newTicket();
         const keyed = [_]struct { []const u8, CardAction }{
-            .{ "\r", .go },    .{ "e", .edit }, .{ "p", .priority }, .{ ">", .close },
-            .{ "<", .reopen }, .{ "J", .down }, .{ "K", .up },       .{ "t", .to_todo },
-            .{ "G", .give },
+            .{ "\r", .go },    .{ "e", .edit },    .{ "p", .priority }, .{ ">", .close },
+            .{ "<", .reopen }, .{ "J", .down },    .{ "K", .up },       .{ "t", .to_todo },
+            .{ "G", .give },   .{ "w", .to_next },
         };
         for (keyed) |pair| if (std.mem.eql(u8, key, pair[0])) return app.act(pair[1]);
     }
@@ -2689,6 +2752,11 @@ pub const App = struct {
         try app.send(.ignore, "run-shell -b \"babylon auto {s}\"", .{if (app.auto() == null) "on" else "off"});
     }
 
+    /// The todo card picked put in next, at its bottom or at its top.
+    fn toNext(app: *App, id: u32, top: bool) !void {
+        try app.send(.ignore, "run-shell -b \"babylon next {d}{s}\"", .{ id, if (top) " --at 1" else "" });
+    }
+
     fn newTicket(app: *App) !void {
         var buf: [80]u8 = undefined;
         const narrowed = if (app.boardRepo()) |r| (if (plainName(r)) std.fmt.bufPrint(&buf, " --repo {s}", .{r}) catch "" else "") else "";
@@ -2708,6 +2776,7 @@ pub const App = struct {
         to_todo,
         up,
         down,
+        to_next,
 
         pub fn label(action: CardAction) []const u8 {
             return switch (action) {
@@ -2722,6 +2791,7 @@ pub const App = struct {
                 .to_todo => "to todo",
                 .up => "↑",
                 .down => "↓",
+                .to_next => "next",
             };
         }
     };
@@ -2732,14 +2802,14 @@ pub const App = struct {
     /// do and reopen once done, to todo while in the backlog, and edit and priority always, and
     /// moving it along its column but in the backlog or without a repo the move can be narrowed
     /// to, babylon having no move among the cards of none alone.
-    pub fn cardActions(card: *const tickets.Card, out: *[10]CardAction) []CardAction {
+    pub fn cardActions(card: *const tickets.Card, out: *[12]CardAction) []CardAction {
         var n: usize = 0;
         const movable = card.status != .backlog and plainName(card.repo orelse "");
         const all = [_]struct { CardAction, bool }{
             .{ .go, card.proposal != null or card.holder() != null or startable(card) }, .{ .no, card.proposal != null },    .{ .answer, card.ask != null },
             .{ .give, givable(card) },                                                   .{ .edit, true },                   .{ .priority, true },
             .{ .close, card.status == .todo },                                           .{ .reopen, card.status == .done }, .{ .to_todo, card.status == .backlog },
-            .{ .up, movable },                                                           .{ .down, movable },
+            .{ .up, movable },                                                           .{ .down, movable },                .{ .to_next, card.status == .todo },
         };
         for (all) |pair| if (pair[1]) {
             out[n] = pair[0];
@@ -2755,7 +2825,7 @@ pub const App = struct {
     fn act(app: *App, action: CardAction) !void {
         const view = if (app.board_view) |*open| open else return;
         const card = app.boardCard(view.col, view.row) orelse return;
-        var have: [10]CardAction = undefined;
+        var have: [12]CardAction = undefined;
         if (std.mem.indexOfScalar(CardAction, cardActions(card, &have), action) == null) return;
         var buf: [80]u8 = undefined;
         const narrowed = if (app.pickRepo()) |r| (if (plainName(r)) std.fmt.bufPrint(&buf, " --repo {s}", .{r}) catch "" else "") else "";
@@ -2771,6 +2841,7 @@ pub const App = struct {
                 try app.send(.ignore, "run-shell -b \"babylon update {d} --priority {s}\"", .{ card.id, next });
             },
             .close => try app.send(.ignore, "run-shell -b \"babylon update {d} --status done\"", .{card.id}),
+            .to_next => try app.toNext(card.id, false),
             .reopen, .to_todo => try app.send(.ignore, "run-shell -b \"babylon update {d} --status todo\"", .{card.id}),
             .up, .down => {
                 // a move babylon could not be narrowed to the repo shown would order every repo's cards
@@ -2972,7 +3043,7 @@ pub const App = struct {
             break :blk @intCast(@min(2 + line - scroll, app.view_h));
         } else cardTop(view.row - app.boardFirst(view.col)) + @backingInt(CardRow.bottom);
         if (!strip and y + 1 >= app.view_h) return out[0..n];
-        var have: [10]CardAction = undefined;
+        var have: [12]CardAction = undefined;
         var x: u16 = app.boardColX(view.col) + 2;
         const edge = app.boardColX(view.col) + app.boardColW(view.col) -| 2;
         for (cardActions(card, &have)) |action| {
@@ -4565,9 +4636,9 @@ test "the board opens on a ticket by its id: its lane, its repo's columns or the
 }
 
 test "a card moves along its column only with a repo, out of the backlog" {
-    var have: [10]App.CardAction = undefined;
+    var have: [12]App.CardAction = undefined;
     const has = struct {
-        fn up(card: tickets.Card, out: *[10]App.CardAction) bool {
+        fn up(card: tickets.Card, out: *[12]App.CardAction) bool {
             return std.mem.indexOfScalar(App.CardAction, App.cardActions(&card, out), .up) != null;
         }
     }.up;

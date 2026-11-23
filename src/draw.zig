@@ -1052,7 +1052,7 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
     const lead: []const u8 = switch (line.kind) {
         .item => "▌ ",
         .buttons, .refused => "▌     ",
-        .landing_chips, .building_chips => "  ",
+        .landing_chips, .building_chips, .next_item, .auto_line, .auto_repos => "  ",
         else => "",
     };
     if (lead.len > 0 and room > cellCount(lead)) {
@@ -1070,6 +1070,12 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
             break :blk strong;
         },
         .building_head => ink(app, "amber", 4),
+        .next_head => blk: {
+            var strong = ink(app, "amberdim", 8);
+            strong.flags.bold = true;
+            break :blk strong;
+        },
+        .auto_line, .auto_repos, .next_item => .{},
         .quiet, .more, .landed, .buttons => dim,
         .refused => ink(app, "emberdim", 1),
         .item, .landing_chips, .building_chips => .{},
@@ -1078,16 +1084,18 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
     // the pick's cells lit: the whole line of a Your move item, a ticket's chip of its own
     var lit_from: usize = 0;
     var lit_to: usize = 0;
+    var shown = line.text;
     if (if (app.feedFocused()) app.feedPick(f) else null) |on| if (on.line == row) {
-        lit_from = clip(line.text, on.at).len;
-        lit_to = lit_from + (if (on.w == 0) line.text.len - lit_from else clip(line.text[lit_from..], on.w).len);
+        if (line.alt.len > 0) shown = line.alt;
+        lit_from = clip(shown, on.at).len;
+        lit_to = lit_from + (if (on.w == 0) shown.len - lit_from else clip(shown[lit_from..], on.w).len);
     };
-    const cut = cellCount(line.text) > room;
+    const cut = cellCount(shown) > room;
     const avail = if (cut) room - 1 else room;
     var used: usize = 0;
     var at: usize = 0;
-    while (at < line.text.len and used < avail) {
-        const run = feedRun(app, line.kind, line.text, at, style);
+    while (at < shown.len and used < avail) {
+        const run = feedRun(app, line, shown, at, style);
         var end = run.end;
         var run_style = run.style;
         if (lit_from > at) end = @min(end, lit_from);
@@ -1095,7 +1103,7 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
             end = @min(end, lit_to);
             run_style = chip(app);
         }
-        const text = clip(line.text[at..end], avail - used);
+        const text = clip(shown[at..end], avail - used);
         if (text.len == 0) break;
         try pen.set(w, run_style, null);
         try w.writeAll(text);
@@ -1107,10 +1115,15 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
     for (used + @intFromBool(cut)..room) |_| try w.writeAll(" ");
 }
 
+const Run = struct { end: usize, style: vt.Style };
+
 /// The run of one style that starts at byte `at` of a feed line: all of it, but for the chips of
 /// landing and building, whose ticket number, repo, age and stage word each have a style of
 /// their own. The stage word is coloured as the board's cards colour it.
-fn feedRun(app: *const App, kind: feed.Kind, text: []const u8, at: usize, base: vt.Style) struct { end: usize, style: vt.Style } {
+fn feedRun(app: *const App, line: feed.Line, text: []const u8, at: usize, base: vt.Style) Run {
+    const kind = line.kind;
+    if (kind == .auto_line or kind == .auto_repos) return autoRun(app, line, text, at);
+    if (kind == .next_item) return nextRun(app, text, at);
     if (kind != .landing_chips and kind != .building_chips) return .{ .end = text.len, .style = base };
     if (text[at] == ' ') return .{ .end = std.mem.indexOfNonePos(u8, text, at, " ") orelse text.len, .style = .{} };
     // a chip's words, counted from where the run of three spaces before it ends
@@ -1128,6 +1141,54 @@ fn feedRun(app: *const App, kind: feed.Kind, text: []const u8, at: usize, base: 
         idx = if (next - end >= 3) 0 else idx + 1;
         pos = next;
     }
+}
+
+/// The run of auto's line that starts at `at`: its parts are split at ` · `, the first auto's
+/// state, the last hold's, a repo between them paused in the error colour or dim at its cap.
+fn autoRun(app: *const App, line: feed.Line, text: []const u8, at: usize) Run {
+    const dim = ink(app, "dim", 8);
+    const sep = " · ";
+    var part: u4 = 0;
+    var pos: usize = 0;
+    while (true) {
+        const end = std.mem.indexOfPos(u8, text, pos, sep) orelse text.len;
+        if (at < end) {
+            const bit = @as(u16, 1) << part;
+            const last = end == text.len;
+            var style: vt.Style = .{};
+            if (part == 0 and line.kind == .auto_line) {
+                style = if (line.dimmed & bit != 0) dim else ink(app, "violet", 5);
+                style.flags.bold = line.dimmed & bit == 0;
+            } else if (last and line.kind == .auto_line) {
+                style = if (line.failed) ink(app, "emberdim", 1) else dim;
+                style.flags.bold = line.failed;
+            } else if (line.paused & bit != 0) {
+                style = ink(app, "emberdim", 1);
+            } else if (line.dimmed & bit != 0) style = dim;
+            return .{ .end = end, .style = style };
+        }
+        if (at < end + sep.len) return .{ .end = end + sep.len, .style = dim };
+        pos = end + sep.len;
+        part +|= 1;
+    }
+}
+
+/// The run of a line of next that starts at `at`: the human's pin and the ticket's number in the
+/// card-number accent, its repo dim, then its title or why plain.
+fn nextRun(app: *const App, text: []const u8, at: usize) Run {
+    const first: usize = @intFromBool(std.mem.startsWith(u8, text, "▪"));
+    var idx: usize = 0;
+    var pos: usize = 0;
+    while (pos < text.len) {
+        const end = std.mem.indexOfScalarPos(u8, text, pos, ' ') orelse text.len;
+        if (idx > first + 1) break;
+        if (at < end) return .{ .end = end, .style = if (idx == first + 1) ink(app, "dim", 8) else ink(app, "amber", 4) };
+        const gap = std.mem.indexOfNonePos(u8, text, end, " ") orelse text.len;
+        if (at < gap) return .{ .end = gap, .style = .{} };
+        idx += 1;
+        pos = gap;
+    }
+    return .{ .end = text.len, .style = .{} };
 }
 
 fn feedWord(app: *const App, kind: feed.Kind, word: []const u8, idx: usize, failed: bool) vt.Style {
@@ -1496,7 +1557,7 @@ const board_keys = [_][2][]const u8{
     .{ "J K", "move it down or up among its repo's cards" },
     .{ "n, +", "file a ticket" },
     .{ "r, a tab", "the next repo, the backlog, or the one clicked" },
-    .{ "t", "move a backlog card to todo" },
+    .{ "t w W", "a backlog card to todo; a todo card to next, W at its top" },
     .{ "g", "babylon's gate, while it runs one" },
     .{ "o", "the orchestrator, started if it is not running" },
     .{ "A", "babylon's auto mode, on or off" },
@@ -1966,7 +2027,7 @@ test "the feed's headers and a landing row's stage word are drawn in their state
     defer b.deinit();
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     var f: feed.Feed = undefined;
-    feed.build(&f, &b, &.{}, 56, 40, 1795262400, 0);
+    feed.build(&f, &b, &.{}, 56, 40, 1795262400, 0, 0);
 
     var buf: [2048]u8 = undefined;
     var pen: Pen = .{};
@@ -2005,6 +2066,40 @@ test "the feed's headers and a landing row's stage word are drawn in their state
     head = try at.row(&app, &f, &pen, &buf, 3);
     try std.testing.expect(std.mem.indexOf(u8, head, try sgr(&want, ink(&app, "amber", 4))) != null);
     try std.testing.expect(std.mem.indexOf(u8, head, "◐ building 1") != null);
+}
+
+test "auto's line draws a paused repo in the error colour, hold on in bold, and a pinned ticket's mark in the accent" {
+    var b = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"needs_you":[],"hold":true,
+        \\"auto":{"on":true,"cap":6,"working":4,"idle":2,"repo_caps":{"arena":2,"tlon":0}},
+        \\"plan":{"next":[{"ticket":655,"repo":"arena","title":"Typing","why":"third","set_by":"human"}]}}
+    );
+    defer b.deinit();
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    var f: feed.Feed = undefined;
+    feed.build(&f, &b, &.{}, 70, 40, 1795262400, 0, 0);
+    var buf: [2048]u8 = undefined;
+    var want: [64]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    var pen: Pen = .{};
+    try feedRow(&app, &out, &pen, &f, 2, 70);
+    const auto = out.buffered();
+    const paused = try std.fmt.allocPrint(std.testing.allocator, "{s}tlon paused", .{try sgr(&want, ink(&app, "emberdim", 1))});
+    defer std.testing.allocator.free(paused);
+
+    try std.testing.expect(std.mem.indexOf(u8, auto, paused) != null);
+    var hold = ink(&app, "emberdim", 1);
+    hold.flags.bold = true;
+    const held = try std.fmt.allocPrint(std.testing.allocator, "{s}hold on", .{try sgr(&want, hold)});
+    defer std.testing.allocator.free(held);
+    try std.testing.expect(std.mem.indexOf(u8, auto, held) != null);
+
+    out = .fixed(&buf);
+    pen = .{};
+    try feedRow(&app, &out, &pen, &f, 3, 70);
+    const pin = try std.fmt.allocPrint(std.testing.allocator, "{s}  ▪", .{try sgr(&want, ink(&app, "amber", 4))});
+    defer std.testing.allocator.free(pin);
+    try std.testing.expect(std.mem.indexOf(u8, out.buffered(), pin) != null);
 }
 
 test "a queued card with a question open is held, and one without is queued" {

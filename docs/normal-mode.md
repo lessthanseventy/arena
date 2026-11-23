@@ -157,6 +157,7 @@ The board is a normal-mode screen. Its keys are today's, with three changes:
   the to-do column already says.
 - `space` opens the card's modal. Today's detail over the board grows into it.
 - `]` `[` pick the next or previous card that needs the human.
+- `w` puts the picked todo card at the bottom of next, `W` at its top.
 
 The inbox's keys: `j` `k` through its items, `space` the item's modal, `1`…`9` answer the picked
 ask, `⏎` go to its Claude.

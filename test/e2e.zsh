@@ -967,6 +967,10 @@ key M-b
 last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
 key p
 check "p raises the picked card's priority through babylon" await last 'update 7 --priority high'
+key w
+check "w puts the picked todo card at the bottom of next, through babylon" await last 'next 7'
+key W
+check "and W at its top" await last 'next 7 --at 1'
 inner set -p -t alpha:one @arena_claude_since $(date +%s)
 key G
 check "G shows the running Claudes the picked card can be given to" see '│ [1-9]  alpha · one '
@@ -1330,6 +1334,36 @@ key Escape
 gone ' give #7 to '
 key k
 check "and closing them gives the feed back its keys" await feed_lit '#8 arena  asks'
+jq -c '. + {"hold":false,"auto":{"on":true,"cap":6,"working":2,"idle":1,"repo_caps":{"arena":3,"babylon":2,"tlon":1}},"plan":{"next":[{"ticket":655,"repo":"arena","title":"Typing reaches no pane","why":"third sighting","set_by":"orchestrator"},{"ticket":656,"repo":"babylon","title":"Held lines","why":"","set_by":"orchestrator"}]}}' $tmp/run/babylon/board.json >$tmp/board.tmp && mv $tmp/board.tmp $tmp/run/babylon/board.json
+see '▷ next 2 · 1 slot idle'
+check "next is under Your move, auto's line at its top" see 'auto on · 2 of 6 · hold off'
+check "and its repos under it" see 'arena 3 · babylon 2 · tlon 1'
+check "and a ticket of it a row" see '#656 babylon  Held lines'
+key j
+check "the pick goes on to auto's line, a repo of it lit" await feed_lit 'arena 3'
+key Right Right
+check "the arrows pick another repo" await feed_lit 'tlon 1'
+: >$tmp/babylon
+key -
+check "- lowers its cap through babylon, 0 pausing it" await last 'auto --repo-cap tlon=0'
+key +
+check "and + raises it" await last 'auto --repo-cap tlon=2'
+key a
+check "a turns auto off through babylon" await last 'auto off'
+key H
+check "and H puts the pipeline on hold" await last 'hold on'
+key j
+check "the pick goes on to next's tickets" await feed_lit '#655 arena  third sighting'
+key p
+check "p pins a ticket where it is, through babylon as the human" await last 'next 655 --at 1'
+key J
+check "J moves it down" await last 'next 655 --at 2'
+key K
+check "K moves the one under it up" await last 'next 656 --at 1'
+key x
+check "x drops it from next" await last 'next 655 --drop'
+jq -c "del(.hold,.auto,.plan)" $tmp/run/babylon/board.json >$tmp/board.tmp && mv $tmp/board.tmp $tmp/run/babylon/board.json
+key k k
 key i
 key M-h
 await eval '! orch_lit'

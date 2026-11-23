@@ -83,7 +83,31 @@ pub fn epochOf(given: ?[]const u8) ?i64 {
 }
 
 /// babylon's auto mode: while on, it starts a Claude on each free todo card until `cap` are working.
-pub const Auto = struct { on: bool = false, cap: u32 = 0, working: u32 = 0 };
+/// `idle` is the slots auto has free with nothing in next to start; `repo_caps` each repo's own
+/// cap, 0 for one paused.
+pub const Auto = struct {
+    on: bool = false,
+    cap: u32 = 0,
+    working: u32 = 0,
+    idle: ?u32 = null,
+    repo_caps: std.json.ArrayHashMap(u32) = .{},
+};
+
+/// A ticket in next, the plan's ordered list of what should start soon. `set_by` is who placed it:
+/// `human` is a pin, which the orchestrator moves only with a proposal.
+pub const Next = struct {
+    ticket: u32,
+    repo: []const u8 = "",
+    title: []const u8 = "",
+    why: []const u8 = "",
+    set_by: []const u8 = "",
+
+    pub fn pinned(n: Next) bool {
+        return std.mem.eql(u8, n.set_by, "human");
+    }
+};
+
+const Plan = struct { next: []Next = &.{} };
 
 /// babylon's orchestrator: `running` while its session is there, `on` while babylon keeps it so.
 pub const Orchestrator = struct { on: bool = true, running: bool = true };
@@ -118,6 +142,8 @@ const File = struct {
     tickets: []Card,
     backlog: []Card = &.{},
     auto: ?Auto = null,
+    hold: bool = false,
+    plan: Plan = .{},
     orchestrator: ?Orchestrator = null,
     proposals: []Proposal = &.{},
     needs_you: []Need = &.{},
@@ -138,6 +164,10 @@ pub const Board = struct {
         for (parsed.value.needs_you) |*need| {
             need.text = try cleanLine(arena, need.text);
             for (need.actions) |*action| action.label = try cleanLine(arena, action.label);
+        }
+        for (parsed.value.plan.next) |*item| {
+            item.title = try cleanLine(arena, item.title);
+            item.why = try cleanLine(arena, item.why);
         }
         for (parsed.value.proposals) |*proposal| {
             proposal.why = try cleanLine(arena, proposal.why);
@@ -174,6 +204,21 @@ pub const Board = struct {
     pub fn auto(b: *const Board) ?Auto {
         const state = b.parsed.value.auto orelse return null;
         return if (state.on) state else null;
+    }
+
+    /// Auto mode's state on or off, when babylon's file says it.
+    pub fn autoState(b: *const Board) ?Auto {
+        return b.parsed.value.auto;
+    }
+
+    /// Whether babylon holds its pipeline.
+    pub fn hold(b: *const Board) bool {
+        return b.parsed.value.hold;
+    }
+
+    /// The plan's next, in order.
+    pub fn next(b: *const Board) []const Next {
+        return b.parsed.value.plan.next;
     }
 
     /// What babylon says of its orchestrator, when its file does.
@@ -357,6 +402,20 @@ test "auto mode is read while on, and a file without it or with it off has none"
     var old = try Board.parse(gpa, sample);
     defer old.deinit();
     try std.testing.expectEqual(@as(?Auto, null), old.auto());
+}
+
+test "next, hold and auto's repo caps are read as babylon gives them" {
+    var b = try Board.parse(std.testing.allocator,
+        \\{"tickets":[],"hold":true,"auto":{"on":true,"cap":6,"working":5,"idle":2,"repo_caps":{"arena":3,"tlon":0}},
+        \\"plan":{"next":[{"ticket":655,"repo":"arena","title":"Typing\nreaches","why":"third sighting","set_by":"human"},{"ticket":9}]}}
+    );
+    defer b.deinit();
+    try std.testing.expect(b.hold());
+    try std.testing.expectEqual(@as(?u32, 2), b.autoState().?.idle);
+    try std.testing.expectEqual(@as(u32, 0), b.autoState().?.repo_caps.map.get("tlon").?);
+    try std.testing.expectEqual(@as(usize, 2), b.next().len);
+    try std.testing.expectEqualStrings("Typing reaches", b.next()[0].title);
+    try std.testing.expect(b.next()[0].pinned() and !b.next()[1].pinned());
 }
 
 test "the orchestrator's state is read as babylon gives it, and a file without it has none" {
