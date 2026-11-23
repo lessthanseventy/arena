@@ -453,13 +453,11 @@ listed() {
 }
 check "the rail lists each session's Claudes under a rule of their own, each over what it is doing and its review" await listed
 inked() { sed -n $1p <<<$(outer capture-pane -ep -t o) }
-lit() { [[ $(inked 13) == *$'\e[1;7m\e[38;5;4m beta '* && $(inked 7) != *$'\e[1;7m'* ]] }
-check "the session in view has its name there lit, as in the list above" lit
-looked() { [[ $(inked 14) == *$'\e[38;5;4m ◐ solo '* && $(inked 11) == *$'\e[39m one '* ]] }
-check "and the Claude in view its title" looked
+lit() { [[ $(inked 14) == *$'\e[1;7m'*' ◐ solo '* && $(inked 15) == *$'\e[1;7m'*' Read b.zig '* && $(inked 13) != *$'\e[1;7m'* && $(inked 11) != *$'\e[1;7m'* ]] }
+check "the Claude in view has all its rows lit, and its session's header is not" lit
 claude alpha:renamed prompt '{"prompt": "more"}'
 for w in alpha:one alpha:renamed beta:solo; inner set -p -t $w @arena_claude_background 'a shell'
-check "more than it has rows for, a Claude whose rows do not all fit is left to a count of the rest" await eval '[[ $(line 16) =~ "^│   ◔ a shell +│" && $(line 17) =~ "^│ \+1 more +│" ]]'
+check "more than it has rows for, the list scrolls to the Claude in view" await eval '[[ $(line 15) =~ "^│ ◐ solo " && $(line 17) =~ "^│   ◔ a shell +│" ]] && ! screen | grep -q "▲ three"'
 for w in alpha:one beta:solo; inner set -pu -t $w @arena_claude_background
 claude alpha:renamed end
 inner set -pu -t alpha:three @arena_review

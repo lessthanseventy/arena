@@ -17,12 +17,15 @@ const Pen = struct {
     style: vt.Style = .{},
     dimmed: bool = false,
     fresh: bool = true,
+    /// A style every cell is drawn in while set: the selected agent's rows.
+    over: ?vt.Style = null,
 
     /// `dim` is the palette to dim against, for an unfocused window's cells. The terminal's own
     /// faint is not used for that: one keeping a minimum contrast repaints faint colours white.
-    fn set(pen: *Pen, w: *Writer, given: vt.Style, dim: ?*const color.Palette) !void {
+    fn set(pen: *Pen, w: *Writer, drawn: vt.Style, dim: ?*const color.Palette) !void {
+        const given = pen.over orelse drawn;
         if (!pen.fresh and pen.dimmed == (dim != null) and @as(u128, @bitCast(pen.style)) == @as(u128, @bitCast(given))) return;
-        pen.* = .{ .style = given, .dimmed = dim != null, .fresh = false };
+        pen.* = .{ .style = given, .dimmed = dim != null, .fresh = false, .over = pen.over };
         var style = given;
         if (dim) |palette| {
             var fg = resolve(palette, style.fg_color) orelse palette.fg;
@@ -397,13 +400,23 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
 fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: u16, wide: bool) !void {
     const dim = ink(app, "dim", 8);
     var filled: usize = 0;
+    // the selected Claude's rows are one solid bar, and so is the subagent it shows; its
+    // session's header only says it holds it
+    switch (line) {
+        .agent, .detail, .meta, .background => |a| if (app.agentSelected(a)) {
+            pen.over = chip(app);
+        },
+        .sub => |sub| if (app.subShown(sub)) {
+            pen.over = chip(app);
+        },
+        else => {},
+    }
+    defer pen.over = null;
     switch (line) {
         .session => |si| {
             const s = app.sessions.items[si];
             const name = clip(s.name, if (wide) inner - 2 else 2);
-            // lit as its row above is, so the session in view reads the same in both lists
-            const lit = s.id == app.current and app.board_view == null;
-            try pen.set(w, if (lit) chip(app) else if (s.id == app.current) heading(app) else dim, null);
+            try pen.set(w, if (s.id == app.current and app.board_view == null) heading(app) else dim, null);
             try w.writeAll(" ");
             try w.writeAll(name);
             filled = 1 + cellCount(name);

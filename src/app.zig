@@ -700,6 +700,29 @@ pub const App = struct {
     pub fn agentLines(app: *const App, out: []AgentLine, room: usize, details: bool) usize {
         var found: [64]Agent = undefined;
         const count = app.agents(&found);
+        const selected = for (found[0..count]) |a| {
+            if (app.agentSelected(a)) break true;
+        } else false;
+        // the list starts at the first Claude from which the selected one shows
+        var from: usize = 0;
+        while (true) : (from += 1) {
+            const n = agentLinesFrom(out, room, details, found[from..count]);
+            if (!selected or from + 1 >= count) return n;
+            for (out[0..n]) |line| {
+                if (line == .agent and app.agentSelected(line.agent)) return n;
+            }
+        }
+    }
+
+    /// Whether `a` is the Claude in view: its window is its session's focus, and that session
+    /// is the current one, with no board over it.
+    pub fn agentSelected(app: *const App, a: Agent) bool {
+        const s = app.sessions.items[a.session];
+        return s.id == app.current and app.board_view == null and s.focused() == a.win;
+    }
+
+    fn agentLinesFrom(out: []AgentLine, room: usize, details: bool, found: []const Agent) usize {
+        const count = found.len;
         const rows = @min(out.len, room);
         if (rows == 0) return 0;
         var n: usize = 0;
