@@ -4355,8 +4355,8 @@ pub const App = struct {
     /// Whether a left click at `m` is on the strip or the board's side column, which it makes
     /// insert; the rail and the board are chrome.
     fn paneClick(app: *const App, m: keys.Mouse) bool {
-        if (app.board_view) |view| return app.sideShown() and !view.boxed() and m.y < app.view_h and m.x >= app.boardX() + app.boardW();
-        return m.x >= @max(app.term_w - app.view_w, app.railDrawnW());
+        if (app.board_view) |view| return app.sideShown() and !view.boxed() and m.y < app.view_h and m.x > app.boardX() + app.boardW();
+        return m.y < app.view_h and m.x >= @max(app.term_w - app.view_w, app.railDrawnW());
     }
 
     /// Normal mode ends where an overlay has the keys: it is the mode there, and closing it is
@@ -5220,6 +5220,16 @@ test "beside the board, the keys go by the session tmux was last asked for" {
     app.current = 2;
     app.heading = 1;
     try expect(!app.typing());
+}
+
+test "a left click on the dots row is chrome, not the pane's" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 24;
+    const expect = std.testing.expect;
+    try expect(app.paneClick(.{ .code = 0, .x = 10, .y = 23, .release = false }));
+    try expect(!app.paneClick(.{ .code = 0, .x = 10, .y = 24, .release = false }));
 }
 
 test "a card's title wraps at a space onto its second row" {
