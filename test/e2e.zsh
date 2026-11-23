@@ -850,6 +850,15 @@ $bin -L $in board 8
 check "and with the board open, moves the pick to it" see '╰ go ─ edit '
 key Escape
 gone ' board   every'
+two=$(inner list-panes -s -t alpha -F '#{pane_id}' | sed -n 2p)
+$bin -L $in show $two
+check "arena show and a pane puts its window in front" await dots '○ ● ○'
+$bin -L $in show "#8"
+check "arena show and a held ticket's number does the same for its Claude's pane" await dots '● ○ ○'
+$bin -L $in inbox
+check "arena inbox opens the board, until the inbox lands" see '\? keys · esc close'
+$bin -L $in show $two
+check "and a show with the board open puts it away for the pane" await dots '○ ● ○'
 key M-b
 last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
 key p
@@ -1212,5 +1221,9 @@ untold() { ! grep -q 'arena board' $tmp/other-out }
 check "and a control-mode client that is no arena is told nothing" untold
 key Escape Escape M-q
 check "which leaves as any other" see 'EXIT 0'
+none() { $bin -L $in "$@" 2>/dev/null; [[ $? == 3 ]] }
+check "with no arena running, arena show exits 3" none show %0
+check "and arena inbox does too" none inbox
+check "arena --help lists the doors" test -n "$($bin --help | grep -F 'arena [-L socket] show')"
 
 exit $((fails > 0))

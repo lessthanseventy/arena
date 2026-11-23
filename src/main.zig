@@ -167,8 +167,27 @@ fn hasSession(init: std.process.Init, tmux: []const []const u8) !bool {
 /// client still on the server.
 const clients_option = "@arena_clients";
 
-/// Has every arena on the server show the board on ticket `id`, and says whether one was told.
-fn tellCard(init: std.process.Init, tmux: []const []const u8, id: u32) !bool {
+const usage =
+    \\usage: arena [-L socket] [session]
+    \\       arena [-L socket] board <ticket>         the board on that ticket
+    \\       arena [-L socket] show <%pane|#ticket>   that pane, or the Claude holding that ticket, in front
+    \\       arena [-L socket] inbox                  the needs-you inbox
+    \\
+    \\board, show and inbox tell the arena that is running; with none, board starts one,
+    \\and show and inbox exit 3.
+    \\
+;
+
+/// The exit status of `arena show` and `arena inbox` when no arena is running: the caller opens one.
+const no_arena = 3;
+
+/// Whether `target` names a pane (`%290`) or a ticket (`#324`).
+fn showTarget(target: []const u8) bool {
+    return target.len > 1 and (target[0] == '%' or target[0] == '#') and ticketId(target[1..]) != null;
+}
+
+/// Has every arena on the server take `message`, and says whether one was told.
+fn tell(init: std.process.Init, tmux: []const []const u8, message: []const u8) !bool {
     const gpa = init.gpa;
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(gpa);
@@ -179,13 +198,14 @@ fn tellCard(init: std.process.Init, tmux: []const []const u8, id: u32) !bool {
     defer gpa.free(clients.stdout);
     defer gpa.free(clients.stderr);
     if (!clients.term.success()) return false;
-    const message = try std.fmt.allocPrint(gpa, control.card_message ++ "{d}", .{id});
-    defer gpa.free(message);
+    // display-message runs its text through strftime: a pane's % would be taken for a conversion
+    const escaped = try std.mem.replaceOwned(u8, gpa, message, "%", "%%");
+    defer gpa.free(escaped);
     var told = false;
     var lines = std.mem.tokenizeScalar(u8, clients.stdout, '\n');
     while (lines.next()) |client| {
         argv.items.len = tmux.len;
-        try argv.appendSlice(gpa, &.{ "display-message", "-c", client, message });
+        try argv.appendSlice(gpa, &.{ "display-message", "-c", client, escaped });
         const said = try std.process.run(gpa, init.io, .{ .argv = argv.items });
         gpa.free(said.stdout);
         gpa.free(said.stderr);
@@ -205,17 +225,35 @@ fn run(init: std.process.Init) !bool {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     var session: ?[]const u8 = null;
     var card: ?u32 = null;
+    var door: ?[]const u8 = null;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "-L") and i + 1 < args.len) {
+        if (std.mem.eql(u8, args[i], "-h") or std.mem.eql(u8, args[i], "--help")) {
+            try std.Io.File.stdout().writeStreamingAll(io, usage);
+            return true;
+        } else if (std.mem.eql(u8, args[i], "-L") and i + 1 < args.len) {
             try argv.appendSlice(gpa, &.{ "-L", args[i + 1] });
             i += 1;
         } else if (std.mem.eql(u8, args[i], "board") and i + 1 < args.len and ticketId(args[i + 1]) != null) {
             card = ticketId(args[i + 1]);
             i += 1;
+        } else if (std.mem.eql(u8, args[i], "show") and i + 1 < args.len and showTarget(args[i + 1])) {
+            door = try std.fmt.allocPrint(init.arena.allocator(), control.show_message ++ "{s}", .{args[i + 1]});
+            i += 1;
+        } else if (std.mem.eql(u8, args[i], "inbox")) {
+            door = control.inbox_message;
         } else session = args[i];
     }
-    if (card) |id| if (try tellCard(init, argv.items, id)) return true;
+    if (door) |message| {
+        if (try tell(init, argv.items, message)) return true;
+        try std.Io.File.stderr().writeStreamingAll(io, "arena: none is running there\n");
+        std.process.exit(no_arena);
+    }
+    if (card) |id| {
+        const message = try std.fmt.allocPrint(gpa, control.card_message ++ "{d}", .{id});
+        defer gpa.free(message);
+        if (try tell(init, argv.items, message)) return true;
+    }
     // A named session is attached or made. With no name, the most recent one, or a first one
     // when there is none: starting the server is what lets tmux's own restore bring sessions back.
     const tmux = try gpa.dupe([]const u8, argv.items);

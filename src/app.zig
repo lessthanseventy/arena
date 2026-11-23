@@ -1083,6 +1083,9 @@ pub const App = struct {
             },
             .session_changed => |id| app.onSessionChanged(id),
             .card => |id| try app.showCard(id),
+            .pane => |id| try app.showPane(id),
+            .holder => |id| try app.showHolder(id),
+            .inbox => try app.showInbox(),
             .exit => {
                 app.ended = true;
                 app.quit = true;
@@ -2029,10 +2032,30 @@ pub const App = struct {
                 "tmux new-window -t ={s}: -n t{d} -c $HOME/projects/{s} claude 'Claim ticket ##{d} with claim_ticket, run the start command its answer gives, and work it to submit_ticket.'\"", .{ session, session, repo, session, card.id, session, card.id, repo, card.id });
             return app.closeBoard();
         };
-        const at = app.paneWindow(pane) orelse return;
+        try app.showPane(pane);
+    }
+
+    /// Pane `id` put in front, its session and window as needed, closing the board; nothing
+    /// when tmux has no such pane.
+    pub fn showPane(app: *App, id: u32) !void {
+        const at = app.paneWindow(id) orelse return;
         try app.closeBoard();
-        try app.send(.ignore, "select-pane -t %{d}", .{pane});
+        try app.send(.ignore, "select-pane -t %{d}", .{id});
         try app.jumpTo(at.session, at.index);
+    }
+
+    /// The pane of the Claude holding ticket `id` put in front; nothing when none does.
+    pub fn showHolder(app: *App, id: u32) !void {
+        const b = if (app.board) |*b| b else return;
+        for (b.cards()) |*card| if (card.id == id) {
+            if (card.holder()) |pane| try app.showPane(pane);
+            return;
+        };
+    }
+
+    /// The needs-you inbox, which is the board until the inbox lands.
+    pub fn showInbox(app: *App) !void {
+        if (app.board_view == null) try app.toggleBoard();
     }
 
     /// A key on the board: h, l and the arrows go between columns, j and k along one, r narrows

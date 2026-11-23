@@ -114,9 +114,17 @@ arena             # the most recent session, or a new one when there is none
 arena work        # the session called work, made if it is not there
 arena -L socket   # a tmux server other than the default one
 arena board 240   # the board on ticket 240, in the arena that is running
+arena show %290   # pane 290 in front: its session and window, picked in the rail
+arena show '#324' # the pane of the Claude holding ticket 324
+arena inbox       # the needs-you inbox (the board, until the inbox lands)
 ```
 
-`arena board <id>` is the door from outside: it has the running arena open its board with that
+`board`, `show` and `inbox` are the only supported way in from outside arena: the shell's popups,
+babylon's notices and other Claudes all call them, so each place sends the human somewhere
+through arena, which follows, not behind its back through tmux's `select-window`, which it
+does not. With no arena running, `show` and `inbox` exit 3 and leave opening one to the caller.
+
+`arena board <id>` has the running arena open its board with that
 ticket picked, the ticket's question over it when it waits on one, and comes back at once. A
 ticket the board shows nowhere, a done one older than its repo's last three, has its whole
 detail over the board in the pick's place. With

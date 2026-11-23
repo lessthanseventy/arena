@@ -19,6 +19,12 @@ pub const Event = union(enum) {
     session_changed: u32,
     /// `arena board <id>` run elsewhere asks this arena for the board on that ticket.
     card: u32,
+    /// `arena show %<id>` run elsewhere asks this arena to put that pane in front.
+    pane: u32,
+    /// `arena show #<id>` asks for the pane of the Claude holding that ticket.
+    holder: u32,
+    /// `arena inbox` asks for the needs-you inbox.
+    inbox,
     exit,
     other,
 };
@@ -26,6 +32,8 @@ pub const Event = union(enum) {
 /// What `arena board <id>` has tmux say to a running arena, the id after it: display-message
 /// to a control client comes to it as a `%message` line.
 pub const card_message = "arena board ";
+pub const show_message = "arena show ";
+pub const inbox_message = "arena inbox";
 
 const changes = [_][]const u8{
     "%sessions-changed", "%session-renamed ",     "%window-add ",
@@ -61,6 +69,17 @@ pub fn parse(line: []const u8, open: ?[]const u8) Event {
         const id = std.fmt.parseInt(u32, line["%message ".len + card_message.len ..], 10) catch return .other;
         return .{ .card = id };
     }
+    if (std.mem.startsWith(u8, line, "%message " ++ show_message)) {
+        const target = line["%message ".len + show_message.len ..];
+        if (target.len < 2) return .other;
+        const id = std.fmt.parseInt(u32, target[1..], 10) catch return .other;
+        return switch (target[0]) {
+            '%' => .{ .pane = id },
+            '#' => .{ .holder = id },
+            else => .other,
+        };
+    }
+    if (std.mem.eql(u8, line, "%message " ++ inbox_message)) return .inbox;
     if (sessionId(line, "%session-changed $")) |id| return .{ .session_changed = id };
     if (sessionId(line, "%session-window-changed $")) |id| return .{ .window_selected = id };
     for (changes) |prefix| {
@@ -132,6 +151,14 @@ test "a message for the board says which ticket, and any other message is not ar
     try std.testing.expectEqual(@as(u32, 240), parse("%message arena board 240", null).card);
     try std.testing.expectEqual(Event.other, parse("%message arena board lights", null));
     try std.testing.expectEqual(Event.other, parse("%message hello", null));
+}
+
+test "a message to show says which pane or whose ticket's, and the inbox is asked for by name" {
+    try std.testing.expectEqual(@as(u32, 290), parse("%message arena show %290", null).pane);
+    try std.testing.expectEqual(@as(u32, 324), parse("%message arena show #324", null).holder);
+    try std.testing.expectEqual(Event.other, parse("%message arena show 290", null));
+    try std.testing.expectEqual(Event.other, parse("%message arena show %x", null));
+    try std.testing.expectEqual(Event.inbox, parse("%message arena inbox", null));
 }
 
 test "session notifications say which session" {
