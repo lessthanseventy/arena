@@ -24,6 +24,10 @@ that go in each place".
   keeps its writes inside ticket worktrees. It owns none of the concerns below.
 - **tlon/Asterion:** out of scope (#14). It is named only where it already has the pattern.
 
+It is drawn for this machine only. The human, 2026-11-23: "we can assume we're just perfecting
+this machine for now". The work Mac, which has no desktop shell, gets no notices once babylon's
+notifier goes.
+
 ## The rules
 
 These are the rules #587 started from, as tested against the code.
