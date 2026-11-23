@@ -125,7 +125,7 @@ const BoardFile = struct {
         const text = std.Io.Dir.cwd().readFileAlloc(app.io, path, app.gpa, .limited(1 << 20)) catch return;
         defer app.gpa.free(text);
         var clean: std.ArrayList(u8) = .empty;
-        @import("app.zig").appendClean(&clean, app.gpa, text) catch {
+        @import("text.zig").appendClean(&clean, app.gpa, text) catch {
             clean.deinit(app.gpa);
             return;
         };
@@ -424,6 +424,7 @@ test {
     _ = @import("keys.zig");
     _ = @import("menu.zig");
     _ = @import("pass.zig");
+    _ = @import("text.zig");
     _ = color;
     _ = layout;
 }

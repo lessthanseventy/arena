@@ -79,7 +79,7 @@ pub const Board = struct {
         for (parsed.value.tickets) |*card| {
             if (card.session_note.len == 0) continue;
             var clean: std.ArrayList(u8) = .empty;
-            try @import("app.zig").appendClean(&clean, parsed.arena.allocator(), card.session_note);
+            try @import("text.zig").appendClean(&clean, parsed.arena.allocator(), card.session_note);
             std.mem.replaceScalar(u8, clean.items, '\n', ' ');
             card.session_note = clean.items;
         }
