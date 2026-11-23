@@ -960,7 +960,7 @@ check "arena show and a pane puts its window in front" await dots '○ ● ○'
 $bin -L $in show "#8"
 check "arena show and a held ticket's number does the same for its Claude's pane" await dots '● ○ ○'
 $bin -L $in inbox
-check "arena inbox opens home, until its feed lands" see '╭─ ○ orchestrator · off '
+check "arena inbox opens home" see '╭─ ○ orchestrator · off '
 $bin -L $in show $two
 check "and a show with the board open puts it away for the pane" await dots '○ ● ○'
 key M-b
@@ -1291,6 +1291,16 @@ check "the column comes back on the new orchestrator" see '╭─ ○ orchestrat
 check "with the keys, as the human left them" await orch_lit
 key 'echo again' Enter
 check "and what is typed reaches the new one's pane" see '│again +│'
+print -r -- "${$(<$tmp/board.pipe)%\}}"',"orchestrator":{"on":true,"running":true},"needs_you":['\
+'{"id":"ask:5","kind":"ask","ticket":8,"repo":"arena","text":"#8 arena  asks: Blue or green?",'\
+'"actions":[{"key":"1","label":"Blue","argv":["babylon","answer","5","1"]},{"key":"c","label":"in words","argv":null,"needs":"words"}]}]}' >$tmp/run/babylon/board.json
+feed_above() {
+  local head=$(rowof '○ orchestrator · idle') move=$(rowof '▲ your move 1') said=$(rowof '│again ')
+  [[ -n $head && -n $move && -n $said ]] && (( head < move && move < said ))
+}
+check "the feed sits atop the orchestrator's column, Your move above its pane's first line" await feed_above
+check "each item as babylon words it, its actions under it" see '▌     1 Blue   c in words'
+check "the pane under the feed is as tall as what is left of the column" await eval '(( $(inner display -p -t orchestrator:orch "#{pane_height}") == 22 - $(rowof "✓ landed today") - 1 ))'
 key M-h
 check "Alt+h gives the board the keys" await eval '! orch_lit'
 key o

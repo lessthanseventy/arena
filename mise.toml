@@ -33,9 +33,9 @@ run = [
   "zsh test/session-record.zsh",
 ]
 
-[tasks.mod]
-description = "the board-feed pane against a fake board file"
-run = ["claude plugin validate .", "claude plugin test ."]
+[tasks.plugin]
+description = "the plugin's manifest and hooks"
+run = "claude plugin validate ."
 
 [tasks.install]
 description = "after a landing: arena built"
@@ -43,5 +43,5 @@ timeout = "20m"
 run = "zig build"
 
 [tasks.check]
-description = "the unit tests, then end to end, then the hooks and the mod"
-depends = ["test", "e2e", "hooks", "mod"]
+description = "the unit tests, then end to end, then the hooks and the plugin"
+depends = ["test", "e2e", "hooks", "plugin"]

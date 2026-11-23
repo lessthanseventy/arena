@@ -312,6 +312,28 @@ fn run(init: std.process.Init) !bool {
     }
 }
 
+/// Seconds the local clock is ahead of UTC, as `date` says: 0 when it says nothing readable.
+fn utcOffset(init: std.process.Init) i64 {
+    const said = std.process.run(init.gpa, init.io, .{ .argv = &.{ "date", "+%z" } }) catch return 0;
+    defer init.gpa.free(said.stdout);
+    defer init.gpa.free(said.stderr);
+    return offsetOf(std.mem.trim(u8, said.stdout, "\n"));
+}
+
+fn offsetOf(z: []const u8) i64 {
+    if (z.len != 5 or (z[0] != '+' and z[0] != '-')) return 0;
+    const hours = std.fmt.parseInt(i64, z[1..3], 10) catch return 0;
+    const minutes = std.fmt.parseInt(i64, z[3..5], 10) catch return 0;
+    const seconds = hours * 3600 + minutes * 60;
+    return if (z[0] == '-') -seconds else seconds;
+}
+
+test offsetOf {
+    try std.testing.expectEqual(@as(i64, -18000), offsetOf("-0500"));
+    try std.testing.expectEqual(@as(i64, 19800), offsetOf("+0530"));
+    try std.testing.expectEqual(@as(i64, 0), offsetOf("UTC"));
+}
+
 fn ticketId(arg: []const u8) ?u32 {
     return std.fmt.parseInt(u32, arg, 10) catch null;
 }
@@ -339,6 +361,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
     defer app.deinit();
     try app.send(.ignore, "set-option -saF " ++ clients_option ++ " ' #{{client_name}} '", .{});
     app.motion = init.environ_map.get("ARENA_REDUCED_MOTION") == null;
+    app.utc_offset = utcOffset(init);
     var theme_file: ThemeFile = .{
         .path = if (init.environ_map.get("HOME")) |home| try std.fs.path.join(gpa, &.{ home, ".config/ficciones/theme/palette.sh" }) else null,
     };
@@ -481,6 +504,7 @@ test {
     _ = @import("control.zig");
     _ = @import("theme.zig");
     _ = @import("board.zig");
+    _ = @import("feed.zig");
     _ = @import("keys.zig");
     _ = @import("menu.zig");
     _ = @import("pass.zig");

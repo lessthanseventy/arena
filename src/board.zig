@@ -22,6 +22,9 @@ pub const Card = struct {
     claimed_by: ?[]const u8 = null,
     /// When it was claimed, as `2026-11-21T23:20:05Z`.
     claimed_at: ?[]const u8 = null,
+    /// When it was handed in to the pipeline, and when it was closed, in the same form.
+    submitted_at: ?[]const u8 = null,
+    closed_at: ?[]const u8 = null,
     /// The pane a chain handed it to, as `%7`, until that pane claims it.
     handed_to: ?[]const u8 = null,
     /// The landed ticket whose pane still holds it, while it is handed.
@@ -55,30 +58,54 @@ pub const Card = struct {
 
     /// When it was claimed, in seconds since the epoch, if babylon says when.
     pub fn claimedAt(card: *const Card) ?i64 {
-        const at = card.claimed_at orelse return null;
-        if (at.len < 19) return null;
-        const int = std.fmt.parseInt;
-        const year = int(i64, at[0..4], 10) catch return null;
-        const month = int(i64, at[5..7], 10) catch return null;
-        const day = int(i64, at[8..10], 10) catch return null;
-        const hour = int(i64, at[11..13], 10) catch return null;
-        const minute = int(i64, at[14..16], 10) catch return null;
-        const second = int(i64, at[17..19], 10) catch return null;
-        // days from the civil date, the year counted from March so a leap day ends it
-        const y = if (month <= 2) year - 1 else year;
-        const era = @divFloor(y, 400);
-        const of_era = y - era * 400;
-        const of_year = @divFloor(153 * (if (month > 2) month - 3 else month + 9) + 2, 5) + day - 1;
-        const days = era * 146097 + of_era * 365 + @divFloor(of_era, 4) - @divFloor(of_era, 100) + of_year - 719468;
-        return days * 86400 + hour * 3600 + minute * 60 + second;
+        return epochOf(card.claimed_at);
     }
 };
+
+/// One of babylon's times, as `2026-11-21T23:20:05Z`, in seconds since the epoch.
+pub fn epochOf(given: ?[]const u8) ?i64 {
+    const at = given orelse return null;
+    if (at.len < 19) return null;
+    const int = std.fmt.parseInt;
+    const year = int(i64, at[0..4], 10) catch return null;
+    const month = int(i64, at[5..7], 10) catch return null;
+    const day = int(i64, at[8..10], 10) catch return null;
+    const hour = int(i64, at[11..13], 10) catch return null;
+    const minute = int(i64, at[14..16], 10) catch return null;
+    const second = int(i64, at[17..19], 10) catch return null;
+    // days from the civil date, the year counted from March so a leap day ends it
+    const y = if (month <= 2) year - 1 else year;
+    const era = @divFloor(y, 400);
+    const of_era = y - era * 400;
+    const of_year = @divFloor(153 * (if (month > 2) month - 3 else month + 9) + 2, 5) + day - 1;
+    const days = era * 146097 + of_era * 365 + @divFloor(of_era, 4) - @divFloor(of_era, 100) + of_year - 719468;
+    return days * 86400 + hour * 3600 + minute * 60 + second;
+}
 
 /// babylon's auto mode: while on, it starts a Claude on each free todo card until `cap` are working.
 pub const Auto = struct { on: bool = false, cap: u32 = 0, working: u32 = 0 };
 
 /// babylon's orchestrator: `running` while its session is there, `on` while babylon keeps it so.
 pub const Orchestrator = struct { on: bool = true, running: bool = true };
+
+/// What one of the human's moves offers: `argv` runs it, or with none, `needs` says what the
+/// human must give first (`words`, `pick`) or the surface must do itself (`surface`).
+pub const Action = struct {
+    key: []const u8,
+    label: []const u8,
+    argv: ?[]const []const u8 = null,
+    needs: ?[]const u8 = null,
+};
+
+/// One thing that is the human's move, as babylon words it: its first row and its actions.
+pub const Need = struct {
+    id: []const u8,
+    kind: []const u8,
+    ticket: ?u32 = null,
+    repo: []const u8 = "",
+    text: []const u8,
+    actions: []Action = &.{},
+};
 
 /// A move the orchestrator proposes, waiting on the human's go or no.
 pub const Proposal = struct {
@@ -93,6 +120,7 @@ const File = struct {
     auto: ?Auto = null,
     orchestrator: ?Orchestrator = null,
     proposals: []Proposal = &.{},
+    needs_you: []Need = &.{},
 };
 
 pub const Board = struct {
@@ -107,6 +135,10 @@ pub const Board = struct {
             card.session_note = try cleanLine(arena, card.session_note);
         }
         for (parsed.value.backlog) |*card| card.title = try cleanLine(arena, card.title);
+        for (parsed.value.needs_you) |*need| {
+            need.text = try cleanLine(arena, need.text);
+            for (need.actions) |*action| action.label = try cleanLine(arena, action.label);
+        }
         for (parsed.value.proposals) |*proposal| {
             proposal.why = try cleanLine(arena, proposal.why);
             const id = proposal.ticket_id orelse continue;
@@ -131,6 +163,11 @@ pub const Board = struct {
 
     pub fn cards(b: *const Board) []const Card {
         return b.parsed.value.tickets;
+    }
+
+    /// What is the human's move, in the order babylon gives it.
+    pub fn needsYou(b: *const Board) []const Need {
+        return b.parsed.value.needs_you;
     }
 
     /// Auto mode's cap and the Claudes working, while it is on.

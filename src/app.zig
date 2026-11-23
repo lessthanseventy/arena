@@ -8,6 +8,7 @@ const color = @import("color.zig");
 const Theme = @import("theme.zig").Theme;
 const Pass = @import("pass.zig").Pass;
 const tickets = @import("board.zig");
+const feed = @import("feed.zig");
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 
@@ -455,6 +456,8 @@ pub const App = struct {
     now: i64 = 0,
     /// Seconds since the epoch, set each turn of the loop.
     epoch: i64 = 0,
+    /// Seconds the local clock is ahead of UTC, for where today began.
+    utc_offset: i64 = 0,
     /// What the held left button is moving: the line after a pane, to resize it, a window by
     /// its title, along the strip, or a session by its name, along the rail.
     drag: union(enum) {
@@ -1209,6 +1212,22 @@ pub const App = struct {
         return if (state.on) .restarting else .off;
     }
 
+    /// The feed atop the orchestrator's column, from babylon's board: none without one.
+    pub fn feedOf(app: *const App, f: *feed.Feed) bool {
+        const b = if (app.board) |*b| b else return false;
+        const today = app.epoch - @mod(app.epoch + app.utc_offset, 86400);
+        feed.build(f, b, app.view_w -| 4, (app.view_h -| 2) / 2, app.epoch, today);
+        return true;
+    }
+
+    /// The row of window `index` of `s` its panes start on: under its top edge, and in the
+    /// orchestrator's own window beside the board, under the feed and its rule too.
+    pub fn winTop(app: *const App, s: *const Session, index: usize) u16 {
+        if (index != 0 or !s.orchestrator() or !app.sided()) return 1;
+        var f: feed.Feed = undefined;
+        return if (app.feedOf(&f)) @intCast(1 + f.count() + 1) else 1;
+    }
+
     /// The orchestrator's own window: its session's first.
     pub fn orchestratorWindow(app: *const App) ?*Window {
         const at = app.orchestratorSession() orelse return null;
@@ -1589,8 +1608,8 @@ pub const App = struct {
     /// reports the new layout, at the size it will be drawn.
     fn settle(app: *App) !void {
         for (app.sessions.items) |s| {
-            const rows = @max(1, app.view_h -| 2);
-            for (s.wins.items) |win| {
+            for (s.wins.items, 0..) |win, i| {
+                const rows = @max(1, app.view_h -| 1 -| app.winTop(s, i));
                 const cols = @max(1, app.colW(s, win) -| 2);
                 const fits = win.w == cols and win.h == rows;
                 const asked = win.asked_w == cols and win.asked_h == rows;
@@ -1824,6 +1843,8 @@ pub const App = struct {
         if (app.board) |*b| b.deinit();
         app.board = if (text) |t| tickets.Board.parse(app.gpa, t) catch null else null;
         if (app.board == null) try app.closeBoard();
+        // the feed's height may change, and the orchestrator's window with it
+        app.want_list = true;
         if (app.board_view) |*view| {
             var repos: [max_repos + 1][]const u8 = undefined;
             view.lane = @min(view.lane, app.laneRepos(&repos) -| 1);
@@ -2316,7 +2337,7 @@ pub const App = struct {
         try app.toSide();
     }
 
-    /// The needs-you inbox, which is home until the column's feed lands.
+    /// The needs-you inbox: home, the feed atop its column.
     pub fn showInbox(app: *App) !void {
         try app.goHome();
     }
@@ -2967,7 +2988,7 @@ pub const App = struct {
                 const screen = pane.term.screens.active;
                 const left = ox + app.colX(s, s.focus) - s.scroll + 1 + pane.x;
                 const x = std.math.clamp(m.x - left, 0, pane.term.cols - 1);
-                var y = @as(i32, m.y) - 1 - pane.y;
+                var y = @as(i32, m.y) - app.winTop(s, s.focus) - pane.y;
                 if (y < 0 or y >= pane.term.rows) pane.term.scrollViewport(.{ .delta = if (y < 0) -1 else 1 });
                 y = std.math.clamp(y, 0, pane.term.rows - 1);
                 const end = screen.pages.pin(.{ .viewport = .{ .x = @intCast(x), .y = @intCast(y) } }) orelse return;
@@ -2987,7 +3008,7 @@ pub const App = struct {
                     return;
                 };
                 const inside = ox + app.colX(s, s.focus) - s.scroll + 1;
-                const want: i32 = if (line.upright) m.x - inside - pane.x else @as(i32, m.y) - 1 - pane.y;
+                const want: i32 = if (line.upright) m.x - inside - pane.x else @as(i32, m.y) - app.winTop(s, s.focus) - pane.y;
                 if (want < 1 or want == line.asked) return;
                 line.asked = want;
                 const axis: u8 = if (line.upright) 'x' else 'y';
@@ -3155,7 +3176,9 @@ pub const App = struct {
         const win = s.wins.items[hit.index];
         if (hit.index != s.focus or hit.cx == 0 or hit.cx == app.colW(s, win) - 1) return null;
         const tx = hit.cx - 1;
-        const ty = y - 1;
+        const top = app.winTop(s, hit.index);
+        if (y < top) return null;
+        const ty = y - top;
         if (win.paneAt(tx, ty) != null) return null;
         if (tx > 0) if (win.paneAt(tx - 1, ty)) |before| return .{ .pane = before.id, .upright = true };
         if (ty > 0) if (win.paneAt(tx, ty - 1)) |above| return .{ .pane = above.id, .upright = false };
@@ -3367,8 +3390,9 @@ pub const App = struct {
             app.drag = .focus;
             return true;
         }
-        if (cx == 0 or cx == col_w - 1 or m.y == 0) return false;
-        const pane = win.paneAt(cx - 1, m.y - 1) orelse return false;
+        const top = app.winTop(s, index);
+        if (cx == 0 or cx == col_w - 1 or m.y < top) return false;
+        const pane = win.paneAt(cx - 1, m.y - top) orelse return false;
         if (focused) {
             if (m.leftPress() and pane != win.activePane()) {
                 win.active = std.mem.indexOfScalar(*Pane, win.panes.items, pane).?;
@@ -3376,7 +3400,7 @@ pub const App = struct {
                 app.dirty = true;
             }
             const px: u16 = @intCast(cx - 1 - pane.x);
-            const py: u16 = @intCast(m.y - 1 - pane.y);
+            const py: u16 = @intCast(m.y - top - pane.y);
             if (m.code & (3 | 32 | 64) == 1) {
                 if (!m.release) try app.send(.ignore, "run-shell -b \"wl-paste -p -n | tmux load-buffer -b arena-primary - && tmux paste-buffer -p -d -b arena-primary -t %{d}\"", .{pane.id});
                 return true;

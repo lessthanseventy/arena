@@ -80,10 +80,10 @@ always did; arena draws them and leaves them running when it quits.
   and it is lit: what is typed, the wheel and the mouse are then its own. Alt+h, or a click on the
   board, goes back to the board. `` ` `` folds it away, and the
   board opens so until it is unfolded. Closing the board goes back to the session you were in.
-  The orchestrator's own Claude has a pane beside its chat, a feed of the board: the asks waiting
-  on you and for how long, the tickets sent back and why, what is being done or in review with
-  its holder's window and stage, and the last ten landings. It is drawn again when babylon's file
-  changes (watched with `inotifywait`), and no other Claude has it.
+  Atop the column, above the orchestrator's pane, is the feed: what is your move as babylon's
+  `needs_you` words it, each with its actions, then what is landing in queue order, what is
+  being built, and how many landed today. It is read from babylon's file, so it stays while the
+  orchestrator is off or restarting.
 - **Jump** to any window in any session by typing part of its name.
 - **A menu** for everything, for when you would rather click.
 - **Mouse throughout**: click, wheel, drag to select and copy (shift-drag over a program that takes
@@ -125,7 +125,7 @@ arena -L socket   # a tmux server other than the default one
 arena board 240   # the board on ticket 240, in the arena that is running
 arena show %290   # pane 290 in front: its session and window, picked in the rail
 arena show '#324' # the pane of the Claude holding ticket 324
-arena inbox       # the needs-you inbox (home, until its feed lands)
+arena inbox       # home, with what needs you atop the orchestrator's column
 ```
 
 `board`, `show` and `inbox` are the only supported way in from outside arena: the shell's popups,

@@ -6,6 +6,7 @@ const color = @import("color.zig");
 const theme = @import("theme.zig");
 const app_mod = @import("app.zig");
 const tickets = @import("board.zig");
+const feed = @import("feed.zig");
 const App = app_mod.App;
 const Session = app_mod.Session;
 const Window = app_mod.Window;
@@ -979,10 +980,23 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
         };
 
         var pen: Pen = .{};
+        const top = app.winTop(s, i);
+        var the_feed: feed.Feed = undefined;
+        if (top > 1) _ = app.feedOf(&the_feed);
         var y: u16 = 0;
         while (y < app.view_h) : (y += 1) {
             const sy = y + yoff;
             if (sy < 0 or sy >= app.view_h) continue;
+            if (y > 0 and y < top and y + 1 < app.view_h) {
+                if (x0 < 0 or x1 >= app.view_w) continue;
+                try w.print("\x1b[{d};{d}H", .{ sy + 1, ox + x0 + 1 });
+                try col.border(&pen, w, 0, y);
+                if (what == .focused_border) {
+                    try w.print("\x1b[{d};{d}H", .{ sy + 1, ox + x1 + 1 });
+                } else try feedRow(app, w, &pen, &the_feed, y - 1, col_w - 2);
+                try col.border(&pen, w, col_w - 1, y);
+                continue;
+            }
             if (y == 0 or y == app.view_h - 1) {
                 try w.print("\x1b[{d};{d}H", .{ sy + 1, ox + lo + 1 });
                 var sx = lo;
@@ -1005,7 +1019,7 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
             try w.print("\x1b[{d};{d}H", .{ sy + 1, ox + in_lo + 1 });
             var sx = in_lo;
             while (sx < in_hi) : (sx += 1) {
-                try cell(app, &pen, w, win, @intCast(sx - x0 - 1), y - 1, focused, sx == in_lo, sx + 1 == in_hi);
+                try cell(app, &pen, w, win, @intCast(sx - x0 - 1), y - top, focused, sx == in_lo, sx + 1 == in_hi);
             }
         }
 
@@ -1014,12 +1028,52 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
         if (!pane.render.cursor.visible) continue;
         const at = pane.render.cursor.viewport orelse continue;
         const sx = x0 + 1 + pane.x + at.x;
-        if (sx >= lo and sx < hi) cursor = .{ .x = ox + sx, .y = 1 + pane.y + at.y };
+        if (sx >= lo and sx < hi) cursor = .{ .x = ox + sx, .y = top + pane.y + at.y };
     }
     return cursor;
 }
 
 const fold_hint = " ` fold ";
+
+/// Row `row` of the feed atop the orchestrator's column, `inner` cells wide: its line, or past
+/// them, the rule under it.
+fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usize, inner: u16) !void {
+    const dim = ink(app, "dim", 8);
+    if (row >= f.count()) {
+        try pen.set(w, dim, null);
+        for (0..inner) |_| try w.writeAll("─");
+        return;
+    }
+    const line = f.line(row);
+    try pen.set(w, .{}, null);
+    try w.writeAll(" ");
+    var room: usize = inner -| 1;
+    const bar = if (line.failed) ink(app, "emberdim", 1) else ink(app, "amber", 4);
+    const lead: []const u8 = switch (line.kind) {
+        .item => "▌ ",
+        .buttons => "▌     ",
+        .chips => "  ",
+        else => "",
+    };
+    if (lead.len > 0 and room > cellCount(lead)) {
+        try pen.set(w, bar, null);
+        try w.writeAll(lead);
+        room -= cellCount(lead);
+    }
+    var bold = heading(app);
+    bold.flags.bold = true;
+    try pen.set(w, switch (line.kind) {
+        .move_head => bold,
+        .head => blk: {
+            var style: vt.Style = .{};
+            style.flags.bold = true;
+            break :blk style;
+        },
+        .quiet, .more, .landed, .buttons => dim,
+        .item, .chips => .{},
+    }, null);
+    try fitted(w, line.text, room);
+}
 
 /// The orchestrator's column with no window of its in it: its head, and while it is off, how to
 /// start it.
@@ -1040,11 +1094,15 @@ fn sideEmpty(app: *const App, w: *Writer) !void {
         .right = if (title_len + right.len + 6 <= app.view_w) right else right[0..0],
     };
     var pen: Pen = .{};
+    var the_feed: feed.Feed = undefined;
+    const top: usize = if (app.feedOf(&the_feed)) the_feed.count() + 2 else 1;
     for (0..app.view_h) |y| {
         try w.print("\x1b[{d};{d}H", .{ y + 1, ox + 1 });
         for (0..app.view_w) |x| {
             if (y == 0 or y + 1 == app.view_h or x == 0 or x + 1 == app.view_w) {
                 try col.border(&pen, w, x, @intCast(y));
+            } else if (y < top) {
+                if (x == 1) try feedRow(app, w, &pen, &the_feed, y - 1, app.view_w - 2);
             } else {
                 try pen.set(w, .{}, null);
                 try w.writeAll(" ");
@@ -1055,7 +1113,8 @@ fn sideEmpty(app: *const App, w: *Writer) !void {
     const off = "orchestrator off · ⏎ start it";
     if (cellCount(off) + 4 > app.view_w) return;
     try pen.set(w, ink(app, "dim", 8), null);
-    try w.print("\x1b[{d};{d}H{s}", .{ 3, ox + 3, off });
+    if (top + 2 >= app.view_h) return;
+    try w.print("\x1b[{d};{d}H{s}", .{ top + 2, ox + 3, off });
 }
 
 fn codepoints(text: []const u8, out: []u21) usize {
