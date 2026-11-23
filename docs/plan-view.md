@@ -2,7 +2,8 @@
 
 This design is for #600, held to [the principles](principles.md) and to the seams (#587,
 `docs/seams.md`), and read with [the orchestrator](orchestrator.md), whose words and column it
-keeps. Nothing in it is built yet. The build is the tickets at the end.
+keeps. The human approved it as drawn on 2026-11-23 (ask #28). Nothing in it is built yet. The
+build is the tickets at the end.
 
 The human, 2026-11-23, looking at arena home: "is a 'board' the best shape here? … I just want to
 be able to see what's going on and what's planned". To the orchestrator's sketch of now, next,
@@ -254,35 +255,35 @@ move it. Board 2–15 against that:
 | #348 Board 15, README and screenshots | keep, rescoped | it shows Home as the plan and the board as the drill-down, last in the stack |
 | #349, the notices | unchanged here | ficciones', as rescoped by the seams |
 
-The kept board tickets stay held until the plan's first arena step lands, so Home changes before
+The kept board tickets stay held until the plan's first arena step (#618) lands, so Home changes before
 the board is polished.
 
 ## The build
 
-To be filed once the human approves this design.
+Epic #612.
 
 babylon, in order:
 
-1. **Next as data:** a `plan_next` table, `babylon next N [--why TEXT] [--at K] [--drop]`, the
+1. **Next as data (#613):** a `plan_next` table, `babylon next N [--why TEXT] [--at K] [--drop]`, the
    `plan_next` MCP tool, and `set_by`. A started ticket leaves next.
-2. **auto takes from next first**, then falls back to today's order.
-3. **`stage_at`** on tickets, stamped on every status and stage change.
-4. **`plan` in board.json:** now (with `since` and `stalled`), next (with `waits_on` and actions),
+2. **auto takes from next first (#615)**, then falls back to today's order.
+3. **`stage_at` (#614)** on tickets, stamped on every status and stage change.
+4. **`plan` in board.json (#616):** now (with `since` and `stalled`), next (with `waits_on` and actions),
    goals with all their steps, landed today by the human's day, and not planned. After 1 and 3,
    and after #591 for `stalled`.
-5. **The orchestrator's prompt** keeps next and its whys, and stops proposing `start` while auto is
+5. **The orchestrator's prompt (#617)** keeps next and its whys, and stops proposing `start` while auto is
    on. After 1.
 
 arena, one stack:
 
-6. **Home draws the plan** in the board's place at the whole width: now, next, goals, landed and
+6. **Home draws the plan (#618)** in the board's place at the whole width: now, next, goals, landed and
    not planned, with `j` `k`, `⏎` and `space` per row as above, `b` home and `B` the board. After 4.
    e2e: `arena` opens on `◆ plan` with the column pinned, and `B` shows the board.
-7. **Next is edited from the plan:** `J` `K`, `x`, `e`, and `n` on a board card, each running
+7. **Next is edited from the plan (#619):** `J` `K`, `x`, `e`, and `n` on a board card, each running
    `babylon next`.
-8. **The plan at half width**, swapped with the orchestrator by `p` and `o`. It rescopes #527 from
+8. **The plan at half width (#527, rescoped)**, swapped with the orchestrator by `p` and `o`. It rescopes #527 from
    board-or-column to plan-or-column.
-9. **The plan and the feed point at each other**, with the dim pick.
-10. **Drag onto next**, with #347.
+9. **The plan and the feed point at each other (#620)**, with the dim pick.
+10. **Drag onto next (#621)**, with #347.
 
 #526 (Home, landed) stays, and step 6 builds on it.
