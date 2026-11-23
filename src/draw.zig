@@ -633,15 +633,17 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
             filled = (if (wide) @as(usize, 9) else 2) + std.fmt.count("{d}", .{count});
         },
         .pipeline => |fold| {
+            const picked = if (app.railPicked()) |pick| pick == .fold and pick.fold == App.repoHash(fold.repo) else false;
+            try pickBar(app, w, pen, picked, dim);
             try pen.set(w, dim, null);
             var buf: [96]u8 = undefined;
             const text = if (wide)
                 std.fmt.bufPrint(&buf, " {s} {d} in the pipeline{s}{s}", .{ if (fold.open) "▾" else "◌", fold.count, if (fold.repo.len > 0) " · " else "", fold.repo }) catch ""
             else
                 std.fmt.bufPrint(&buf, " ◌{d}", .{fold.count}) catch "";
-            const shown = clip(text, inner);
+            const shown = clip(text[@min(1, text.len)..], inner - 1);
             try w.writeAll(shown);
-            filled = cellCount(shown);
+            filled = 1 + cellCount(shown);
         },
         .more => |count| {
             try pen.set(w, dim, null);

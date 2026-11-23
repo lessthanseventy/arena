@@ -810,7 +810,7 @@ pub const App = struct {
         return false;
     }
 
-    fn repoHash(repo: []const u8) u64 {
+    pub fn repoHash(repo: []const u8) u64 {
         return std.hash.Wyhash.hash(0, repo) | 1;
     }
 
@@ -1120,10 +1120,11 @@ pub const App = struct {
         return n;
     }
 
-    /// What the rail's pick is on, by id: a session in its list or a Claude's window in its own.
-    pub const RailPick = union(enum) { session: u32, agent: u32 };
+    /// What the rail's pick is on, by id: a session in its list, a Claude's window in its own, or
+    /// a fold of the pipeline's by its repo's hash.
+    pub const RailPick = union(enum) { session: u32, agent: u32, fold: u64 };
 
-    /// The rail as one list, as it is drawn: each session, then its Claudes.
+    /// The rail as one list, as it is drawn: each session, then its Claudes, then the pipeline's folds.
     fn railPicks(app: *const App, out: []RailPick) usize {
         var n: usize = 0;
         for (app.sessions.items[0..app.railShown()]) |s| {
@@ -1133,10 +1134,15 @@ pub const App = struct {
         }
         var found: [64]Agent = undefined;
         var folds: [max_folds]Fold = undefined;
-        const count, _ = app.railList(&found, &folds);
+        const count, const nf = app.railList(&found, &folds);
         for (found[0..count]) |a| {
             if (n == out.len) break;
             out[n] = .{ .agent = a.win.id };
+            n += 1;
+        }
+        for (folds[0..nf]) |fold| {
+            if (n == out.len) break;
+            out[n] = .{ .fold = repoHash(fold.repo) };
             n += 1;
         }
         return n;
@@ -1299,7 +1305,7 @@ pub const App = struct {
                 .agent => |id| for (found[0..m], 0..) |a, i| {
                     if (a.win.id == id) break i;
                 } else null,
-                .session => null,
+                .session, .fold => null,
             } else null;
             const len: i32 = @intCast(m);
             const by: i32 = if (key[0] == ']') 1 else -1;
@@ -1310,12 +1316,20 @@ pub const App = struct {
             return true;
         } else if (anyKey(key, &.{"\r"})) {
             const pick = here orelse return true;
+            if (pick == .fold) {
+                var found: [64]Agent = undefined;
+                var folds: [max_folds]Fold = undefined;
+                _, const nf = app.railList(&found, &folds);
+                for (folds[0..nf]) |fold| if (repoHash(fold.repo) == pick.fold) app.toggleFold(fold.repo);
+                return true;
+            }
             app.normal = false;
             app.rail_pick = null;
             app.dirty = true;
             switch (pick) {
                 .agent => |id| if (app.agentById(id)) |a| try app.goAgent(a),
                 .session => |id| if (app.sessionIndex(id)) |i| try app.sessionTo(i),
+                .fold => unreachable,
             }
             return true;
         } else return false;
@@ -1326,19 +1340,25 @@ pub const App = struct {
 
     /// Scrolls the rail's list of Claudes to start at the pick when it is one the list has scrolled off.
     fn showPick(app: *App) void {
-        const id = switch (app.rail_pick orelse return) {
-            .agent => |id| id,
-            .session => return,
-        };
+        const pick = app.rail_pick orelse return;
+        if (pick == .session) return;
         var lines: [64]AgentLine = undefined;
         const shown = app.railAgents(&lines);
-        for (lines[0..shown]) |line| if (line == .agent and line.agent.win.id == id) return;
+        for (lines[0..shown]) |line| switch (line) {
+            .agent => |a| if (pick == .agent and a.win.id == pick.agent) return,
+            .pipeline => |fold| if (pick == .fold and repoHash(fold.repo) == pick.fold) return,
+            else => {},
+        };
         var found: [64]Agent = undefined;
         var folds: [max_folds]Fold = undefined;
         const count, _ = app.railList(&found, &folds);
-        const to = for (found[0..count], 0..) |a, i| {
-            if (a.win.id == id) break i;
-        } else return;
+        const to = switch (pick) {
+            .agent => |id| for (found[0..count], 0..) |a, i| {
+                if (a.win.id == id) break i;
+            } else return,
+            .fold => count -| 1,
+            .session => return,
+        };
         app.agent_skip = .{ .n = to, .at = if (app.cur()) |s| s.focused() else null };
     }
 
