@@ -12,6 +12,10 @@
           { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/claude-state.sh\" tool" },
           { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/babylon-inbox.sh\" tool" }
         ]
+      },
+      {
+        "matcher": "SendMessage",
+        "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/ask-reminder.sh\"" }]
       }
     ],
     "Stop": [
