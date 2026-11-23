@@ -1285,6 +1285,7 @@ pub const App = struct {
             return true;
         };
         const need = b.needsYou()[at];
+        if (tickets.lookDoc(need) != null and anyKey(key, &.{ "o", "\r" })) return app.openDoc(need);
         const action = for (need.actions) |action| {
             if (std.mem.eql(u8, action.key, named)) break action;
         } else return false;
@@ -1299,6 +1300,29 @@ pub const App = struct {
             app.board_view.?.giving = 0;
             app.dirty = true;
         }
+        return true;
+    }
+
+    /// The doc of a look at, opened: a link by `xdg-open`, a file of the ticket's repo in a
+    /// window of its own, in `glow` else `less`.
+    fn openDoc(app: *App, need: tickets.Need) !bool {
+        const doc = tickets.lookDoc(need) orelse return true;
+        if (std.mem.startsWith(u8, doc, "http://") or std.mem.startsWith(u8, doc, "https://")) {
+            return app.runNeed(need.id, &.{ "xdg-open", doc });
+        }
+        if (!plainName(need.repo)) return true;
+        const script =
+            "f=\"$HOME/projects/$1/$2\"; if [ ! -f \"$f\" ]; then echo \"no such file: $f\"; read _; exit; fi; " ++
+            "if command -v glow >/dev/null 2>&1; then glow -p \"$f\"; else less \"$f\"; fi";
+        var cmd: Writer.Allocating = .init(app.gpa);
+        defer cmd.deinit();
+        try cmd.writer.writeAll("new-window -a -n doc sh -c ");
+        for ([_][]const u8{ script, "_", need.repo, doc }, 0..) |arg, i| {
+            if (i > 0) try cmd.writer.writeAll(" ");
+            try tmuxQuote(&cmd.writer, arg);
+        }
+        try app.closeBoard();
+        try app.send(.ignore, "{s}", .{cmd.written()});
         return true;
     }
 
@@ -4246,6 +4270,25 @@ pub fn branchTicket(branch: []const u8) ?[]const u8 {
 }
 
 /// `arg` as one word to the shell, whatever is in it.
+/// `arg` as one argument of a tmux command: in double quotes, with `\`, `"` and `$` escaped and
+/// `#` doubled, which tmux would read as a format.
+fn tmuxQuote(w: *Writer, arg: []const u8) !void {
+    try w.writeByte('"');
+    for (arg) |c| switch (c) {
+        '#' => try w.writeAll("##"),
+        '\\', '"', '$' => try w.print("\\{c}", .{c}),
+        else => try w.writeByte(c),
+    };
+    try w.writeByte('"');
+}
+
+test tmuxQuote {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try tmuxQuote(&out.writer, "a \"b\" $c #d\\");
+    try std.testing.expectEqualStrings("\"a \\\"b\\\" \\$c ##d\\\\\"", out.written());
+}
+
 fn shellQuote(w: *Writer, arg: []const u8) !void {
     try w.writeByte('\'');
     for (arg) |c| if (c == '\'') try w.writeAll("'\\''") else try w.writeByte(c);

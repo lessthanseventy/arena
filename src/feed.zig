@@ -196,6 +196,11 @@ pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, wi
         var chips: [12][]const u8 = undefined;
         var bufs: [12][96]u8 = undefined;
         var n: usize = 0;
+        // opening the doc is arena's own: babylon's actions are only what it answers with
+        if (tickets.lookDoc(need) != null) {
+            chips[0] = "o open";
+            n = 1;
+        }
         for (need.actions) |action| {
             if (n == chips.len) break;
             chips[n] = std.fmt.bufPrint(&bufs[n], "{s} {s}", .{ action.key, action.label }) catch continue;
@@ -627,4 +632,20 @@ test "auto's line is two when one does not fit: its state and hold, then its rep
     try std.testing.expectEqual(@as(usize, 22), on.at);
     try std.testing.expectEqual(@as(usize, 11), on.w);
     try std.testing.expectEqual(@as(?usize, 0), f.item(1).?.next);
+}
+
+test "a look at says it can be opened, then babylon's own actions, and names its doc" {
+    var b = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"needs_you":[
+        \\{"id":"ask:6","kind":"look","ticket":307,"repo":"tlon","text":"#307 tlon  look at: docs/asterion.md",
+        \\ "actions":[{"key":"y","label":"looks good","argv":["babylon","call","answer_ask","{\"id\":6}"]},{"key":"c","label":"change","argv":null,"needs":"words"}]}]}
+    );
+    defer b.deinit();
+    try std.testing.expectEqualStrings("docs/asterion.md", tickets.lookDoc(b.needsYou()[0]).?);
+    var f: Feed = undefined;
+    build(&f, &b, &.{}, 56, 40, now, 0, 0);
+    var out: [64][]const u8 = undefined;
+    const got = texts(&f, &out);
+    try std.testing.expectEqualStrings("#307 tlon  look at: docs/asterion.md", got[1]);
+    try std.testing.expectEqualStrings("o open   y looks good   c change", got[2]);
 }

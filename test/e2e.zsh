@@ -1628,6 +1628,16 @@ key Enter
 check "and the board closed, a worker's pane gets it whole too" await said alpha: worker-jkdufltb
 key M-b
 see ' board  every'
+cp $tmp/run/babylon/board.json $tmp/board.nolook
+print -r -- '{"tickets":[],"needs_you":[{"id":"ask:6","kind":"look","ticket":307,"repo":"tlon","text":"#307 tlon  look at: docs/none-jkdufltb.md","actions":[{"key":"y","label":"looks good","argv":["babylon","call","answer_ask","{\"id\":6}"]},{"key":"c","label":"change","argv":null,"needs":"words"}]}]}' >$tmp/run/babylon/board.json
+check "a look at is an item with its doc named and o to open it" see 'o open   y looks good'
+key ']'
+key o
+doc_window() { [[ $(inner list-windows -a -F '#{window_name}') == *doc* ]] }
+check "o opens its doc in a window of its own" await doc_window
+check "which says so when the file is not in the ticket's repo" await eval 'inner capture-pane -p -t "$(inner list-windows -a -F "#{window_id} #{window_name}" | awk "\$2==\"doc\"{print \$1}")" | grep -q "no such file: .*projects/tlon/docs/none-jkdufltb.md"'
+cp $tmp/board.nolook $tmp/run/babylon/board.json
+key M-b
 key M-q
 gone ' board  every'
 key M-q

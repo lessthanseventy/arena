@@ -143,7 +143,7 @@ column focused:
 | `←` `→` `+` `-` | on auto's line, pick a repo of its caps and raise or lower it, 0 pausing it (`babylon auto --repo-cap REPO=N`); `h` goes back to the board from there |
 | `G` | give the picked free send-back to a running Claude, as on the board |
 | `c` | answer the picked ask in words, in a line at the column's foot |
-| `o` `y` | open the picked item's doc, then say it looks good |
+| `o` `⏎` `y` | on a look at: open its doc (a repo file in a window of its own, in `glow` else `less`; a link by `xdg-open`), then say it looks good |
 | `space` | the picked item's modal: the ask's or proposal's ([normal mode](normal-mode.md#an-asks-or-a-proposals-modal)), or the card's |
 | `t` | the ticket's card modal |
 | `h` | focus to the board, where `l` comes back |

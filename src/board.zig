@@ -133,6 +133,15 @@ pub const Need = struct {
     actions: []Action = &.{},
 };
 
+/// The doc a look at is of, as babylon's row says it after `look at: `.
+pub fn lookDoc(need: Need) ?[]const u8 {
+    if (!std.mem.eql(u8, need.kind, "look")) return null;
+    const mark = "look at: ";
+    const at = std.mem.indexOf(u8, need.text, mark) orelse return null;
+    const doc = std.mem.trim(u8, need.text[at + mark.len ..], " ");
+    return if (doc.len == 0) null else doc;
+}
+
 /// A move the orchestrator proposes, waiting on the human's go or no.
 pub const Proposal = struct {
     id: u32,
