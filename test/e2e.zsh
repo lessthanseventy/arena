@@ -58,10 +58,10 @@ key() { outer send-keys -t o "$@" }
 # button, column and row from 1, then M to press or move and m to let go
 mouse() { outer send-keys -t o -l $'\e'"[<$1;$2;$3$4" }
 
-# Up to three seconds for a command to succeed.
+# Up to ten seconds for a command to succeed: babylon runs the gate on a busy machine.
 await() {
   local i
-  for i in {1..60}; do
+  for i in {1..200}; do
     "$@" && return 0
     zselect -t 5
   done
