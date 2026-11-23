@@ -7,6 +7,7 @@ export type Row = {
   mid: string
   text: string
   why?: string
+  todo?: string
   at?: number
   tone: Tone
 }

@@ -8,7 +8,7 @@ const ORCHESTRATOR = 'orchestrator'
 const CAP = 5
 const NONE: Feed = { move: [], landing: [], building: [], landing_more: 0, building_more: 0, status: '' }
 
-const feed = atom({ plugin: 'arena', key: 'feed' } as const, NONE, { shape: 'feed-2' })
+const feed = atom({ plugin: 'arena', key: 'feed' } as const, NONE, { shape: 'feed-3' })
 const now = atom({ plugin: 'arena', key: 'now' } as const, 0)
 
 const REPO_COLORS: Record<string, string> = {
@@ -28,6 +28,8 @@ type Card = {
   repo?: string | null
   stage?: string | null
   stage_note?: string
+  claimed_by?: string | null
+  blocked_by?: number[]
   claimed_at?: string | null
   submitted_at?: string | null
   closed_at?: string | null
@@ -67,6 +69,7 @@ export const rows = (text: string, at_now: number): Feed => {
       mid: '',
       text: card?.title ?? line(proposal.what),
       why: proposal.why ? line(proposal.why) : undefined,
+      todo: 'go/no on its card',
       tone: 'move',
     }
   })
@@ -79,15 +82,21 @@ export const rows = (text: string, at_now: number): Feed => {
       mid: 'ask',
       text: line(card.ask?.question ?? ''),
       at: time(card.ask?.asked_at),
+      todo: 'answer: tell the orchestrator, or 1–N on the board',
       tone: 'move',
     }))
+  const isSentBack = (card: Card) => card.stage === 'failed' && card.status !== 'done'
+  const isHeld = (card: Card) => Boolean(card.claimed_by)
+  const openBlockers = (card: Card) =>
+    (card.blocked_by ?? []).filter(id => board.tickets.some(other => other.id === id && other.status !== 'done'))
   const sentBack: Row[] = cards
-    .filter(card => card.stage === 'failed' && card.status !== 'done')
+    .filter(card => isSentBack(card) && !isHeld(card) && openBlockers(card).length === 0)
     .map(card => ({
       label: `#${card.id}`,
       repo: repoOf(card),
       mid: 'sent back',
       text: line(card.stage_note ?? '') || card.title,
+      todo: 'the orchestrator will propose',
       tone: 'failed',
     }))
 
@@ -108,16 +117,32 @@ export const rows = (text: string, at_now: number): Feed => {
     tone: RUNNING.includes(card.stage ?? '') ? 'running' : 'queued',
   }))
   const building: Row[] = cards
-    .filter(card => card.status === 'doing' && card.stage !== 'failed' && !card.ask)
+    .filter(
+      card =>
+        (card.status === 'doing' && card.stage !== 'failed' && !card.ask) ||
+        (isSentBack(card) && (isHeld(card) || openBlockers(card).length > 0)),
+    )
     .sort(byTime(card => time(card.claimed_at)))
-    .map(card => ({
-      label: `#${card.id}`,
-      repo: repoOf(card),
-      mid: '',
-      text: card.title,
-      at: time(card.claimed_at),
-      tone: 'plain',
-    }))
+    .map(card => {
+      if (!isSentBack(card)) {
+        return {
+          label: `#${card.id}`,
+          repo: repoOf(card),
+          mid: '',
+          text: card.title,
+          at: time(card.claimed_at),
+          tone: 'plain' as const,
+        }
+      }
+
+      return {
+        label: `#${card.id}`,
+        repo: repoOf(card),
+        mid: isHeld(card) ? '✗ fixing after send-back' : `✗ waits on ${openBlockers(card).map(id => `#${id}`).join(' ')}`,
+        text: card.title,
+        tone: 'failed' as const,
+      }
+    })
 
   const midnight = new Date(at_now).setHours(0, 0, 0, 0)
   const landed = cards.filter(card => card.stage === 'landed' && (time(card.closed_at) ?? 0) >= midnight).length
@@ -211,6 +236,7 @@ export const register: Register = on => {
           {row.repo ? <Text color={repoColor(row.repo)}> {row.repo}</Text> : ''}
           {mid ? ` · ${mid}` : ''} · {row.text}
           {row.why ? ` — ${row.why}` : ''}
+          {row.todo ? ` → ${row.todo}` : ''}
         </Text>
       )
     }

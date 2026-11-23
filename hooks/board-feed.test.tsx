@@ -40,6 +40,14 @@ const BOARD = {
     }),
     card(360, 'Released after a send-back', 'todo', { repo: 'ficciones', stage: 'failed', stage_note: 'needs the human' }),
     card(14, 'A pane for the board', 'doing', { claimed_at: '2026-11-21T10:00:00Z' }),
+    card(495, 'Held after a send-back', 'doing', {
+      claimed_by: '%610',
+      claimed_at: '2026-11-21T11:00:00Z',
+      stage: 'failed',
+      stage_note: 'red',
+    }),
+    card(361, 'The blocker', 'doing', { claimed_at: '2026-11-21T11:10:00Z' }),
+    card(362, 'Blocked after a send-back', 'todo', { stage: 'failed', stage_note: 'red', blocked_by: [361, 6] }),
     card(15, 'Keys under a box', 'review', { claimed_at: '2026-11-21T09:00:00Z', stage: 'verifying' }),
     card(17, 'Queued later', 'review', { submitted_at: '2026-11-21T11:30:00Z' }),
     card(18, 'Queued first', 'review', { repo: 'tlon', submitted_at: '2026-11-21T11:10:00Z' }),
@@ -116,10 +124,14 @@ test('in the orchestrator, the pane shows what needs the human, then landing and
   const row = async (text: RegExp) => (await ui.find({ type: 'Text', text }))?.text
 
   expect(await row(/auto/)).toBe('auto 3/4 · hold off · landed today 1')
-  expect(await row(/^P4/)).toBe('P4 start #7 arena · A todo card — Next in line')
-  expect(await row(/^#16 arena · ask/)).toBe('#16 arena · ask 12m · Blue or green?')
-  expect(await row(/^#12/)).toBe('#12 arena · sent back · the gate is red: e2e timed out')
-  expect(await row(/^#360/)).toBe('#360 ficciones · sent back · needs the human')
+  expect(await row(/^P4/)).toBe('P4 start #7 arena · A todo card — Next in line → go/no on its card')
+  expect(await row(/^#16 arena · ask/)).toBe(
+    '#16 arena · ask 12m · Blue or green? → answer: tell the orchestrator, or 1–N on the board',
+  )
+  expect(await row(/^#12/)).toBe('#12 arena · sent back · the gate is red: e2e timed out → the orchestrator will propose')
+  expect(await row(/^#360/)).toBe('#360 ficciones · sent back · needs the human → the orchestrator will propose')
+  expect(await row(/^#495/)).toBe('#495 arena · ✗ fixing after send-back · Held after a send-back')
+  expect(await row(/^#362/)).toBe('#362 arena · ✗ waits on #361 · Blocked after a send-back')
   expect(await row(/^#15/)).toBe('#15 arena · verifying · Keys under a box')
   expect(await row(/^#18/)).toBe('#18 tlon · queued 2nd · Queued first')
   expect(await row(/^#17/)).toBe('#17 arena · queued 3rd · Queued later')
@@ -129,7 +141,19 @@ test('in the orchestrator, the pane shows what needs the human, then landing and
   expect(await row(/^#6 /)).toBe(undefined)
 
   const all = await ui.findAll({ type: 'Text', text: /^[#P]\d+ / })
-  expect(all.map(one => one.text?.split(' ')[0])).toEqual(['P4', '#16', '#12', '#360', '#15', '#18', '#17', '#14'])
+  expect(all.map(one => one.text?.split(' ')[0])).toEqual([
+    'P4',
+    '#16',
+    '#12',
+    '#360',
+    '#15',
+    '#18',
+    '#17',
+    '#362',
+    '#14',
+    '#495',
+    '#361',
+  ])
   await ui.unmount()
 })
 
@@ -171,7 +195,9 @@ test('the pane is drawn again when the board file changes, and a wait grows by t
   const ui = await $.ui.mount(PANE)
 
   await clock.advance(60_000)
-  expect((await ui.find({ type: 'Text', text: /^#16/ }))?.text).toBe('#16 arena · ask 13m · Blue or green?')
+  expect((await ui.find({ type: 'Text', text: /^#16/ }))?.text).toBe(
+    '#16 arena · ask 13m · Blue or green? → answer: tell the orchestrator, or 1–N on the board',
+  )
   expect(read.length).toBe(2)
 
   change()
