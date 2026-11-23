@@ -177,6 +177,7 @@ const normal_keys = "j k pick  ] [ next waiting  ⏎ go  b home  i insert";
 fn pickBar(app: *const App, w: *Writer, pen: *Pen, picked: bool, base: vt.Style) !void {
     try pen.set(w, if (picked) ink(app, "amber", 4) else base, null);
     try w.writeAll(if (picked) "▌" else " ");
+    if (picked) try pen.set(w, base, null);
 }
 
 /// `NORMAL` in the accent at the bottom-left corner of the screen while in normal mode, and the
