@@ -2576,7 +2576,7 @@ pub const App = struct {
         const view = app.board_view orelse return;
         const card = app.boardCard(view.col, view.row) orelse return;
         const pane = card.holder() orelse {
-            if (!startable(card)) return;
+            if (!givable(card)) return;
             // babylon refuses what it will not start and says why; the board closes when it does
             var id_buf: [12]u8 = undefined;
             _ = try app.runWith("start", &.{ "babylon", "start", std.fmt.bufPrint(&id_buf, "{d}", .{card.id}) catch return }, true);
@@ -2879,10 +2879,10 @@ pub const App = struct {
         var n: usize = 0;
         const movable = card.status != .backlog and plainName(card.repo orelse "");
         const all = [_]struct { CardAction, bool }{
-            .{ .go, card.proposal != null or card.holder() != null or startable(card) }, .{ .no, card.proposal != null },    .{ .answer, card.ask != null },
-            .{ .give, givable(card) },                                                   .{ .edit, true },                   .{ .priority, true },
-            .{ .close, card.status == .todo },                                           .{ .reopen, card.status == .done }, .{ .to_todo, card.status == .backlog },
-            .{ .up, movable },                                                           .{ .down, movable },                .{ .to_next, card.status == .todo },
+            .{ .go, card.proposal != null or card.holder() != null or givable(card) }, .{ .no, card.proposal != null },    .{ .answer, card.ask != null },
+            .{ .give, givable(card) },                                                 .{ .edit, true },                   .{ .priority, true },
+            .{ .close, card.status == .todo },                                         .{ .reopen, card.status == .done }, .{ .to_todo, card.status == .backlog },
+            .{ .up, movable },                                                         .{ .down, movable },                .{ .to_next, card.status == .todo },
         };
         for (all) |pair| if (pair[1]) {
             out[n] = pair[0];
@@ -4306,9 +4306,6 @@ pub fn cellCount(text: []const u8) usize {
     return std.unicode.utf8CountCodepoints(text) catch text.len;
 }
 
-/// The longest repo name a session is named for in full.
-const session_name = 64;
-
 /// The number of the ticket a branch named `t<number>-...` works, null for any other branch.
 pub fn branchTicket(branch: []const u8) ?[]const u8 {
     if (branch.len < 2 or branch[0] != 't') return null;
@@ -4351,14 +4348,8 @@ test shellQuote {
     try std.testing.expectEqualStrings("'{\"id\":27} it'\\''s'", out.written());
 }
 
-/// A todo card no Claude holds, waiting on nothing, of a repo that can name a session and a folder.
-fn startable(card: *const tickets.Card) bool {
-    const repo = card.repo orelse return false;
-    return card.holder() == null and card.status == .todo and card.blocked_by.len == 0 and plainName(repo) and
-        repo.len <= session_name;
-}
-
-/// A card babylon would let a running Claude claim: to do, held by no one, waiting on nothing.
+/// A card babylon would let a Claude claim, or start one on: to do, held by no one, waiting on
+/// nothing, and no epic. babylon says why when it refuses what this lets through.
 fn givable(card: *const tickets.Card) bool {
     return card.holder() == null and card.status == .todo and card.blocked_by.len == 0 and !std.mem.eql(u8, card.kind, "epic");
 }
@@ -4378,30 +4369,6 @@ test "a card is given only while it is free to claim, whatever its repo" {
     c = free;
     c.kind = "epic";
     try std.testing.expect(!givable(&c));
-}
-
-test "a Claude is started only on a free todo card of a plain repo" {
-    const free: tickets.Card = .{ .id = 1, .repo = "tlon", .title = "a", .status = .todo };
-    try std.testing.expect(startable(&free));
-    var c = free;
-    c.blocked_by = &.{2};
-    try std.testing.expect(!startable(&c));
-    c = free;
-    c.claimed_by = "%3";
-    try std.testing.expect(!startable(&c));
-    c = free;
-    c.status = .doing;
-    try std.testing.expect(!startable(&c));
-    c = free;
-    const long: [session_name + 1]u8 = @splat('a');
-    c.repo = &long;
-    try std.testing.expect(!startable(&c));
-    c = free;
-    c.repo = "a b";
-    try std.testing.expect(!startable(&c));
-    c = free;
-    c.repo = null;
-    try std.testing.expect(!startable(&c));
 }
 
 /// A repo's name safe in a tmux command unquoted, as directory names are.
