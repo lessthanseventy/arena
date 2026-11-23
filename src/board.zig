@@ -22,6 +22,10 @@ pub const Card = struct {
     claimed_by: ?[]const u8 = null,
     /// When it was claimed, as `2026-11-21T23:20:05Z`.
     claimed_at: ?[]const u8 = null,
+    /// The pane a chain handed it to, as `%7`, until that pane claims it.
+    handed_to: ?[]const u8 = null,
+    /// The landed ticket whose pane still holds it, while it is handed.
+    handed_from: ?u32 = null,
     branch: ?[]const u8 = null,
     /// The open tickets it waits on.
     blocked_by: []const u32 = &.{},
@@ -37,9 +41,14 @@ pub const Card = struct {
     /// board is parsed, never read from a card's own fields.
     proposal: ?Proposal = null,
 
+    /// The pane holding it, as `%12`: the one that claimed it, else the one it was handed to.
+    pub fn heldBy(card: *const Card) ?[]const u8 {
+        return card.claimed_by orelse card.handed_to;
+    }
+
     /// The id of the pane holding it, if one does.
     pub fn holder(card: *const Card) ?u32 {
-        const pane = card.claimed_by orelse return null;
+        const pane = card.heldBy() orelse return null;
         if (pane.len < 2 or pane[0] != '%') return null;
         return std.fmt.parseInt(u32, pane[1..], 10) catch null;
     }
@@ -221,11 +230,23 @@ test "the board parses babylon's file, fields it does not draw left out" {
     var b = try Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     try std.testing.expectEqual(@as(usize, 4), b.cards().len);
+    try std.testing.expectEqual(@as(?u32, null), b.cards()[0].handed_from);
     try std.testing.expectEqual(@as(?u32, 12), b.cards()[1].holder());
     try std.testing.expectEqual(@as(?u32, null), b.cards()[0].holder());
     try std.testing.expectEqualSlices(u32, &.{1}, b.cards()[2].blocked_by);
     try std.testing.expectEqualStrings("its session is left running: it holds #6", b.cards()[3].session_note);
     try std.testing.expectEqualStrings("", b.cards()[0].session_note);
+}
+
+test "a todo card handed to a pane is held by it until the pane claims it" {
+    var b = try Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":6,"title":"Handed","status":"todo","handed_to":"%7","handed_from":4},
+        \\{"id":7,"title":"Claimed","status":"doing","claimed_by":"%9","handed_to":null,"handed_from":null}]}
+    );
+    defer b.deinit();
+    try std.testing.expectEqual(@as(?u32, 7), b.cards()[0].holder());
+    try std.testing.expectEqual(@as(?u32, 4), b.cards()[0].handed_from);
+    try std.testing.expectEqual(@as(?u32, 9), b.cards()[1].holder());
 }
 
 test "a note's escapes and control characters are gone once the board is parsed, and it is one line" {

@@ -1714,7 +1714,7 @@ fn cardHolder(app: *const App, card: *const tickets.Card, buf: []u8) []const u8 
         const win = at.session.wins.items[at.index];
         if (win.claude != .none) out.print("{u} ", .{glyph(app, win.claude)}) catch {};
         out.writeAll(win.name) catch {};
-    } else out.writeAll(card.claimed_by.?) catch {};
+    } else out.writeAll(card.heldBy().?) catch {};
     var age: [8]u8 = undefined;
     if (card.claimedAt()) |at| out.print(" · {s}", .{ago(&age, app.epoch, @intCast(@max(1, at)))}) catch {};
     return out.buffered();
