@@ -1052,6 +1052,7 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
     const lead: []const u8 = switch (line.kind) {
         .item => "▌ ",
         .buttons, .refused => "▌     ",
+        .next_refused => "    ",
         .landing_chips, .building_chips, .next_item, .auto_line, .auto_repos => "  ",
         else => "",
     };
@@ -1077,7 +1078,7 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
         },
         .auto_line, .auto_repos, .next_item => .{},
         .quiet, .more, .landed, .buttons => dim,
-        .refused => ink(app, "emberdim", 1),
+        .refused, .next_refused => ink(app, "emberdim", 1),
         .item, .landing_chips, .building_chips => .{},
     };
     if (room == 0) return;
@@ -1506,7 +1507,12 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     const hovered = app.hovered();
     var end: u16 = 0;
     var right = app.boardX() + app.boardW();
+    var refusal_at: ?App.Button = null;
     for (shown, 0..) |button, index| {
+        if (app.start_refused != null and button.what == .card) {
+            if (refusal_at == null) refusal_at = button;
+            continue;
+        }
         var style: vt.Style = switch (button.what) {
             .repo => |i| if (i == view.repo and !view.backlog) chip(app) else if (app.tabCount(i) > 0) .{} else ink(app, "dim", 8),
             .backlog => if (view.backlog) chip(app) else if (app.board.?.backlog().len > 0) .{} else ink(app, "dim", 8),
@@ -1530,6 +1536,12 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
             else => right = @min(right, button.x),
         }
     }
+    // babylon's refusal of the start takes the place of the card's action row
+    if (refusal_at) |at| if (app.start_refused) |text| {
+        const edge = app.boardColX(view.col) + app.boardColW(view.col) -| 2;
+        try pen.set(w, ink(app, "emberdim", 1), null);
+        try w.print("\x1b[{d};{d}H{s}", .{ at.y + 1, at.x + 1, clip(text, edge -| at.x) });
+    };
     var heads: [48]App.Button = undefined;
     if (app.header(&heads).more) |at| {
         try pen.set(w, ink(app, "dim", 8), null);

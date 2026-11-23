@@ -4,7 +4,7 @@ const std = @import("std");
 const tickets = @import("board.zig");
 const Card = tickets.Card;
 
-pub const Kind = enum { move_head, quiet, item, buttons, refused, more, next_head, auto_line, auto_repos, next_item, landing_head, building_head, landing_chips, building_chips, landed };
+pub const Kind = enum { move_head, quiet, item, buttons, refused, next_refused, more, next_head, auto_line, auto_repos, next_item, landing_head, building_head, landing_chips, building_chips, landed };
 
 /// babylon's refusal of what was asked of a Your move item, by the item's id: said in place of
 /// its buttons.
@@ -213,7 +213,7 @@ pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, wi
         }
     }
 
-    next(&f.rest, board, repo_sel, width);
+    next(&f.rest, board, refused, repo_sel, width);
     landing(&f.rest, board, width, epoch);
     building(&f.rest, board, width, epoch);
     var landed: usize = 0;
@@ -242,7 +242,7 @@ pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, wi
 /// Next, under its head auto's line, then a line for each ticket in it, the pin of the human's
 /// in front. A line says its why in place of the title while it is the pick. `repo_sel` is the
 /// repo of auto's caps that is lit.
-fn next(p: *Part, board: *const tickets.Board, repo_sel: usize, width: usize) void {
+fn next(p: *Part, board: *const tickets.Board, refused: []const Refusal, repo_sel: usize, width: usize) void {
     const plan = board.next();
     const auto = board.autoState();
     if (plan.len == 0 and auto == null) return;
@@ -250,12 +250,17 @@ fn next(p: *Part, board: *const tickets.Board, repo_sel: usize, width: usize) vo
     if (idle > 0) {
         p.add(.next_head, false, "▷ next {d} · {d} slot{s} idle", .{ plan.len, idle, if (idle == 1) "" else "s" });
     } else p.add(.next_head, false, "▷ next {d}", .{plan.len});
-    if (auto) |a| autoLine(p, board, a, repo_sel, width);
+    if (auto) |a| {
+        autoLine(p, board, a, repo_sel, width);
+        if (refusalOf(refused, "auto")) |why| p.add(.next_refused, false, "{s}", .{why});
+    }
     for (plan, 0..) |item, i| {
         const pin: []const u8 = if (item.pinned()) "▪ " else "";
         p.add(.next_item, false, "{s}#{d} {s}  {s}", .{ pin, item.ticket, item.repo, item.title });
         if (item.why.len > 0) p.alt("{s}#{d} {s}  {s}", .{ pin, item.ticket, item.repo, item.why });
         p.spot(.{ .line = p.n - 1, .next = i, .ticket = item.ticket });
+        var id: [24]u8 = undefined;
+        if (refusalOf(refused, std.fmt.bufPrint(&id, "next:{d}", .{item.ticket}) catch "")) |why| p.add(.next_refused, false, "{s}", .{why});
     }
 }
 
@@ -599,6 +604,27 @@ test "next says its idle slots, then auto's line with a paused repo and one at i
     try std.testing.expectEqual(@as(u16, 1 << 2), auto.dimmed);
     try std.testing.expectEqual(@as(u16, 1 << 4), auto.paused);
     try std.testing.expectEqualStrings("▪ #655 arena  third sighting", f.line(3).alt);
+}
+
+test "babylon's refusal of an auto key is said under auto's line, and of a next key under that ticket's row" {
+    var b = try tickets.Board.parse(std.testing.allocator, planned);
+    defer b.deinit();
+    var f: Feed = undefined;
+    const refused = [_]Refusal{
+        .{ .id = "auto", .text = "refused: hold is on" },
+        .{ .id = "next:656", .text = "refused: ticket #656 is claimed by pane %1010" },
+    };
+    build(&f, &b, &refused, 70, 40, now, 0, 1);
+    var out: [64][]const u8 = undefined;
+    const got = texts(&f, &out);
+    try std.testing.expectEqualStrings("auto on · 4 of 6 · arena 2 · babylon 3 · tlon paused · hold on", got[2]);
+    try std.testing.expectEqualStrings("refused: hold is on", got[3]);
+    try std.testing.expectEqual(Kind.next_refused, f.line(3).kind);
+    try std.testing.expectEqualStrings("▪ #655 arena  Typing reaches no pane", got[4]);
+    try std.testing.expectEqualStrings("#656 babylon  Held lines", got[5]);
+    try std.testing.expectEqualStrings("refused: ticket #656 is claimed by pane %1010", got[6]);
+    try std.testing.expectEqual(@as(usize, 5), f.item(2).?.line);
+    try std.testing.expectEqual(@as(?u32, 656), f.item(2).?.ticket);
 }
 
 test "the pick goes to auto's line, lit on the repo picked, then to next's tickets" {

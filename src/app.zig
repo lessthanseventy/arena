@@ -465,6 +465,8 @@ pub const App = struct {
     utc_offset: i64 = 0,
     /// babylon's refusals of what the feed ran for its items, said in their place.
     refusals: std.ArrayList(feed.Refusal) = .empty,
+    /// babylon's refusal of the board's start, drawn on the card's action row until the next key.
+    start_refused: ?[]u8 = null,
     /// What the held left button is moving: the line after a pane, to resize it, a window by
     /// its title, along the strip, or a session by its name, along the rail.
     drag: union(enum) {
@@ -522,6 +524,7 @@ pub const App = struct {
             app.gpa.free(r.text);
         }
         app.refusals.deinit(app.gpa);
+        if (app.start_refused) |text| app.gpa.free(text);
         if (app.board) |*b| b.deinit();
     }
 
@@ -1365,23 +1368,44 @@ pub const App = struct {
         var place: [12]u8 = undefined;
         const ticket = std.fmt.bufPrint(&id, "{d}", .{plan[at].ticket}) catch return true;
         const view = &app.board_view.?;
-        if (anyKey(key, &.{"x"})) return app.runNeed("next", &.{ "babylon", "next", ticket, "--drop" });
+        var said: [24]u8 = undefined;
+        const refusal = std.fmt.bufPrint(&said, "next:{d}", .{plan[at].ticket}) catch return true;
+        if (anyKey(key, &.{"x"})) return app.runNeed(refusal, &.{ "babylon", "next", ticket, "--drop" });
         if (anyKey(key, &.{"p"})) {
             const here = std.fmt.bufPrint(&place, "{d}", .{at + 1}) catch return true;
-            return app.runNeed("next", &.{ "babylon", "next", ticket, "--at", here });
+            return app.runNeed(refusal, &.{ "babylon", "next", ticket, "--at", here });
         }
         const down = anyKey(key, &.{"J"});
         if (!down and !anyKey(key, &.{"K"})) return false;
         if (if (down) at + 1 >= plan.len else at == 0) return true;
         const to = std.fmt.bufPrint(&place, "{d}", .{if (down) at + 2 else at}) catch return true;
         view.pick = if (down) view.pick + 1 else view.pick - 1;
-        return app.runNeed("next", &.{ "babylon", "next", ticket, "--at", to });
+        return app.runNeed(refusal, &.{ "babylon", "next", ticket, "--at", to });
     }
 
     /// `argv`, run for Your move item `id` through tmux: babylon's refusal is written beside its
     /// board, for the feed to say in place of the item's buttons.
     fn runNeed(app: *App, id: []const u8, argv: []const []const u8) !bool {
+        return app.runWith(id, argv, false);
+    }
+
+    /// `runNeed`, and with `report` also a word on success, `ok`, for arena to read: the board's
+    /// start closes it only then.
+    fn runWith(app: *App, id: []const u8, argv: []const []const u8, report: bool) !bool {
+        // a refusal under auto's line or a next row stays only until the next key of either
+        if (std.mem.eql(u8, id, "auto") or std.mem.startsWith(u8, id, "next:")) {
+            var i: usize = app.refusals.items.len;
+            while (i > 0) {
+                i -= 1;
+                const r = app.refusals.items[i];
+                if (!std.mem.eql(u8, r.id, "auto") and !std.mem.startsWith(u8, r.id, "next:")) continue;
+                app.gpa.free(r.id);
+                app.gpa.free(r.text);
+                _ = app.refusals.orderedRemove(i);
+            }
+        }
         app.dropRefusal(id);
+        if (report) app.clearStartRefusal();
         var buf: [std.fs.max_path_bytes]u8 = undefined;
         const path = app.refusalPath(id, &buf) orelse "/dev/null";
         var cmd: Writer.Allocating = .init(app.gpa);
@@ -1391,7 +1415,12 @@ pub const App = struct {
             if (i > 0) try cmd.writer.writeAll(" ");
             try shellQuote(&cmd.writer, arg);
         }
-        try cmd.writer.writeAll(" 2>&1) || printf '%s\\n' \"$out\" >");
+        try cmd.writer.writeAll(" 2>&1)");
+        if (report) {
+            try cmd.writer.writeAll(" && printf ok >");
+            try shellQuote(&cmd.writer, path);
+        }
+        try cmd.writer.writeAll(" || printf '%s\\n' \"$out\" >");
         try shellQuote(&cmd.writer, path);
         // tmux reads the line as a format, in double quotes: # is ##, and \, " and $ escaped
         var line: Writer.Allocating = .init(app.gpa);
@@ -1424,6 +1453,28 @@ pub const App = struct {
         const owned_id = try app.gpa.dupe(u8, id);
         errdefer app.gpa.free(owned_id);
         try app.refusals.append(app.gpa, .{ .id = owned_id, .text = try clean.toOwnedSlice(app.gpa) });
+        app.dirty = true;
+    }
+
+    /// babylon's answer to the board's start: `ok` closes the board, anything else is drawn on
+    /// the card where its start button was.
+    pub fn startAnswered(app: *App, text: []const u8) !void {
+        const line = std.mem.trim(u8, text, " \n");
+        if (std.mem.eql(u8, line, "ok")) return app.closeBoard();
+        if (app.board_view == null) return;
+        const first = line[0 .. std.mem.indexOfScalar(u8, line, '\n') orelse line.len];
+        var clean: std.ArrayList(u8) = .empty;
+        errdefer clean.deinit(app.gpa);
+        try @import("text.zig").appendClean(&clean, app.gpa, first);
+        app.clearStartRefusal();
+        app.start_refused = try clean.toOwnedSlice(app.gpa);
+        app.dirty = true;
+    }
+
+    fn clearStartRefusal(app: *App) void {
+        const text = app.start_refused orelse return;
+        app.gpa.free(text);
+        app.start_refused = null;
         app.dirty = true;
     }
 
@@ -2174,6 +2225,7 @@ pub const App = struct {
     fn closeBoard(app: *App) !void {
         const view = app.board_view orelse return;
         app.board_view = null;
+        app.clearStartRefusal();
         app.dirty = true;
         app.reflow();
         if (view.back) |id| try app.switchTo(id);
@@ -2524,10 +2576,10 @@ pub const App = struct {
         const card = app.boardCard(view.col, view.row) orelse return;
         const pane = card.holder() orelse {
             if (!startable(card)) return;
-            // babylon refuses what it will not start, and says why
-            try app.send(.ignore, "run-shell -b \"out=\\$(babylon start {d} 2>&1) || " ++
-                "{{ command -v notify-send >/dev/null && notify-send -a arena -- \\\"\\$out\\\"; }}\"", .{card.id});
-            return app.closeBoard();
+            // babylon refuses what it will not start and says why; the board closes when it does
+            var id_buf: [12]u8 = undefined;
+            _ = try app.runWith("start", &.{ "babylon", "start", std.fmt.bufPrint(&id_buf, "{d}", .{card.id}) catch return }, true);
+            return;
         };
         try app.showPane(pane);
     }
@@ -2632,6 +2684,7 @@ pub const App = struct {
     /// it to the next repo and from the last back to every one, Enter goes to the Claude holding
     /// the card picked or starts one on a free todo card, Escape and q close.
     fn boardKey(app: *App, key: []const u8) !void {
+        app.clearStartRefusal();
         app.dirty = true;
         const view = &app.board_view.?;
         const is = anyKey;

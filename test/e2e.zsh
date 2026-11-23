@@ -22,7 +22,7 @@ chmod +x $tmp/bin/claude
 print -r -- $'#!/bin/sh\nprintf "%s|" "$@" >>'$tmp$'/notified\necho >>'$tmp$'/notified' >$tmp/bin/notify-send
 chmod +x $tmp/bin/notify-send
 # stands in for babylon's command line: it says what the board answered
-print -r -- $'#!/bin/sh\necho "$@" >>'$tmp$'/babylon\n[ "$1" = answer ] && [ -e '$tmp$'/refuse ] && { echo "babylon: no session to answer" >&2; exit 1; }\n[ "$1" = give ] && [ -e '$tmp$'/refuse ] && { echo "babylon: the Claude in $3 is mid-turn" >&2; exit 1; }\n[ "$1" = detail ] && printf \'#%s Lights\\n\\nthe whole of it\\n\' "$2"\nexit 0' >$tmp/bin/babylon
+print -r -- $'#!/bin/sh\necho "$@" >>'$tmp$'/babylon\n[ "$1" = answer ] && [ -e '$tmp$'/refuse ] && { echo "babylon: no session to answer" >&2; exit 1; }\n[ "$1" = give ] && [ -e '$tmp$'/refuse ] && { echo "babylon: the Claude in $3 is mid-turn" >&2; exit 1; }\n[ "$1" = start ] && [ -e '$tmp$'/refuse-start ] && { echo "babylon: ticket #$2 is claimed by pane %1010" >&2; exit 1; }\n[ "$1" = next ] && [ -e '$tmp$'/refuse-next ] && { echo "babylon: ticket #$2 is claimed by pane %1010" >&2; exit 1; }\n[ "$1" = detail ] && printf \'#%s Lights\\n\\nthe whole of it\\n\' "$2"\nexit 0' >$tmp/bin/babylon
 chmod +x $tmp/bin/babylon
 export PATH=$tmp/bin:$PATH
 
@@ -1075,8 +1075,13 @@ check "t moves a backlog card to todo through babylon" await told
 key r
 check "r from the backlog goes back to every repo" await tablit every
 check "which does not show the backlog" gone '#12 Someday'
+touch $tmp/refuse-start
+key Enter
+check "Enter on a card babylon refuses to start says why on the card, the board still open" see 'babylon: ticke'
+rm $tmp/refuse-start
 key Enter
 check "Enter on a free todo card runs babylon start on it" await last 'start 7'
+check "and closes the board once babylon has started it" gone ' board  every'
 key M-b
 check "and the board opens again on every repo" await tablit every
 key r
@@ -1123,6 +1128,7 @@ key M-b
 see '#13 Gatekeepi'
 key Enter
 check "Enter on a babylon card starts it through babylon too" await last 'start 13'
+check "and closes the board" gone ' board  every'
 
 cp $tmp/board.kept $tmp/run/babylon/board.json
 key M-b
@@ -1340,8 +1346,13 @@ key H
 check "and H puts the pipeline on hold" await last 'hold on'
 key j
 check "the pick goes on to next's tickets" await feed_lit '#655 arena  third sighting'
+touch $tmp/refuse-next
+key p
+check "a next key babylon refuses says why under the ticket's row" see 'babylon: ticket #655 is c'
+rm $tmp/refuse-next
 key p
 check "p pins a ticket where it is, through babylon as the human" await last 'next 655 --at 1'
+check "and the next key takes the refusal away" gone 'babylon: ticket #655 is c'
 key J
 check "J moves it down" await last 'next 655 --at 2'
 key K

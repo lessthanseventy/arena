@@ -148,14 +148,23 @@ const BoardFile = struct {
 /// babylon's refusals of what the feed ran, written beside its board, taken in for the feed to say.
 fn checkRefusals(app: *App) !void {
     const b = if (app.board) |*b| b else return;
-    for (b.needsYou()) |need| {
-        var buf: [std.fs.max_path_bytes]u8 = undefined;
-        const path = app.refusalPath(need.id, &buf) orelse return;
-        const text = std.Io.Dir.cwd().readFileAlloc(app.io, path, app.gpa, .limited(1 << 12)) catch continue;
-        defer app.gpa.free(text);
-        std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
-        try app.refuse(need.id, text);
+    for (b.needsYou()) |need| try takeRefusal(app, need.id);
+    try takeRefusal(app, "auto");
+    for (b.next()) |item| {
+        var id: [24]u8 = undefined;
+        try takeRefusal(app, std.fmt.bufPrint(&id, "next:{d}", .{item.ticket}) catch continue);
     }
+    try takeRefusal(app, "start");
+}
+
+fn takeRefusal(app: *App, id: []const u8) !void {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path = app.refusalPath(id, &buf) orelse return;
+    const text = std.Io.Dir.cwd().readFileAlloc(app.io, path, app.gpa, .limited(1 << 12)) catch return;
+    defer app.gpa.free(text);
+    std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
+    if (std.mem.eql(u8, id, "start")) return app.startAnswered(text);
+    try app.refuse(id, text);
 }
 
 pub fn main(init: std.process.Init) !void {
