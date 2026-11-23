@@ -403,10 +403,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
             try draw.frame(&app, &frame.writer, what);
             try tty.writeStreamingAll(io, frame.written());
         }
-        if (app.out.items.len > 0) {
-            try tty.writeStreamingAll(io, app.out.items);
-            app.out.clearRetainingCapacity();
-        }
+        if (app.out.items.len > 0) app.dirty = true;
 
         const wait_ms: i64 = if (app.dirty)
             @max(1, frame_ms - (now - last_frame))

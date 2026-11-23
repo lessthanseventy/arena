@@ -467,11 +467,12 @@ pub const App = struct {
     } = .none,
     /// The session the open menu asks about closing.
     doomed: u32 = 0,
-    /// The pointer's shape, as the terminal was last told.
+    /// The pointer's shape, and whether the next frame is to tell the terminal of it.
     shape: []const u8 = "default",
+    shape_due: bool = false,
     /// Where the mouse last was.
     pointer: struct { x: u16 = 0, y: u16 = 0 } = .{},
-    /// Bytes for the terminal arena runs in, written out after the next frame.
+    /// Bytes for the terminal arena runs in, written inside the next frame.
     out: std.ArrayList(u8) = .empty,
     /// A piece of a pane's output without what it passes to the terminal, between `Pass` and the pane.
     plain: std.ArrayList(u8) = .empty,
@@ -2197,7 +2198,9 @@ pub const App = struct {
         return if (col == view.col and view.row >= shown) view.row - shown + 1 else 0;
     }
 
-    fn boardCardAt(app: *const App, x: u16, y: u16) ?struct { lane: usize, col: usize, row: usize } {
+    pub const CardAt = struct { lane: usize, col: usize, row: usize };
+
+    fn boardCardAt(app: *const App, x: u16, y: u16) ?CardAt {
         const left = app.boardColX(0);
         if (x < left or y < 2 or y + 1 >= app.view_h) return null;
         const col = for (0..app.boardCols()) |c| {
@@ -2502,7 +2505,32 @@ pub const App = struct {
         x: u16,
         y: u16,
         w: u16,
+
+        pub fn hit(button: Button, x: u16, y: u16) bool {
+            return y == button.y and x >= button.x and x < button.x + button.w;
+        }
     };
+
+    /// What a click at the pointer would act on, underlined while the pointer is on it: a board
+    /// button by its place in `boardButtons`, a card, or a row of the rail.
+    pub const Hovered = union(enum) { none, button: usize, card: CardAt, rail: u16 };
+
+    pub fn hovered(app: *const App) Hovered {
+        const p = app.pointer;
+        if (app.menu != null or app.prompt != null or app.overview != null or app.drag != .none) return .none;
+        const rail_w = app.railDrawnW();
+        if (p.x < rail_w) return if (p.x > 0 and p.x + 1 < rail_w and app.railActs(p.y)) .{ .rail = p.y } else .none;
+        const view = app.board_view orelse return .none;
+        if (view.boxed() or p.x >= app.boardX() + app.boardW()) return .none;
+        var buttons: [48]Button = undefined;
+        for (app.boardButtons(&buttons), 0..) |button, i| if (button.hit(p.x, p.y)) return .{ .button = i };
+        return if (app.boardCardAt(p.x, p.y)) |at| .{ .card = at } else .none;
+    }
+
+    fn railActs(app: *const App, y: u16) bool {
+        return (y == 1 and app.board != null) or app.railSession(y) != null or y == app.railNewRow() or
+            y == app.railMenuRow() or app.railAgentAt(y) != null;
+    }
 
     pub fn buttonLabel(app: *const App, what: @FieldType(Button, "what"), buf: []u8) []const u8 {
         return switch (what) {
@@ -2712,7 +2740,7 @@ pub const App = struct {
             return true;
         }
         var buttons: [48]Button = undefined;
-        for (app.boardButtons(&buttons)) |button| if (m.y == button.y and m.x >= button.x and m.x < button.x + button.w) {
+        for (app.boardButtons(&buttons)) |button| if (button.hit(m.x, m.y)) {
             try app.pressButton(button);
             return true;
         };
@@ -3060,7 +3088,8 @@ pub const App = struct {
         const shape: []const u8 = if (upright) |is| (if (is) "ew-resize" else "ns-resize") else "default";
         if (shape.ptr == app.shape.ptr) return;
         app.shape = shape;
-        try app.out.print(app.gpa, "\x1b]22;{s}\x1b\\", .{shape});
+        app.shape_due = true;
+        app.dirty = true;
     }
 
     /// True when a wheel or swipe step may move between windows or sessions: they come in
@@ -3094,7 +3123,9 @@ pub const App = struct {
     /// A right click nothing else took opens the menu; with the menu open, a click picks from it
     /// or, outside it, closes it.
     fn onMouse(app: *App, m: keys.Mouse) !void {
+        const was = app.hovered();
         app.pointer = .{ .x = m.x, .y = m.y };
+        if (!std.meta.eql(was, app.hovered())) app.dirty = true;
         if (m.leftPress() and app.menu == null and app.prompt == null and app.overview == null) {
             app.normal = !app.paneClick(m);
             app.dirty = true;

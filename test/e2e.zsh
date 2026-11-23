@@ -647,8 +647,9 @@ mouse 0 8 $y m
 check "a click on a subagent's row in the rail goes to its Claude's window" await at alpha:subs
 fake() { inner capture-pane -p -t alpha:subs | grep -qx -- "$1" }
 check "and steps that Claude's list of agents to it: past the shells, down to its row, Enter" await fake '❯ ● general-purpose  Review it'
-# a lit row has its text in its mark's ink, a dim one a change of ink between the two
-sub_lit() { [[ $(inked $(row "│   ◔ $1 ")) == *$'\e[1;7m'* ]] }
+# a lit row has its text in its mark's ink, a dim one a change of ink between the two; the
+# pointer left on a row underlines it
+sub_lit() { [[ $(inked $(row "│   ◔ $1 ")) == *$'\e[1;'(|4\;)'7m'* ]] }
 sub_dim() { [[ $(inked $(row "│   ◔ $1 ")) != *$'\e[1;7m'* && $(inked $(row "│   ◔ $1 ")) == *$'\e[7m'* ]] }
 check "the subagent its Claude shows has its row in bold on the Claude's bar" await sub_lit 'Review it'
 check "and no other, though the bar runs through it" sub_dim 'Explore the rail'
@@ -1316,6 +1317,162 @@ check "arena board and the id of a done card older than those shown has its whol
 key Escape
 check "put away as any other" gone '│ #21 Lights '
 key M-b
+
+# each cell of a line of `capture-pane -e` as the attributes it is drawn in: fg/bg/flags
+attrs() {
+  setopt localoptions extendedglob
+  local s=$1 fg= bg= k v i
+  local -a ps
+  local -aU fl
+  while [[ -n $s ]]; do
+    if [[ $s == $'\e['[0-9\;]#m* ]]; then
+      ps=(${(s:;:)${${s%%m*}#$'\e['}})
+      s=${s#*m}
+      (( $#ps )) || ps=(0)
+      for (( i = 1; i <= $#ps; i++ )); do
+        case $ps[i] in
+          (0) fg= bg= fl=() ;;
+          (38|48)
+            k=$ps[i]
+            if [[ $ps[i+1] == 5 ]]; then v="5;$ps[i+2]"; (( i += 2 )); else v="2;$ps[i+2];$ps[i+3];$ps[i+4]"; (( i += 4 )); fi
+            if [[ $k == 38 ]]; then fg=$v; else bg=$v; fi ;;
+          (39) fg= ;;
+          (49) bg= ;;
+          (3[0-7]|9[0-7]) fg=$ps[i] ;;
+          (4[0-7]|10[0-7]) bg=$ps[i] ;;
+          (22) fl=(${fl:#[12]}) ;;
+          (2[3-9]) fl=(${fl:#${ps[i]#2}}) ;;
+          (*) fl+=($ps[i]) ;;
+        esac
+      done
+    elif [[ $s == $'\e'* ]]; then
+      s=${s#?}
+    else
+      print -r -- "$fg/$bg/${(oj:,:)fl}"
+      s=${s#?}
+    fi
+  done
+}
+# the cells whose attributes differ between two pictures of `capture-pane -e`: row, column, and its attributes after
+changed() {
+  local -a la=("${(@f)1}") lb=("${(@f)2}") a b
+  local r c
+  for (( r = 1; r <= $#la || r <= $#lb; r++ )); do
+    [[ $la[r] == "$lb[r]" ]] && continue
+    a=("${(@f)$(attrs "$la[r]")}")
+    b=("${(@f)$(attrs "$lb[r]")}")
+    for (( c = 1; c <= $#a || c <= $#b; c++ )); do
+      [[ $a[c] != $b[c] ]] && print -r -- "$r $c $b[c]"
+    done
+  done
+}
+# a capture can land mid-frame: the picture once two a tenth of a second apart agree
+pic() {
+  local was now=$(outer capture-pane -ep -t o) i
+  for i in {1..30}; do
+    was=$now
+    zselect -t 10
+    now=$(outer capture-pane -ep -t o)
+    [[ $now == "$was" ]] && break
+  done
+  print -r -- "$now"
+}
+rowof() { screen | grep -n -m1 -F -- "$1" | cut -d: -f1 }
+colof() { local l=$(screen | sed -n $1p); [[ $l == *"$2"* ]] || return 1; local p=${l%%"$2"*}; print $(( ${#p} + 1 )) }
+# the column of the first │ at or after column $2 of row $1
+barof() { local l=$(screen | sed -n $1p); local p=${${l[$2,-1]}%%│*}; print $(( $2 + ${#p} )) }
+park() { mouse 35 $rest_x $rest_y M }
+# The pointer from where nothing is under it to column $1, row $2: the screen's text is as it
+# was, and only cells in rows $3 to $4 and columns $5 to $6 changed, each now underlined; with no
+# rows given, nothing changed. Then away again, and it is all as it was.
+hovered() {
+  local text before after cell
+  local -a cells f
+  park
+  zselect -t 30
+  before=$(pic) text=$(screen)
+  mouse 35 $1 $2 M
+  if [[ -n $3 ]]; then await eval '[[ $(pic) != "$before" ]]' || { print "      nothing changed"; return 1 }; fi
+  zselect -t 30
+  after=$(pic)
+  [[ $(screen) == "$text" ]] || { print "      text changed"; diff <(print -r -- "$text") <(screen) | sed 's/^/      /'; return 1 }
+  cells=("${(@f)$(changed "$before" "$after")}")
+  cells=("${(@)cells:#}")
+  if [[ -z $3 ]]; then
+    (( $#cells == 0 )) || { print -l -- "      changed:" "${cells[@]}"; return 1 }
+  else
+    for cell in "${cells[@]}"; do
+      f=(${=cell})
+      (( f[1] >= $3 && f[1] <= $4 && f[2] >= $5 && f[2] <= $6 )) || { print "      outside: $cell"; return 1 }
+      [[ ,${f[3]##*/}, == *,4,* ]] || { print "      not underlined: $cell"; return 1 }
+    done
+  fi
+  park
+  await eval '[[ $(pic) == "$before" ]]' || { print "      not as it was after"; return 1 }
+}
+print -r -- '{"tickets":[{"id":40,"repo":"arena","title":"Hover me","kind":"ticket","status":"todo","priority":"med","blocked_by":[]},'\
+'{"id":41,"repo":"menard","title":"Over there","kind":"ticket","status":"doing","priority":"med","blocked_by":[]}],'\
+'"orchestrator":{"on":true,"running":true}}' >$tmp/run/babylon/board.json
+claude alpha:one stop '{"last_assistant_message": "Hovered"}'
+inner set -p -t alpha:one @arena_claude_since $(($(date +%s) - 7300))
+inner split-window -h -t orchestrator:orch sh
+outer resize-window -t o -x 160
+key M-b
+key '`'
+see '╭─ 1 orch ─'
+see '#40 Hover'
+see '╭─ doing 1 '
+check "the rail lists a Claude for the pointer to rest on" see '│ . one +2h'
+rest_x=$(( $(colof 2 '╭─ doing') + 3 )) rest_y=18
+r=1 c=$(colof 1 ' menard ')
+check "the pointer on a tab underlines it and changes nothing else" hovered $((c + 2)) $r $r $r $c $((c + 7))
+c=$(colof 1 ' orch ')
+check "and on the orchestrator's button" hovered $((c + 2)) $r $r $r $c $((c + 5))
+c=$(colof 2 ' + ')
+check "and on the + that files a ticket" hovered $((c + 1)) 2 2 2 $c $((c + 2))
+r=$(rowof '#40 Hover')
+c=$(colof $r '#40')
+check "on a card it underlines its title" hovered $((c + 3)) $r $r $((r + 1)) $((c - 1)) $(barof $r $c)
+r=$(rowof '╰ go ')
+c=$(colof $r ' give ')
+check "and on one of the picked card's actions, that action" hovered $((c + 2)) $r $r $r $c $((c + 5))
+rail_w=$(colof 1 '╮')
+r=$(rowof '│ alpha ')
+check "on the rail, a session's row" hovered 4 $r $r $r 2 $((rail_w - 1))
+r=$(rowof ' one ')
+check "and a Claude's" hovered 4 $r $r $r 2 $((rail_w - 1))
+ox=$(colof 1 '╭─ 1 orch')
+divide=$(barof 3 $((ox + 1)))
+for x y what in $ox 10 'its left edge' 160 10 'its right edge' $((ox + 12)) 1 'its top edge' \
+  $((ox + 4)) 23 'its foot' $((ox + 4)) 24 'the row under it' $divide 10 'the line between its panes' \
+  $((ox - 1)) 10 'the gap between it and the board' $rail_w 10 "the rail's edge"; do
+  check "with the orchestrator's column beside the board, the pointer on $what changes nothing" hovered $x $y
+done
+pick_ink() {
+  local r=$(( $(rowof '#40 Hover') - 1 ))
+  local c=$(( $(colof $((r + 1)) '#40') - 2 ))
+  [[ $(attrs "$(pic | sed -n ${r}p)" | sed -n ${c}p) == "5;$1/"* ]]
+}
+check "the picked card is in the accent while the board has the keys" await pick_ink 4
+key M-l
+check "and dim while the orchestrator's column has them" await pick_ink 8
+key M-h
+await pick_ink 4
+key M-b
+inner kill-pane -t orchestrator:orch.1
+inner select-window -t alpha:one
+inner split-window -h -t alpha:one sh
+await eval '[[ $(inner list-panes -t alpha:one | wc -l) == 2 ]]'
+zselect -t 50
+divide=$(barof 5 $(( $(colof 1 '╭─ 1 one') + 1 )))
+mouse 35 $divide 5 M
+shaped() { [[ $(<$tmp/raw) == *$'\e]22;ew-resize'* ]] }
+await shaped
+in_frame() { local raw=$(<$tmp/raw); local pre=${raw%$'\e]22;ew-resize'*}; [[ ${pre##*$'\e[?2026'} == h* ]] }
+check "the pointer's shape goes out inside a frame" in_frame
+park
+inner kill-pane -t alpha:one.1
+outer resize-window -t o -x 121
 
 key M-q
 check "Alt+q leaves cleanly" see 'EXIT 0'
