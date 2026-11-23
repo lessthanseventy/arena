@@ -1244,12 +1244,9 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
 
     try w.print("\x1b[1;{d}H", .{ox + 1});
     try pen.set(w, heading(app), null);
-    const header = app.boardTitle(&buf);
     try w.writeAll(App.board_title);
-    try pen.set(w, autoOn(app), null);
-    try w.writeAll(header[@min(header.len, App.board_title.len)..]);
     try pen.set(w, .{}, null);
-    try fitted(w, "", app.boardW() -| cellCount(header));
+    try fitted(w, "", app.boardW() -| cellCount(App.board_title));
 
     const lanes = app.boardLanes();
     if (lanes) try laneNames(app, w, &pen);
@@ -1368,13 +1365,16 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     const shown = app.boardButtons(&buttons);
     const hovered = app.hovered();
     var end: u16 = 0;
+    var right = app.boardX() + app.boardW();
     for (shown, 0..) |button, index| {
         var style: vt.Style = switch (button.what) {
-            .repo => |i| if (i == view.repo and !view.backlog) chip(app) else if (app.tabLive(i)) .{} else ink(app, "dim", 8),
-            .backlog => if (view.backlog) chip(app) else ink(app, "dim", 8),
+            .repo => |i| if (i == view.repo and !view.backlog) chip(app) else if (app.tabCount(i) > 0) .{} else ink(app, "dim", 8),
+            .backlog => if (view.backlog) chip(app) else if (app.board.?.backlog().len > 0) .{} else ink(app, "dim", 8),
             .gate => ink(app, "violet", 5),
+            .orch => if (app.orchestrator().?.running) ink(app, "violet", 5) else ink(app, "dim", 8),
             .auto => if (app.auto() != null) autoOn(app) else ink(app, "dim", 8),
-            .proposed, .new => heading(app),
+            .proposed => if (app.board.?.proposedCount() > 0) heading(app) else ink(app, "dim", 8),
+            .new => heading(app),
             .card => blk: {
                 var lit = if (app.columnFocused()) ink(app, "dim", 8) else ink(app, "amber", 4);
                 lit.flags.inverse = true;
@@ -1383,14 +1383,23 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         };
         if (hovered == .button and hovered.button == index) style.flags.underline = .single;
         try pen.set(w, style, null);
-        try w.print("\x1b[{d};{d}H{s}", .{ button.y + 1, button.x + 1, app.buttonLabel(button.what, &buf) });
-        if (button.y == 0) end = button.x + button.w;
+        try w.print("\x1b[{d};{d}H{s}", .{ button.y + 1, button.x + 1, app.buttonLabel(button, &buf) });
+        if (button.y != 0) continue;
+        switch (button.what) {
+            .repo, .backlog => end = button.x + button.w,
+            else => right = @min(right, button.x),
+        }
+    }
+    var heads: [48]App.Button = undefined;
+    if (app.header(&heads).more) |at| {
+        try pen.set(w, ink(app, "dim", 8), null);
+        try w.print("\x1b[1;{d}H…", .{at + 1});
+        end = at + 1;
     }
     const hint = "? keys · esc close";
-    const right = app.boardX() + app.boardW();
     if (end + 2 + cellCount(hint) + 1 <= right) {
         try pen.set(w, ink(app, "dim", 8), null);
-        try w.print("\x1b[1;{d}H{s}", .{ right - cellCount(hint), hint });
+        try w.print("\x1b[1;{d}H{s}", .{ right - 1 - cellCount(hint), hint });
     }
     try pen.set(w, .{}, null);
 }

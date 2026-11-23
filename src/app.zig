@@ -2050,12 +2050,15 @@ pub const App = struct {
         return n;
     }
 
-    /// Whether tab `i` has a card to do, doing or in review: every repo's, or one's.
-    pub fn tabLive(app: *const App, i: usize) bool {
-        if (i == 0) return true;
+    /// The cards to do, doing or in review on tab `i`: every repo's, or one's. The backlog's
+    /// own count is its cards'.
+    pub fn tabCount(app: *const App, i: usize) usize {
+        const b = if (app.board) |*b| b else return 0;
         var repos: [max_repos][]const u8 = undefined;
-        const n = if (app.board) |*b| b.repos(&repos) else 0;
-        return i <= n and app.live(repos[i - 1]);
+        const n = b.repos(&repos);
+        if (i > n) return 0;
+        const repo: ?[]const u8 = if (i == 0) null else repos[i - 1];
+        return b.column(.todo, repo, &.{}) + b.column(.doing, repo, &.{}) + b.column(.review, repo, &.{});
     }
 
     /// Whether `repo` has a card to do, doing or in review.
@@ -2609,10 +2612,12 @@ pub const App = struct {
 
     /// A button on the board, where it is drawn and clicked: 0-based, as the mouse has it.
     pub const Button = struct {
-        what: union(enum) { repo: usize, backlog, gate, auto, proposed, new, card: CardAction },
+        what: union(enum) { repo: usize, backlog, gate, orch, auto, proposed, new, card: CardAction },
         x: u16,
         y: u16,
         w: u16,
+        /// Drawn without its words, as a header with no room for them has it.
+        short: bool = false,
 
         pub fn hit(button: Button, x: u16, y: u16) bool {
             return y == button.y and x >= button.x and x < button.x + button.w;
@@ -2640,66 +2645,148 @@ pub const App = struct {
             y == app.railMenuRow() or app.railAgentAt(y) != null;
     }
 
-    pub fn buttonLabel(app: *const App, what: @FieldType(Button, "what"), buf: []u8) []const u8 {
-        return switch (what) {
+    pub fn buttonLabel(app: *const App, button: Button, buf: []u8) []const u8 {
+        const short = button.short;
+        const b = if (app.board) |*b| b else null;
+        return switch (button.what) {
             .repo => |i| blk: {
-                if (i == 0) break :blk " every ";
                 var repos: [max_repos][]const u8 = undefined;
-                const n = if (app.board) |*b| b.repos(&repos) else 0;
-                break :blk if (i <= n) std.fmt.bufPrint(buf, " {s} ", .{repos[i - 1]}) catch " ? " else " ? ";
+                const n = if (b) |board| board.repos(&repos) else 0;
+                const name = if (i == 0) "every" else if (i <= n) repos[i - 1] else "?";
+                break :blk std.fmt.bufPrint(buf, " {s} {d} ", .{ name, app.tabCount(i) }) catch " ? ";
             },
-            .backlog => " backlog ",
-            .gate => " gate ",
-            .auto => if (app.auto()) |state| std.fmt.bufPrint(buf, " auto {d}/{d} ", .{ state.working, state.cap }) catch " auto " else " auto ",
-            .proposed => std.fmt.bufPrint(buf, " ▲ {d} proposed ", .{if (app.board) |*b| b.proposedCount() else 0}) catch " ▲ ",
+            .backlog => std.fmt.bufPrint(buf, " backlog {d} ", .{if (b) |board| board.backlog().len else 0}) catch " ? ",
+            .gate => blk: {
+                var runs: [1]*const tickets.Card = undefined;
+                const card: ?*const tickets.Card = if (b) |board| (if (board.running(&runs) > 0) runs[0] else null) else null;
+                const word = if (short) "" else "gate ";
+                break :blk if (card) |c| std.fmt.bufPrint(buf, " ◒ {s}#{d} ", .{ word, c.id }) catch " ◒ " else if (short) " ◒ " else " ◒ gate ";
+            },
+            .orch => if (short) " ● " else " ● orch ",
+            .auto => blk: {
+                const word = if (short) "" else "auto ";
+                break :blk if (app.auto()) |state|
+                    std.fmt.bufPrint(buf, " ◐ {s}{d}/{d} ", .{ word, state.working, state.cap }) catch " ◐ "
+                else if (short) " ◐ " else " ◐ auto ";
+            },
+            .proposed => blk: {
+                const n = if (b) |board| board.proposedCount() else 0;
+                break :blk if (short) std.fmt.bufPrint(buf, " ▲ {d} ", .{n}) catch " ▲ " else std.fmt.bufPrint(buf, " ▲ {d} need you ", .{n}) catch " ▲ ";
+            },
             .new => " + ",
             .card => |action| std.fmt.bufPrint(buf, " {s} ", .{action.label()}) catch " ? ",
         };
     }
 
-    pub const board_title = " board ";
+    /// The title the board's first row begins with.
+    pub const board_title = " ▤ board";
 
-    /// The board's header title: auto's state after its name while auto is on, unless a
-    /// button of its row would have no room beside it.
-    pub fn boardTitle(app: *const App, buf: []u8) []const u8 {
-        const state = app.auto() orelse return board_title;
-        const long = std.fmt.bufPrint(buf, " board auto {d}/{d} ", .{ state.working, state.cap }) catch return board_title;
-        var row: [max_repos + 6]Button = undefined;
-        return if (app.tabRow(&row, cellCount(long)) < app.tabRow(&row, cellCount(board_title))) board_title else long;
-    }
+    /// Where the board's first row ends its tabs: how many of its buttons there are, and where
+    /// the `…` stands when tabs are left out.
+    pub const Header = struct { n: usize, more: ?u16 };
 
-    /// The buttons of the board's first row, after a title `title_w` cells wide: how many fit.
-    fn tabRow(app: *const App, out: []Button, title_w: usize) usize {
-        var n: usize = 0;
+    /// The board's first row in three groups: the title, the tabs (`every`, the repos, the
+    /// backlog, each with its count), and, against the right edge, what babylon is doing
+    /// (those needing the human, the gate, the orchestrator, auto). The right group drops its
+    /// words when the tabs would not all fit beside it, and tabs that still do not fit are
+    /// left out with a `…` after the last.
+    pub fn header(app: *const App, out: []Button) Header {
         var buf: [64]u8 = undefined;
         var repos: [max_repos][]const u8 = undefined;
         const count = if (app.board) |*b| b.repos(&repos) else 0;
         const ox = app.boardX();
-        var x: u16 = ox + @as(u16, @intCast(title_w)) + 1;
         const right = ox + app.boardW();
-        const proposed = if (app.board) |*b| b.proposedCount() > 0 else false;
-        for (0..count + 5) |i| {
-            const what: @FieldType(Button, "what") = if (i <= count) .{ .repo = i } else if (i == count + 1) .backlog else if (i == count + 2) .gate else if (i == count + 3) .auto else .proposed;
-            if (what == .gate and app.gateSession() == null) continue;
-            if (what == .proposed and !proposed) continue;
-            const w: u16 = @intCast(cellCount(app.buttonLabel(what, &buf)));
-            if (what == .gate or (what == .auto and app.gateSession() == null)) x += 2;
-            if (x + w > right or n == out.len) break;
-            out[n] = .{ .what = what, .x = x, .y = 0, .w = w };
+        const start = ox + @as(u16, @intCast(cellCount(board_title))) + 1;
+
+        var tabs: [max_repos + 2]Button = undefined;
+        var tab_n: usize = 0;
+        for (0..count + 1) |i| {
+            tabs[tab_n] = .{ .what = .{ .repo = i }, .x = 0, .y = 0, .w = 0 };
+            tab_n += 1;
+        }
+        tabs[tab_n] = .{ .what = .backlog, .x = 0, .y = 0, .w = 0 };
+        tab_n += 1;
+
+        var group: [4]Button = undefined;
+        var group_n: usize = 0;
+        group[group_n] = .{ .what = .proposed, .x = 0, .y = 0, .w = 0 };
+        group_n += 1;
+        if (app.gateSession() != null) {
+            group[group_n] = .{ .what = .gate, .x = 0, .y = 0, .w = 0 };
+            group_n += 1;
+        }
+        if (app.orchestrator() != null) {
+            group[group_n] = .{ .what = .orch, .x = 0, .y = 0, .w = 0 };
+            group_n += 1;
+        }
+        group[group_n] = .{ .what = .auto, .x = 0, .y = 0, .w = 0 };
+        group_n += 1;
+
+        var tabs_w: usize = 0;
+        for (tabs[0..tab_n]) |tab| tabs_w += cellCount(app.buttonLabel(tab, &buf)) + 1;
+        const full_w = groupWidth(app, group[0..group_n], false);
+        const short = start + tabs_w + 1 + full_w > right;
+        for (group[0..group_n]) |*item| item.short = short;
+        var group_w: u16 = @intCast(groupWidth(app, group[0..group_n], short));
+
+        // what does not fit beside the tabs' first, which is the one that says where we are
+        var first_w: u16 = @intCast(cellCount(app.buttonLabel(tabs[0], &buf)));
+        while (group_n > 0 and start + first_w + 1 + group_w > right) {
+            group_n -= 1;
+            group_w = @intCast(groupWidth(app, group[0..group_n], short));
+        }
+
+        var n: usize = 0;
+        var x = right - group_w;
+        for (group[0..group_n]) |item| {
+            const w: u16 = @intCast(cellCount(app.buttonLabel(item, &buf)));
+            out[n] = .{ .what = item.what, .x = x, .y = 0, .w = w, .short = short };
             n += 1;
             x += w + 1;
         }
-        return n;
+        const limit = right - group_w -| 1;
+
+        // the tabs, in room before the right group's, and one cell of it for a `…` when some are left
+        var left: [max_repos + 2]Button = undefined;
+        var left_n: usize = 0;
+        x = start;
+        for (tabs[0..tab_n]) |tab| {
+            first_w = @intCast(cellCount(app.buttonLabel(tab, &buf)));
+            if (x + first_w > limit) break;
+            left[left_n] = .{ .what = tab.what, .x = x, .y = 0, .w = first_w };
+            left_n += 1;
+            x += first_w + 1;
+        }
+        var more: ?u16 = null;
+        if (left_n < tab_n) {
+            while (left_n > 1 and left[left_n - 1].x + left[left_n - 1].w + 1 > limit) left_n -= 1;
+            more = if (left_n > 0) left[left_n - 1].x + left[left_n - 1].w else start;
+        }
+        // the tabs go first in the order, so a click finds them before the right group's
+        std.mem.copyBackwards(Button, out[left_n .. left_n + n], out[0..n]);
+        @memcpy(out[0..left_n], left[0..left_n]);
+        return .{ .n = left_n + n, .more = more };
     }
 
-    /// The board's buttons: the repos as tabs and the gate and auto's switch beside them on its first row, a + on
+    fn groupWidth(app: *const App, group: []const Button, short: bool) usize {
+        var buf: [64]u8 = undefined;
+        var w: usize = 0;
+        for (group) |item| {
+            var button = item;
+            button.short = short;
+            w += cellCount(app.buttonLabel(button, &buf)) + 1;
+        }
+        return w -| 1;
+    }
+
+    /// The board's buttons: the tabs and what babylon is doing on its first row, a + on
     /// the to-do column's top edge, and the picked card's actions on its bottom edge, each kept
     /// to the room it has. A row of the strip has no edge: the strip's own foot has its reopen.
     pub fn boardButtons(app: *const App, out: []Button) []Button {
         const view = app.board_view orelse return out[0..0];
         const cw = app.boardColW(0);
         var buf: [64]u8 = undefined;
-        var n = app.tabRow(out, cellCount(app.boardTitle(&buf)));
+        var n = app.header(out).n;
         if (cw >= 12 and n < out.len) {
             out[n] = .{ .what = .new, .x = app.boardColX(0) + cw - 4, .y = 1, .w = 3 };
             n += 1;
@@ -2718,7 +2805,7 @@ pub const App = struct {
         const edge = app.boardColX(view.col) + app.boardColW(view.col) -| 2;
         for (cardActions(card, &have)) |action| {
             if (strip and action != .reopen) continue;
-            const w: u16 = @intCast(cellCount(app.buttonLabel(.{ .card = action }, &buf)));
+            const w: u16 = @intCast(cellCount(app.buttonLabel(.{ .what = .{ .card = action }, .x = 0, .y = 0, .w = 0 }, &buf)));
             if (x + w > edge or n == out.len) break;
             out[n] = .{ .what = .{ .card = action }, .x = x, .y = y, .w = w };
             n += 1;
@@ -2742,6 +2829,7 @@ pub const App = struct {
                 view.row = 0;
             },
             .gate => try app.toGate(),
+            .orch => try app.toOrchestrator(),
             .auto => try app.toggleAuto(),
             .proposed => app.jumpProposed(),
             .new => try app.newTicket(),
@@ -4137,6 +4225,53 @@ test "the every view's lanes: their lines, the pick stepping across them, and th
     try eq(@as(?u32, 4), picked(&app));
     try app.boardKey("j");
     try eq(@as(?u32, 4), picked(&app));
+}
+
+test "the board's first row: tabs with their counts, then babylon's state against the right edge, each said once" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 140;
+    app.view_w = 140;
+    app.view_h = 20;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"repo":"arena","title":"a","status":"todo"},
+        \\{"id":2,"repo":"arena","title":"b","status":"doing"},
+        \\{"id":3,"repo":"tlon","title":"c","status":"review","stage":"reviewing"},
+        \\{"id":4,"repo":"menard","title":"d","status":"done"}
+        \\],"backlog":[{"id":7,"repo":"arena","title":"later","status":"backlog"}],
+        \\"auto":{"on":true,"cap":3,"working":2},"orchestrator":{"on":true,"running":true}}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{};
+
+    const labels = struct {
+        fn of(a: *const App, out: *[2048]u8) ![]const u8 {
+            var buttons: [48]App.Button = undefined;
+            const head = a.header(&buttons);
+            var len: usize = 0;
+            for (buttons[0..head.n]) |button| {
+                var buf: [64]u8 = undefined;
+                const text = std.mem.trim(u8, a.buttonLabel(button, &buf), " ");
+                len += (try std.fmt.bufPrint(out[len..], "{s}|", .{text})).len;
+            }
+            return out[0..len];
+        }
+    }.of;
+    var out: [2048]u8 = undefined;
+    // no gate session, so none; the orchestrator is said once, and auto once
+    try std.testing.expectEqualStrings("every 3|arena 2|menard 0|tlon 1|backlog 1|▲ 0 need you|● orch|◐ auto 2/3|", try labels(&app, &out));
+
+    var buttons: [48]App.Button = undefined;
+    const head = app.header(&buttons);
+    try std.testing.expectEqual(@as(?u16, null), head.more);
+    const last = buttons[head.n - 1];
+    try std.testing.expectEqual(app.boardX() + app.boardW(), last.x + last.w);
+
+    // with less room the right group loses its words first, then tabs go, ending in …
+    app.view_w = 60;
+    try std.testing.expectEqualStrings("every 3|arena 2|menard 0|▲ 0|●|◐ 2/3|", try labels(&app, &out));
+    const narrow = app.header(&buttons);
+    try std.testing.expect(narrow.more != null);
 }
 
 test "the every view's done column is a strip: narrow, a card a row, its reopen on its foot" {

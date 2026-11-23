@@ -881,7 +881,7 @@ print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket",
   >$tmp/run/babylon/board.json
 check "babylon's board has a row atop the rail, with its counts" see '^│ ▤ board +1 todo  1 doing │'
 key M-b
-check "Alt+b opens it in place of the strip, its repos as tabs" see ' board   every   arena   tlon '
+check "Alt+b opens it in place of the strip, its repos as tabs" see ' ▤ board +every [0-9]+ +arena [0-9]+ +tlon [0-9]+ '
 check "and where its keys are" see '\? keys · esc close'
 check "the picked card's actions as chips on its own bottom edge" see '╰ go ─ answer ─╯'
 rowof() { screen | grep -n -m1 -- "$1" | cut -d: -f1 }
@@ -988,9 +988,9 @@ key A
 check "A turns babylon's auto mode on" await last 'auto on'
 cp $tmp/run/babylon/board.json $tmp/board.noauto
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":2,"working":1}}' >$tmp/run/babylon/board.json
-check "on, the switch beside the tabs says how many work of the cap" see ' backlog .* auto 1/2( |$)'
+check "on, the switch beside the tabs says how many work of the cap" see ' backlog [0-9]+ .* ◐ auto 1/2( |$)'
 check "and so does the board's row atop the rail" see '^│ ▤ board auto 1/2 '
-check "and the board's own header, after its name" see ' board auto 1/2   every '
+check "but the board's own header says it once, not after its name" gone ' board auto 1/2 +every '
 key A
 check "and A turns it off" await last 'auto off'
 cp $tmp/board.noauto $tmp/run/babylon/board.json
@@ -1009,14 +1009,14 @@ cp $tmp/board.noauto $tmp/run/babylon/board.json
 check "with nothing of it in babylon's file again, the row says nothing" gone '^│ ▤ board orch'
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"proposals":[{"id":4,"action":"start","ticket_id":7,"what":"Start #7","why":"Next in line"}]}' >$tmp/run/babylon/board.json
 check "a card with an open proposal shows it" see '▲ proposed'
-check "the header counts the proposals" see ' ▲ 1 proposed'
+check "the header counts the proposals" see ' ▲ 1 need you'
 check "and the card has a no beside its go" see '╰ go ─ no '
 key Enter
 check "go on it answers the proposal through babylon, not a Claude started" await last 'go 4'
 key x
 check "and x says no to it" await last 'no 4'
 cp $tmp/board.noauto $tmp/run/babylon/board.json
-check "with it settled, the card and the header say nothing of it" gone '▲'
+check "with it settled, the card and the header say nothing of it" gone '▲ [1-9]'
 print -r -- '{"tickets":['\
 '{"id":13,"repo":"tlon","title":"Held for an answer","kind":"ticket","status":"review","priority":"med","claimed_by":"'$one'",'\
 '"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[],"stage":"queued","ask":{"id":6,"question":"Which size?"}},'\
@@ -1337,9 +1337,9 @@ check "and its tab is dim" tab_dim menard
 check "where one with work is not" tab_lit arena
 cp $tmp/run/babylon/board.json $tmp/board.lanes
 print -r -- "${$(<$tmp/board.lanes)%\}}"',"auto":{"on":true,"cap":2,"working":1}}' >$tmp/run/babylon/board.json
-check "with room, the header says auto beside every button" see ' board auto 1/2   every .* gate .* auto 1/2( |$)'
+check "with room, the header says auto beside every button" see ' ▤ board +every .* ◒ gate .* ◐ auto 1/2( |$)'
 outer resize-window -t o -x 105
-check "a header with no room for auto beside every button leaves it to the switch" see ' board   every .* auto 1/2( |$)'
+check "a header with no room for auto beside every button leaves it to the switch" see ' ▤ board +every .* ◐ (auto )?1/2( |$)'
 outer resize-window -t o -x 121
 cp $tmp/board.lanes $tmp/run/babylon/board.json
 check "and off, it is gone again" gone 'auto [0-9]'
