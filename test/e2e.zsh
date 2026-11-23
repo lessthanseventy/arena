@@ -1330,7 +1330,7 @@ key '<'
 check "and < opens it again" await last 'update 24 --status todo'
 key h h h
 check "a repo with only done cards has no lane" gone '│  menard '
-tabline() { local l; for l in "${(@f)$(outer capture-pane -ep -t o)}"; [[ $l == *' board '*' every '* ]] && print -r -- $l }
+tabline() { local l; for l in "${(@f)$(outer capture-pane -ep -t o)}"; [[ $l == *'board'*' every '* ]] && print -r -- $l }
 tab_dim() { [[ $(tabline) == *$'\e[38;5;8m '$1' '* ]] }
 tab_lit() { ! tab_dim $1 }
 mouse 35 60 24 M
