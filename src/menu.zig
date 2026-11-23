@@ -18,6 +18,7 @@ pub const Action = enum {
     overview,
     board,
     rail_width,
+    report,
     detach,
     confirm_close,
     confirm_close_session,
@@ -53,6 +54,7 @@ pub const main = [_]Item{
     .{ .icon = "▦", .label = "Overview", .key = 'o', .action = .overview },
     .{ .icon = "▤", .label = "Board", .key = 't', .action = .board },
     .{ .icon = "◧", .label = "Wide or narrow rail", .key = 'w', .action = .rail_width },
+    .{ .icon = "!", .label = "Report this", .key = '!', .action = .report },
     .{ .icon = "⎋", .label = "Detach", .key = 'q', .action = .detach },
 };
 
@@ -118,14 +120,14 @@ pub const jump_rows = 8;
 /// A line of text being typed: a new name, or part of the name of a window to jump to.
 pub const Prompt = struct {
     what: What,
-    buf: [48]u8 = undefined,
+    buf: [160]u8 = undefined,
     len: usize = 0,
     /// Which of the windows listed under a jump prompt Enter goes to.
     selected: usize = 0,
     /// The last search found nothing.
     missed: bool = false,
 
-    pub const What = enum { window, session, jump, search };
+    pub const What = enum { window, session, jump, search, report };
     pub const Result = enum { none, cancel, commit, up, down };
 
     /// Rows the box takes; the first of a jump prompt's windows is on row `list_row`.
@@ -223,8 +225,8 @@ test "a prompt takes text, whole characters back, and no more than fits" {
     try std.testing.expectEqual(Prompt.Result.up, p.press("\x1b[A"));
     try std.testing.expectEqual(Prompt.Result.down, p.press("\t"));
     try std.testing.expectEqual(Prompt.Result.none, p.press("\x1b[C"));
-    for (0..100) |_| _ = p.press("a");
-    try std.testing.expectEqual(@as(usize, 44), p.len);
+    for (0..200) |_| _ = p.press("a");
+    try std.testing.expectEqual(@as(usize, 156), p.len);
     try std.testing.expectEqual(Prompt.Result.commit, p.press("\r"));
     try std.testing.expectEqual(Prompt.Result.cancel, p.press("\x1b"));
 }

@@ -10,6 +10,9 @@ const Pass = @import("pass.zig").Pass;
 const tickets = @import("board.zig");
 const feed = @import("feed.zig");
 const sheets = @import("plan.zig");
+const capture = @import("report.zig");
+const draw = @import("draw.zig");
+const build_options = @import("build_options");
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 
@@ -500,6 +503,14 @@ pub const App = struct {
     shape_due: bool = false,
     /// Where the mouse last was.
     pointer: struct { x: u16 = 0, y: u16 = 0 } = .{},
+    /// The last input, for a report.
+    trail: capture.Trail = .{},
+    /// What a report in the making holds, taken when its key was pressed: the summary is the
+    /// first `report_summary_len` bytes.
+    report_text: []u8 = &.{},
+    report_summary_len: usize = 0,
+    /// Where reports are saved; none when there is no home to keep them in.
+    reports_dir: ?[]const u8 = null,
     /// Bytes for the terminal arena runs in, written inside the next frame.
     out: std.ArrayList(u8) = .empty,
     /// A piece of a pane's output without what it passes to the terminal, between `Pass` and the pane.
@@ -537,6 +548,7 @@ pub const App = struct {
         }
         app.refusals.deinit(app.gpa);
         if (app.start_refused) |text| app.gpa.free(text);
+        if (app.report_text.len > 0) app.gpa.free(app.report_text);
         if (app.board) |*b| b.deinit();
     }
 
@@ -1690,6 +1702,7 @@ pub const App = struct {
         defer line.deinit();
         for (cmd.written()) |c| switch (c) {
             '#' => try line.writer.writeAll("##"),
+            '\n' => try line.writer.writeAll("\\n"),
             '\\', '"', '$' => try line.writer.print("\\{c}", .{c}),
             else => try line.writer.writeByte(c),
         };
@@ -4402,7 +4415,9 @@ pub const App = struct {
             const len = keyLen(text[i..]);
             const key = text[i..][0..len];
             i += len;
-            if (app.normal and app.prompt == null) {
+            // a prompt opened over any of them, as the report's is, has the keys first
+            const asking = app.prompt != null;
+            if (app.normal and !asking) {
                 if (app.popup != null) {
                     try app.popupKey(key);
                     continue;
@@ -4415,9 +4430,9 @@ pub const App = struct {
                 }
                 if (std.mem.eql(u8, key, "b")) try app.goHome();
                 if (std.mem.eql(u8, key, "B")) try app.toBoard();
-            } else if (app.overview != null) {
+            } else if (app.overview != null and !asking) {
                 try app.overviewKey(key);
-            } else if (app.board_view != null and !app.sideFocused()) {
+            } else if (app.board_view != null and !app.sideFocused() and !asking) {
                 try app.boardKey(key);
             } else if (app.prompt) |*prompt| {
                 app.dirty = true;
@@ -4441,6 +4456,7 @@ pub const App = struct {
         const prompt = app.prompt orelse return;
         if (prompt.what == .search) return app.searchNext();
         app.prompt = null;
+        if (prompt.what == .report) return app.fileReport(prompt.text());
         const s = app.cur() orelse return;
         var cmd: Writer.Allocating = .init(app.gpa);
         defer cmd.deinit();
@@ -4451,7 +4467,7 @@ pub const App = struct {
                 if (prompt.selected < n) try app.jumpTo(hits[prompt.selected].session, hits[prompt.selected].index);
                 return;
             },
-            .search => return,
+            .search, .report => return,
             .window => try cmd.writer.print("rename-window -t @{d} -- '", .{(s.focused() orelse return).id}),
             .session => try cmd.writer.print("rename-session -t '${d}' -- '", .{s.id}),
         }
@@ -4490,6 +4506,7 @@ pub const App = struct {
                     .overview => app.openOverview(),
                     .board => try app.toggleBoard(),
                     .rail_width => app.toggleRail(),
+                    .report => try app.startReport(),
                     .split_right => try app.send(.ignore, "split-window -h -c '#{{pane_current_path}}'", .{}),
                     .split_below => try app.send(.ignore, "split-window -v -c '#{{pane_current_path}}'", .{}),
                     .browser => {
@@ -4536,7 +4553,165 @@ pub const App = struct {
         try app.moveWin(s, s.focus, @intCast(next));
     }
 
+    /// What the pointer is over, in words.
+    fn writeElement(app: *const App, w: *Writer) !void {
+        const p = app.pointer;
+        if (app.prompt != null) return w.writeAll("a prompt");
+        if (app.menu != null) return w.writeAll("a menu");
+        if (app.overview != null) {
+            const spot = app.thumbUnder(p.x, p.y) orelse return w.writeAll("the overview");
+            const s = app.sessions.items[spot.session];
+            return w.print("the overview's picture of window {s} of session {s}", .{ s.wins.items[spot.win].name, s.name });
+        }
+        if (p.x < app.railDrawnW()) {
+            if (app.railSession(p.y)) |i| return w.print("rail: session {s}", .{app.sessions.items[i].name});
+            if (app.railAgentAt(p.y)) |line| switch (line) {
+                .agent, .detail, .meta, .background => |a| return w.print("rail: the Claude in window {s}", .{a.win.name}),
+                .session => |i| return w.print("rail: session {s}", .{app.sessions.items[i].name}),
+                else => return w.writeAll("rail: the list of Claudes"),
+            };
+            if (p.y == app.railNewRow()) return w.writeAll("rail: + new");
+            if (p.y == app.railMenuRow()) return w.writeAll("rail: ≡ menu");
+            if (p.y == 1 and app.board != null) return w.writeAll("rail: the board row");
+            return w.writeAll("the rail");
+        }
+        if (app.board_view) |view| {
+            if (view.boxed()) return w.writeAll("a box over the board");
+            if (p.x >= app.boardX() + app.boardW()) return w.writeAll(if (app.sided()) "the orchestrator column" else "the board's edge");
+            var buttons: [48]Button = undefined;
+            for (app.boardButtons(&buttons)) |button| if (button.hit(p.x, p.y)) {
+                var label: [48]u8 = undefined;
+                return w.print("board {s} {s}", .{ if (button.what == .card) "card action" else "header button", std.mem.trim(u8, app.buttonLabel(button, &label), " ") });
+            };
+            if (app.boardCardAt(p.x, p.y)) |at| {
+                const card = if (app.boardLanes()) app.laneCard(at.lane, at.col, at.row) else app.boardCard(at.col, at.row);
+                if (card) |c| return w.print("card #{d} {s}", .{ c.id, c.title });
+            }
+            return w.writeAll("the board's background");
+        }
+        const s = app.cur() orelse return w.writeAll("nothing");
+        if (p.y == app.view_h) return w.writeAll("the dots under the strip");
+        const ox: i32 = app.term_w - app.view_w;
+        const hit = app.colAt(s, @as(i32, p.x) - ox + s.scroll) orelse return w.writeAll("the strip between windows");
+        const win = s.wins.items[hit.index];
+        if (p.y == 0) return w.print("the title of window {s}", .{win.name});
+        const top = app.winTop(s, hit.index);
+        if (hit.cx > 0 and p.y >= top) if (win.paneAt(hit.cx - 1, p.y - top)) |pane| return w.print("pane %{d} of window {s}", .{ pane.id, win.name });
+        return w.print("window {s}", .{win.name});
+    }
+
+    /// Which view is showing.
+    fn writeView(app: *const App, w: *Writer) !void {
+        if (app.overview != null) return w.writeAll("overview");
+        if (app.board_view) |view| {
+            try w.writeAll(if (view.home) "home" else "board");
+            if (view.backlog) try w.writeAll(", backlog") else if (app.boardRepo()) |repo| try w.print(", {s} only", .{repo});
+            if (view.boxed()) try w.writeAll(", a box open");
+            if (app.sided()) try w.print(", orchestrator column {s}", .{if (view.focus == .orchestrator) "focused" else "beside"});
+            return;
+        }
+        const s = app.cur() orelse return w.writeAll("no session");
+        try w.print("session {s}", .{s.name});
+        if (s.focused()) |win| try w.print(", window {s}", .{win.name});
+    }
+
+    /// What is picked: the board's card, the column's feed item or the focused window.
+    fn writePicked(app: *const App, w: *Writer) !void {
+        if (app.board_view) |view| {
+            if (view.focus == .orchestrator and app.sided()) return w.print("the orchestrator column's feed item {d}", .{view.pick});
+            const card = if (app.boardLanes()) app.laneCard(view.lane, view.col, view.row) else app.boardCard(view.col, view.row);
+            if (card) |c| return w.print("card #{d} {s}", .{ c.id, c.title });
+            return w.writeAll("no card");
+        }
+        const s = app.cur() orelse return w.writeAll("nothing");
+        if (s.focused()) |win| return w.print("window {s}", .{win.name});
+        return w.writeAll("nothing");
+    }
+
+    /// Takes what arena shows and the last input for a report, and asks the human what is wrong.
+    /// The screen is drawn again with nothing over it, to be read as text.
+    fn startReport(app: *App) !void {
+        app.menu = null;
+        app.dirty = true;
+        var shot: Writer.Allocating = .init(app.gpa);
+        defer shot.deinit();
+        // a frame hands the terminal what is queued for it and the pointer's shape: both stay due
+        const queued = app.out;
+        const due = app.shape_due;
+        app.out = .empty;
+        defer {
+            app.out.deinit(app.gpa);
+            app.out = queued;
+            app.shape_due = due;
+        }
+        try draw.frame(app, &shot.writer, .all);
+
+        var element: [200]u8 = undefined;
+        var view: [120]u8 = undefined;
+        var picked: [200]u8 = undefined;
+        const strings = struct {
+            fn of(buf: []u8, app_: *const App, comptime write: fn (*const App, *Writer) anyerror!void) []const u8 {
+                var w: Writer = .fixed(buf);
+                write(app_, &w) catch {};
+                return w.buffered();
+            }
+        };
+        var text: Writer.Allocating = .init(app.gpa);
+        defer text.deinit();
+        const w = &text.writer;
+        try capture.writeSummary(w, .{
+            .commit = build_options.commit,
+            .cols = app.term_w,
+            .rows = app.view_h + 1,
+            .rail = if (app.rail == .wide) "wide" else "narrow",
+            .mode = if (app.normal) "normal" else "insert",
+            .view = strings.of(&view, app, writeView),
+            .picked = strings.of(&picked, app, writePicked),
+            .pointer = .{ .x = app.pointer.x, .y = app.pointer.y },
+            .element = strings.of(&element, app, writeElement),
+        });
+        const summary_len = w.end;
+        try w.writeAll("\ninput, oldest first:\n");
+        try app.trail.write(w, app.now);
+        try w.writeAll("\n");
+        try capture.writeScreen(app.gpa, app.io, w, shot.written(), app.term_w, app.view_h + 1, app.pointer.x, app.pointer.y);
+        if (app.report_text.len > 0) app.gpa.free(app.report_text);
+        app.report_text = try text.toOwnedSlice();
+        app.report_summary_len = summary_len;
+        app.prompt = .{ .what = .report };
+    }
+
+    /// Saves the capture beside the reports before it and files a ticket in arena with the
+    /// human's line and what the capture says first; an empty line files nothing.
+    fn fileReport(app: *App, line: []const u8) !void {
+        if (line.len == 0) return;
+        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const saved: ?[]const u8 = save: {
+            const dir = app.reports_dir orelse break :save null;
+            const path = std.fmt.bufPrint(&path_buf, "{s}/{d}.txt", .{ dir, app.epoch }) catch break :save null;
+            var data: Writer.Allocating = .init(app.gpa);
+            defer data.deinit();
+            try data.writer.print("what's wrong: {s}\n", .{line});
+            try data.writer.writeAll(app.report_text);
+            std.Io.Dir.cwd().createDirPath(app.io, dir) catch break :save null;
+            std.Io.Dir.cwd().writeFile(app.io, .{ .sub_path = path, .data = data.written() }) catch break :save null;
+            break :save path;
+        };
+        var body: Writer.Allocating = .init(app.gpa);
+        defer body.deinit();
+        try body.writer.print("{s}\n\nFiled by arena's report key.\n\n{s}", .{ line, app.report_text[0..app.report_summary_len] });
+        if (saved) |path| try body.writer.print("capture, with the screen as text and the last input: {s}\n", .{path});
+        _ = try app.runNeed("report", &.{ "babylon", "file", line, "--repo", "arena", "--body", body.written() });
+    }
+
+    /// Records what was typed, as it came: arena's own keys are kept, a pane's only counted.
+    fn trailText(app: *App, text: []const u8) void {
+        if (text.len == 0) return;
+        if (app.typing()) app.trail.push(app.now, .{ .to_pane = text.len }) else app.trail.pushKeys(app.now, text);
+    }
+
     fn onChord(app: *App, letter: u8) !void {
+        if (letter == '!') return if (app.prompt == null) app.startReport();
         if (app.menu == null and app.prompt == null and app.sideDue()) {
             const view = &app.board_view.?;
             const s = app.sessionById(app.bound()).?;
@@ -4604,12 +4779,22 @@ pub const App = struct {
         while (rest.len > 0 and !app.quit) {
             const part = keys.next(rest);
             rest = part.rest;
+            app.trailText(part.text);
             if (app.typing()) try app.forward(part.text) else try app.menuKeys(part.text);
             defer app.settleMode();
             switch (part.event orelse return part.held.len) {
-                .mouse => |m| try app.onMouse(m),
-                .chord => |letter| try app.onChord(letter),
-                .mode => try app.toggleMode(),
+                .mouse => |m| {
+                    app.trail.push(app.now, .{ .mouse = m });
+                    try app.onMouse(m);
+                },
+                .chord => |letter| {
+                    app.trail.push(app.now, .{ .chord = letter });
+                    try app.onChord(letter);
+                },
+                .mode => {
+                    app.trail.push(app.now, .mode);
+                    try app.toggleMode();
+                },
                 .osc => |body| {
                     app.palette.answer(body);
                     app.dirty = true;
@@ -4626,6 +4811,7 @@ pub const App = struct {
 
     /// Held input that turned out to be all there was, typed as it is.
     pub fn typedAlone(app: *App, bytes: []const u8) !void {
+        app.trailText(bytes);
         if (app.typing()) try app.forward(bytes) else try app.menuKeys(bytes);
         app.settleMode();
     }

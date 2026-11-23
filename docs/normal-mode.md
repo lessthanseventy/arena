@@ -181,6 +181,7 @@ Code is not checked.
 | `Alt+p` | `/` |
 | `Alt+n` `Alt+N` | `]` `[` then `⏎` |
 | `Alt+/` | `space` on the shown pane, then `/` |
+| `Alt+!` | none yet: it works in every mode, and over the board (also in the menu as Report this) |
 | `Alt+q` | `Q` |
 
 ## Mockups

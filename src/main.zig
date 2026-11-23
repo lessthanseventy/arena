@@ -86,6 +86,13 @@ test boardPath {
     try std.testing.expectEqualStrings("/run/user/1000/babylon/board.json", linux);
 }
 
+/// Where reports are saved: beside the state babylon keeps, under arena's name.
+fn reportsPath(gpa: std.mem.Allocator, env: *const std.process.Environ.Map) !?[]u8 {
+    if (env.get("XDG_STATE_HOME")) |dir| return try std.fs.path.join(gpa, &.{ dir, "arena/reports" });
+    if (env.get("HOME")) |home| return try std.fs.path.join(gpa, &.{ home, ".local/state/arena/reports" });
+    return null;
+}
+
 const BoardFile = struct {
     path: ?[]u8,
     text: ?[]u8 = null,
@@ -397,6 +404,9 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
     };
     defer board_file.deinit(&app);
     app.board_dir = if (board_file.path) |path| std.fs.path.dirname(path) else null;
+    const reports_dir = try reportsPath(gpa, init.environ_map);
+    defer if (reports_dir) |dir| gpa.free(dir);
+    app.reports_dir = reports_dir;
     winch.store(true, .release);
     try tty.writeStreamingAll(io, color.Palette.query);
 
@@ -536,6 +546,7 @@ test {
     _ = @import("keys.zig");
     _ = @import("menu.zig");
     _ = @import("pass.zig");
+    _ = @import("report.zig");
     _ = @import("text.zig");
     _ = color;
     _ = layout;

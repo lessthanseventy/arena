@@ -14,6 +14,13 @@ pub fn build(b: *std.Build) void {
     const ghostty = b.dependency("ghostty", .{ .target = target, .optimize = optimize });
     exe_mod.addImport("ghostty-vt", ghostty.module("ghostty-vt"));
 
+    // what a report says arena was; a checkout with no git says "unknown"
+    var git_code: u8 = 0;
+    const described = b.runAllowFail(&.{ "git", "describe", "--always", "--dirty" }, &git_code, .ignore) catch "unknown";
+    const options = b.addOptions();
+    options.addOption([]const u8, "commit", std.mem.trim(u8, described, " \n"));
+    exe_mod.addOptions("build_options", options);
+
     const exe = b.addExecutable(.{ .name = "arena", .root_module = exe_mod });
     b.installArtifact(exe);
 

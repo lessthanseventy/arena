@@ -752,6 +752,14 @@ fn clip(text: []const u8, max: usize) []const u8 {
     return text[0..it.i];
 }
 
+/// The last `max` characters of `text`.
+fn lastCells(text: []const u8, max: usize) []const u8 {
+    var n = cellCount(text);
+    var it = std.unicode.Utf8View.initUnchecked(text).iterator();
+    while (n > max) : (n -= 1) _ = it.nextCodepointSlice();
+    return text[it.i..];
+}
+
 /// A bordered box over the strip, drawn a row at a time from the top.
 const Box = struct {
     app: *const App,
@@ -865,7 +873,7 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
     const was: []const u8 = switch (prompt.what) {
         .window => if (session) |s| (if (s.focused()) |win| win.name else "") else "",
         .session => if (session) |s| s.name else "",
-        .jump, .search => "",
+        .jump, .search, .report => "",
     };
 
     try b.edge("╭", "╮");
@@ -877,12 +885,13 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
             .session => "  ✎ Rename session",
             .jump => "  → Jump to window",
             .search => "  / Search history",
+            .report => "  ! What's wrong?",
         },
         dim,
         std.fmt.bufPrint(&buf, "{s}  ", .{clip(was, 12)}) catch "",
     );
     try b.blank();
-    const shown = clip(prompt.text(), menu.width - 10);
+    const shown = lastCells(prompt.text(), menu.width - 10);
     try b.line(.{}, std.fmt.bufPrint(&buf, "  › {s}", .{shown}) catch "", .{}, "");
     try b.blank();
     if (prompt.what == .jump) {
@@ -906,6 +915,8 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
         try b.line(dim, "  ↑↓ move   ⏎ go   esc close", dim, "");
     } else if (prompt.what == .search) {
         try b.line(dim, if (prompt.missed) "  no match" else "  ⏎ older match   esc close", dim, "");
+    } else if (prompt.what == .report) {
+        try b.line(dim, "  ⏎ file it   esc cancel", dim, "");
     } else try b.line(dim, "  ⏎ rename   esc cancel", dim, "");
     try b.edge("╰", "╯");
     return .{ .x = at.x + 6 + @as(i32, @intCast(cellCount(shown))), .y = at.y + 4 };

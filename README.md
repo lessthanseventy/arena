@@ -15,6 +15,11 @@ always did; arena draws them and leaves them running when it quits.
 
 - **A strip per session.** Windows are columns with rounded borders; the focused one has a slowly
   turning gradient. The first and last columns sit flush against the edges.
+- **Report this.** `Alt+!` (or Report this in the menu) asks one line, "what's wrong?", and files a
+  babylon ticket in arena with it: what the pointer is over, what is picked, the view, the
+  window's size, the rail's width and arena's commit. The screen as text (with the styles around
+  the pointer) and the last input are saved beside it in `$XDG_STATE_HOME/arena/reports/`, so a
+  bug arrives reproducible. What is typed into a pane is counted there, never kept.
 - **A rail of sessions** down the left, with each one's window count. `Alt+w` or a click on its
   top narrows it to two letters a session and a mark and time a Claude; resting the pointer on
   the narrow rail draws it wide over the strip until the pointer leaves.

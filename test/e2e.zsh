@@ -947,6 +947,21 @@ mouse 0 ${(z)$(spot '#8 Board')} M
 check "a click on a card in a repo's group picks it" see '╰ go ─ edit '
 mouse 0 ${(z)$(spot '#7 Lights')} M
 check "and on another, that one" see '╰ go ─ answer ─ '
+key M-!
+check "Alt+! over a card asks what is wrong" see "What's wrong\?"
+key -l 'hover sticks on a card'
+key Enter
+filed() { [[ -f $tmp/babylon ]] && grep -q '^file hover sticks on a card --repo arena --body hover sticks on a card$' $tmp/babylon }
+check "and Enter files a ticket in arena with the line" await filed
+told_of() { grep -q -- "$1" $tmp/babylon }
+check "which says what the pointer is over" told_of '^pointer: x=[0-9]* y=[0-9]* over card #7 Lights$'
+check "and the window's size, the rail and the view" told_of '^size: 121x24$'
+capture=$(sed -n 's/^capture, with the screen as text and the last input: //p' $tmp/babylon)
+check "and names the capture file" test -f "$capture"
+capture_has() { local p; for p in "$@"; do grep -q -- "$p" "$capture" || return 1; done }
+check "which has the line, the last input and the screen as text" capture_has "^what's wrong: hover sticks on a card" 'mouse press left at' '^ *[0-9]*|.*#7 Lights'
+check "with the styles around the pointer" grep -q '^styles around the pointer' "$capture"
+rm $tmp/babylon
 key '?'
 check "? shows the board's keys" see "the board's keys"
 key x
