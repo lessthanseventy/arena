@@ -1392,10 +1392,9 @@ pub const App = struct {
         return false;
     }
 
-    /// A Claude done in the window in view has been looked at: its pane's state is cleared in
-    /// tmux, unless a hook has moved it on since.
-    fn see(app: *App) !void {
-        const s = app.cur() orelse return;
+    /// A Claude done in the session's focused window has been looked at: its pane's state is
+    /// cleared in tmux, unless a hook has moved it on since.
+    fn see(app: *App, s: *Session) !void {
         const win = s.focused() orelse return;
         if (win.claude != .done) return;
         win.claude = .none;
@@ -2081,7 +2080,7 @@ pub const App = struct {
         }
         try app.notify();
         app.follow_active = false;
-        try app.see();
+        if (app.cur()) |s| try app.see(s);
         try app.settle();
         if (app.cur()) |s| app.listed = app.listed or s.wins.items.len > 0;
         app.dirty = true;
@@ -2156,7 +2155,7 @@ pub const App = struct {
         app.orchestrating = false;
         const to = app.sessions.items[index];
         if (to.id == app.bound()) return;
-        try app.see();
+        if (app.sessionById(app.bound())) |from| try app.see(from);
         app.slide = if (index > app.sessionIndex(app.bound()) orelse index) 1 else -1;
         try app.switchTo(to.id);
     }
@@ -2198,7 +2197,7 @@ pub const App = struct {
 
     fn focusIn(app: *App, s: *Session, index: usize) !void {
         app.orchestrating = false;
-        try app.see();
+        try app.see(s);
         s.focus = index;
         try app.send(.ignore, "select-window -t @{d}", .{s.wins.items[index].id});
         app.dirty = true;
