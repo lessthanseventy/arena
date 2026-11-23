@@ -264,7 +264,11 @@ fn rail(app: *const App, w: *Writer) !void {
     var lines: [64]App.AgentLine = undefined;
     const agents = app.railAgents(&lines);
     const agents_row = app.railAgentsRow();
-    const agents_title: []const u8 = if (!wide) "" else if (app.agent_sort == .urgency) " agents · urgency " else " agents · recent ";
+    const agents_title: []const u8 = if (!wide) "" else switch (app.agent_sort) {
+        .urgency => " agents · urgency ",
+        .recent => " agents · recent ",
+        .ticket => " agents · ticket ",
+    };
     var pen: Pen = .{};
     var y: u16 = 0;
     while (y < h) : (y += 1) {
@@ -476,7 +480,7 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
                 var num: [8]u8 = undefined;
                 const s = app.sessions.items[a.session];
                 const at = std.mem.indexOfScalar(*Window, s.wins.items, win) orelse 0;
-                const label = branchTicket(win.text(.branch)) orelse
+                const label = app_mod.branchTicket(win.text(.branch)) orelse
                     (std.fmt.bufPrint(&num, "w{d}", .{at + 1}) catch "");
                 try pen.set(w, dim, null);
                 try w.writeAll(" ");
@@ -584,6 +588,22 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
             }
             filled = inner - 1 - left;
         },
+        .above => |count| {
+            try pen.set(w, dim, null);
+            if (wide) try w.print(" ↑ {d} above", .{count}) else try w.print(" ↑{d}", .{count});
+            filled = (if (wide) @as(usize, 9) else 2) + std.fmt.count("{d}", .{count});
+        },
+        .pipeline => |fold| {
+            try pen.set(w, dim, null);
+            var buf: [96]u8 = undefined;
+            const text = if (wide)
+                std.fmt.bufPrint(&buf, " {s} {d} in the pipeline{s}{s}", .{ if (fold.open) "▾" else "◌", fold.count, if (fold.repo.len > 0) " · " else "", fold.repo }) catch ""
+            else
+                std.fmt.bufPrint(&buf, " ◌{d}", .{fold.count}) catch "";
+            const shown = clip(text, inner);
+            try w.writeAll(shown);
+            filled = cellCount(shown);
+        },
         .more => |count| {
             try pen.set(w, dim, null);
             if (wide) try w.print(" +{d} more", .{count}) else try w.print(" +{d}", .{count});
@@ -680,15 +700,6 @@ fn shortName(name: []const u8) []const u8 {
     };
     for (short) |pair| if (std.mem.eql(u8, name, pair[0])) return pair[1];
     return clip(name, 5);
-}
-
-/// The number of the ticket a branch named `t<number>-...` works, null for any other branch.
-fn branchTicket(branch: []const u8) ?[]const u8 {
-    if (branch.len < 2 or branch[0] != 't') return null;
-    var n: usize = 1;
-    while (n < branch.len and std.ascii.isDigit(branch[n])) n += 1;
-    if (n == 1 or (n < branch.len and branch[n] != '-')) return null;
-    return branch[1..n];
 }
 
 /// The first `max` characters of `text`.

@@ -29,6 +29,9 @@ pub const max_tabs = 32;
 pub const tab_name = 16;
 /// Wheel and swipe steps that move between windows or sessions are taken this far apart.
 const nav_gap_ms = 150;
+/// A turn of the wheel over the rail's agents scrolls them this many Claudes.
+const wheel_agents = 3;
+
 /// A sideways swipe steps once it has gone this many wheel events one way.
 const swipe_events = 3;
 
@@ -402,6 +405,11 @@ pub const App = struct {
     /// overlay is the mode.
     normal: bool = false,
     agent_sort: AgentSort = .urgency,
+    /// The rail's list of Claudes was scrolled to start at the `n`th, beside the window `at` that
+    /// was in view then; going to another puts it back to following the Claude in view.
+    agent_skip: ?struct { n: usize, at: ?*const Window } = null,
+    /// The repos whose pipeline folds are open, as hashes; 0 for a free place.
+    pipeline_open: [8]u64 = @splat(0),
     /// When the pointer came to rest on the narrow rail; 0 while it is elsewhere.
     hover_at: i64 = 0,
     /// Set when the session's current window changed in tmux, so focus goes to it when listed.
@@ -635,9 +643,9 @@ pub const App = struct {
     }
 
     pub const Agent = struct { session: usize, win: *Window };
-    /// How lists of agents are ordered: the one that most wants looking at first, or the one
-    /// heard from last.
-    pub const AgentSort = enum { urgency, recent };
+    /// How lists of agents are ordered: the one that most wants looking at first, the one heard
+    /// from last, or by repo and ticket number, which no change of state moves.
+    pub const AgentSort = enum { urgency, recent, ticket };
 
     /// The windows with a Claude, as many as `out` holds, grouped by session, as `agent_sort`
     /// has them: the session with the first of its Claudes first, then in the rail's order.
@@ -654,6 +662,7 @@ pub const App = struct {
     }
 
     fn agentBefore(app: *const App, a: Agent, b: Agent) bool {
+        if (app.agent_sort == .ticket) return app.ticketBefore(a, b);
         if (a.session != b.session) {
             const ra = app.sessionRank(a.session);
             const rb = app.sessionRank(b.session);
@@ -669,7 +678,61 @@ pub const App = struct {
         return switch (app.agent_sort) {
             .urgency => urgency(win),
             .recent => if (last == 0) std.math.maxInt(u32) else last,
+            .ticket => 0,
         };
+    }
+
+    /// The ticket a window's Claude works, by its branch, and its repo as the board has it.
+    const TicketKey = struct { repo: []const u8, id: u32 };
+
+    fn ticketKey(app: *const App, win: *const Window) ?TicketKey {
+        const id = std.fmt.parseInt(u32, branchTicket(win.text(.branch)) orelse return null, 10) catch return null;
+        const card = app.ticketCard(id);
+        return .{ .repo = if (card) |c| c.repo orelse "" else "", .id = id };
+    }
+
+    fn ticketCard(app: *const App, id: u32) ?*const tickets.Card {
+        const board = if (app.board) |*b| b else return null;
+        for (board.cards()) |*card| if (card.id == id) return card;
+        return null;
+    }
+
+    fn keyBefore(a: TicketKey, b: TicketKey) bool {
+        return switch (std.mem.order(u8, a.repo, b.repo)) {
+            .lt => true,
+            .gt => false,
+            .eq => a.id < b.id,
+        };
+    }
+
+    /// The lowest ticket among a session's Claudes, null for a session holding none.
+    fn sessionTicket(app: *const App, si: usize) ?TicketKey {
+        var best: ?TicketKey = null;
+        for (app.sessions.items[si].wins.items) |win| if (win.agent()) {
+            const key = app.ticketKey(win) orelse continue;
+            if (best == null or keyBefore(key, best.?)) best = key;
+        };
+        return best;
+    }
+
+    /// The stable order: by repo, then ticket number, sessions with no ticket last by name. It
+    /// reads only what a session's life does not change.
+    fn ticketBefore(app: *const App, a: Agent, b: Agent) bool {
+        if (a.session != b.session) {
+            const ka = app.sessionTicket(a.session);
+            const kb = app.sessionTicket(b.session);
+            if (ka != null and kb != null) {
+                if (keyBefore(ka.?, kb.?)) return true;
+                if (keyBefore(kb.?, ka.?)) return false;
+            } else if (ka != null or kb != null) return ka != null;
+            const order = std.mem.order(u8, app.sessions.items[a.session].name, app.sessions.items[b.session].name);
+            return order == .lt or (order == .eq and a.session < b.session);
+        }
+        const ka = app.ticketKey(a.win);
+        const kb = app.ticketKey(b.win);
+        if (ka != null and kb != null) return keyBefore(ka.?, kb.?);
+        if (ka != null or kb != null) return ka != null;
+        return a.win.id < b.win.id;
     }
 
     /// The more pressing its state, the higher; of those alike, the longer in it.
@@ -689,33 +752,120 @@ pub const App = struct {
     /// A subagent of a window's Claude, by its place among those in the background.
     pub const Sub = struct { agent: Agent, index: usize };
 
+    /// A repo's Claudes whose tickets are only waiting in babylon's pipeline, folded into one row
+    /// until it is opened.
+    pub const Fold = struct { repo: []const u8, count: usize, open: bool };
+    pub const max_folds = 8;
+
     /// A row of a list of agents: a session's name over its own, a window with a Claude, its
     /// `Window.detail`, its branch, review and context, a subagent of its, what else it has
-    /// running in the background, or how many more there are than rows.
-    pub const AgentLine = union(enum) { session: usize, agent: Agent, detail: Agent, meta: Agent, sub: Sub, background: Agent, more: usize };
+    /// running in the background, how many Claudes are scrolled off above, a fold of the
+    /// pipeline's, or how many more there are than rows.
+    pub const AgentLine = union(enum) { session: usize, agent: Agent, detail: Agent, meta: Agent, sub: Sub, background: Agent, above: usize, pipeline: Fold, more: usize };
 
     /// The pane of the Claude asked for a subagent and the subagent's description, when arena
     /// stops trying, when it last sent a key, and how many Downs it has sent to reach the list.
     const Pick = struct { pane: u32, name: [320]u8 = undefined, len: usize, until: i64, sent_at: i64 = 0, downs: u8 = 0 };
+
+    /// Whether a ticket's Claude has nothing to do until babylon is done with it.
+    fn inPipeline(card: *const tickets.Card) bool {
+        if (card.status != .review) return false;
+        const stage = card.stage orelse return false;
+        for ([_][]const u8{ "queued", "verifying", "reviewing", "landing" }) |waiting| {
+            if (std.mem.eql(u8, stage, waiting)) return true;
+        }
+        return false;
+    }
+
+    fn repoHash(repo: []const u8) u64 {
+        return std.hash.Wyhash.hash(0, repo) | 1;
+    }
+
+    fn foldOpen(app: *const App, repo: []const u8) bool {
+        return std.mem.indexOfScalar(u64, &app.pipeline_open, repoHash(repo)) != null;
+    }
+
+    fn toggleFold(app: *App, repo: []const u8) void {
+        const hash = repoHash(repo);
+        if (std.mem.indexOfScalar(u64, &app.pipeline_open, hash)) |at| {
+            app.pipeline_open[at] = 0;
+        } else if (std.mem.indexOfScalar(u64, &app.pipeline_open, 0)) |free| {
+            app.pipeline_open[free] = hash;
+        }
+        app.dirty = true;
+    }
+
+    /// The rail's Claudes: those whose tickets have landed or closed are left out, and those only
+    /// waiting in the pipeline are folded a row to a repo, in order of name, unless the repo is
+    /// open. The Claude in view stays, whatever its ticket. Returns how many Claudes and folds.
+    fn railList(app: *const App, out: []Agent, folds: []Fold) struct { usize, usize } {
+        var all: [64]Agent = undefined;
+        const total = app.agents(&all);
+        var n: usize = 0;
+        var nf: usize = 0;
+        for (all[0..total]) |a| {
+            const card = if (app.agentSelected(a)) null else if (std.fmt.parseInt(u32, branchTicket(a.win.text(.branch)) orelse "", 10)) |id| app.ticketCard(id) else |_| null;
+            if (card) |c| {
+                if (c.status == .done) continue;
+                if (inPipeline(c)) {
+                    const repo = c.repo orelse "";
+                    const at = for (folds[0..nf], 0..) |f, i| {
+                        if (std.mem.eql(u8, f.repo, repo)) break i;
+                    } else if (nf < folds.len) blk: {
+                        folds[nf] = .{ .repo = repo, .count = 0, .open = app.foldOpen(repo) };
+                        nf += 1;
+                        break :blk nf - 1;
+                    } else null;
+                    if (at) |i| folds[i].count += 1;
+                    if (!(at != null and folds[at.?].open)) continue;
+                }
+            }
+            out[n] = a;
+            n += 1;
+        }
+        std.mem.sort(Fold, folds[0..nf], {}, struct {
+            fn before(_: void, a: Fold, b: Fold) bool {
+                return std.mem.order(u8, a.repo, b.repo) == .lt;
+            }
+        }.before);
+        return .{ n, nf };
+    }
 
     /// The agents in at most `room` rows of `out`, as `agents` orders them, with each one's
     /// detail, its branch, review and context, and its background under it when `details`, where
     /// it has them.
     pub fn agentLines(app: *const App, out: []AgentLine, room: usize, details: bool) usize {
         var found: [64]Agent = undefined;
-        const count = app.agents(&found);
-        const selected = for (found[0..count]) |a| {
+        var folds: [max_folds]Fold = undefined;
+        const count, const nf = app.railList(&found, &folds);
+        const from = app.listFrom(found[0..count], folds[0..nf], room, details);
+        return linesFrom(out, room, details, found[0..count], folds[0..nf], from);
+    }
+
+    /// The first Claude listed: where the human scrolled to while the Claude they scrolled
+    /// beside is still in view, else the first from which the selected one shows.
+    fn listFrom(app: *const App, found: []const Agent, folds: []const Fold, room: usize, details: bool) usize {
+        if (app.agent_skip) |skip| {
+            if (skip.at == if (app.cur()) |s| s.focused() else null) return @min(skip.n, found.len -| 1);
+        }
+        const selected = for (found) |a| {
             if (app.agentSelected(a)) break true;
         } else false;
-        // the list starts at the first Claude from which the selected one shows
+        var scratch: [64]AgentLine = undefined;
         var from: usize = 0;
         while (true) : (from += 1) {
-            const n = agentLinesFrom(out, room, details, found[from..count]);
-            if (!selected or from + 1 >= count) return n;
-            for (out[0..n]) |line| {
-                if (line == .agent and app.agentSelected(line.agent)) return n;
+            const n = linesFrom(&scratch, room, details, found, folds, from);
+            if (!selected or from + 1 >= found.len) return from;
+            for (scratch[0..n]) |line| {
+                if (line == .agent and app.agentSelected(line.agent)) return from;
             }
         }
+    }
+
+    fn linesFrom(out: []AgentLine, room: usize, details: bool, found: []const Agent, folds: []const Fold, from: usize) usize {
+        if (from == 0 or room == 0 or out.len == 0) return agentLinesFrom(out, room, details, found, folds);
+        out[0] = .{ .above = from };
+        return 1 + agentLinesFrom(out[1..], room - 1, details, found[from..], folds);
     }
 
     /// Whether `a` is the Claude in view: its window is its session's focus, and that session
@@ -725,7 +875,7 @@ pub const App = struct {
         return s.id == app.current and app.board_view == null and s.focused() == a.win;
     }
 
-    fn agentLinesFrom(out: []AgentLine, room: usize, details: bool, found: []const Agent) usize {
+    fn agentLinesFrom(out: []AgentLine, room: usize, details: bool, found: []const Agent, folds: []const Fold) usize {
         const count = found.len;
         const rows = @min(out.len, room);
         if (rows == 0) return 0;
@@ -767,20 +917,54 @@ pub const App = struct {
         }
         var shown: usize = 0;
         for (out[0..n]) |line| shown += @intFromBool(line == .agent);
-        if (shown < count) {
+        // the folds come after the Claudes, once all of them have been listed
+        if (shown == count) for (folds) |fold| {
+            if (n == rows) break;
+            out[n] = .{ .pipeline = fold };
+            n += 1;
+            shown += 1;
+        };
+        if (shown < count + folds.len) {
             if (n == rows) {
-                if (out[n - 1] == .agent) shown -= 1;
+                if (out[n - 1] == .agent or out[n - 1] == .pipeline) shown -= 1;
                 n -= 1;
             }
-            out[n] = .{ .more = count - shown };
+            out[n] = .{ .more = count + folds.len - shown };
             n += 1;
         }
         return n;
     }
 
+    /// Scrolls the rail's list of Claudes by `by`, up while the wheel turns up, as far as there
+    /// is more to show. Going to another Claude puts the list back to following it.
+    fn scrollAgents(app: *App, by: i32) void {
+        var found: [64]Agent = undefined;
+        var folds: [max_folds]Fold = undefined;
+        const count, const nf = app.railList(&found, &folds);
+        const rows = app.railAgentRows();
+        const details = app.railDrawnW() == app.railWideW();
+        const from = app.listFrom(found[0..count], folds[0..nf], rows, details);
+        const to: usize = @intCast(std.math.clamp(@as(i64, @intCast(from)) + by, 0, @as(i64, @intCast(count -| 1))));
+        app.agent_skip = .{ .n = to, .at = if (app.cur()) |s| s.focused() else null };
+        app.dirty = true;
+    }
+
+    /// Whether the rail's list has Claudes scrolled off above it, and whether below.
+    fn agentsOverflow(app: *const App) struct { above: bool, below: bool } {
+        var lines: [64]AgentLine = undefined;
+        const n = app.railAgents(&lines);
+        return .{ .above = n > 0 and lines[0] == .above, .below = n > 0 and lines[n - 1] == .more };
+    }
+
     /// The rail's agents, as many as have rows, with their details while the rail is drawn wide.
     pub fn railAgents(app: *const App, out: []AgentLine) usize {
         return app.agentLines(out, app.railAgentRows(), app.railDrawnW() == app.railWideW());
+    }
+
+    /// Whether row `y` of the rail is one of its agents' rows.
+    fn inRailAgents(app: *const App, y: u16) bool {
+        const top = app.railAgentsRow() + 1;
+        return y >= top and y - top < app.railAgentRows();
     }
 
     /// The row of the rail's agents at row `y`, null for any other row.
@@ -789,6 +973,21 @@ pub const App = struct {
         const n = app.railAgents(&lines);
         const top = app.railAgentsRow() + 1;
         return if (y >= top and y - top < n) lines[y - top] else null;
+    }
+
+    /// A click on the row `line` of the rail's agents that goes nowhere but along the list.
+    fn clickList(app: *App, line: AgentLine) void {
+        var lines: [64]AgentLine = undefined;
+        const n = app.railAgents(&lines);
+        var shown: i32 = 0;
+        for (lines[0..n]) |l| shown += @intFromBool(l == .agent);
+        const page: i32 = @max(1, shown);
+        switch (line) {
+            .above => app.scrollAgents(-page),
+            .more => app.scrollAgents(page),
+            .pipeline => |fold| app.toggleFold(fold.repo),
+            else => {},
+        }
     }
 
     fn goAgent(app: *App, a: Agent) !void {
@@ -891,7 +1090,11 @@ pub const App = struct {
     }
 
     fn toggleSort(app: *App) void {
-        app.agent_sort = if (app.agent_sort == .urgency) .recent else .urgency;
+        app.agent_sort = switch (app.agent_sort) {
+            .urgency => .recent,
+            .recent => .ticket,
+            .ticket => .urgency,
+        };
         app.dirty = true;
     }
 
@@ -2924,7 +3127,16 @@ pub const App = struct {
         }
         if (m.x < @max(ox, app.railDrawnW())) {
             if (m.wheel()) {
-                if (app.navStep()) try app.sessionBy(if (m.code & 1 == 0) -1 else 1);
+                const up = m.code & 1 == 0;
+                if (app.inRailAgents(m.y)) {
+                    const more = app.agentsOverflow();
+                    // a list that scrolls keeps the wheel, even at its ends: it steps no session
+                    if (more.above or more.below) {
+                        if (if (up) more.above else more.below) app.scrollAgents(if (up) -wheel_agents else wheel_agents);
+                        return true;
+                    }
+                }
+                if (app.navStep()) try app.sessionBy(if (up) -1 else 1);
                 return true;
             }
             if (m.middlePress()) if (app.railSession(m.y)) |row| {
@@ -2938,7 +3150,7 @@ pub const App = struct {
                     .agent, .detail, .meta, .background => |a| try app.goAgent(a),
                     .sub => |sub| try app.goSub(sub),
                     .session => |si| try app.sessionTo(si),
-                    .more => {},
+                    .above, .pipeline, .more => app.clickList(line),
                 }
                 return true;
             }
@@ -3519,6 +3731,15 @@ pub fn cellCount(text: []const u8) usize {
 /// The longest repo name a session is named for in full.
 const session_name = 64;
 
+/// The number of the ticket a branch named `t<number>-...` works, null for any other branch.
+pub fn branchTicket(branch: []const u8) ?[]const u8 {
+    if (branch.len < 2 or branch[0] != 't') return null;
+    var n: usize = 1;
+    while (n < branch.len and std.ascii.isDigit(branch[n])) n += 1;
+    if (n == 1 or (n < branch.len and branch[n] != '-')) return null;
+    return branch[1..n];
+}
+
 /// A todo card no Claude holds, waiting on nothing, of a repo that can name a session and a folder.
 fn startable(card: *const tickets.Card) bool {
     const repo = card.repo orelse return false;
@@ -3964,4 +4185,61 @@ test "a session shows the review state that most wants looking at" {
     try std.testing.expectEqual(Review.queued, App.sessionReview(&s));
     a.review = .changes;
     try std.testing.expectEqual(Review.changes, App.sessionReview(&s));
+}
+
+test "the ticket order holds a Claude's place through its state, and the pipeline's and the landed's are folded away" {
+    const gpa = std.testing.allocator;
+    var board = try tickets.Board.parse(gpa,
+        \\{"tickets":[
+        \\{"id":9,"repo":"tlon","title":"a","status":"doing"},
+        \\{"id":4,"repo":"tlon","title":"b","status":"doing"},
+        \\{"id":7,"repo":"arena","title":"c","status":"doing"},
+        \\{"id":5,"repo":"arena","title":"d","status":"review","stage":"verifying"},
+        \\{"id":6,"repo":"arena","title":"e","status":"review","stage":"queued"},
+        \\{"id":3,"repo":"arena","title":"f","status":"done"}]}
+    );
+    defer board.deinit();
+    const branches = [_][]const u8{ "\t\t\t\tt9-a", "\t\t\t\tt4-b", "\t\t\t\tt7-c", "\t\t\t\tt5-d", "\t\t\t\tt6-e", "\t\t\t\tt3-f", "" };
+    const names = [_][]const u8{ "s9", "s4", "s7", "s5", "s6", "s3", "loose" };
+    var wins: [7]Window = undefined;
+    var sessions: [7]Session = undefined;
+    var slots: [7]*Window = undefined;
+    var pointers: [7]*Session = undefined;
+    for (0..7) |i| {
+        wins[i] = .{ .id = @intCast(i + 1), .claude = .working, .info = @constCast(branches[i]) };
+        slots[i] = &wins[i];
+        sessions[i] = .{ .id = @intCast(i + 1), .name = @constCast(names[i]), .wins = .fromOwnedSlice(slots[i .. i + 1]) };
+        pointers[i] = &sessions[i];
+    }
+    var app: App = .{ .gpa = gpa, .io = undefined, .tmux_in = undefined, .board = board, .agent_sort = .ticket };
+    app.sessions = .fromOwnedSlice(&pointers);
+    app.board = board;
+
+    var found: [8]App.Agent = undefined;
+    var folds: [App.max_folds]App.Fold = undefined;
+    var count, var nf = app.railList(&found, &folds);
+    try std.testing.expectEqual(@as(usize, 4), count);
+    try std.testing.expectEqual(@as(usize, 1), nf);
+    try std.testing.expectEqual(@as(usize, 2), folds[0].count);
+    // arena's #7 first, then tlon's #4 and #9, the one with no ticket last
+    try std.testing.expectEqual(@as(u32, 3), found[0].win.id);
+    try std.testing.expectEqual(@as(u32, 2), found[1].win.id);
+    try std.testing.expectEqual(@as(u32, 1), found[2].win.id);
+    try std.testing.expectEqual(@as(u32, 7), found[3].win.id);
+
+    wins[0].claude = .waiting;
+    wins[0].since = 100;
+    count, nf = app.railList(&found, &folds);
+    try std.testing.expectEqual(@as(u32, 3), found[0].win.id);
+    try std.testing.expectEqual(@as(u32, 1), found[2].win.id);
+
+    // folded: one row for the pipeline's two; scrolled down a row, one above
+    var lines: [16]App.AgentLine = undefined;
+    const n = app.agentLines(&lines, 16, false);
+    try std.testing.expectEqual(App.AgentLine{ .pipeline = folds[0] }, lines[n - 1]);
+    app.agent_skip = .{ .n = 1, .at = null };
+    const m = app.agentLines(&lines, 3, false);
+    try std.testing.expectEqual(@as(usize, 3), m);
+    try std.testing.expectEqual(@as(usize, 1), lines[0].above);
+    try std.testing.expect(lines[2] == .more);
 }

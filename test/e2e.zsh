@@ -486,10 +486,10 @@ check "the rail lists each session's Claudes under a rule of their own, each ove
 inked() { sed -n $1p <<<$(outer capture-pane -ep -t o) }
 lit() { [[ $(inked 14) == *$'\e[1;7m'*' ◐ solo '* && $(inked 15) == *$'\e[1;7m'*' Read b.zig '* && $(inked 13) != *$'\e[1;7m'* && $(inked 11) != *$'\e[1;7m'* ]] }
 check "the Claude in view has all its rows lit, and its session's header is not" lit
-bar_whole() { [[ $(inked 17) =~ $'\e\\[1;7m(\e\\[[0-9;]*m)*   ◔ a shell' ]] }
+bar_whole() { [[ $(inked 18) =~ $'\e\\[1;7m(\e\\[[0-9;]*m)*   ◔ a shell' ]] }
 claude alpha:renamed prompt '{"prompt": "more"}'
 for w in alpha:one alpha:renamed beta:solo; inner set -p -t $w @arena_claude_background 'a shell'
-check "more than it has rows for, the list scrolls to the Claude in view" await eval '[[ $(line 15) =~ "^│ ◐ solo " && $(line 17) =~ "^│   ◔ a shell +│" ]] && ! screen | grep -q "▲ three"'
+check "more than it has rows for, the list scrolls to the Claude in view" await eval '[[ $(line 16) =~ "^│ ◐ solo " && $(line 18) =~ "^│   ◔ a shell +│" ]] && ! screen | grep -q "▲ three"'
 check "and the bar runs unbroken from the left through its background row" bar_whole
 for w in alpha:one beta:solo; inner set -pu -t $w @arena_claude_background
 claude alpha:renamed end
@@ -709,6 +709,9 @@ first() { screen | grep -A1 -- '├─ agents' | tail -1 | grep -q -- "$1" }
 check "the one heard from last first" await first '│ beta '
 mouse 0 5 6 M
 mouse 0 5 6 m
+check "another click orders them by ticket" see '├─ agents · ticket '
+mouse 0 5 6 M
+mouse 0 5 6 m
 see '├─ agents · urgency '
 key M-w
 inner set -p -t beta:solo @arena_claude_branch t324-lights
@@ -727,6 +730,66 @@ key M-w
 check "Alt+w again widens it" see '^╭─ sessions ─+╮ '
 claude alpha:three end
 claude beta:solo end
+
+# 24 Claudes across three repos, ticket 10 landed, the last two of each repo waiting in the pipeline
+board='{"tickets":['
+repos=(amber birch cedar)
+for s in 1 2 3; do
+  repo=${repos[s]}
+  inner new-session -d -s c$s -n n${s}0 sh
+  for w in 0 1 2 3 4 5 6 7 8; do
+    id=$s$w
+    [[ $w != 0 ]] && inner new-window -d -t c$s -n n$id sh
+    state=doing stage=null
+    [[ $w == 0 ]] && state=done
+    [[ $w -ge 7 ]] && state=review stage='"queued"'
+    board+="{\"id\":$id,\"repo\":\"$repo\",\"title\":\"t\",\"status\":\"$state\",\"stage\":$stage},"
+  done
+done
+mkdir -p $tmp/run/babylon
+print -r -- "${board%,}]}" >$tmp/run/babylon/board.json
+tick() { claude $1 prompt; inner set -p -t $1 @arena_claude_branch t${1##*n}-x }
+for s in 1 2 3; do for w in 0 1 2 3 4 5 6 7 8; do tick c$s:n$s$w; done; done
+agents_y() { row '├─ agents' }
+click_title() { local y=$(agents_y); mouse 0 5 $y M; mouse 0 5 $y m }
+check "the rail lists the Claudes, with how many more there are" see "[0-9]+ more"
+check "and a landed ticket's Claude is not listed" gone ' n10 '
+# a wheel step a time over the agents until the screen shows or hides what it is for
+wheel_until() {
+  local i y=$(($(agents_y) + 3))
+  for i in {1..60}; do
+    "$@" && return 0
+    mouse $dir 5 $y M
+    zselect -t 15
+  done
+  return 1
+}
+dir=65
+check "the wheel over the agents scrolls them to the last one" wheel_until shows '◌ 2 in the pipeline · cedar'
+check "which leaves a row for those above" see '↑ [0-9]+ above'
+dir=64
+check "and back up to the first" wheel_until hides '↑ [0-9]+ above'
+click_title
+click_title
+check "the title's click cycles on to the stable order" see '├─ agents · ticket '
+order() { local y=$(agents_y); screen | sed -n "$((y + 1)),$((y + 9))p" | grep -oE '(c[0-9]|n[0-9]+)' | tr -d '\n' }
+before=$(order)
+check "which lists by repo, then ticket" [ "${before#c1n11n12n13}" != "$before" ]
+claude c1:n12 stop
+inner set -p -t c1:n12 @arena_claude_branch t12-x
+check "a Claude changing state" see '◉ n12'
+check "does not move a row in it" [ "$(order)" = "$before" ]
+dir=65
+wheel_until shows '◌ 2 in the pipeline · cedar'
+y=$(row '◌ 2 in the pipeline · cedar')
+mouse 0 5 $y M
+mouse 0 5 $y m
+check "a click on a fold opens it onto its Claudes, which are listed, and it is left open to close" wheel_until shows '▾ 2 in the pipeline · cedar'
+click_title
+check "and the title's click goes round to urgency again" see '├─ agents · urgency '
+for s in 1 2 3; do inner kill-session -t c$s; done
+rm -f $tmp/run/babylon/board.json
+gone '├─ agents'
 mouse 0 5 4 M
 mouse 0 5 4 m
 await at beta:solo
