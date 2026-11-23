@@ -1102,9 +1102,15 @@ see '╭─ 1 orch ─ *╮ ╭─ 2 t'
 key M-b
 await in_session alpha
 orch_at() { [[ $(inner display -p -t orchestrator: '#{window_name}') == $1 ]] }
+kill -STOP $server
 key M-b M-l M-l
+zselect -t 50
+kill -CONT $server
 check "Alt+l again before tmux has switched steps to the orchestrator's next window" await orch_at two
+kill -STOP $server
 key M-h
+zselect -t 50
+kill -CONT $server
 check "and Alt+h back" await orch_at orch
 inner kill-window -t orchestrator:two
 key M-b
