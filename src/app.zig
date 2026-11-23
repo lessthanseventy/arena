@@ -2440,7 +2440,8 @@ pub const App = struct {
         }
     };
 
-    /// The actions `card` has: go while a Claude holds it, answer while it asks, give while it is
+    /// The actions `card` has: go while a proposal is open on it, a Claude holds it or it can be
+    /// started, no beside a proposal, answer while it asks, give while it is
     /// free to claim, close while still to
     /// do and reopen once done, to todo while in the backlog, and edit and priority always, and
     /// moving it along its column but in the backlog or without a repo the move can be narrowed
