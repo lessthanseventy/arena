@@ -1017,6 +1017,18 @@ key x
 check "and x says no to it" await last 'no 4'
 cp $tmp/board.noauto $tmp/run/babylon/board.json
 check "with it settled, the card and the header say nothing of it" gone '▲'
+print -r -- '{"tickets":['\
+'{"id":13,"repo":"tlon","title":"Held for an answer","kind":"ticket","status":"review","priority":"med","claimed_by":"'$one'",'\
+'"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[],"stage":"queued","ask":{"id":6,"question":"Which size?"}},'\
+'{"id":14,"repo":"tlon","title":"Sent back asking","kind":"ticket","status":"review","priority":"med","claimed_by":"'$one'",'\
+'"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[],"stage":"failed","ask":{"id":9,"question":"Which shape?"}}]}' >$tmp/run/babylon/board.json
+check "a held card asking has the question on its top edge" see '╭ \? asks ─'
+check "and where the pipeline has it, held, in its footer" see '│ held +│'
+check "a sent back one asking has the question on its top edge too" see '#14 Sent back'
+check "and ✗ sent back in its footer" see '│ ✗ sent back +│'
+cp $tmp/board.noauto $tmp/run/babylon/board.json
+check "with the board back, #7 is there" see '#7 Lights'
+mouse 0 ${(z)$(spot '#7 Lights')} M
 key J
 check "J moves it down its column, among its lane's" await last 'move 7 down --repo tlon'
 key '>'
