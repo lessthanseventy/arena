@@ -188,7 +188,9 @@ pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, wi
         f.move.starts[f.move.items] = f.move.n;
         f.move.tickets[f.move.items] = need.ticket;
         f.move.items += 1;
-        f.move.add(.item, failed, "{s}", .{need.text});
+        // a look's text already names its doc; any other row with one wears a mark
+        const marked = need.doc != null and !std.mem.eql(u8, need.kind, "look");
+        f.move.add(.item, failed, "{s}{s}", .{ need.text, if (marked) " ¶" else "" });
         if (refusalOf(refused, need.id)) |why| {
             f.move.add(.refused, failed, "{s}", .{why});
             continue;
@@ -197,7 +199,7 @@ pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, wi
         var bufs: [12][96]u8 = undefined;
         var n: usize = 0;
         // opening the doc is arena's own: babylon's actions are only what it answers with
-        if (tickets.lookDoc(need) != null) {
+        if (need.doc != null) {
             chips[0] = "o open";
             n = 1;
         }
@@ -660,14 +662,33 @@ test "auto's line is two when one does not fit: its state and hold, then its rep
     try std.testing.expectEqual(@as(?usize, 0), f.item(1).?.next);
 }
 
+test "a decision that names a doc keeps its place, wears a mark and says o opens it; one without says nothing of it" {
+    var b = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"needs_you":[
+        \\{"id":"ask:6","kind":"ask","ticket":307,"repo":"tlon","text":"#307 tlon  asks: A or B?","doc":"docs/plan.md",
+        \\ "actions":[{"key":"1","label":"A","argv":["babylon","answer","6","1"]}]},
+        \\{"id":"ask:7","kind":"ask","ticket":308,"repo":"tlon","text":"#308 tlon  asks: C or D?","doc":null,
+        \\ "actions":[{"key":"1","label":"C","argv":["babylon","answer","7","1"]}]}]}
+    );
+    defer b.deinit();
+    var f: Feed = undefined;
+    build(&f, &b, &.{}, 56, 40, now, 0, 0);
+    var out: [64][]const u8 = undefined;
+    const got = texts(&f, &out);
+    try std.testing.expectEqualStrings("#307 tlon  asks: A or B? ¶", got[1]);
+    try std.testing.expectEqualStrings("o open   1 A", got[2]);
+    try std.testing.expectEqualStrings("#308 tlon  asks: C or D?", got[3]);
+    try std.testing.expectEqualStrings("1 C", got[4]);
+}
+
 test "a look at says it can be opened, then babylon's own actions, and names its doc" {
     var b = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[],"needs_you":[
-        \\{"id":"ask:6","kind":"look","ticket":307,"repo":"tlon","text":"#307 tlon  look at: docs/asterion.md",
+        \\{"id":"ask:6","kind":"look","ticket":307,"repo":"tlon","text":"#307 tlon  look at: docs/asterion.md","doc":"docs/asterion.md",
         \\ "actions":[{"key":"y","label":"looks good","argv":["babylon","call","answer_ask","{\"id\":6}"]},{"key":"c","label":"change","argv":null,"needs":"words"}]}]}
     );
     defer b.deinit();
-    try std.testing.expectEqualStrings("docs/asterion.md", tickets.lookDoc(b.needsYou()[0]).?);
+    try std.testing.expectEqualStrings("docs/asterion.md", b.needsYou()[0].doc.?);
     var f: Feed = undefined;
     build(&f, &b, &.{}, 56, 40, now, 0, 0);
     var out: [64][]const u8 = undefined;

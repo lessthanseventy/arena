@@ -1288,7 +1288,7 @@ pub const App = struct {
             return true;
         };
         const need = b.needsYou()[at];
-        if (tickets.lookDoc(need) != null and anyKey(key, &.{ "o", "\r" })) return app.openDoc(need);
+        if (need.doc != null and anyKey(key, &.{ "o", "\r" })) return app.openDoc(need);
         const action = for (need.actions) |action| {
             if (std.mem.eql(u8, action.key, named)) break action;
         } else return false;
@@ -1306,10 +1306,10 @@ pub const App = struct {
         return true;
     }
 
-    /// The doc of a look at, opened: a link by `xdg-open`, a file of the ticket's repo in a
+    /// The doc of a row, opened: a link by `xdg-open`, a file of the ticket's repo in a
     /// window of its own, in `glow` else `less`.
     fn openDoc(app: *App, need: tickets.Need) !bool {
-        const doc = tickets.lookDoc(need) orelse return true;
+        const doc = need.doc orelse return true;
         if (std.mem.startsWith(u8, doc, "http://") or std.mem.startsWith(u8, doc, "https://")) {
             return app.runNeed(need.id, &.{ "xdg-open", doc });
         }
