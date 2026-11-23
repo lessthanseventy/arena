@@ -1024,7 +1024,8 @@ print -r -- '{"tickets":['\
 '"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[],"stage":"failed","ask":{"id":9,"question":"Which shape?"}}]}' >$tmp/run/babylon/board.json
 check "a held card asking has the question on its top edge" see '╭ \? asks ─'
 check "and where the pipeline has it, held, in its footer" see '│ held +│'
-check "a sent back one asking has the question on its top edge too" see '#14 Sent back'
+edge_over() { [[ $(screen | grep -B1 -m1 -- "$1") == *'? asks'* ]] }
+check "a sent back one asking has the question on its top edge too" await edge_over '#14 Sent back'
 check "and ✗ sent back in its footer" see '│ ✗ sent back +│'
 cp $tmp/board.noauto $tmp/run/babylon/board.json
 check "with the board back, #7 is there" see '#7 Lights'
