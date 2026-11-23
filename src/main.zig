@@ -438,6 +438,11 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
             var rest: []const u8 = buf[0..n];
             while (std.mem.indexOfScalar(u8, rest, '\n')) |nl| {
                 try line.appendSlice(gpa, rest[0..nl]);
+                // an Escape held to tell it from Alt was typed before what the command line says after it
+                if (keys.lone(typed.items) and control.told(line.items)) {
+                    try app.typedAlone(typed.items);
+                    typed.items.len = 0;
+                }
                 try app.onLine(line.items);
                 line.clearRetainingCapacity();
                 rest = rest[nl + 1 ..];

@@ -35,6 +35,14 @@ pub const card_message = "arena board ";
 pub const show_message = "arena show ";
 pub const inbox_message = "arena inbox";
 
+/// Whether `line` is what `arena board`, `show` or `inbox` had tmux say to a running arena.
+pub fn told(line: []const u8) bool {
+    return switch (parse(line, null)) {
+        .card, .pane, .holder, .inbox => true,
+        else => false,
+    };
+}
+
 const changes = [_][]const u8{
     "%sessions-changed", "%session-renamed ",     "%window-add ",
     "%window-close ",    "%window-renamed ",      "%unlinked-window-",
@@ -159,6 +167,14 @@ test "a message to show says which pane or whose ticket's, and the inbox is aske
     try std.testing.expectEqual(Event.other, parse("%message arena show 290", null));
     try std.testing.expectEqual(Event.other, parse("%message arena show %x", null));
     try std.testing.expectEqual(Event.inbox, parse("%message arena inbox", null));
+}
+
+test "what arena board, show and inbox say is told apart from tmux's own lines" {
+    try std.testing.expect(told("%message arena board 240"));
+    try std.testing.expect(told("%message arena show %290"));
+    try std.testing.expect(told("%message arena inbox"));
+    try std.testing.expect(!told("%message hello"));
+    try std.testing.expect(!told("%output %1 x"));
 }
 
 test "session notifications say which session" {

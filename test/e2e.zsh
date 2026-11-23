@@ -944,6 +944,9 @@ check "arena board and a ticket's id, run elsewhere, opens the board on it with 
 key Escape
 $bin -L $in board 8
 check "and with the board open, moves the pick to it" see '╰ go ─ edit '
+# past the wait that tells a lone Escape from Alt
+zselect -t 10
+check "the Escape typed before it put the question away, not the board after" shows ' board   every'
 key Escape
 gone ' board   every'
 two=$(inner list-panes -s -t alpha -F '#{pane_id}' | sed -n 2p)
