@@ -68,7 +68,7 @@ pub const Auto = struct { on: bool = false, cap: u32 = 0, working: u32 = 0 };
 /// babylon's orchestrator: `running` while its session is there, `on` while babylon keeps it so.
 pub const Orchestrator = struct { on: bool = true, running: bool = true };
 
-const File = struct { tickets: []Card, backlog: []const Card = &.{}, auto: ?Auto = null, orchestrator: ?Orchestrator = null };
+const File = struct { tickets: []Card, backlog: []Card = &.{}, auto: ?Auto = null, orchestrator: ?Orchestrator = null };
 
 pub const Board = struct {
     parsed: std.json.Parsed(File),
@@ -76,14 +76,21 @@ pub const Board = struct {
     pub fn parse(gpa: std.mem.Allocator, text: []const u8) !Board {
         var parsed = try std.json.parseFromSlice(File, gpa, text, .{ .ignore_unknown_fields = true, .allocate = .alloc_always });
         errdefer parsed.deinit();
+        const arena = parsed.arena.allocator();
         for (parsed.value.tickets) |*card| {
-            if (card.session_note.len == 0) continue;
-            var clean: std.ArrayList(u8) = .empty;
-            try @import("text.zig").appendClean(&clean, parsed.arena.allocator(), card.session_note);
-            std.mem.replaceScalar(u8, clean.items, '\n', ' ');
-            card.session_note = clean.items;
+            card.title = try cleanLine(arena, card.title);
+            card.session_note = try cleanLine(arena, card.session_note);
         }
+        for (parsed.value.backlog) |*card| card.title = try cleanLine(arena, card.title);
         return .{ .parsed = parsed };
+    }
+
+    fn cleanLine(arena: std.mem.Allocator, text: []const u8) ![]const u8 {
+        if (text.len == 0) return text;
+        var clean: std.ArrayList(u8) = .empty;
+        try @import("text.zig").appendClean(&clean, arena, text);
+        std.mem.replaceScalar(u8, clean.items, '\n', ' ');
+        return clean.items;
     }
 
     pub fn deinit(b: *Board) void {
@@ -184,6 +191,15 @@ test "a note's escapes and control characters are gone once the board is parsed,
     );
     defer b.deinit();
     try std.testing.expectEqualStrings("it holds #6", b.cards()[0].session_note);
+}
+
+test "a title's escapes and control characters are gone once the board is parsed" {
+    var b = try Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1,"title":"\u001b[31mBo\u0007ard\n2","status":"done"}],"backlog":[{"id":7,"title":"\u001b]0;t\u0007later","status":"backlog"}]}
+    );
+    defer b.deinit();
+    try std.testing.expectEqualStrings("Board 2", b.cards()[0].title);
+    try std.testing.expectEqualStrings("later", b.parsed.value.backlog[0].title);
 }
 
 test "a claim's time is read as seconds since the epoch, and one unsaid or unread is none" {
