@@ -35,9 +35,7 @@ What it is for, in one line: **a glance tells you what needs you, what is moving
 The board's own area, with the rail narrowed beside it (see [The rail](#the-rail)): 166 cells.
 
 ```
- ▤ board    every · arena 13 · babylon 7 · ficciones · menard · tlon 9    backlog 4                     ▲ 1 needs you    ◒ gate #305 reviewing    ● orch    ◐ auto 3/3
- ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ▲ ✗ #286 arena  Alt+h/Alt+l are dropped during an unanswered switch  —  sent back: the review asked for changes                                       ⏎ look   G give
+ ▤ board    every · arena 13 · babylon 7 · ficciones · menard · tlon 9    backlog 4                      ▲ 4 need you    ◒ gate #305 reviewing    ● orch    ◐ auto 3/3
  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
  todo 32                                  + new    doing 3                                 review 2                             recent 41
@@ -90,14 +88,9 @@ The board's own area, with the rail narrowed beside it (see [The rail](#the-rail
 
 **One calm header, in three groups.** Left: what you are looking at: `every`, or one repo, each
 with its count of open cards (a repo with none dim), then `backlog`. Right: what babylon is doing,
-each said once: `▲ 1 needs you`, the gate and its card, `orch`, `auto 3/3`. Each is a button. Under
-it a rule, nothing else.
-
-**A "needs you" row, only when something does.** Under the header, a row for each card whose
-Claude asks you something (`? asks`) or that babylon sent back (`✗`, with the first line of its
-`stage_note`). Its actions are on it: `⏎ answer` on an ask, `⏎ look` on a send-back, `G give`.
-With nothing to do, the row is gone and the board moves up. Over three, they fold to
-`▲ 5 need you  ⏎ go through them`, which picks the first and steps through them with `⏎`.
+each said once: `▲ 4 need you`, the gate and its card, `orch`, `auto 3/3`. Each is a button. Under
+it a rule, nothing else. `▲ 4 need you` opens [the inbox](#needs-you-the-inbox); with nothing
+there it is a dim `▲ 0`.
 
 **Columns by status, grouped by repo inside, no lanes.** In the every view the board is four
 columns. Inside each, every repo with cards in it gets a one-row heading with its count
@@ -140,11 +133,66 @@ foot.
 ### Mouse
 
 - A click on a card picks it; a click on the picked one does its `⏎`.
-- A click on a header button, a "needs you" action, a picked card's action, or a key in the foot's
-  bar does what it says.
+- A click on a header button, a picked card's action, an inbox item's option, or a key in the
+  foot's bar does what it says.
 - The wheel scrolls the column under the pointer.
 - A card dragged onto another column moves there where babylon allows it (todo↔backlog,
   done→todo); elsewhere the drop says why not.
+
+## Needs you: the inbox
+
+The one place for what needs the human's eyes or decision. The header's `▲ 4 need you` opens it in
+the board's place, and so do the rail's board row, the desktop's notices and the bar: none of them
+say more than `▲ N need you`. A card with something in it carries `▲` in its last row, and its
+`⏎` opens the inbox on that item. `esc` goes back to the board.
+
+```
+ ▤ board    every · arena 13 · babylon 7 · ficciones · menard · tlon 9    backlog 4                      ▲ 4 need you    ◒ gate #305 reviewing    ● orch    ◐ auto 3/3
+ ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▲ needs you  4                                                                                                                                  esc back to the board
+
+ decisions 1
+ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ #320 arena  Design: the board looks and works like a real app                                                                         asked 3m ago by t320-design │
+ │ Build it as the doc's 13-ticket stack?            ▤ docs/board-design.md   o open it                                                                              │
+ │                                                                                                                                                                   │
+ │ 1 Yes, file the stack as drawn   2 Yes, but leave out find and drag   3 Change something first   4 A different direction                        c answer in words │
+ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ to look at 1
+ ▌ #307 tlon  Design: asterion, the house as its own app and backend     ▤ docs/asterion.md                               ⏎ open   y looks good   c say what to change
+
+ sent back 2
+ ▌ ✗ #286 arena  Alt+h/Alt+l are dropped during an unanswered switch                                                                        its Claude has it   ⏎ look
+ ▌   the review asked for changes: the e2e never holds tmux unanswered
+ ▌ ✗ #290 arena  e2e flake: the click that focuses window two leaves the strip on window one                                         yours   ⏎ look   G give   x close
+ ▌   no Claude holds it: the gate failed twice on the same check
+
+ from the orchestrator 2
+ ▌ Start #302 next: tlon's Today card is high, filed a day ago, and nothing blocks it                                                                      ⏎ go   x no
+ ▌ Restart t305-landed-worktree: its Claude has been quiet 40m on a doing card                                                                             ⏎ go   x no
+
+ ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ j k pick   1-9 an option   ⏎ go   x no   o open   c in words   │   esc the board
+```
+
+It has four kinds, each a heading with its count, oldest first inside:
+
+- **Decisions:** every open ask: its ticket, who asked and when, the question, its options as
+  buttons, answered in place with `1`-`9` or a click, or in words with `c`. An ask that comes with a
+  doc to read names it, and `o` opens it.
+- **To look at:** mockups and designs waiting on review. The item names the doc itself, never a
+  branch, and `⏎` opens it: a file in the repo in a window beside the board (`glow`, else `less`),
+  a link in the browser. `y` says it looks good, `c` says what to change; both go to its ticket's
+  Claude as the answer.
+- **Sent back:** the first line of the reason, and whose move it is: `its Claude has it` when the
+  session holding it was told and is on it, `yours` when no Claude holds it or it needs a choice.
+  Only `yours` counts toward `▲ N`; the rest are there to be seen.
+- **From the orchestrator:** its proposals: what to start next, follow-ups to keep or close,
+  sessions to restart. Each is one line saying what and why, with `⏎ go` and `x no`, never a chat
+  paragraph. On `go` babylon does it; on `no` it is gone.
+
+With nothing in it, it says `nothing needs you` in the middle of the board's area.
 
 ## The board, at half the screen
 
@@ -152,10 +200,7 @@ Four columns do not fit in about 90 cells, so the board shows two: **now** (doin
 **next** (todo). `recent 41` becomes a button beside `+ new`, and `tab`, that swaps it in for next.
 
 ```
- ▤ board  every · arena 13 · babylon 7 · tlon 9 · …          ▲ 1   ◒ #305   ● orch   ◐ 3/3
- ─────────────────────────────────────────────────────────────────────────────────────────
- ▲ ✗ #286 Alt+h/Alt+l are dropped during an unanswered switch               ⏎ look  G give
-     sent back: the review asked for changes
+ ▤ board  every · arena 13 · babylon 7 · tlon 9 · …          ▲ 4   ◒ #305   ● orch   ◐ 3/3
  ─────────────────────────────────────────────────────────────────────────────────────────
 
  now 5                                     next 32                       + new   recent 41
@@ -218,30 +263,86 @@ as cut lines. With the board open:
 ╰────╯
 ```
 
+## Hover, focus and pick: one system
+
+The human, hovering today's board: "these go all wonky when i hover them. make it all work together
+nicely". Header tabs were drawn over (`menard` showed as `enard`), and something moved at the foot
+of the orchestrator's column. So hover, focus and pick are three states, each with one look
+everywhere, across the header, the cards, the inbox, the rail and the orchestrator's column:
+
+| state | what it is | its look |
+| --- | --- | --- |
+| hover | the thing under the pointer that a click would act on | underlined, nothing else |
+| focus | the area keys go to: board, inbox, rail or the orchestrator's column | its frame in the turning gradient, as a focused column's is today |
+| pick | the one item in an area the keys act on | the accent box, or #324's whole-entry mark in the rail |
+
+The rules that make them hold together:
+
+- **Hover changes attributes, never cells.** No text, width or position changes under the
+  pointer, and nothing beside it moves. The one thing hover opens is the narrow rail's wide peek,
+  drawn over the board and taken back cell for cell.
+- **One layout, read by drawing and clicking alike.** Every button, tab, card and action has its
+  rectangle from one pass; the frame draws from those rectangles and a click or hover is tested
+  against the same ones. Nothing is drawn "over what is under it" at a guessed place.
+- **Everything is in the frame.** The pointer's shape and any other escape go out inside the
+  synchronized frame, never between frames where the cursor stands at some cell.
+- **Each area has its own pick, and only the focused area's is in the accent.** The others show
+  theirs dim, so a glance shows where the keys will go.
+
+An e2e holds it: it hovers one of each kind of element (a tab, a status button, a card, a card's
+action, a key in the foot's bar, an inbox option, a rail session and Claude, the orchestrator
+column's edges and the dividers) and checks that the screen's text is the same as before
+everywhere, and that its attributes changed only inside that element.
+
 ## What babylon needs to give
 
 - **When each ticket was filed** (`inserted_at` in board.json), for a todo card's `filed 1d`.
+- **A doc on an ask**: an ask can name a file or link to look at, and be a decision or a "look at
+  this"; board.json gives both.
+- **Whose move a send-back is**: board.json says whether the holding session was told and is on
+  it, or the human must act.
+- **Proposals from the orchestrator**: a way to post one (what, why, the action babylon runs on
+  go), list the open ones in board.json, and take go or no.
+- **auto's count no higher than its cap**: the header said `auto 4/3`; board.json had
+  `"working":4,"cap":3`, so babylon counts more as working than it started.
 - A queued card's place in line (`2nd`) arena can count itself from the queued cards.
 
 The rest (`model`, `stage_note`, `closed_at`, `claimed_at`, `blocked_by`, asks) is in board.json.
 
 ## The build, as a stack
 
-Each a ticket on the last, in this order:
+babylon's parts stand alone and can go in any order. arena's are one stack, each on the last; a part
+that reads a babylon field waits on that ticket.
 
-1. **babylon:** board.json carries each ticket's `inserted_at`.
+babylon:
+
+- board.json carries each ticket's `inserted_at`.
+- An ask can name a doc and be a decision or a look.
+- A send-back says whose move it is.
+- Orchestrator proposals, with go and no.
+- auto's working count never passes its cap.
+
+arena:
+
+1. **Hover, focus and pick:** one layout of rectangles for drawing and clicks, hover as attributes
+   only, escapes inside the frame, and the hover e2e.
 2. **Header:** one row in three groups, each thing said once, each a button.
-3. **Needs you:** the row of asks and send-backs under the header, with their actions.
-4. **Columns, no lanes:** the every view's columns grouped by repo, empty columns narrow, width by
+3. **Columns, no lanes:** the every view's columns grouped by repo, empty columns narrow, width by
    card count.
-5. **Cards sized to their content:** the priority bar, the whole title, the last row by status;
+4. **Cards sized to their content:** the priority bar, the whole title, the last row by status;
    columns scroll by rows, not card slots.
-6. **The picked card:** boxed, with its detail and action buttons.
-7. **The key bar** along the foot, following the pick.
-8. **Recent** filling its column, with ages.
-9. **Half width:** now and next, then tabs under 60 cells.
-10. **The rail:** narrow while the board is open, the picked card's Claude lit, a click on a Claude
+5. **The picked card:** boxed, with its detail and action buttons.
+6. **The key bar** along the foot, following the pick.
+7. **Recent** filling its column, with ages.
+8. **The inbox:** decisions and sent back, from what board.json has today; `▲ N` in the header,
+   the rail and on cards opens it.
+9. **The inbox's to look at**, opening the doc (waits on babylon's doc on an ask).
+10. **The inbox's proposals** (waits on babylon's proposals).
+11. **Half width:** now and next, then tabs under 60 cells.
+12. **The rail:** narrow while the board is open, the picked card's Claude lit, a click on a Claude
     picks its card.
-11. **Find** with `/`.
-12. **Drag** a card between columns.
-13. **README** and screenshots of the new board (takes in #321).
+13. **Find** with `/`.
+14. **Drag** a card between columns.
+15. **README** and screenshots of the new board (takes in #321).
+
+ficciones: the bar's and the desktop's notices of asks say only `▲ N need you` and open arena's inbox.
