@@ -82,6 +82,16 @@ claim "bad input exits 0" test $? = 0
 env -u TMUX_PANE sh -c 'jq -nc "{session_id: \"s2\", cwd: \"/\", prompt: \"hi\"}" | sh $0/hooks/claude-state.sh prompt' $root
 claim "a session outside tmux still has its record" test "$(jq -r .state $work/run/sessions/s2.json)" = working
 
+send start '{source: "resume"}'
+jq '.state = "done"' $rec > $rec.new && mv $rec.new $rec
+TMUX_PANE=%8 TMUX=/tmp/other,1,0 send start '{source: "resume"}'
+is .pane %8 "a start in a new pane moves the record there"
+is .socket /tmp/other "and to its socket"
+is .state done "and keeps its state"
+
+ARENA_RETITLE=1 sh -c 'jq -nc "{session_id: \"s3\", cwd: \"/\"}" | sh $0/hooks/claude-state.sh start' $root
+claim "the retitle subprocess leaves no record" test ! -e $work/run/sessions/s3.json
+
 print '{"ctx":41,"model":"Opus 5.5"}' > $work/run/sessions/s1.meter
 send end '{}'
 claim "the end removes the record" test ! -e $rec

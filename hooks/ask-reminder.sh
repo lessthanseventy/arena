@@ -8,13 +8,13 @@
 json=$(cat)
 printf '%s' "$json" | jq -e '.agent_id // empty' >/dev/null 2>&1 && exit 0
 [ "$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null)" = orchestrator ] || exit 0
-board=${BABYLON_BOARD:-${XDG_RUNTIME_DIR:-$HOME/.local/state}/babylon/board.json}
+board=${BABYLON_BOARD:-${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}/babylon/board.json}
 [ -r "$board" ] || exit 0
 to=$(printf '%s' "$json" | jq -r 'select(.tool_name == "SendMessage") | .tool_input.to // empty' 2>/dev/null)
 [ -n "$to" ] || exit 0
 m=$(jq -r --arg to "$to" '
   .tickets[] | select(.ask != null) | . as $t
-  | select(($to | test("^#" + ($t.id | tostring) + "( |$)")) or ($t.claimed_by != null and $t.claimed_by == $to))
+  | select(($to | test("^#" + ($t.id | tostring) + "( |$)")) or ($t.claimed_by != null and $t.claimed_by == $to) or ($t.handed_to != null and $t.handed_to == $to))
   | "#\(.id)'"'"'s ask \(.ask.id) is still open: if this message answers it, record it with answer_ask (choice + said)."
 ' "$board" 2>/dev/null | head -1)
 [ -n "$m" ] || exit 0

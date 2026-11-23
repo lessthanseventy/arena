@@ -33,4 +33,15 @@ check "a session with no ticket: nothing" test -z "$(hook orchestrator-peer)"
 check "from another session: nothing" test -z "$(hook '#316 x' work)"
 check "with no board: nothing" test -z "$(hook '#316 x' orchestrator $tmp/none.json)"
 
+print -r -- '{"tickets":[{"id":320,"claimed_by":null,"handed_to":"%12","ask":{"id":5,"question":"x"}}]}' > $tmp/handed.json
+check "a send to the pane a card is handed to is reminded" \
+  test "$(hook %12 orchestrator $tmp/handed.json | jq -r .hookSpecificOutput.additionalContext)" = "#320's ask 5 is still open: if this message answers it, record it with answer_ask (choice + said)."
+mkdir -p $tmp/state/babylon
+cp $tmp/board.json $tmp/state/babylon/board.json
+xdg() { # the hook with no BABYLON_BOARD and no XDG_RUNTIME_DIR
+  jq -nc '{tool_name: "SendMessage", tool_input: {to: "%9", message: "go"}}' |
+    env -u BABYLON_BOARD -u XDG_RUNTIME_DIR PATH=$tmp:$PATH FAKE_SESSION=orchestrator XDG_STATE_HOME=$tmp/state TMUX=$server,1,0 TMUX_PANE=%1 sh $root/hooks/ask-reminder.sh
+}
+check "with no runtime dir the board is under XDG_STATE_HOME" test -n "$(xdg)"
+
 exit $fails

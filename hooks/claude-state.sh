@@ -15,6 +15,8 @@
 pane=${TMUX_PANE:-}
 # a session outside tmux still has its record; only the pane options are skipped
 [ -n "$pane" ] || tmux() { return 0; }
+# the retitle subprocess below is a Claude of its own: it has no session worth a record
+[ -z "${ARENA_RETITLE:-}" ] || exit 0
 json=$(cat)
 now=$(date +%s)
 # when the session or one of its subagents last did anything, for arena to tell a quiet one
@@ -97,7 +99,7 @@ retitle() {
 	began=$(grep '"type":"ai-title"' "$transcript" | head -1 | jq -r '.aiTitle // ""' 2>/dev/null)
 	now=$(tmux show -pqv -t "$pane" @arena_claude_title 2>/dev/null)
 	topic=$(printf 'Began as: %s\nCalled now: %s\nLatest requests, oldest first:\n%s\n' "$began" "$now" "$prompts" |
-		env -u TMUX_PANE timeout 90 claude -p --model haiku --tools "" --no-session-persistence \
+		env -u TMUX_PANE ARENA_RETITLE=1 timeout 90 claude -p --model haiku --tools "" --no-session-persistence \
 			"Above is how a user's conversation with a coding agent began, what it is called now, and what \
 they asked since. Short replies like 'yes' or 'go ahead' continue the work before them. If what it is \
 called now still fits the latest requests, reply with it unchanged. Otherwise reply with a title of 2 to 4 \
@@ -150,7 +152,17 @@ keep() {
 change() { printf '%s' "$json" | jq -c --argjson list "$(running)" "$1" 2>/dev/null; }
 case ${1:-} in
 start)
-	[ -e "$sessions/$sid.json" ] || record idle
+	if [ -e "$sessions/$sid.json" ]; then
+		# a resumed session is in a new pane, maybe on a new server: where it is changes, what it was doing does not
+		[ -n "$sid" ] && tmp=$(mktemp "$sessions/.$sid.XXXXXX") &&
+			if jq -c --arg socket "${TMUX%%,*}" --arg pane "$pane" '.socket = $socket | .pane = $pane' "$sessions/$sid.json" >"$tmp" 2>/dev/null; then
+				mv -f "$tmp" "$sessions/$sid.json"
+			else
+				rm -f "$tmp"
+			fi
+	else
+		record idle
+	fi
 	exit 0
 	;;
 # A shell or subagent finishing comes as a prompt, which nobody typed: it is taken off the list.
