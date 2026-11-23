@@ -7,7 +7,7 @@
 # last answer, @arena_claude_tokens, its context in tokens, @arena_claude_agents, its subagents in
 # the background, @arena_claude_background, what its shells there are doing, and
 # @arena_claude_branch, the git branch it works on. $1 is the
-# event (prompt | tool | stop | waiting |
+# event (prompt | tool | stop | stopfailure | waiting |
 # end), the hook's JSON is on stdin. A hook must never fail a turn: every miss is silent and the
 # exit is 0. Without jq the text is left out.
 pane=${TMUX_PANE:-}
@@ -152,13 +152,13 @@ waiting)
 	;;
 # Quotes inside the JSON's strings are escaped, so only a field of its own matches. A task not
 # yet finished is still there whatever else it is doing: pending, paused, waiting on its own.
-stop)
+stop | stopfailure)
 	if printf '%s' "$json" | grep -Eo '"status" *: *"[a-z_]*"' | grep -Evq '"(completed|failed|killed|done)"$'; then mark=background; else mark='done'; fi
 	opt @arena_claude_doing ''
 	began=$(tmux show -pqv -t "$pane" @arena_claude_began 2>/dev/null)
 	[ -n "$began" ] && opt @arena_claude_took "$((now - began))"
 	t=$(title) && [ -n "$t" ] && opt @arena_claude_title "$t"
-	opt @arena_claude_said "$(text '[.last_assistant_message // "" | splits("\n") | gsub("^[#>*\\s-]+|[*`]"; "") | select(test("\\S"))][0] // ""')"
+	opt @arena_claude_said "$(text '[.last_assistant_message // .error_details // .error // "" | tostring | splits("\n") | gsub("^[#>*\\s-]+|[*`]"; "") | select(test("\\S"))][0] // ""')"
 	l=$(change '[.background_tasks[]? | select(.status | IN("completed", "failed", "killed", "done") | not) |
 		{id, type, description: (.description // .command // "" | split("\n")[0])}]') && {
 		keep "$l"

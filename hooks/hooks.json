@@ -26,6 +26,7 @@
         ]
       }
     ],
+    "StopFailure": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/claude-state.sh\" stopfailure" }] }],
     "Notification": [
       {
         "matcher": "permission_prompt|elicitation_dialog",

@@ -466,6 +466,11 @@ check "the text is at most 80 characters" is_opt doing "Bash $(printf 'x%.0s' {1
 claude alpha:one stop
 check "a stop leaves the prompt" is_opt prompt 'fix the "rail"'
 check "and nothing doing" is_opt doing ''
+claude alpha:one prompt
+claude alpha:one stopfailure '{"error": "rate_limit", "error_details": "You are out of usage credits.\nRun /usage-credits"}'
+marked() { [[ $(inner show -pqv -t alpha:one @arena_claude) == done ]] }
+check "a turn that ends on an API error is done, not working" marked
+check "and says the error's first line" is_opt said 'You are out of usage credits.'
 claude alpha:one end
 claude alpha:three end
 check "a session's end takes its mark off" see '│ alpha +3 │'
