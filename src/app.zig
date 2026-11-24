@@ -3009,7 +3009,7 @@ pub const App = struct {
             };
             return n;
         }
-        return shownOf(tickets.statuses[col], b.column(tickets.statuses[col], app.pickRepo(), app.findText(), out));
+        return app.shownIn(tickets.statuses[col], b.column(tickets.statuses[col], app.pickRepo(), app.findText(), out));
     }
 
     /// What the board's cards are narrowed to: what is being typed after `/`, else what Enter kept.
@@ -3029,8 +3029,8 @@ pub const App = struct {
     pub const done_shown = 3;
 
     /// Of `total` cards in `status`'s column, how many are shown.
-    pub fn shownOf(status: tickets.Status, total: usize) usize {
-        return if (status == .done) @min(total, done_shown) else total;
+    pub fn shownIn(app: *const App, status: tickets.Status, total: usize) usize {
+        return if (status == .done) @min(total, @as(usize, if (app.workbench()) strip_n else done_shown)) else total;
     }
 
     /// The cards in column `col` of lane `lane`: those shown, and all of them.
@@ -3038,7 +3038,7 @@ pub const App = struct {
         const b = if (app.board) |*b| b else return .{ .shown = 0, .total = 0 };
         const repo = app.laneRepo(lane) orelse return .{ .shown = 0, .total = 0 };
         const total = b.column(tickets.statuses[col], repo, app.findText(), &.{});
-        return .{ .shown = shownOf(tickets.statuses[col], total), .total = total };
+        return .{ .shown = app.shownIn(tickets.statuses[col], total), .total = total };
     }
 
     /// Whether the open board is the every view, a lane a repo, not one repo's columns.
@@ -3169,8 +3169,8 @@ pub const App = struct {
         const lane = app.pickLane();
         const top = app.cardStart(col, lane, view.row) orelse return 0;
         const bottom = top + app.cardHeight(lane, col, view.row) -| 1;
-        const shown = @max(1, app.view_h -| (first_line + 1));
-        return if (bottom >= shown) @min(top, bottom - shown + 1) else 0;
+        const rows = @max(1, app.listH() -| (first_line + 1));
+        return if (bottom >= rows) @min(top, bottom - rows + 1) else 0;
     }
 
     /// The group the pick is in: its repo's in the every view, else the one.
@@ -3183,7 +3183,7 @@ pub const App = struct {
         const b = if (app.board) |*b| b else return null;
         const repo = app.laneRepo(lane) orelse return null;
         var out: [max_cards]*const tickets.Card = undefined;
-        const n = shownOf(tickets.statuses[col], b.column(tickets.statuses[col], repo, app.findText(), &out));
+        const n = app.shownIn(tickets.statuses[col], b.column(tickets.statuses[col], repo, app.findText(), &out));
         return if (row < @min(n, max_cards)) out[row] else null;
     }
 
@@ -3249,7 +3249,7 @@ pub const App = struct {
         var left = room;
         for (tickets.statuses, 0..) |status, c| {
             counts[c] = if (app.boardLanes()) app.boardCount(status) else app.boardColumnAll(c);
-            out[c] = if (counts[c] == 0) emptyColW(c, app.columnName(c)) else if (status == .done) @min(recent_w, room / 4) else 0;
+            out[c] = if (status == .done and app.footRows() > 0) 0 else if (counts[c] == 0) app.emptyColWidth(c) else if (status == .done) @min(recent_w, room / 4) else 0;
             left -|= out[c];
         }
         const sum = counts[0] + counts[1] + counts[2];
@@ -3268,8 +3268,11 @@ pub const App = struct {
 
     pub const recent_w = 40;
 
-    /// An empty column's width: its heading, ` name 0 `, in its border, and todo's + beside it.
-    fn emptyColW(col: usize, name: []const u8) u16 {
+    /// An empty column's width: its heading, ` name 0 `, in its border, and todo's + beside it; a
+    /// Workbench window's bar has its stripes, count badge and box.
+    fn emptyColWidth(app: *const App, col: usize) u16 {
+        const name = app.columnName(col);
+        if (app.workbench()) return @intCast(cellCount(name) + 12 + @as(usize, if (col == 0) 8 else 0));
         return @intCast(cellCount(name) + 4 + 3 + @as(usize, if (col == 0) 4 else 0));
     }
 
@@ -3288,7 +3291,76 @@ pub const App = struct {
     /// Whether column `col` is the every view's strip of what each repo closed last: done, a
     /// card a row with no box.
     pub fn boardStrip(app: *const App, col: usize) bool {
-        return app.boardLanes() and tickets.statuses[col] == .done;
+        return (app.boardLanes() or app.footRows() > 0) and tickets.statuses[col] == .done;
+    }
+
+    /// Whether the board is drawn in Workbench's look, which has geometry of its own.
+    pub fn workbench(app: *const App) bool {
+        return app.roles != null;
+    }
+
+    /// Rows of Workbench's recent strip along the board's foot: its title bar, the timeline, the
+    /// labels and the picked one's button.
+    pub const foot_rows: u16 = 4;
+
+    /// How many of the last closed the strip shows.
+    pub const strip_n = 5;
+
+    /// The rows the recent strip takes: none outside Workbench, in the backlog, or with no room.
+    pub fn footRows(app: *const App) u16 {
+        if (!app.workbench() or app.boardBacklog() or app.view_h < first_line + foot_rows + 6) return 0;
+        return foot_rows;
+    }
+
+    /// The row after the last the columns' windows take: their shadow is on the one before.
+    pub fn listH(app: *const App) u16 {
+        return app.view_h - app.footRows();
+    }
+
+    /// The cards the recent strip shows, the last closed first.
+    pub fn stripCards(app: *const App, out: *[strip_n]*const tickets.Card) usize {
+        const b = if (app.board) |*b| b else return 0;
+        var all: [max_cards]*const tickets.Card = undefined;
+        const n = @min(b.column(.done, app.boardRepo(), app.findText(), &all), strip_n);
+        @memcpy(out[0..n], all[0..n]);
+        return n;
+    }
+
+    /// The width of one of the strip's entries.
+    pub fn stripCell(app: *const App) u16 {
+        return app.boardW() / strip_n;
+    }
+
+    /// Where the pick of card `card` is in column `col`, that column's own rows or, in the every
+    /// view, its repo's lane.
+    fn spotOf(app: *const App, col: usize, id: u32) ?CardAt {
+        if (!app.boardLanes()) {
+            var out: [max_cards]*const tickets.Card = undefined;
+            const n = @min(app.boardColumn(col, &out), max_cards);
+            for (out[0..n], 0..) |card, row| if (card.id == id) return .{ .lane = 0, .col = col, .row = row };
+            return null;
+        }
+        var repos: [max_repos + 1][]const u8 = undefined;
+        for (0..app.laneRepos(&repos)) |lane| {
+            var row: usize = 0;
+            while (app.laneCard(lane, col, row)) |card| : (row += 1) {
+                if (card.id == id) return .{ .lane = lane, .col = col, .row = row };
+            }
+        }
+        return null;
+    }
+
+    /// The card of the strip under (`x`, `y`), where the strip is drawn.
+    fn stripCardAt(app: *const App, x: u16, y: u16) ?CardAt {
+        const foot = app.footRows();
+        if (foot == 0 or y <= app.listH() or y + 1 >= app.view_h or x < app.boardX()) return null;
+        const k = (x - app.boardX()) / @max(1, app.stripCell());
+        var cards: [strip_n]*const tickets.Card = undefined;
+        if (k >= app.stripCards(&cards)) return null;
+        const done = for (tickets.statuses, 0..) |status, c| {
+            if (status == .done) break c;
+        } else return null;
+        return app.spotOf(done, cards[k].id);
     }
 
     /// Whether card `row` of group `lane` in column `col` is the one picked.
@@ -3304,6 +3376,12 @@ pub const App = struct {
         if (app.boardStrip(col)) return 1;
         const card = app.groupCard(lane, col, row) orelse return 1;
         var buf: [160]u8 = undefined;
+        if (app.workbench()) {
+            var tile = TitleLines.init(card.title, tileTextW(app.boardColW(col)));
+            var rows: usize = 0;
+            while (tile.next()) |_| rows += 1;
+            return @max(1, @min(rows, tile_title_rows)) + @as(usize, if (app.cardPicked(lane, col, row)) 4 else 3);
+        }
         var lines = TitleLines.init(cardTitle(card, &buf), cardTextW(app.boardColW(col)));
         var n: usize = 0;
         while (lines.next()) |_| n += 1;
@@ -3312,6 +3390,15 @@ pub const App = struct {
     }
 
     pub const title_rows = 4;
+
+    /// A Workbench tile's title takes two rows at most, the picked one's too.
+    pub const tile_title_rows = 2;
+
+    /// The cells a Workbench tile's title has in a column `w` wide: its window's and its own
+    /// gutters, a cell of the tile's, and the priority dot's.
+    pub fn tileTextW(w: u16) usize {
+        return w -| 7;
+    }
 
     /// The cells a card's text has in a column `w` wide: the column's edges, the card's left mark
     /// and a space, and a cell after.
@@ -3341,11 +3428,13 @@ pub const App = struct {
     pub const CardAt = struct { lane: usize, col: usize, row: usize };
 
     fn boardCardAt(app: *const App, x: u16, y: u16) ?CardAt {
+        if (app.stripCardAt(x, y)) |at| return at;
         const left = app.boardColX(0);
-        if (x < left or y < first_line or y + 1 >= app.view_h) return null;
+        if (x < left or y < first_line or y + 1 >= app.listH()) return null;
         const col = for (0..app.boardCols()) |c| {
             if (x < app.boardColX(c) + app.boardColW(c)) break c;
         } else return null;
+        if (app.boardColW(col) == 0) return null;
         const at = app.columnLineAt(col, y - first_line + app.columnScroll(col)) orelse return null;
         return switch (at.what) {
             .card => |card| .{ .lane = at.lane, .col = col, .row = card.row },
@@ -4240,7 +4329,7 @@ pub const App = struct {
                 const n = if (b) |board| board.needsYou().len else 0;
                 break :blk if (short) std.fmt.bufPrint(buf, " ▲ {d} ", .{n}) catch " ▲ " else std.fmt.bufPrint(buf, " ▲ {d} need you ", .{n}) catch " ▲ ";
             },
-            .new => " + ",
+            .new => if (app.workbench()) " + new " else " + ",
             .card => |action| app.cardButtonText(action, buf),
         };
     }
@@ -4255,7 +4344,7 @@ pub const App = struct {
             .open => if (c.status == .review) "log" else action.label(),
             else => action.label(),
         } else action.label();
-        if (app.boardStrip(view.col)) return std.fmt.bufPrint(buf, " {s} ", .{word}) catch " ? ";
+        if (app.boardStrip(view.col) and app.footRows() == 0) return std.fmt.bufPrint(buf, " {s} ", .{word}) catch " ? ";
         return std.fmt.bufPrint(buf, " {s} {s} ", .{ action.key(), word }) catch " ? ";
     }
 
@@ -4372,24 +4461,38 @@ pub const App = struct {
         const cw = app.boardColW(0);
         var buf: [64]u8 = undefined;
         var n = app.header(out).n;
-        if (cw >= 12 and n < out.len) {
-            out[n] = .{ .what = .new, .x = app.boardColX(0) + cw - 4, .y = first_line - 1, .w = 3 };
+        const bench = app.workbench();
+        if (cw >= @as(u16, if (bench) 26 else 12) and n < out.len) {
+            out[n] = if (bench)
+                .{ .what = .new, .x = app.boardColX(0) + cw - 12, .y = first_line - 1, .w = 7 }
+            else
+                .{ .what = .new, .x = app.boardColX(0) + cw - 4, .y = first_line - 1, .w = 3 };
             n += 1;
         }
         const card = app.boardCard(view.col, view.row) orelse return out[0..n];
         const strip = app.boardStrip(view.col);
+        const foot = app.footRows() > 0;
         const y: u16 = if (strip) app.view_h -| 1 else blk: {
             const lane = app.pickLane();
             const top = app.cardStart(view.col, lane, view.row) orelse return out[0..n];
             const line = top + app.cardHeight(lane, view.col, view.row) - 2;
             const scroll = app.columnScroll(view.col);
             if (line < scroll) return out[0..n];
-            break :blk @intCast(@min(first_line + line - scroll, app.view_h));
+            break :blk @intCast(@min(first_line + line - scroll, app.listH()));
         };
-        if (!strip and y + 1 >= app.view_h) return out[0..n];
+        if (!strip and y + 1 >= app.listH()) return out[0..n];
         var have: [12]CardAction = undefined;
         var x: u16 = app.boardColX(view.col) + 2;
-        const edge = app.boardColX(view.col) + app.boardColW(view.col) -| 2;
+        var edge = app.boardColX(view.col) + app.boardColW(view.col) -| 2;
+        if (strip and foot) {
+            var cards: [strip_n]*const tickets.Card = undefined;
+            const shown_n = app.stripCards(&cards);
+            const k = for (cards[0..shown_n], 0..) |c, i| {
+                if (c.id == card.id) break i;
+            } else return out[0..n];
+            x = app.boardX() + @as(u16, @intCast(k)) * app.stripCell() + 1;
+            edge = x + app.stripCell();
+        } else if (bench) edge -= 1;
         for (cardActions(card, &have)) |action| {
             if (strip and action != .reopen) continue;
             const w: u16 = @intCast(cellCount(app.buttonLabel(.{ .what = .{ .card = action }, .x = 0, .y = 0, .w = 0 }, &buf)));
@@ -4594,7 +4697,7 @@ pub const App = struct {
     /// move: the feed's pick goes to that item. Whether it was that click.
     fn cardNeedsClick(app: *App, at: CardAt, m: keys.Mouse) !bool {
         const card = app.groupCard(at.lane, at.col, at.row) orelse return false;
-        if (card.proposal == null or app.boardStrip(at.col)) return false;
+        if (card.proposal == null or app.boardStrip(at.col) or app.workbench()) return false;
         const line = app.columnLineAt(at.col, m.y - first_line + app.columnScroll(at.col)) orelse return false;
         const part = switch (line.what) {
             .card => |spot| spot.part,
@@ -6457,6 +6560,53 @@ test "the every view's done column is a strip: narrow, a card a row, its reopen 
     app.board_view.?.repo = 1;
     try eq(@min(App.recent_w, app.boardW() / 4), app.boardColW(3));
     try std.testing.expect(!app.boardStrip(3));
+}
+
+test "in Workbench's look a click on the picked tile's button does its action, and one on a recent entry picks it" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 100;
+    app.view_w = 100;
+    app.view_h = 30;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":4,"repo":"tlon","title":"d","status":"doing","ask":{"id":9,"question":"Which?","options":["x"]}},
+        \\{"id":6,"repo":"tlon","title":"f","status":"done"},
+        \\{"id":7,"repo":"tlon","title":"g","status":"done"}
+        \\]}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{ .col = 1 };
+    const eq = std.testing.expectEqual;
+
+    try eq(@as(u16, 0), app.boardColW(3));
+    var buttons: [48]App.Button = undefined;
+    var answer: ?App.Button = null;
+    for (app.boardButtons(&buttons)) |b| switch (b.what) {
+        .card => |action| if (action == .answer) {
+            answer = b;
+        },
+        else => {},
+    };
+    const on = answer.?;
+    try std.testing.expect(!app.board_view.?.answering);
+    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = on.x + 1, .y = on.y, .release = false }));
+    try std.testing.expect(app.board_view.?.answering);
+    app.board_view.?.answering = false;
+
+    var recent: [App.strip_n]*const tickets.Card = undefined;
+    try eq(@as(usize, 2), app.stripCards(&recent));
+    const second = recent[1].id;
+    const x = app.boardX() + app.stripCell() + 1;
+    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = app.listH() + 1, .release = false }));
+    try eq(@as(usize, 3), app.board_view.?.col);
+    try eq(second, app.boardCard(3, app.board_view.?.row).?.id);
+    var picked: [48]App.Button = undefined;
+    const reopen = for (app.boardButtons(&picked)) |b| {
+        if (b.what == .card and b.what.card == .reopen) break b;
+    } else return error.NoReopen;
+    try eq(app.listH() + 3, reopen.y);
+    try eq(app.boardX() + app.stripCell() + 1, reopen.x);
 }
 
 test "the board opens on a ticket by its id: its lane, its repo's columns or the backlog, its question shown" {

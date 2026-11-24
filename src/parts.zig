@@ -37,18 +37,45 @@ pub fn shadow(w: *Writer, r: Roles, x: usize, y: usize, width: usize, h: usize, 
 /// `▎label ` on raised, its lead bar in `lead`; filled, `lead` is the face and the label is ink.
 /// The cells it took.
 pub fn chip(w: *Writer, r: Roles, x: usize, y: usize, label: []const u8, lead: RGB, filled: bool) !usize {
+    return chipInk(w, r, x, y, label, lead, if (filled) r.on_accent else r.text, filled);
+}
+
+/// A chip whose words are in `words`, as a repo's glyph and number are in its hue.
+pub fn chipInk(w: *Writer, r: Roles, x: usize, y: usize, label: []const u8, lead: RGB, words: RGB, filled: bool) !usize {
     const face = if (filled) lead else r.raised;
     try moveTo(w, x, y);
     try paint(w, lead, face, false);
     try w.writeAll("▎");
-    try paint(w, if (filled) r.on_accent else r.text, face, filled);
+    try paint(w, words, face, filled);
     try w.print("{s} ", .{label});
     return text_mod.cells(label) + 2;
 }
 
+/// `s` at (`x`, `y`) in `fg` on `bg`.
+pub fn say(w: *Writer, x: usize, y: usize, s: []const u8, fg: RGB, bg: RGB, bold: bool) !void {
+    try moveTo(w, x, y);
+    try paint(w, fg, bg, bold);
+    try w.writeAll(s);
+}
+
+/// `width` cells of `bg` from (`x`, `y`).
+pub fn fill(w: *Writer, x: usize, y: usize, width: usize, bg: RGB) !void {
+    try moveTo(w, x, y);
+    try paint(w, bg, bg, false);
+    try spaces(w, width);
+}
+
+/// A tile's top row, its bevel's light edge: `width` cells of `▔` in `edge` on `bg`.
+pub fn bevel(w: *Writer, x: usize, y: usize, width: usize, edge: RGB, bg: RGB) !void {
+    try moveTo(w, x, y);
+    try paint(w, edge, bg, false);
+    for (0..width) |_| try w.writeAll("▔");
+}
+
 /// ` key label ` on raised with the key in amber, and its shadow; the primary one is filled amber
-/// with ink. `under` is what the shadow falls on. The cells it took, the shadow's included.
-pub fn button(w: *Writer, r: Roles, x: usize, y: usize, key: []const u8, label: []const u8, primary: bool, under: RGB) !usize {
+/// with ink. `under` is what the shadow falls on, none for a button on a thing that casts its own.
+/// The cells it took, the shadow's included.
+pub fn button(w: *Writer, r: Roles, x: usize, y: usize, key: []const u8, label: []const u8, primary: bool, under: ?RGB) !usize {
     const face = if (primary) r.accent else r.raised;
     const words = if (primary) r.on_accent else r.text;
     try moveTo(w, x, y);
@@ -59,7 +86,8 @@ pub fn button(w: *Writer, r: Roles, x: usize, y: usize, key: []const u8, label: 
     try paint(w, words, face, primary);
     try w.print(" {s} ", .{label});
     const width = text_mod.cells(key) + text_mod.cells(label) + 3;
-    try paint(w, r.well, under, false);
+    const under_ = under orelse return width + 1;
+    try paint(w, r.well, under_, false);
     try w.writeAll("▌");
     try moveTo(w, x + 1, y + 1);
     for (0..width) |_| try w.writeAll("▀");

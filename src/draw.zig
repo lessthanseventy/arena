@@ -1770,6 +1770,203 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
 /// then a column a status, each a box of its cards, a card a box of its own: the ticket's number
 /// and title on two rows, a footer of what else is so of it, its left edge its priority, and
 /// the picked one's border lit.
+/// Nerd Font glyphs, one a repo, in `Roles.repo_names`' order.
+const repo_glyphs = [_][]const u8{ "\u{f120}", "\u{f1b3}", "\u{f013}", "\u{f0ad}", "\u{f015}" };
+
+fn repoHue(r: theme.Roles, repo: ?[]const u8) struct { glyph: []const u8, hue: color.RGB } {
+    for (theme.Roles.repo_names, 0..) |name, i| if (std.mem.eql(u8, name, repo orelse "")) return .{ .glyph = repo_glyphs[i], .hue = r.repo[i] };
+    return .{ .glyph = "\u{f10c}", .hue = r.dim };
+}
+
+/// The board in Workbench's look: its columns windows, their cards tiles, and the last closed a
+/// strip along its foot.
+fn benchBoard(app: *App, w: *Writer, r: theme.Roles, view: app_mod.BoardView) !void {
+    const ox = app.boardX();
+    for (App.first_line - 1..app.view_h) |y| try bench.tabRow(w, r, ox, @intCast(y), app.boardW());
+    const lanes = app.boardLanes();
+    for (0..app.boardCols()) |c| {
+        const cw = app.boardColW(c);
+        if (cw < 8) continue;
+        const x = app.boardColX(c);
+        const total = if (lanes) app.boardCount(tickets.statuses[c]) else app.boardColumnAll(c);
+        const focused = c == view.col and !app.columnFocused();
+        try bench.window(w, r, x, App.first_line - 1, cw - 1, app.listH() - App.first_line, app.columnName(c), total, focused);
+        if (total == 0) try bench.say(w, x + 2, App.first_line, "none", r.dim, r.panel, false);
+        try benchLines(app, w, r, view, c, x, cw);
+    }
+    if (app.footRows() > 0) try benchRecent(app, w, r, view);
+}
+
+fn benchLines(app: *const App, w: *Writer, r: theme.Roles, view: app_mod.BoardView, c: usize, x: u16, cw: u16) !void {
+    var lines = App.ColumnLines.init(app, c);
+    for (0..app.columnScroll(c)) |_| _ = lines.next();
+    var y: u16 = App.first_line;
+    while (y + 1 < app.listH()) : (y += 1) {
+        const at = lines.next() orelse break;
+        switch (at.what) {
+            .heading => try benchHeading(w, r, app.laneRepo(at.lane).?, app.laneCounts(at.lane, c).total, at.lane == view.lane and c == view.col, x + 1, y, cw -| 3),
+            .more => {
+                var buf: [24]u8 = undefined;
+                const n = app.groupCounts(at.lane, c);
+                try bench.say(w, x + 2, y, std.fmt.bufPrint(&buf, "↓ {d} more", .{n.total - n.shown}) catch "", r.dim, r.panel, false);
+            },
+            .card => |spot| {
+                const card = app.groupCard(at.lane, c, spot.row).?;
+                if (app.boardStrip(c)) {
+                    var buf: [160]u8 = undefined;
+                    const text = std.fmt.bufPrint(&buf, "✓ #{d} {s}", .{ card.id, card.title }) catch card.title;
+                    const lit = app.cardPicked(at.lane, c, spot.row) and !app.columnFocused();
+                    try bench.say(w, x + 2, y, clip(text, cw -| 5), if (lit) r.accent else r.dim, r.panel, lit);
+                } else try benchTile(app, w, r, card, spot.part, app.cardPicked(at.lane, c, spot.row), x + 1, y, cw - 3, cw);
+            },
+        }
+    }
+}
+
+/// A repo's heading row in a column of `width` cells at `x`: its glyph and name in its hue, a dim
+/// dashes, and its count of cards there.
+fn benchHeading(w: *Writer, r: theme.Roles, repo: []const u8, count: usize, lit: bool, x: usize, y: usize, width: usize) !void {
+    var buf: [24]u8 = undefined;
+    const num = std.fmt.bufPrint(&buf, "{d}", .{count}) catch "";
+    const mark = repoHue(r, repo);
+    const name = clip(if (repo.len == 0) "no repo" else repo, width -| (cellCount(num) + 6));
+    try bench.say(w, x + 1, y, mark.glyph, mark.hue, r.panel, false);
+    try bench.say(w, x + 3, y, name, mark.hue, r.panel, true);
+    const from = x + 4 + cellCount(name);
+    const to = x + width -| (cellCount(num) + 1);
+    var dashes: [128]u8 = undefined;
+    var out: Writer = .fixed(&dashes);
+    if (to > from) for (from..to) |_| out.writeAll("─") catch break;
+    try bench.say(w, from, y, out.buffered(), if (lit) r.accent else r.dim, r.panel, false);
+    try bench.say(w, @max(from, to) + 1, y, num, r.dim, r.panel, false);
+}
+
+/// What a card says of where it is, as a chip: a question open, sent back, proposed, where the
+/// pipeline has it, what it waits on, who holds it.
+fn benchState(app: *const App, card: *const tickets.Card, r: theme.Roles, buf: []u8) ?struct { label: []const u8, lead: color.RGB, words: color.RGB, filled: bool } {
+    const eql = std.mem.eql;
+    const stage = card.stage orelse "";
+    if (card.proposal != null) return .{ .label = "▲ proposed", .lead = r.you, .words = r.on_accent, .filled = true };
+    if (card.ask != null and !eql(u8, stage, "queued")) return .{ .label = "▲ asks you", .lead = r.you, .words = r.on_accent, .filled = true };
+    if (eql(u8, stage, "failed")) return .{ .label = "\u{f0e2} sent back", .lead = r.failed, .words = r.on_accent, .filled = true };
+    if (stage.len > 0 and !(eql(u8, stage, "queued") and card.ask != null)) {
+        const mark: []const u8, const lead = if (eql(u8, stage, "queued")) .{ "\u{f017}", r.queued } else if (eql(u8, stage, "verifying")) .{ "\u{f00c}", r.checking } else if (eql(u8, stage, "reviewing")) .{ "\u{f06e}", r.checking } else if (eql(u8, stage, "landed")) .{ "\u{f135}", r.landed } else .{ "\u{f017}", r.dim };
+        var inner: [64]u8 = undefined;
+        const said = cardStage(app, card, 0, stage, &inner);
+        return .{ .label = std.fmt.bufPrint(buf, "{s} {s}", .{ mark, said }) catch said, .lead = lead, .words = r.text, .filled = false };
+    }
+    if (card.blocked_by.len > 0) return .{ .label = std.fmt.bufPrint(buf, "\u{f0c1} waits #{d}", .{card.blocked_by[0]}) catch "waits", .lead = r.dim, .words = r.dim, .filled = false };
+    if (card.status == .doing) return if (card.holder() != null)
+        .{ .label = "\u{f013} building", .lead = r.building, .words = r.text, .filled = false }
+    else
+        .{ .label = "\u{f10c} no Claude", .lead = r.failed, .words = r.text, .filled = false };
+    return null;
+}
+
+/// Row `part` of a card as a tile at `x` and `tw` cells wide, in a column `col_w` wide: the bevel,
+/// its title on two rows at most, then its chips. The picked one is raised, with a row for its
+/// buttons and its shadow.
+fn benchTile(app: *const App, w: *Writer, r: theme.Roles, card: *const tickets.Card, part: usize, picked: bool, x: u16, y: u16, tw: usize, col_w: u16) !void {
+    const bg = if (picked) r.raised else r.tile;
+    const text_w = App.tileTextW(col_w);
+    var count: usize = 0;
+    var counted = app_mod.TitleLines.init(card.title, text_w);
+    while (counted.next()) |_| count += 1;
+    const t: usize = @max(1, @min(count, App.tile_title_rows));
+    if (picked and part >= 1 and part <= t + 2) try bench.say(w, x + tw, y, "▌", r.well, r.panel, false);
+    if (part == 0) {
+        try bench.bevel(w, x, y, tw, if (picked) r.text.mix(bg, 0.5) else r.raised, bg);
+    } else if (part <= t) {
+        try bench.fill(w, x, y, tw, bg);
+        var lines = app_mod.TitleLines.init(card.title, text_w);
+        var line: []const u8 = "";
+        for (0..part) |_| line = lines.next() orelse "";
+        const cut = part == App.tile_title_rows and count > App.tile_title_rows;
+        var buf: [200]u8 = undefined;
+        const shown = if (cut) (std.fmt.bufPrint(&buf, "{s}…", .{clip(line, text_w -| 1)}) catch line) else line;
+        try bench.say(w, x + 1, y, shown, if (card.blocked_by.len > 0) r.dim else r.text, bg, true);
+        if (part == 1) {
+            const high = std.mem.eql(u8, card.priority, "high");
+            const low = std.mem.eql(u8, card.priority, "low");
+            try bench.say(w, x + tw - 2, y, if (high) "●" else if (low) "○" else "◉", if (high) r.failed else r.dim, bg, false);
+        }
+    } else if (part == t + 1) {
+        try bench.fill(w, x, y, tw, bg);
+        try benchChips(app, w, r, card, x + 1, y, tw - 2, bg);
+    } else if (picked and part == t + 2) {
+        try bench.fill(w, x, y, tw, bg);
+    } else if (picked and part == t + 3) {
+        var under: [256]u8 = undefined;
+        var out: Writer = .fixed(&under);
+        for (0..@min(tw, 80)) |_| out.writeAll("▀") catch break;
+        try bench.say(w, x + 1, y, out.buffered(), r.well, r.panel, false);
+    }
+}
+
+/// A tile's chip row in `room` cells from `x`: the repo's glyph and the number in its hue, where
+/// the card is, its model, and how long it has been filed or held.
+fn benchChips(app: *const App, w: *Writer, r: theme.Roles, card: *const tickets.Card, x: u16, y: u16, room: usize, bg: color.RGB) !void {
+    var at = x;
+    const end = x + room;
+    var buf: [96]u8 = undefined;
+    var state_buf: [96]u8 = undefined;
+    const mark = repoHue(r, card.repo);
+    const id = std.fmt.bufPrint(&buf, "{s} {d}", .{ mark.glyph, card.id }) catch "";
+    at += @as(u16, @intCast(try bench.chipInk(w, r, at, y, id, mark.hue, mark.hue, false)));
+    if (benchState(app, card, r, &state_buf)) |state| if (at + cellCount(state.label) + 2 <= end) {
+        at += @as(u16, @intCast(try bench.chipInk(w, r, at, y, state.label, state.lead, state.words, state.filled)));
+    };
+    if (card.model) |model| if (at + cellCount(modelName(model)) + 3 <= end) {
+        at += @as(u16, @intCast(try bench.chip(w, r, at + 1, y, modelName(model), r.dim, false))) + 1;
+    };
+    var age: [8]u8 = undefined;
+    var said: [24]u8 = undefined;
+    const since: []const u8 = switch (card.status) {
+        .todo => if (tickets.epochOf(card.inserted_at)) |t| ago(&age, app.epoch, @intCast(@max(1, t))) else "",
+        .doing => if (card.claimedAt()) |t| ago(&age, app.epoch, @intCast(@max(1, t))) else "",
+        else => "",
+    };
+    if (since.len > 0) {
+        const text = std.fmt.bufPrint(&said, "{s}{s}", .{ if (card.status == .todo) "filed " else "", since }) catch since;
+        if (at + 1 + cellCount(text) <= end) try bench.say(w, at + 1, y, text, r.dim, bg, false);
+    }
+}
+
+/// The recent strip along the foot: a title bar, a timeline of the last closed with how long ago
+/// each, and under it each one's number and title. The picked one is lit and has its button.
+fn benchRecent(app: *App, w: *Writer, r: theme.Roles, view: app_mod.BoardView) !void {
+    const y0 = app.listH();
+    const x = app.boardX();
+    const focused = view.col == 3 and !app.columnFocused();
+    var total: usize = 0;
+    if (app.board) |*b| total = b.column(.done, app.boardRepo(), app.findText(), &.{});
+    try bench.titleBar(w, r, x, y0, app.boardW(), "recent", focused);
+    var nbuf: [16]u8 = undefined;
+    _ = try bench.chip(w, r, x + 4 + "recent".len, y0, std.fmt.bufPrint(&nbuf, "{d}", .{total}) catch "", r.dim, false);
+    var cards: [App.strip_n]*const tickets.Card = undefined;
+    const n = app.stripCards(&cards);
+    const picked_id: ?u32 = if (view.col == 3) (if (app.boardCard(view.col, view.row)) |c| c.id else null) else null;
+    const span_w = app.stripCell();
+    for (cards[0..n], 0..) |card, k| {
+        const cx = x + @as(u16, @intCast(k)) * span_w;
+        const lit = picked_id == card.id and !app.columnFocused();
+        const landed = card.stage != null and std.mem.eql(u8, card.stage.?, "landed");
+        var age: [8]u8 = undefined;
+        const since = if (tickets.epochOf(card.closed_at)) |t| ago(&age, app.epoch, @intCast(@max(1, t))) else "";
+        var buf: [200]u8 = undefined;
+        const head = std.fmt.bufPrint(&buf, "{s} {s} ", .{ if (landed) "◆" else "✓", since }) catch "◆";
+        try bench.say(w, cx + 1, y0 + 1, head, if (lit) r.accent else if (landed) r.landed else r.dim, r.ground, lit);
+        var dashes: [256]u8 = undefined;
+        var out: Writer = .fixed(&dashes);
+        for (@min(cx + 1 + cellCount(head), cx + span_w)..cx + span_w) |_| out.writeAll("─") catch break;
+        try bench.say(w, cx + 1 + cellCount(head), y0 + 1, out.buffered(), r.dim, r.ground, false);
+        const id = std.fmt.bufPrint(&buf, "#{d}", .{card.id}) catch "";
+        const hue = repoHue(r, card.repo).hue;
+        try bench.say(w, cx + 1, y0 + 2, id, hue, r.ground, true);
+        try bench.say(w, cx + 2 + cellCount(id), y0 + 2, clip(card.title, span_w -| (cellCount(id) + 3)), if (lit) r.text else r.dim, r.ground, lit);
+    }
+}
+
 fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     if (app.planShown()) return planView(app, w, view);
     const ox = app.boardX();
@@ -1789,6 +1986,10 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         try fitted(w, "", app.boardW() -| cellCount(App.board_title));
     }
 
+    if (app.roles) |r| {
+        try benchBoard(app, w, r, view);
+        return benchOver(app, w, view);
+    }
     const lanes = app.boardLanes();
     for (0..app.boardCols()) |c| {
         const name = app.columnName(c);
@@ -1815,6 +2016,11 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         for (0..inner) |_| try w.writeAll("─");
         try w.writeAll("╯");
     }
+    try benchOver(app, w, view);
+}
+
+/// What lies over the board's columns: its buttons, the find line and the boxes opened on it.
+fn benchOver(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     try boardButtons(app, w, view);
     _ = try findLine(app, w);
     if (view.answering) if (app.boardCard(view.col, view.row)) |card| if (card.ask) |ask| try askBox(app, w, card.id, ask);
@@ -2033,6 +2239,20 @@ fn workbenchButton(app: *const App, w: *Writer, r: theme.Roles, button: App.Butt
             const n = board.needsYou().len;
             try bench.headButton(w, r, button.x, button.y, label, if (n > 0) r.you else r.dim, n > 0);
         },
+        .new => {
+            const focused = view.col == 0 and !app.columnFocused();
+            try bench.say(w, button.x, button.y, label, r.accent, if (focused) r.raised else r.tile, true);
+        },
+        .card => |action| {
+            const trimmed = std.mem.trim(u8, label, " ");
+            const split = std.mem.indexOfScalar(u8, trimmed, ' ') orelse return false;
+            var buttons: [48]App.Button = undefined;
+            const first = for (app.boardButtons(&buttons)) |b| {
+                if (b.what == .card) break b;
+            } else return false;
+            _ = action;
+            _ = try bench.button(w, r, button.x, button.y, trimmed[0..split], trimmed[split + 1 ..], button.x == first.x and button.y == first.y, null);
+        },
         .gate => try bench.headButton(w, r, button.x, button.y, label, r.checking, false),
         .orch => try bench.headButton(w, r, button.x, button.y, label, if (app.orchestrator().?.running) r.text else r.dim, false),
         .auto => {
@@ -2046,7 +2266,6 @@ fn workbenchButton(app: *const App, w: *Writer, r: theme.Roles, button: App.Butt
             const rest = label[at + "▌".len ..];
             if (rest.len > 0 and used < button.w) try bench.headButton(w, r, button.x + used, button.y, rest, r.dim, false);
         },
-        else => return false,
     }
     return true;
 }
@@ -2099,8 +2318,12 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     // card's action row
     if (refusal_at) |at| if (said) |text| {
         const edge = app.boardColX(view.col) + app.boardColW(view.col) -| 2;
-        try pen.set(w, said_ink, null);
-        try w.print("\x1b[{d};{d}H{s}", .{ at.y + 1, at.x + 1, clip(text, edge -| at.x) });
+        if (app.roles) |r| {
+            try bench.say(w, at.x, at.y, clip(text, edge -| at.x -| 1), if (app.start_refused != null) r.failed else r.accent, r.raised, false);
+        } else {
+            try pen.set(w, said_ink, null);
+            try w.print("\x1b[{d};{d}H{s}", .{ at.y + 1, at.x + 1, clip(text, edge -| at.x) });
+        }
     };
     var heads: [48]App.Button = undefined;
     if (app.header(&heads).more) |at| {
@@ -3065,6 +3288,89 @@ test "the board's head in Workbench's look: a striped title bar, tabs under it t
     try eq(r.accent, knob.bg);
     try eq(@as(u21, '2'), (try bench.probe(drawn, sw.x + 10, 0)).cp);
     try eq(app.boardX() + app.boardW(), sw.x + sw.w);
+}
+
+test "the board in Workbench's look: windows, the picked tile raised with its chips, buttons and shadow, and the recent strip" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 24;
+    app.roles = bench.roles();
+    const r = app.roles.?;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"repo":"arena","title":"first","status":"todo","priority":"high","model":"claude-opus-5-5"},
+        \\{"id":3,"repo":"arena","title":"second","status":"todo"},
+        \\{"id":2,"repo":"menard","title":"old","status":"done","closed_at":"2026-11-24T00:00:00Z"}
+        \\]}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{};
+    var buf: [65536]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try boardView(&app, &out, app.board_view.?);
+    const drawn = out.buffered();
+    const eq = std.testing.expectEqual;
+    const arena = r.repo[0];
+
+    // todo is a window on its own: a title bar with its count, the gap beside it the shadow's
+    try eq(@as(u21, 't'), (try bench.probe(drawn, 3, 2)).cp);
+    try eq(@as(u21, '▌'), (try bench.probe(drawn, app.boardColW(0) - 1, 4)).cp);
+
+    // the picked tile: its bevel, its title with the priority dot in its corner, its chip row
+    const tw = app.boardColW(0) - 3;
+    const bevel = try bench.probe(drawn, 1, 4);
+    try eq(@as(u21, '▔'), bevel.cp);
+    try eq(r.raised, bevel.bg);
+    const title = try bench.probe(drawn, 2, 5);
+    try eq(@as(u21, 'f'), title.cp);
+    try std.testing.expect(title.bold);
+    try eq(r.raised, title.bg);
+    const dot = try bench.probe(drawn, 1 + tw - 2, 5);
+    try eq(@as(u21, '●'), dot.cp);
+    try eq(r.failed, dot.fg);
+    const lead = try bench.probe(drawn, 2, 6);
+    try eq(@as(u21, '▎'), lead.cp);
+    try eq(arena, lead.fg);
+    const mark = try bench.probe(drawn, 3, 6);
+    try eq(@as(u21, 0xf120), mark.cp);
+    try eq(arena, mark.fg);
+    const number = try bench.probe(drawn, 5, 6);
+    try eq(@as(u21, '1'), number.cp);
+    try eq(arena, number.fg);
+    const model = try bench.probe(drawn, 9, 6);
+    try eq(@as(u21, 'o'), model.cp);
+    try eq(r.text, model.fg);
+    try eq(r.dim, (try bench.probe(drawn, 8, 6)).fg);
+
+    // its shadow, and the first button on the row it has for them filled amber, the next raised
+    try eq(@as(u21, '▌'), (try bench.probe(drawn, 1 + tw, 5)).cp);
+    try eq(@as(u21, '▀'), (try bench.probe(drawn, 2, 8)).cp);
+    try eq(r.well, (try bench.probe(drawn, 2, 8)).fg);
+    var buttons: [48]App.Button = undefined;
+    const shown = app.boardButtons(&buttons);
+    var cards: usize = 0;
+    for (shown) |b| if (b.what == .card) {
+        try eq(@as(u16, 7), b.y);
+        const face = (try bench.probe(drawn, b.x, b.y)).bg;
+        try eq(if (cards == 0) r.accent else r.raised, face);
+        cards += 1;
+    };
+    try std.testing.expect(cards >= 2);
+
+    // the card under it is a tile, not raised, and has no buttons
+    const next = try bench.probe(drawn, 1, 9);
+    try eq(r.tile, next.bg);
+    try eq(r.tile, (try bench.probe(drawn, 2, 10)).bg);
+
+    // recent is a strip along the foot, its entry a mark and its number in the repo's hue
+    const foot = app.listH();
+    try eq(@as(u16, 20), foot);
+    try eq(@as(u21, 'r'), (try bench.probe(drawn, 3, foot)).cp);
+    try eq(@as(u21, '✓'), (try bench.probe(drawn, 1, foot + 1)).cp);
+    const entry = try bench.probe(drawn, 1, foot + 2);
+    try eq(@as(u21, '#'), entry.cp);
+    try eq(r.repo[3], entry.fg);
 }
 
 test "the board's keys end on a card's edge and its marks, and a 24-row terminal has them whole" {
