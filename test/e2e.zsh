@@ -1138,8 +1138,14 @@ mouse 0 3 12 M
 check "and closed with the board by a click on the rail, no file either" await nofile
 $bin -L $in board 7
 check "arena board and a ticket's id, run elsewhere, opens the board on it with its question" see '│ Which colour\? +│'
+# The Escape comes by the outer server and the message by the inner one, so nothing orders them;
+# arena stopped meanwhile reads both at once, the Escape held as a lone one.
+arena_pid=$(pgrep -x -P $(outer display -p -t o '#{pane_pid}') arena)
+kill -STOP $arena_pid
 key Escape
 $bin -L $in board 8
+zselect -t 10
+kill -CONT $arena_pid
 check "and with the board open, moves the pick to it" see '⏎ go +e edit '
 # past the wait that tells a lone Escape from Alt
 zselect -t 10
