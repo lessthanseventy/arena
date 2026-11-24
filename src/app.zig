@@ -3074,7 +3074,7 @@ pub const App = struct {
         return if (app.boardBacklog()) 1 else tickets.statuses.len;
     }
 
-    /// The cards in `status` on the whole board, whatever it is narrowed to.
+    /// The cards in `status` on the whole board, whatever repo it is narrowed to, that the find holds.
     pub fn boardCount(app: *const App, status: tickets.Status) usize {
         const b = if (app.board) |*b| b else return 0;
         return b.column(status, null, app.findText(), &.{});
