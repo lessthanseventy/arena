@@ -2099,6 +2099,8 @@ mouse 0 $((${#digest_prefix} + 2)) $digest_row m
 check "and a click on its seen does the same" await last 'digest ok'
 key M-b
 cp $tmp/board.nolook $tmp/run/babylon/board.json
+# home takes the plan as it opens, so arena must have read it back before b
+see '▤ board.*1 todo  0 doing'
 
 # the narrow rail at home holds only what moves: a working and a waiting Claude, the rest of a
 # session's folded into one line, and no orchestrator
@@ -2115,7 +2117,7 @@ see '^NORMAL'
 key w
 see '^│─gamma──│'
 key b
-see ' every [0-9]+ +[a-z]'
+see '◆ plan  B board'
 check "the narrow rail at home lists the session's waiting Claude by ticket" see '^│[ ▌]▲ 901 *│'
 check "and its working one" see '^│[ ▌]◐ 902 *│'
 check "and folds the three idle ones into one line" see '^│[ ▌]· 3 *│'
@@ -2125,7 +2127,7 @@ check "none of the idle ones is listed, and no orchestrator row is" eval '! scre
 # dim, a Claude with no ticket is named by its place in its session, and a list longer than the
 # rail says how many it scrolled past
 key M-b
-gone ' every [0-9]+ +[a-z]'
+gone '◆ plan'
 mouse 0 4 4 M
 mouse 0 4 4 m
 rail_has() { outer capture-pane -p -e -t o | grep -qF -- "$1" }
