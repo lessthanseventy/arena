@@ -162,6 +162,7 @@ fn checkRefusals(app: *App) !void {
         try takeRefusal(app, std.fmt.bufPrint(&id, "next:{d}", .{item.ticket}) catch continue);
     }
     try takeRefusal(app, "start");
+    try takeRefusal(app, "report");
 }
 
 fn takeRefusal(app: *App, id: []const u8) !void {
@@ -171,6 +172,7 @@ fn takeRefusal(app: *App, id: []const u8) !void {
     defer app.gpa.free(text);
     std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
     if (std.mem.eql(u8, id, "start")) return app.startAnswered(text);
+    if (std.mem.eql(u8, id, "report")) return app.reportAnswered(text);
     try app.refuse(id, text);
 }
 

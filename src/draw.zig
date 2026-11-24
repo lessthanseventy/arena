@@ -1356,6 +1356,7 @@ fn sideHead(app: *const App, buf: []u8) []const u8 {
     const mark: u21 = switch (state) {
         .working => glyph(app, .working),
         .waiting => '▲',
+        .stalled => glyph(app, .stalled),
         .idle, .off => '○',
         .restarting => '◌',
     };
@@ -1366,6 +1367,7 @@ fn sideHead(app: *const App, buf: []u8) []const u8 {
     switch (state) {
         .working => out.print("working {s}", .{ago(&when, app.epoch, win.?.since)}) catch {},
         .waiting => out.writeAll("waits on you") catch {},
+        .stalled => out.writeAll("stalled") catch {},
         .idle => out.writeAll("idle") catch {},
         .restarting => out.writeAll("restarting") catch {},
         .off => out.writeAll("off") catch {},
@@ -2307,6 +2309,11 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
     } else if (app.menu) |open| {
         try menuBox(app, w, open);
         cursor = null;
+    }
+    if (app.report_said) |text| {
+        var pen: Pen = .{};
+        try pen.set(w, if (app.report_failed) ink(app, "emberdim", 1) else ink(app, "amber", 4), null);
+        try w.print("\x1b[{d};{d}H{s}", .{ app.view_h + 1, app.term_w - app.view_w + 1, clip(text, app.view_w) });
     }
     try w.writeAll("\x1b[0m");
     if (cursor) |at| try w.print("\x1b[{d};{d}H\x1b[?25h", .{ at.y + 1, at.x + 1 });

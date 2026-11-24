@@ -482,6 +482,9 @@ pub const App = struct {
     refusals: std.ArrayList(feed.Refusal) = .empty,
     /// babylon's refusal of the board's start, drawn on the card's action row until the next key.
     start_refused: ?[]u8 = null,
+    /// What babylon said of the last report filed, drawn on the bottom row until the next key.
+    report_said: ?[]u8 = null,
+    report_failed: bool = false,
     /// What the held left button is moving: the line after a pane, to resize it, a window by
     /// its title, along the strip, or a session by its name, along the rail.
     drag: union(enum) {
@@ -548,6 +551,7 @@ pub const App = struct {
         }
         app.refusals.deinit(app.gpa);
         if (app.start_refused) |text| app.gpa.free(text);
+        if (app.report_said) |text| app.gpa.free(text);
         if (app.report_text.len > 0) app.gpa.free(app.report_text);
         if (app.board) |*b| b.deinit();
     }
@@ -1503,7 +1507,7 @@ pub const App = struct {
         return view.focus == .orchestrator and !view.boxed() and app.sided();
     }
 
-    pub const OrchestratorState = enum { working, waiting, idle, restarting, off };
+    pub const OrchestratorState = enum { working, waiting, stalled, idle, restarting, off };
 
     /// The orchestrator as its column's head says it: its window's Claude while its session is
     /// there, else restarting while babylon keeps it on, else off.
@@ -1511,6 +1515,7 @@ pub const App = struct {
         if (app.orchestratorWindow()) |win| return switch (win.claude) {
             .working => .working,
             .waiting => .waiting,
+            .stalled => .stalled,
             else => .idle,
         };
         const state = app.orchestrator() orelse return .off;
@@ -1749,11 +1754,14 @@ pub const App = struct {
             try shellQuote(&cmd.writer, arg);
         }
         try cmd.writer.writeAll(" 2>&1)");
-        if (report) {
+        if (std.mem.eql(u8, id, "report")) {
+            try cmd.writer.writeAll(" && printf 'ok %s\\n' \"$out\" >");
+            try shellQuote(&cmd.writer, path);
+        } else if (report) {
             try cmd.writer.writeAll(" && printf ok >");
             try shellQuote(&cmd.writer, path);
         }
-        try cmd.writer.writeAll(" || printf '%s\\n' \"$out\" >");
+        try cmd.writer.writeAll(if (std.mem.eql(u8, id, "report")) " || printf 'no %s\\n' \"$out\" >" else " || printf '%s\\n' \"$out\" >");
         try shellQuote(&cmd.writer, path);
         // tmux reads the line as a format, in double quotes: # is ##, and \, " and $ escaped
         var line: Writer.Allocating = .init(app.gpa);
@@ -1803,6 +1811,35 @@ pub const App = struct {
         if (clean.items.len == 0) try clean.appendSlice(app.gpa, "babylon refused to start it");
         app.clearStartRefusal();
         app.start_refused = try clean.toOwnedSlice(app.gpa);
+        app.dirty = true;
+    }
+
+    /// babylon's answer to the report key's filing: `ok` and its words, or `no` and why.
+    pub fn reportAnswered(app: *App, text: []const u8) !void {
+        const line = std.mem.trim(u8, text, " \n");
+        const failed = !std.mem.startsWith(u8, line, "ok ");
+        const body = if (failed) std.mem.trim(u8, line[@min(3, line.len)..], " \n") else line[3..];
+        const first = body[0 .. std.mem.indexOfScalar(u8, body, '\n') orelse body.len];
+        var clean: std.ArrayList(u8) = .empty;
+        errdefer clean.deinit(app.gpa);
+        if (failed) {
+            try @import("text.zig").appendClean(&clean, app.gpa, first);
+            if (clean.items.len == 0) try clean.appendSlice(app.gpa, "babylon refused the report");
+        } else if (std.mem.indexOfScalar(u8, first, '#')) |at| {
+            var end = at + 1;
+            while (end < first.len and std.ascii.isDigit(first[end])) end += 1;
+            try clean.print(app.gpa, "filed {s}", .{first[at..end]});
+        } else try clean.appendSlice(app.gpa, "filed");
+        app.clearReportSaid();
+        app.report_said = try clean.toOwnedSlice(app.gpa);
+        app.report_failed = failed;
+        app.dirty = true;
+    }
+
+    fn clearReportSaid(app: *App) void {
+        const text = app.report_said orelse return;
+        app.gpa.free(text);
+        app.report_said = null;
         app.dirty = true;
     }
 
@@ -4776,22 +4813,32 @@ pub const App = struct {
         app.prompt = .{ .what = .report };
     }
 
+    /// Writes the capture under a name no earlier report has: `{epoch}-{n}.txt`, n the next free
+    /// number in that second.
+    fn saveCapture(app: *App, line: []const u8, path_buf: []u8) !?[]const u8 {
+        const dir = app.reports_dir orelse return null;
+        var data: Writer.Allocating = .init(app.gpa);
+        defer data.deinit();
+        try data.writer.print("what's wrong: {s}\n", .{line});
+        try data.writer.writeAll(app.report_text);
+        std.Io.Dir.cwd().createDirPath(app.io, dir) catch return null;
+        for (0..1000) |n| {
+            const path = std.fmt.bufPrint(path_buf, "{s}/{d}-{d}.txt", .{ dir, app.epoch, n }) catch return null;
+            std.Io.Dir.cwd().writeFile(app.io, .{ .sub_path = path, .data = data.written(), .flags = .{ .exclusive = true } }) catch |err| switch (err) {
+                error.PathAlreadyExists => continue,
+                else => return null,
+            };
+            return path;
+        }
+        return null;
+    }
+
     /// Saves the capture beside the reports before it and files a ticket in arena with the
     /// human's line and what the capture says first; an empty line files nothing.
     fn fileReport(app: *App, line: []const u8) !void {
         if (line.len == 0) return;
         var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-        const saved: ?[]const u8 = save: {
-            const dir = app.reports_dir orelse break :save null;
-            const path = std.fmt.bufPrint(&path_buf, "{s}/{d}.txt", .{ dir, app.epoch }) catch break :save null;
-            var data: Writer.Allocating = .init(app.gpa);
-            defer data.deinit();
-            try data.writer.print("what's wrong: {s}\n", .{line});
-            try data.writer.writeAll(app.report_text);
-            std.Io.Dir.cwd().createDirPath(app.io, dir) catch break :save null;
-            std.Io.Dir.cwd().writeFile(app.io, .{ .sub_path = path, .data = data.written() }) catch break :save null;
-            break :save path;
-        };
+        const saved = try app.saveCapture(line, &path_buf);
         var body: Writer.Allocating = .init(app.gpa);
         defer body.deinit();
         try body.writer.print("{s}\n\nFiled by arena's report key.\n\n{s}", .{ line, app.report_text[0..app.report_summary_len] });
@@ -4875,6 +4922,7 @@ pub const App = struct {
             const part = keys.next(rest);
             rest = part.rest;
             app.trailText(part.text);
+            app.clearReportSaid();
             if (app.typing()) try app.forward(part.text) else try app.menuKeys(part.text);
             defer app.settleMode();
             switch (part.event orelse return part.held.len) {
@@ -5197,12 +5245,41 @@ test "the column's head says the orchestrator's state: its Claude's, else restar
     try eq(.working, app.orchestratorState());
     win.claude = .waiting;
     try eq(.waiting, app.orchestratorState());
+    win.claude = .stalled;
+    try eq(.stalled, app.orchestratorState());
     app.sessions = .empty;
     app.board.?.deinit();
     app.board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[],"orchestrator":{"on":false,"running":false}}
     );
     try eq(.off, app.orchestratorState());
+}
+
+test "a refused report says babylon's reason, a filed one its number, and both go with the next key" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    defer app.deinit();
+    try app.reportAnswered("no babylon: repo arena is held\nmore\n");
+    try std.testing.expectEqualStrings("babylon: repo arena is held", app.report_said.?);
+    try std.testing.expect(app.report_failed);
+    try app.reportAnswered("ok #741 the thing\n");
+    try std.testing.expectEqualStrings("filed #741", app.report_said.?);
+    try std.testing.expect(!app.report_failed);
+}
+
+test "two reports in one second keep two captures" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir_len = try tmp.dir.realPath(std.testing.io, &dir_buf);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = undefined, .epoch = 1000 };
+    app.reports_dir = dir_buf[0..dir_len];
+    var a: [std.fs.max_path_bytes]u8 = undefined;
+    var b: [std.fs.max_path_bytes]u8 = undefined;
+    const first = (try app.saveCapture("one", &a)).?;
+    const second = (try app.saveCapture("two", &b)).?;
+    try std.testing.expect(!std.mem.eql(u8, first, second));
+    try std.testing.expect(std.mem.endsWith(u8, first, "/1000-0.txt"));
+    try std.testing.expect(std.mem.endsWith(u8, second, "/1000-1.txt"));
 }
 
 test "the every view's columns grouped by repo: their lines, the pick stepping across groups, the scroll, the widths" {
