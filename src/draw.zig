@@ -394,7 +394,10 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
                 std.fmt.bufPrint(&buf, "{d} todo  {d} doing ", .{ todo, doing }) catch "";
             try w.writeAll(" ▤ board");
             var auto_buf: [32]u8 = undefined;
-            const auto = if (app.auto()) |state| std.fmt.bufPrint(&auto_buf, " auto {d}/{d}", .{ state.working, state.cap }) catch "" else "";
+            const auto = if (app.auto()) |state| (if (state.tools) |t|
+                std.fmt.bufPrint(&auto_buf, " auto {d}/{d} · tools {d}/{d}", .{ state.working, state.cap, t.working, t.cap })
+            else
+                std.fmt.bufPrint(&auto_buf, " auto {d}/{d}", .{ state.working, state.cap })) catch "" else "";
             const orch_state = app.orchestrator();
             const runs_orch = if (orch_state) |state| state.running else false;
             const orch: []const u8 = if (orch_state) |state| (if (state.running or state.on) " orch" else " orch off") else "";
@@ -2019,7 +2022,7 @@ fn groupedColumn(app: *const App, w: *Writer, pen: *Pen, view: app_mod.BoardView
             const hovered = hovers(app, line.lane, c, k);
             if (each == 1) {
                 var buf: [160]u8 = undefined;
-                var style = if (picked and !app.columnFocused()) heading(app) else if (picked) vt.Style{} else ink(app, "dim", 8);
+                var style = if (picked and !app.columnFocused()) heading(app) else ink(app, "dim", 8);
                 try pen.set(w, style, null);
                 try w.writeAll(" ");
                 if (hovered) style.flags.underline = .single;

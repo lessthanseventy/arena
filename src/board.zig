@@ -88,9 +88,11 @@ pub const Idle = struct { slots: u32, why: []const u8 = "" };
 /// babylon's auto mode: while on, it starts a Claude on each free todo card until `cap` are working.
 /// `repo_caps` is each repo's own cap, 0 for one paused.
 pub const Auto = struct {
+    pub const Tools = struct { working: u32 = 0, cap: u32 = 0 };
     on: bool = false,
     cap: u32 = 0,
     working: u32 = 0,
+    tools: ?Tools = null,
     idle: ?Idle = null,
     repo_caps: std.json.ArrayHashMap(u32) = .{},
 };
@@ -487,6 +489,16 @@ test "auto mode is read while on, and a file without it or with it off has none"
     var old = try Board.parse(gpa, sample);
     defer old.deinit();
     try std.testing.expectEqual(@as(?Auto, null), old.auto());
+    try std.testing.expectEqual(@as(?Auto.Tools, null), on.auto().?.tools);
+}
+
+test "auto's tools slots are read when babylon gives them" {
+    var b = try Board.parse(std.testing.allocator,
+        \\{"tickets":[],"auto":{"on":true,"cap":4,"working":4,"tools":{"working":1,"cap":2}}}
+    );
+    defer b.deinit();
+    try std.testing.expectEqual(@as(u32, 1), b.auto().?.tools.?.working);
+    try std.testing.expectEqual(@as(u32, 2), b.auto().?.tools.?.cap);
 }
 
 test "next, hold and auto's repo caps are read as babylon gives them" {

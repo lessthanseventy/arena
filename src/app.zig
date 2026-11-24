@@ -734,8 +734,8 @@ pub const App = struct {
 
     fn ticketKey(app: *const App, win: *const Window) ?TicketKey {
         const id = std.fmt.parseInt(u32, branchTicket(win.text(.branch)) orelse return null, 10) catch return null;
-        const card = app.ticketCard(id);
-        return .{ .repo = if (card) |c| c.repo orelse "" else "", .id = id };
+        const card = app.ticketCard(id) orelse return null;
+        return .{ .repo = card.repo orelse "", .id = id };
     }
 
     fn ticketCard(app: *const App, id: u32) ?*const tickets.Card {
@@ -818,7 +818,7 @@ pub const App = struct {
     fn inPipeline(card: *const tickets.Card) bool {
         if (card.status != .review) return false;
         const stage = card.stage orelse return false;
-        for ([_][]const u8{ "queued", "verifying", "reviewing", "landing" }) |waiting| {
+        for ([_][]const u8{ "queued", "verifying", "reviewing" }) |waiting| {
             if (std.mem.eql(u8, stage, waiting)) return true;
         }
         return false;
@@ -3430,7 +3430,7 @@ pub const App = struct {
             .auto => blk: {
                 const word = if (short) "" else "auto ";
                 break :blk if (app.auto()) |state|
-                    std.fmt.bufPrint(buf, " ◐ {s}{d}/{d} ", .{ word, state.working, state.cap }) catch " ◐ "
+                    (if (state.tools) |t| (if (short) std.fmt.bufPrint(buf, " ◐ {d}/{d} ", .{ state.working, state.cap }) else std.fmt.bufPrint(buf, " ◐ auto {d}/{d} · tools {d}/{d} ", .{ state.working, state.cap, t.working, t.cap })) else std.fmt.bufPrint(buf, " ◐ {s}{d}/{d} ", .{ word, state.working, state.cap })) catch " ◐ "
                 else if (short) " ◐ " else " ◐ auto ";
             },
             .needs => blk: {
@@ -5513,6 +5513,39 @@ test "a session shows the review state that most wants looking at" {
     try std.testing.expectEqual(Review.queued, App.sessionReview(&s));
     a.review = .changes;
     try std.testing.expectEqual(Review.changes, App.sessionReview(&s));
+}
+
+test "a Claude whose card is off the board sorts after the named repos, and a landing one stays listed" {
+    const gpa = std.testing.allocator;
+    var board = try tickets.Board.parse(gpa,
+        \\{"tickets":[
+        \\{"id":7,"repo":"tlon","title":"a","status":"doing"},
+        \\{"id":8,"repo":"tlon","title":"b","status":"review","stage":"landing"}]}
+    );
+    defer board.deinit();
+    const branches = [_][]const u8{ "\t\t\t\tt99-gone", "\t\t\t\tt7-a", "\t\t\t\tt8-b" };
+    var wins: [3]Window = undefined;
+    var sessions: [3]Session = undefined;
+    var slots: [3]*Window = undefined;
+    var pointers: [3]*Session = undefined;
+    for (0..3) |i| {
+        wins[i] = .{ .id = @intCast(i + 1), .claude = .working, .info = @constCast(branches[i]) };
+        slots[i] = &wins[i];
+        sessions[i] = .{ .id = @intCast(i + 1), .name = @constCast("s"), .wins = .fromOwnedSlice(slots[i .. i + 1]) };
+        pointers[i] = &sessions[i];
+    }
+    var app: App = .{ .gpa = gpa, .io = undefined, .tmux_in = undefined, .board = board, .agent_sort = .ticket };
+    app.sessions = .fromOwnedSlice(&pointers);
+    app.board = board;
+
+    var found: [3]App.Agent = undefined;
+    var folds: [App.max_folds]App.Fold = undefined;
+    const count, const nf = app.railList(&found, &folds);
+    try std.testing.expectEqual(@as(usize, 3), count);
+    try std.testing.expectEqual(@as(usize, 0), nf);
+    try std.testing.expectEqual(@as(u32, 2), found[0].win.id);
+    try std.testing.expectEqual(@as(u32, 3), found[1].win.id);
+    try std.testing.expectEqual(@as(u32, 1), found[2].win.id);
 }
 
 test "a pipeline Claude whose repo finds no fold left is listed as itself" {
