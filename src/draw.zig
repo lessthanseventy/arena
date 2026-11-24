@@ -1807,8 +1807,10 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     var end: u16 = 0;
     var right = app.boardX() + app.boardW();
     var refusal_at: ?App.Button = null;
+    const said: ?[]const u8 = if (app.start_refused) |text| text else if (app.report_said != null and !app.feedFocused()) app.report_said else null;
+    const said_ink = if (app.start_refused != null) ink(app, "emberdim", 1) else reportInk(app);
     for (shown, 0..) |button, index| {
-        if (app.start_refused != null and button.what == .card) {
+        if (said != null and button.what == .card) {
             if (refusal_at == null) refusal_at = button;
             continue;
         }
@@ -1835,10 +1837,11 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
             else => right = @min(right, button.x),
         }
     }
-    // babylon's refusal of the start takes the place of the card's action row
-    if (refusal_at) |at| if (app.start_refused) |text| {
+    // babylon's refusal of the start, or its answer to the report key, takes the place of the
+    // card's action row
+    if (refusal_at) |at| if (said) |text| {
         const edge = app.boardColX(view.col) + app.boardColW(view.col) -| 2;
-        try pen.set(w, ink(app, "emberdim", 1), null);
+        try pen.set(w, said_ink, null);
         try w.print("\x1b[{d};{d}H{s}", .{ at.y + 1, at.x + 1, clip(text, edge -| at.x) });
     };
     var heads: [48]App.Button = undefined;
@@ -2355,6 +2358,34 @@ fn cardDetail(card: *const tickets.Card, with_repo: bool, buf: []u8) []const u8 
     return out.buffered();
 }
 
+fn reportInk(app: *const App) vt.Style {
+    return if (app.report_failed) ink(app, "emberdim", 1) else ink(app, "amber", 4);
+}
+
+/// babylon's answer to the report key, where the key was pressed: directly under the picked feed
+/// line while the feed has the keys; on the board, on the picked card's action row, which
+/// boardButtons draws; else, with nowhere of its own, the last row of the view.
+fn reportSaid(app: *App, w: *Writer, text: []const u8) !void {
+    const ox = app.term_w - app.view_w;
+    var pen: Pen = .{};
+    try pen.set(w, reportInk(app), null);
+    var f: feed.Feed = undefined;
+    if (app.feedOf(&f)) if (app.feedPick(&f)) |on| if (app.feedFocused() and on.line + 3 < app.view_h) {
+        const room = app.view_w -| 4;
+        try w.print("\x1b[{d};{d}H{s}", .{ on.line + 3, ox + 3, clip(text, room) });
+        for (cellCount(clip(text, room))..room) |_| try w.writeAll(" ");
+        return;
+    };
+    if (app.board_view != null and cardActionsShown(app)) return;
+    try w.print("\x1b[{d};{d}H{s}", .{ app.view_h, ox + 1, clip(text, app.view_w) });
+}
+
+fn cardActionsShown(app: *const App) bool {
+    var buttons: [48]App.Button = undefined;
+    for (app.boardButtons(&buttons)) |button| if (button.what == .card) return true;
+    return false;
+}
+
 /// One frame: the rail, the current session's strip (and, mid-slide, the one being left) or the
 /// overview in its place, the menu or prompt when open, and the cursor.
 pub fn frame(app: *App, w: *Writer, what: What) !void {
@@ -2397,11 +2428,7 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
         try menuBox(app, w, open);
         cursor = null;
     }
-    if (app.report_said) |text| {
-        var pen: Pen = .{};
-        try pen.set(w, if (app.report_failed) ink(app, "emberdim", 1) else ink(app, "amber", 4), null);
-        try w.print("\x1b[{d};{d}H{s}", .{ app.view_h + 1, app.term_w - app.view_w + 1, clip(text, app.view_w) });
-    }
+    if (app.report_said) |text| try reportSaid(app, w, text);
     try w.writeAll("\x1b[0m");
     if (cursor) |at| try w.print("\x1b[{d};{d}H\x1b[?25h", .{ at.y + 1, at.x + 1 });
     if (app.shape_due) try w.print("\x1b]22;{s}\x1b\\", .{app.shape});
@@ -2584,4 +2611,55 @@ test "the board's keys end on a card's edge and its marks, and a 24-row terminal
     try helpBox(&app, &tall);
     drawn = tall.buffered();
     try std.testing.expect(std.mem.indexOf(u8, drawn, try std.fmt.bufPrint(&at, "\x1b[3;{d}H╭", .{x + 1})) != null);
+}
+
+fn homeApp(board: *tickets.Board) App {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 120;
+    app.view_w = 60;
+    app.view_h = 24;
+    app.board = board.*;
+    app.board_view = .{ .home = true, .focus = .orchestrator };
+    return app;
+}
+
+test "a stalled orchestrator's head says stalled in the frame" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"orchestrator":{"on":true,"running":true}}
+    );
+    defer board.deinit();
+    var orch: Session = .{ .id = 2, .name = @constCast("orchestrator") };
+    var win: Window = .{ .id = 1, .name = @constCast("orch"), .claude = .stalled };
+    var wins = [_]*Window{&win};
+    orch.wins = .fromOwnedSlice(&wins);
+    var sessions = [_]*Session{&orch};
+    var app = homeApp(&board);
+    app.sessions = .fromOwnedSlice(&sessions);
+    var buf: [65536]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try frame(&app, &out, .all);
+    try std.testing.expect(std.mem.indexOf(u8, out.buffered(), "orchestrator · stalled") != null);
+}
+
+test "the report's answer is drawn under the picked feed line, the tab strip's row untouched" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":17,"repo":"arena","title":"b","status":"review","stage":"queued","submitted_at":"2026-11-21T11:30:00Z"}],"needs_you":[]}
+    );
+    defer board.deinit();
+    var app = homeApp(&board);
+    app.report_said = try std.testing.allocator.dupe(u8, "filed #9");
+    defer std.testing.allocator.free(app.report_said.?);
+    var f: feed.Feed = undefined;
+    try std.testing.expect(app.feedOf(&f));
+    const pick = app.feedPick(&f).?;
+    var buf: [65536]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try frame(&app, &out, .all);
+    var want: [48]u8 = undefined;
+    const under = try std.fmt.bufPrint(&want, "\x1b[{d};{d}Hfiled #9", .{ pick.line + 3, app.term_w - app.view_w + 3 });
+    try std.testing.expect(std.mem.indexOf(u8, out.buffered(), under) != null);
+    var strip_row: [16]u8 = undefined;
+    const tab_row = try std.fmt.bufPrint(&strip_row, "\x1b[{d};", .{app.view_h + 1});
+    const at = std.mem.indexOf(u8, out.buffered(), "filed #9").?;
+    try std.testing.expect(std.mem.indexOf(u8, out.buffered()[at - 12 .. at], tab_row) == null);
 }
