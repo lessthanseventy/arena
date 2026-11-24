@@ -1856,7 +1856,6 @@ check "arena with no session named opens home: the plan, the orchestrator's colu
 check "the plan, with its head" see '◆ plan  B board'
 check "next as babylon gives it" see '1 #7 +tlon +Lights +free now'
 check "and its why under it" see 'the light switch'
-
 check "the column with the keys" await orch_lit
 key C-Space
 key B
