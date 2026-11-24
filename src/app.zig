@@ -4543,7 +4543,7 @@ pub const App = struct {
                 .hold => @intFromBool(b.hold()),
                 .cap => state.repo_caps.map.get(want.repo),
             };
-            const said = if (has) |value| value == want.value else false;
+            const said = (want.due == 0 or want.sent_at == 0) and (if (has) |value| value == want.value else false);
             const stale = want.due == 0 and app.now - want.sent_at >= autos.trust_ms;
             if (said or stale) app.auto_wants.drop(app.gpa, i);
         }
