@@ -380,8 +380,7 @@ pub const BoardView = struct {
     /// The plan's pick among its rows that can be picked, and the stages unfolded, a bit each.
     plan_pick: usize = 0,
     unfolded: u8 = 0,
-    /// The plan's pick is of a ticket the feed has an item for, which is the feed's pick.
-    feed_lit: bool = false,
+
     /// At home with the room of half a screen: the orchestrator's column alone, else the plan
     /// or the board alone.
     alone: bool = true,
@@ -466,6 +465,8 @@ pub const App = struct {
     follow_active: bool = false,
     palette: color.Palette = .{},
     theme: ?Theme = null,
+    /// The ticket the plan and the feed light dim for each other, set by `settleLit` each frame.
+    lit_ticket: ?u32 = null,
     /// Workbench's roles from the same palette; none draws the board's header in the terminal's own colours.
     roles: ?Roles = null,
     /// Off under ARENA_REDUCED_MOTION: the border stands still and strips jump.
@@ -1782,11 +1783,51 @@ pub const App = struct {
 
     pub const FeedLit = enum { none, focused, dim };
 
-    /// How the feed's pick is lit: bright while the feed has the keys, dim while the plan has them
-    /// and its pick is of a ticket the feed shows.
+    /// How the feed's pick is lit: bright while the feed has the keys, dim while the plan has them.
     pub fn feedLit(app: *const App) FeedLit {
         if (app.feedFocused()) return .focused;
-        return if (app.planShown() and !app.columnFocused() and app.board_view.?.feed_lit) .dim else .none;
+        return if (app.planShown() and !app.columnFocused()) .dim else .none;
+    }
+
+    /// The ticket the side that does not have the keys lights dim: the plan's picked row's while
+    /// the plan has them, the feed's picked item's while the feed has them. Worked out each frame
+    /// from the picks, so it cannot go stale.
+    pub fn settleLit(app: *App) void {
+        app.lit_ticket = null;
+        if (!app.planShown()) return;
+        if (app.columnFocused()) {
+            var f: feed.Feed = undefined;
+            if (app.feedOf(&f)) if (app.feedPick(&f)) |on| {
+                app.lit_ticket = on.ticket;
+            };
+            return;
+        }
+        var sheet: sheets.Sheet = undefined;
+        if (!app.planSheet(&sheet)) return;
+        if (sheet.picked(app.board_view.?.plan_pick)) |row| app.lit_ticket = row.ticket;
+    }
+
+    /// The feed's item that is lit: its pick while the feed has the keys, else the one of the
+    /// plan's picked ticket.
+    pub fn feedLitItem(app: *const App, f: *const feed.Feed) ?feed.Item {
+        switch (app.feedLit()) {
+            .none => return null,
+            .focused => return app.feedPick(f),
+            .dim => {
+                const id = app.lit_ticket orelse return null;
+                for (0..f.itemCount()) |i| if (f.item(i).?.ticket == id) return f.item(i);
+                return null;
+            },
+        }
+    }
+
+    /// Whether the plan's `row` is lit: the pick's while the plan has the keys, else the row of
+    /// the feed's picked ticket, dim.
+    pub fn planRowLit(app: *const App, row: sheets.Row) bool {
+        const view = app.board_view orelse return false;
+        if (!app.columnFocused()) return if (row.pick) |p| p == view.plan_pick else false;
+        const id = app.lit_ticket orelse return false;
+        return row.ticket == id and (row.kind == .now or row.kind == .next);
     }
 
     /// The plan's pick put on the row of ticket `id` in now or next, when the plan is shown.
@@ -1799,20 +1840,6 @@ pub const App = struct {
             app.board_view.?.plan_pick = pick;
             return;
         }
-    }
-
-    /// The feed's pick put on the item of the ticket the plan's pick is on, when the feed has one.
-    fn pickFeed(app: *App, sheet: *const sheets.Sheet) void {
-        const view = &app.board_view.?;
-        view.feed_lit = false;
-        const id = (sheet.picked(view.plan_pick) orelse return).ticket orelse return;
-        var f: feed.Feed = undefined;
-        if (!app.feedOf(&f)) return;
-        for (0..f.itemCount()) |i| if (f.item(i).?.ticket == id) {
-            view.pick = i;
-            view.feed_lit = true;
-            return;
-        };
     }
 
     /// The feed's pick, kept to what the feed has now: none while it has nothing to pick.
@@ -3623,7 +3650,6 @@ pub const App = struct {
         view.plan_pick = @min(view.plan_pick, sheet.picks -| 1);
         if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) view.plan_pick = @min(view.plan_pick + 1, sheet.picks -| 1);
         if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.plan_pick -|= 1;
-        app.pickFeed(&sheet);
         if (is(key, &.{"?"})) view.help = true;
         if (is(key, &.{"B"})) return app.toBoard();
         if (is(key, &.{ "J", "K", "x", "e" })) {
@@ -3723,10 +3749,7 @@ pub const App = struct {
         if (at >= sheet.n) return;
         const row = sheet.rows[at];
         const pick = row.pick orelse return;
-        if (view.plan_pick == pick) try app.planAct(&row, "\r") else {
-            view.plan_pick = pick;
-            app.pickFeed(&sheet);
-        }
+        if (view.plan_pick == pick) try app.planAct(&row, "\r") else view.plan_pick = pick;
     }
 
     /// The needs-you inbox: home, the feed atop its column.
@@ -7275,7 +7298,8 @@ test "the plan's pick lights its ticket's Your move item dim in the feed, and th
         \\{"tickets":[],
         \\"needs_you":[
         \\{"id":"a","kind":"ask","ticket":760,"repo":"arena","text":"Which?","actions":[]},
-        \\{"id":"b","kind":"sent_back","ticket":338,"repo":"arena","text":"sent back","actions":[]}],
+        \\{"id":"b","kind":"sent_back","ticket":338,"repo":"arena","text":"sent back","actions":[]},
+        \\{"id":"c","kind":"ask","ticket":55,"repo":"arena","text":"Not in the plan","actions":[]}],
         \\"plan":{"now":[
         \\{"ticket":760,"repo":"arena","title":"One","state":"building"},
         \\{"ticket":338,"repo":"arena","title":"Two","state":"building"},
@@ -7286,18 +7310,53 @@ test "the plan's pick lights its ticket's Your move item dim in the feed, and th
     const eq = std.testing.expectEqual;
     const view = &app.board_view.?;
 
-    try app.planKey("j");
-    try eq(@as(usize, 1), view.plan_pick);
-    try eq(@as(usize, 1), view.pick);
-    try eq(App.FeedLit.dim, app.feedLit());
-    // a ticket with no item in the feed lights none
-    try app.planKey("j");
-    try eq(App.FeedLit.none, app.feedLit());
+    var f: feed.Feed = undefined;
+    try std.testing.expect(app.feedOf(&f));
+    const item_of = struct {
+        fn at(ff: *const feed.Feed, ticket: u32) usize {
+            for (0..ff.itemCount()) |i| if (ff.item(i).?.ticket == ticket) return ff.item(i).?.line;
+            unreachable;
+        }
+    }.at;
 
+    // the plan on a ticket the feed has an item for: that item is lit dim
+    try app.planKey("j");
+    app.settleLit();
+    try eq(App.FeedLit.dim, app.feedLit());
+    try eq(item_of(&f, 338), app.feedLitItem(&f).?.line);
+
+    // the feed's own pick on a ticket the plan is not on does not move what the plan lights
+    view.pick = 2;
+    app.settleLit();
+    try eq(item_of(&f, 338), app.feedLitItem(&f).?.line);
+
+    // a plan row the feed has no item for lights none
+    try app.planKey("j");
+    app.settleLit();
+    try std.testing.expect(app.feedLitItem(&f) == null);
+
+    // the plan pick moved by anything but a plan key (J and K reorder next so) is followed
+    view.plan_pick = 0;
+    app.settleLit();
+    try eq(item_of(&f, 760), app.feedLitItem(&f).?.line);
+
+    // the feed has the keys: its pick lights its ticket's row dim, and a ticket not in the plan none
     view.focus = .orchestrator;
     app.normal = true;
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    view.pick = 1;
+    app.settleLit();
+    try eq(App.FeedLit.focused, app.feedLit());
+    for (sheet.rows[0..sheet.n]) |row| {
+        if (row.kind == .now) try eq(row.ticket.? == 338, app.planRowLit(row));
+    }
+    view.pick = 2;
+    app.settleLit();
+    for (sheet.rows[0..sheet.n]) |row| try std.testing.expect(!app.planRowLit(row));
+
+    // moving in the feed moves the plan's pick to the ticket's row, when it has one
     view.pick = 0;
     try std.testing.expect(try app.feedKey("j"));
-    try eq(@as(usize, 1), view.pick);
     try eq(@as(usize, 1), view.plan_pick);
 }

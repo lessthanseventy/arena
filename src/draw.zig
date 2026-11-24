@@ -1316,7 +1316,7 @@ fn spaceRun(n: usize) []const u8 {
 /// pick lit raised. Chips keep their cells, so the pick's place is the text's.
 fn benchFeedRow(app: *const App, w: *Writer, pen: *Pen, r: theme.Roles, f: *const feed.Feed, row: usize, inner: u16) !void {
     const line = f.line(row);
-    const on = if (app.feedLit() != .none) app.feedPick(f) else null;
+    const on = app.feedLitItem(f);
     const strong = app.feedLit() == .focused;
     var head = row;
     if (line.kind == .buttons or line.kind == .refused) {
@@ -1445,7 +1445,7 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
     var lit_from: usize = 0;
     var lit_to: usize = 0;
     var shown = line.text;
-    if (if (app.feedLit() != .none) app.feedPick(f) else null) |on| if (on.line == row) {
+    if (app.feedLitItem(f)) |on| if (on.line == row) {
         if (line.alt.len > 0) shown = line.alt;
         lit_from = clip(shown, on.at).len;
         lit_to = lit_from + (if (on.w == 0) shown.len - lit_from else clip(shown[lit_from..], on.w).len);
@@ -1981,7 +1981,7 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
             continue;
         }
         const row = sheet.rows[at];
-        if (row.pick != null and row.pick.? == view.plan_pick) {
+        if (app.planRowLit(row)) {
             var bar = if (app.columnFocused()) dim else ink(app, "amber", 4);
             bar.flags.bold = true;
             try pen.set(w, bar, null);
@@ -2060,7 +2060,7 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
     const x0: usize = app.boardX() + 1;
     const ww: usize = app.boardW() -| 3;
     if (ww < 16) return;
-    const picked = if (row.pick) |p| p == view.plan_pick else false;
+    const picked = app.planRowLit(row);
     const mark = if (app.columnFocused()) r.dim else r.accent;
     const bg = if (picked) r.raised else r.panel;
     const room = ww - 4;
@@ -3515,6 +3515,7 @@ fn cardActionsShown(app: *const App) bool {
 /// One frame: the rail, the current session's strip (and, mid-slide, the one being left) or the
 /// overview in its place, the menu or prompt when open, and the cursor.
 pub fn frame(app: *App, w: *Writer, what: What) !void {
+    app.settleLit();
     try w.writeAll("\x1b[?2026h\x1b[?25l\x1b[0m");
     if (what == .all) {
         // Not 2J: erasing the whole display takes the terminal's kitty pictures with it.
