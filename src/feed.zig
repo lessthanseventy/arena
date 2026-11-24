@@ -1,10 +1,14 @@
-//! The feed atop the orchestrator's column: the human's move as babylon gives it, then what is
-//! landing and building, and how many landed today.
+//! The feed atop the orchestrator's column: the human's move as babylon gives it, then a strip of
+//! chips, one for each of next, building, landing, today's landings and auto. A chip opens its list
+//! as a popover over the column's pane.
 const std = @import("std");
 const tickets = @import("board.zig");
 const Card = tickets.Card;
 
-pub const Kind = enum { move_head, quiet, item, buttons, refused, next_refused, more, next_head, next_item, landing_head, building_head, landing_chips, building_chips, landed };
+pub const Kind = enum { move_head, quiet, item, buttons, refused, next_refused, more, strip, next_head, next_item, landing_head, building_head, landing_chips, building_chips, landed };
+
+/// The lists a chip of the strip opens.
+pub const Section = enum { next, landing, building, landed };
 
 /// babylon's refusal of what was asked of a Your move item, by the item's id: said in place of
 /// its buttons.
@@ -21,7 +25,13 @@ pub const Item = struct {
     need: ?usize = null,
     /// Its place in next, for a ticket there.
     next: ?usize = null,
+    /// The list a chip of the strip opens; none on the auto chip, which opens auto's settings.
+    chip: bool = false,
+    section: ?Section = null,
 };
+
+/// A chip of the strip, `w` cells of its line from `at`.
+const Chip = struct { line: usize, at: usize, w: usize, section: ?Section };
 
 /// What the pick can be on in the rest of the feed: a ticket's chip on a line of landing or
 /// building, or a ticket of next.
@@ -115,21 +125,44 @@ const Part = struct {
 pub const Feed = struct {
     move: Part = .{},
     rest: Part = .{},
+    strip: Part = .{},
+    chips: [5]Chip = undefined,
+    n_chips: usize = 0,
+    /// The list open as a popover, the lines of `rest` it starts at and how many are shown.
+    open: ?Section = null,
+    pop_from: usize = 0,
+    pop: usize = 0,
+    ranges: [4][2]usize = @splat(.{ 0, 0 }),
     /// The lines of Your move shown, and the items shown of it.
     shown: usize = 0,
     items_shown: usize = 0,
     more: [32]u8 = undefined,
 
-    /// How many lines it takes.
+    /// How many lines it takes in the column, where the pane starts under them.
+    pub fn height(f: *const Feed) usize {
+        return f.shown + @intFromBool(f.cut()) + f.strip.n;
+    }
+
+    /// How many lines it draws: its height, and the popover over the pane when one is open.
     pub fn count(f: *const Feed) usize {
-        return f.shown + @intFromBool(f.cut()) + f.rest.n;
+        return f.height() + f.pop;
     }
 
     /// Line `i` of it, from the top.
     pub fn line(f: *const Feed, i: usize) Line {
         if (i < f.shown) return f.move.lines[i];
         if (f.cut() and i == f.shown) return .{ .kind = .more, .text = f.moreText() };
-        return f.rest.lines[i - f.shown - @intFromBool(f.cut())];
+        const at = i - f.shown - @intFromBool(f.cut());
+        if (at < f.strip.n) return f.strip.lines[at];
+        return f.rest.lines[f.pop_from + at - f.strip.n];
+    }
+
+    fn popSpots(f: *const Feed) []const Spot {
+        var from: usize = 0;
+        while (from < f.rest.n_spots and f.rest.spots[from].line < f.pop_from) from += 1;
+        var to = from;
+        while (to < f.rest.n_spots and f.rest.spots[to].line < f.pop_from + f.pop) to += 1;
+        return f.rest.spots[from..to];
     }
 
     fn cut(f: *const Feed) bool {
@@ -138,21 +171,32 @@ pub const Feed = struct {
 
     /// How many things the pick can be on.
     pub fn itemCount(f: *const Feed) usize {
-        var n = f.items_shown;
-        for (f.rest.spots[0..f.rest.n_spots]) |spot| n += @intFromBool(spot.line < f.rest.n);
-        return n;
+        return f.items_shown + f.n_chips + f.popSpots().len;
     }
 
-    /// The `i`th thing the pick can be on: Your move's items first, then next's, then landing,
-    /// then building.
+    /// The `i`th thing the pick can be on: Your move's items first, then the strip's chips, then
+    /// the open list's tickets.
     pub fn item(f: *const Feed, i: usize) ?Item {
         if (i < f.items_shown) return .{ .line = f.move.starts[i], .ticket = f.move.tickets[i], .need = i };
-        const at = i - f.items_shown;
-        if (at >= f.rest.n_spots) return null;
-        const spot = f.rest.spots[at];
-        if (spot.line >= f.rest.n) return null;
+        const top = f.shown + @intFromBool(f.cut());
+        const spots = f.popSpots();
+        // the open list's tickets follow its own chip
+        var open_at: usize = f.n_chips;
+        for (f.chips[0..f.n_chips], 0..) |chip, k| {
+            if (f.open != null and chip.section == f.open) open_at = k;
+        }
+        var at = i - f.items_shown;
+        if (at > open_at and at <= open_at + spots.len) return f.popItem(spots[at - open_at - 1]);
+        if (at > open_at) at -= spots.len;
+        if (at >= f.n_chips) return null;
+        const chip = f.chips[at];
+        return .{ .line = top + chip.line, .at = chip.at, .w = chip.w, .chip = true, .section = chip.section };
+    }
+
+    fn popItem(f: *const Feed, spot: Spot) Item {
+        const top = f.shown + @intFromBool(f.cut());
         return .{
-            .line = f.shown + @intFromBool(f.cut()) + spot.line,
+            .line = top + f.strip.n + spot.line - f.pop_from,
             .at = spot.at,
             .w = spot.w,
             .ticket = spot.ticket,
@@ -166,11 +210,12 @@ pub const Feed = struct {
     }
 };
 
-/// The feed for `board`, its lines `width` cells wide and at most `room` of them, as of `epoch`, in
-/// a day that began at `today`. Your move keeps its head and first item; the rest of it is cut to
-/// whole items, and what follows is cut to what is left. An item babylon refused says why in place
-/// of its buttons.
-pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, width: usize, room: usize, epoch: i64, today: i64) void {
+/// The feed for `board`, its lines `width` cells wide in a column `rows` tall, as of `epoch`, in a
+/// day that began at `today`. Your move keeps its head and first item and takes at most half the
+/// column with the strip under it; the rest of it is cut to whole items. The list `open` is
+/// drawn under the strip, over the pane, as far as the column goes. An item babylon refused says
+/// why in place of its buttons.
+pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, width: usize, rows: usize, epoch: i64, today: i64, open: ?Section) void {
     f.* = .{};
     const needs = board.needsYou();
     if (needs.len == 0) f.move.add(.quiet, false, "nothing needs you", .{});
@@ -211,18 +256,24 @@ pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, wi
         }
     }
 
-    next(&f.rest, board, refused);
-    landing(&f.rest, board, width, epoch);
-    building(&f.rest, board, width, epoch);
-    var landed: usize = 0;
-    for (board.cards()) |card| {
-        const stage = card.stage orelse continue;
-        if (std.mem.eql(u8, stage, "landed") and (tickets.epochOf(card.closed_at) orelse 0) >= today) landed += 1;
-    }
-    f.rest.add(.landed, false, "✓ landed today {d}", .{landed});
+    var counts: [4]usize = undefined;
+    var mark = f.rest.n;
+    counts[0] = next(&f.rest, board, refused);
+    f.ranges[0] = .{ mark, f.rest.n };
+    mark = f.rest.n;
+    counts[1] = landing(&f.rest, board, width, epoch);
+    f.ranges[1] = .{ mark, f.rest.n };
+    mark = f.rest.n;
+    counts[2] = building(&f.rest, board, width, epoch);
+    f.ranges[2] = .{ mark, f.rest.n };
+    mark = f.rest.n;
+    counts[3] = landedToday(&f.rest, board, today);
+    f.ranges[3] = .{ mark, f.rest.n };
+    stripOf(f, board, width, counts);
 
+    const room = rows / 2;
     const floor = if (f.move.items > 0) @min(f.move.n, f.move.starts[0] + 2) else f.move.n;
-    var want = @max(floor, room -| f.rest.n);
+    var want = @max(floor, room -| f.strip.n);
     if (f.move.n <= want and f.move.items == f.move.total) {
         f.shown = f.move.n;
         f.items_shown = f.move.items;
@@ -234,15 +285,91 @@ pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, wi
         f.items_shown = k;
         f.shown = if (k < f.move.items) f.move.starts[k] else f.move.n;
     }
-    f.rest.n = @min(f.rest.n, room -| (f.count() - f.rest.n));
+    f.open = open;
+    if (open) |section| {
+        const range = f.ranges[@backingInt(section)];
+        f.pop_from = range[0];
+        f.pop = @min(range[1] - range[0], rows -| (f.height() + 1));
+    }
+}
+
+/// Today's landings: a head and a line for each ticket. The count of them.
+fn landedToday(p: *Part, board: *const tickets.Board, today: i64) usize {
+    var n: usize = 0;
+    for (board.cards()) |card| {
+        const stage = card.stage orelse continue;
+        if (std.mem.eql(u8, stage, "landed") and (tickets.epochOf(card.closed_at) orelse 0) >= today) n += 1;
+    }
+    p.add(.landed, false, "✓ landed today {d}", .{n});
+    var shown: usize = 0;
+    for (board.cards()) |card| {
+        const stage = card.stage orelse continue;
+        if (!std.mem.eql(u8, stage, "landed") or (tickets.epochOf(card.closed_at) orelse 0) < today) continue;
+        if (shown == 12) break;
+        p.add(.next_item, false, "#{d} {s}  {s}", .{ card.id, card.repo orelse "", card.title });
+        p.spot(.{ .line = p.n - 1, .ticket = card.id });
+        shown += 1;
+    }
+    return n;
+}
+
+/// The strip: a chip for each list with something in it, and for auto, in at most two lines of
+/// `width` cells, three spaces apart. `counts` are the lists' sizes, in `Section` order.
+fn stripOf(f: *Feed, board: *const tickets.Board, width: usize, counts: [4]usize) void {
+    const Entry = struct { text: [40]u8 = undefined, len: usize = 0, section: ?Section };
+    var entries: [5]Entry = undefined;
+    var n: usize = 0;
+    const order = [_]Section{ .next, .building, .landing, .landed };
+    for (order) |section| {
+        const count = counts[@backingInt(section)];
+        const range = f.ranges[@backingInt(section)];
+        if (range[1] == range[0] or (count == 0 and section != .landed)) continue;
+        entries[n] = .{ .section = section };
+        const text = switch (section) {
+            .next => std.fmt.bufPrint(&entries[n].text, "▷ next {d}", .{count}),
+            .building => std.fmt.bufPrint(&entries[n].text, "◐ building {d}", .{count}),
+            .landing => std.fmt.bufPrint(&entries[n].text, "◒ landing {d}", .{count}),
+            .landed => std.fmt.bufPrint(&entries[n].text, "✓ {d} today", .{count}),
+        } catch continue;
+        entries[n].len = text.len;
+        n += 1;
+    }
+    if (board.autoState()) |auto| {
+        entries[n] = .{ .section = null };
+        const text = (if (auto.on)
+            std.fmt.bufPrint(&entries[n].text, "auto {d}/{d}", .{ auto.working, auto.cap })
+        else
+            std.fmt.bufPrint(&entries[n].text, "auto off", .{})) catch "auto";
+        entries[n].len = text.len;
+        n += 1;
+    }
+    var at: usize = 0;
+    while (at < n and f.strip.n < 2) {
+        var line: [160]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&line);
+        var cells: usize = 0;
+        const row = f.strip.n;
+        while (at < n) : (at += 1) {
+            const text = entries[at].text[0..entries[at].len];
+            const chip = cellCount(text);
+            const gap: usize = if (cells == 0) 0 else 3;
+            if (cells > 0 and cells + gap + chip > width) break;
+            w.splatByteAll(' ', gap) catch break;
+            w.writeAll(text) catch break;
+            f.chips[f.n_chips] = .{ .line = row, .at = cells + gap, .w = chip, .section = entries[at].section };
+            f.n_chips += 1;
+            cells += gap + chip;
+        }
+        f.strip.add(.strip, false, "{s}", .{w.buffered()});
+    }
 }
 
 /// Next, a line for each ticket in it, the pin of the human's in front. A line says its why in
-/// place of the title while it is the pick.
-fn next(p: *Part, board: *const tickets.Board, refused: []const Refusal) void {
+/// place of the title while it is the pick. How many tickets it has.
+fn next(p: *Part, board: *const tickets.Board, refused: []const Refusal) usize {
     const plan = board.next();
     const auto = board.autoState();
-    if (plan.len == 0 and auto == null) return;
+    if (plan.len == 0 and auto == null) return 0;
     const idle = if (auto) |a| (if (a.idle) |i| i.slots else 0) else 0;
     if (idle > 0) {
         p.add(.next_head, false, "▷ next {d} · {d} slot{s} idle", .{ plan.len, idle, if (idle == 1) "" else "s" });
@@ -255,6 +382,7 @@ fn next(p: *Part, board: *const tickets.Board, refused: []const Refusal) void {
         var id: [24]u8 = undefined;
         if (refusalOf(refused, std.fmt.bufPrint(&id, "next:{d}", .{item.ticket}) catch "")) |why| p.add(.next_refused, false, "{s}", .{why});
     }
+    return plan.len;
 }
 
 /// The Claudes working a repo's tickets.
@@ -271,7 +399,7 @@ fn refusalOf(refused: []const Refusal, id: []const u8) ?[]const u8 {
     return null;
 }
 
-fn landing(p: *Part, board: *const tickets.Board, width: usize, epoch: i64) void {
+fn landing(p: *Part, board: *const tickets.Board, width: usize, epoch: i64) usize {
     var queue: [64]*const Card = undefined;
     var n: usize = 0;
     for (board.cards()) |*card| {
@@ -279,7 +407,7 @@ fn landing(p: *Part, board: *const tickets.Board, width: usize, epoch: i64) void
         queue[n] = card;
         n += 1;
     }
-    if (n == 0) return;
+    if (n == 0) return 0;
     // board.json carries no queue order: the pipeline takes tickets in the order they were handed
     // in, those it is working on first
     std.mem.sort(*const Card, queue[0..n], {}, struct {
@@ -305,9 +433,10 @@ fn landing(p: *Part, board: *const tickets.Board, width: usize, epoch: i64) void
         };
     }
     p.flow(.landing_chips, chips[0..n], ids[0..n], 2, width);
+    return n;
 }
 
-fn building(p: *Part, board: *const tickets.Board, width: usize, epoch: i64) void {
+fn building(p: *Part, board: *const tickets.Board, width: usize, epoch: i64) usize {
     var held: [64]*const Card = undefined;
     var n: usize = 0;
     for (board.cards()) |*card| {
@@ -319,7 +448,7 @@ fn building(p: *Part, board: *const tickets.Board, width: usize, epoch: i64) voi
         held[n] = card;
         n += 1;
     }
-    if (n == 0) return;
+    if (n == 0) return 0;
     std.mem.sort(*const Card, held[0..n], {}, struct {
         fn before(_: void, a: *const Card, z: *const Card) bool {
             const at_a = a.claimedAt() orelse std.math.maxInt(i64);
@@ -348,6 +477,7 @@ fn building(p: *Part, board: *const tickets.Board, width: usize, epoch: i64) voi
             std.fmt.bufPrint(&bufs[i], "#{d} {s} {s}", .{ card.id, repo, at })) catch "";
     }
     p.flow(.building_chips, chips[0..n], ids[0..n], 2, width);
+    return n;
 }
 
 fn isFailed(card: *const Card) bool {
@@ -436,13 +566,13 @@ fn texts(f: *const Feed, out: [][]const u8) [][]const u8 {
     return out[0..f.count()];
 }
 
-test "the feed draws babylon's needs_you as given, then landing in queue order, building and today's landings" {
+test "the feed draws babylon's needs_you as given, then a strip of chips, and a chip's list is a popover under it" {
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var f: Feed = undefined;
-    build(&f, &b, &.{}, 56, 40, now, now - 12 * 3600);
+    build(&f, &b, &.{}, 56, 80, now, now - 12 * 3600, null);
     var out: [64][]const u8 = undefined;
-    const want = [_][]const u8{
+    const move = [_][]const u8{
         "▲ your move 3",
         "P4 Start #7: Next in line",
         "⏎ go   x no",
@@ -450,31 +580,74 @@ test "the feed draws babylon's needs_you as given, then landing in queue order, 
         "1 Blue   c in words",
         "✗ #12 arena  sent back, free: red",
         "G give   ⏎ start",
-        "◒ landing 3",
-        "#15 babylon reviewing 2m   #18 tlon queued 1st",
-        "#17 arena queued 2nd",
-        "◐ building 5",
-        "#21 tlon ○ 2d   #16 arena ▲ 3h   #14 arena 2h",
-        "✗ #495 arena 1h   ✗ #362 arena waits on #361",
-        "✓ landed today 1",
     };
     const got = texts(&f, &out);
-    try std.testing.expectEqual(want.len, got.len);
-    for (want, got) |w, g| try std.testing.expectEqualStrings(w, g);
+    try std.testing.expectEqual(move.len + 1, got.len);
+    for (move, got[0..move.len]) |w, g| try std.testing.expectEqualStrings(w, g);
+    try std.testing.expectEqualStrings("◐ building 5   ◒ landing 3   ✓ 1 today", got[move.len]);
+    try std.testing.expectEqual(Kind.strip, f.line(move.len).kind);
     try std.testing.expect(f.line(5).failed and f.line(6).failed and f.line(6).kind == .buttons);
     try std.testing.expect(!f.line(1).failed);
+
+    build(&f, &b, &.{}, 56, 80, now, now - 12 * 3600, .landing);
+    const in_landing = texts(&f, &out);
+    try std.testing.expectEqual(move.len + 4, in_landing.len);
+    try std.testing.expectEqualStrings("◒ landing 3", in_landing[move.len + 1]);
+    try std.testing.expectEqualStrings("#15 babylon reviewing 2m   #18 tlon queued 1st", in_landing[move.len + 2]);
+    try std.testing.expectEqualStrings("#17 arena queued 2nd", in_landing[move.len + 3]);
+    try std.testing.expectEqual(move.len + 1, f.height());
+
+    build(&f, &b, &.{}, 56, 80, now, now - 12 * 3600, .building);
+    const in_building = texts(&f, &out);
+    try std.testing.expectEqualStrings("◐ building 5", in_building[move.len + 1]);
+    try std.testing.expectEqualStrings("#21 tlon ○ 2d   #16 arena ▲ 3h   #14 arena 2h", in_building[move.len + 2]);
+    try std.testing.expectEqualStrings("✗ #495 arena 1h   ✗ #362 arena waits on #361", in_building[move.len + 3]);
+
+    build(&f, &b, &.{}, 56, 80, now, now - 12 * 3600, .landed);
+    const landed = texts(&f, &out);
+    try std.testing.expectEqualStrings("✓ landed today 1", landed[move.len + 1]);
+    try std.testing.expectEqualStrings("#9 arena  Landed today", landed[move.len + 2]);
+}
+
+test "with 8 in next and 5 building, the block is Your move and a strip of at most two lines" {
+    var json: std.ArrayList(u8) = .empty;
+    defer json.deinit(std.testing.allocator);
+    try json.appendSlice(std.testing.allocator, "{\"tickets\":[");
+    for (0..5) |i| {
+        if (i > 0) try json.append(std.testing.allocator, ',');
+        try json.print(std.testing.allocator, "{{\"id\":{d},\"repo\":\"arena\",\"title\":\"t\",\"status\":\"doing\",\"claimed_by\":\"%{d}\",\"claimed_at\":\"2026-11-21T10:00:00Z\"}}", .{ i + 1, i + 1 });
+    }
+    try json.appendSlice(std.testing.allocator, "],\"needs_you\":[],\"auto\":{\"on\":true,\"cap\":6,\"working\":5},\"plan\":{\"next\":[");
+    for (0..8) |i| {
+        if (i > 0) try json.append(std.testing.allocator, ',');
+        try json.print(std.testing.allocator, "{{\"ticket\":{d},\"repo\":\"arena\",\"title\":\"n\",\"why\":\"\",\"set_by\":\"orchestrator\"}}", .{i + 100});
+    }
+    try json.appendSlice(std.testing.allocator, "]}}");
+    var b = try tickets.Board.parse(std.testing.allocator, json.items);
+    defer b.deinit();
+    var f: Feed = undefined;
+    build(&f, &b, &.{}, 56, 40, now, 0, null);
+    try std.testing.expect(f.height() <= 3);
+    try std.testing.expectEqual(Kind.strip, f.line(f.height() - 1).kind);
+    var out: [64][]const u8 = undefined;
+    const got = texts(&f, &out);
+    try std.testing.expectEqualStrings("▷ next 8   ◐ building 5   ✓ 0 today   auto 5/6", got[got.len - 1]);
+
+    const height = f.height();
+    build(&f, &b, &.{}, 56, 40, now, 0, .next);
+    try std.testing.expectEqual(height, f.height());
+    try std.testing.expect(f.count() > height);
 }
 
 test "a short column cuts Your move to whole items and says how many more, and keeps the rest" {
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var f: Feed = undefined;
-    build(&f, &b, &.{}, 56, 11, now, 0);
-    try std.testing.expectEqual(@as(usize, 11), f.count());
+    build(&f, &b, &.{}, 56, 12, now, 0, null);
+    try std.testing.expectEqual(@as(usize, 5), f.count());
     try std.testing.expectEqualStrings("⏎ go   x no", f.line(2).text);
     try std.testing.expectEqualStrings("↓ 2 more", f.line(3).text);
-    try std.testing.expectEqualStrings("◒ landing 3", f.line(4).text);
-    try std.testing.expectEqualStrings("✓ landed today 2", f.line(10).text);
+    try std.testing.expectEqual(Kind.strip, f.line(4).kind);
 }
 
 test "more items than the feed holds are counted in ↓ N more, and only whole items are shown" {
@@ -490,7 +663,7 @@ test "more items than the feed holds are counted in ↓ N more, and only whole i
     var b = try tickets.Board.parse(std.testing.allocator, json.items);
     defer b.deinit();
     var f: Feed = undefined;
-    build(&f, &b, &.{}, 56, 200, now, 0);
+    build(&f, &b, &.{}, 56, 400, now, 0, null);
     try std.testing.expect(f.items_shown < 30);
     var want: [16]u8 = undefined;
     try std.testing.expectEqualStrings(try std.fmt.bufPrint(&want, "↓ {d} more", .{30 - f.items_shown}), f.line(f.shown).text);
@@ -503,31 +676,37 @@ test "with nothing that needs the human, the feed shrinks to one dim line above 
     );
     defer b.deinit();
     var f: Feed = undefined;
-    build(&f, &b, &.{}, 56, 20, now, 0);
+    build(&f, &b, &.{}, 56, 40, now, 0, null);
     try std.testing.expectEqual(@as(usize, 2), f.count());
     try std.testing.expectEqual(Kind.quiet, f.line(0).kind);
-    try std.testing.expectEqualStrings("✓ landed today 0", f.line(1).text);
+    try std.testing.expectEqualStrings("✓ 0 today", f.line(1).text);
 }
 
-test "the pick goes through Your move's items, then each ticket landing and building, where each is drawn" {
+test "the pick goes through Your move's items, then the strip's chips, then the open list's tickets, where each is drawn" {
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var f: Feed = undefined;
-    build(&f, &b, &.{}, 56, 40, now, 0);
-    try std.testing.expectEqual(@as(usize, 11), f.itemCount());
+    build(&f, &b, &.{}, 56, 80, now, 0, null);
+    try std.testing.expectEqual(@as(usize, 6), f.itemCount());
     try std.testing.expectEqual(Item{ .line = 1, .ticket = 7, .need = 0 }, f.item(0).?);
     try std.testing.expectEqual(Item{ .line = 5, .ticket = 12, .need = 2 }, f.item(2).?);
-    try std.testing.expectEqual(Item{ .line = 8, .at = 0, .w = 24, .ticket = 15 }, f.item(3).?);
-    try std.testing.expectEqual(Item{ .line = 8, .at = 27, .w = 19, .ticket = 18 }, f.item(4).?);
-    try std.testing.expectEqual(Item{ .line = 12, .at = 18, .w = 26, .ticket = 362 }, f.item(10).?);
-    try std.testing.expectEqual(@as(?Item, null), f.item(11));
+    try std.testing.expectEqual(Item{ .line = 7, .at = 0, .w = 12, .chip = true, .section = .building }, f.item(3).?);
+    try std.testing.expectEqual(Item{ .line = 7, .at = 15, .w = 11, .chip = true, .section = .landing }, f.item(4).?);
+    try std.testing.expectEqual(@as(?Item, null), f.item(6));
+
+    build(&f, &b, &.{}, 56, 80, now, 0, .landing);
+    try std.testing.expectEqual(@as(usize, 9), f.itemCount());
+    try std.testing.expectEqual(Item{ .line = 9, .at = 0, .w = 24, .ticket = 15 }, f.item(5).?);
+    try std.testing.expectEqual(Item{ .line = 9, .at = 27, .w = 19, .ticket = 18 }, f.item(6).?);
+    try std.testing.expectEqual(@as(?u32, 17), f.item(7).?.ticket);
+    try std.testing.expectEqual(@as(?Section, .landed), f.item(8).?.section);
 }
 
 test "an item babylon refused says why in place of its buttons" {
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var f: Feed = undefined;
-    build(&f, &b, &.{.{ .id = "ask:3", .text = "babylon: no session to answer" }}, 56, 40, now, 0);
+    build(&f, &b, &.{.{ .id = "ask:3", .text = "babylon: no session to answer" }}, 56, 80, now, 0, null);
     try std.testing.expectEqualStrings("#16 arena  asks: Blue?", f.line(3).text);
     try std.testing.expectEqual(Kind.refused, f.line(4).kind);
     try std.testing.expectEqualStrings("babylon: no session to answer", f.line(4).text);
@@ -548,13 +727,14 @@ test "next says its idle slots, then each ticket, and no line of auto's" {
     var b = try tickets.Board.parse(std.testing.allocator, planned);
     defer b.deinit();
     var f: Feed = undefined;
-    build(&f, &b, &.{}, 70, 40, now, 0);
+    build(&f, &b, &.{}, 70, 80, now, 0, .next);
     var out: [64][]const u8 = undefined;
     const got = texts(&f, &out);
-    try std.testing.expectEqualStrings("▷ next 2 · 2 slots idle", got[1]);
-    try std.testing.expectEqualStrings("▪ #655 arena  Typing reaches no pane", got[2]);
-    try std.testing.expectEqualStrings("#656 babylon  Held lines", got[3]);
-    try std.testing.expectEqualStrings("▪ #655 arena  third sighting", f.line(2).alt);
+    try std.testing.expectEqualStrings("▷ next 2   ◐ building 2   ✓ 0 today   auto 4/6", got[1]);
+    try std.testing.expectEqualStrings("▷ next 2 · 2 slots idle", got[2]);
+    try std.testing.expectEqualStrings("▪ #655 arena  Typing reaches no pane", got[3]);
+    try std.testing.expectEqualStrings("#656 babylon  Held lines", got[4]);
+    try std.testing.expectEqualStrings("▪ #655 arena  third sighting", f.line(3).alt);
 }
 
 test "babylon's refusal of a next key is said under that ticket's row" {
@@ -562,23 +742,23 @@ test "babylon's refusal of a next key is said under that ticket's row" {
     defer b.deinit();
     var f: Feed = undefined;
     const refused = [_]Refusal{.{ .id = "next:656", .text = "refused: ticket #656 is claimed by pane %1010" }};
-    build(&f, &b, &refused, 70, 40, now, 0);
+    build(&f, &b, &refused, 70, 80, now, 0, .next);
     var out: [64][]const u8 = undefined;
     const got = texts(&f, &out);
-    try std.testing.expectEqualStrings("#656 babylon  Held lines", got[3]);
-    try std.testing.expectEqualStrings("refused: ticket #656 is claimed by pane %1010", got[4]);
-    try std.testing.expectEqual(Kind.next_refused, f.line(4).kind);
-    try std.testing.expectEqual(@as(?u32, 656), f.item(1).?.ticket);
+    try std.testing.expectEqualStrings("#656 babylon  Held lines", got[4]);
+    try std.testing.expectEqualStrings("refused: ticket #656 is claimed by pane %1010", got[5]);
+    try std.testing.expectEqual(Kind.next_refused, f.line(5).kind);
+    try std.testing.expectEqual(@as(?u32, 656), f.item(2).?.ticket);
 }
 
 test "the pick goes through next's tickets" {
     var b = try tickets.Board.parse(std.testing.allocator, planned);
     defer b.deinit();
     var f: Feed = undefined;
-    build(&f, &b, &.{}, 70, 40, now, 0);
-    try std.testing.expectEqual(@as(?usize, 0), f.item(0).?.next);
-    try std.testing.expectEqual(@as(?u32, 655), f.item(0).?.ticket);
-    try std.testing.expectEqual(@as(?usize, 1), f.item(1).?.next);
+    build(&f, &b, &.{}, 70, 80, now, 0, .next);
+    try std.testing.expectEqual(@as(?usize, 0), f.item(1).?.next);
+    try std.testing.expectEqual(@as(?u32, 655), f.item(1).?.ticket);
+    try std.testing.expectEqual(@as(?usize, 1), f.item(2).?.next);
 }
 
 test "a decision that names a doc keeps its place, wears a mark and says o opens it; one without says nothing of it" {
@@ -591,7 +771,7 @@ test "a decision that names a doc keeps its place, wears a mark and says o opens
     );
     defer b.deinit();
     var f: Feed = undefined;
-    build(&f, &b, &.{}, 56, 40, now, 0);
+    build(&f, &b, &.{}, 56, 80, now, 0, null);
     var out: [64][]const u8 = undefined;
     const got = texts(&f, &out);
     try std.testing.expectEqualStrings("#307 tlon  asks: A or B? ¶", got[1]);
@@ -609,7 +789,7 @@ test "a look at says it can be opened, then babylon's own actions, and names its
     defer b.deinit();
     try std.testing.expectEqualStrings("docs/asterion.md", b.needsYou()[0].doc.?);
     var f: Feed = undefined;
-    build(&f, &b, &.{}, 56, 40, now, 0);
+    build(&f, &b, &.{}, 56, 80, now, 0, null);
     var out: [64][]const u8 = undefined;
     const got = texts(&f, &out);
     try std.testing.expectEqualStrings("#307 tlon  look at: docs/asterion.md", got[1]);

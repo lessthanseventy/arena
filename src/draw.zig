@@ -1175,12 +1175,12 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
         var pen: Pen = .{};
         const top = app.winTop(s, i);
         var the_feed: feed.Feed = undefined;
-        if (top > 1) _ = app.feedOf(&the_feed);
+        const drawn: usize = if (top > 1 and app.feedOf(&the_feed)) the_feed.count() + 2 else top;
         var y: u16 = 0;
         while (y < app.view_h) : (y += 1) {
             const sy = y + yoff;
             if (sy < 0 or sy >= app.view_h) continue;
-            if (y > 0 and y < top and y + 1 < app.view_h) {
+            if (y > 0 and y < drawn and y + 1 < app.view_h) {
                 if (x0 < 0 or x1 >= app.view_w) continue;
                 try w.print("\x1b[{d};{d}H", .{ sy + 1, ox + x0 + 1 });
                 try col.border(&pen, w, 0, y);
@@ -1355,6 +1355,23 @@ fn benchFeedRow(app: *const App, w: *Writer, pen: *Pen, r: theme.Roles, f: *cons
             try o.say(if (strong) r.accent else r.dim, true, if (lit) "▌ " else "  ");
             try o.say(r.failed, false, line.text);
         },
+        .strip => {
+            try o.say(r.text, false, " ");
+            const open: []const u8 = if (f.open) |section| switch (section) {
+                .next => "▷",
+                .building => "◐",
+                .landing => "◒",
+                .landed => "✓",
+            } else "";
+            var at: usize = 0;
+            var pieces = std.mem.splitSequence(u8, line.text, "   ");
+            while (pieces.next()) |piece| {
+                const here = on != null and on.?.line == row and on.?.at == at;
+                at += cellCount(piece) + 3;
+                const opened = open.len > 0 and std.mem.startsWith(u8, piece, open);
+                try o.chip(r, if (here) (if (strong) r.accent else r.dim) else r.dim, piece, here or opened);
+            }
+        },
         .move_head => {
             const cut = std.mem.lastIndexOfScalar(u8, line.text, ' ') orelse 0;
             try o.say(r.you, true, line.text[0..cut]);
@@ -1395,7 +1412,7 @@ fn benchFeedRow(app: *const App, w: *Writer, pen: *Pen, r: theme.Roles, f: *cons
 fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usize, inner: u16) !void {
     const dim = ink(app, "dim", 8);
     if (row < f.count()) if (app.roles) |r| switch (f.line(row).kind) {
-        .item, .buttons, .refused, .move_head, .landing_chips, .building_chips => return benchFeedRow(app, w, pen, r, f, row, inner),
+        .item, .buttons, .refused, .move_head, .strip, .landing_chips, .building_chips => return benchFeedRow(app, w, pen, r, f, row, inner),
         else => {},
     };
     if (row >= f.count()) {
@@ -1436,7 +1453,7 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
             break :blk strong;
         },
         .next_item => .{},
-        .quiet, .more, .landed, .buttons => dim,
+        .quiet, .more, .landed, .buttons, .strip => dim,
         .refused, .next_refused => ink(app, "emberdim", 1),
         .item, .landing_chips, .building_chips => .{},
     };
@@ -1565,13 +1582,14 @@ fn sideEmpty(app: *const App, w: *Writer) !void {
     };
     var pen: Pen = .{};
     var the_feed: feed.Feed = undefined;
-    const top: usize = if (app.feedOf(&the_feed)) the_feed.count() + 2 else 1;
+    const top: usize = if (app.feedOf(&the_feed)) the_feed.height() + 2 else 1;
+    const drawn: usize = if (top > 1) the_feed.count() + 2 else 1;
     for (0..app.view_h) |y| {
         try w.print("\x1b[{d};{d}H", .{ y + 1, ox + 1 });
         for (0..app.view_w) |x| {
             if (y == 0 or y + 1 == app.view_h or x == 0 or x + 1 == app.view_w) {
                 try col.border(&pen, w, x, @intCast(y));
-            } else if (y < top) {
+            } else if (y < drawn) {
                 if (x == 1) try feedRow(app, w, &pen, &the_feed, y - 1, app.view_w - 2);
             } else {
                 try pen.set(w, onPanel(app, .{}), null);
@@ -3766,7 +3784,7 @@ test "the feed's headers and a landing row's stage word are drawn in their state
     defer b.deinit();
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     var f: feed.Feed = undefined;
-    feed.build(&f, &b, &.{}, 56, 40, 1795262400, 0);
+    feed.build(&f, &b, &.{}, 56, 80, 1795262400, 0, .landing);
 
     var buf: [2048]u8 = undefined;
     var pen: Pen = .{};
@@ -3780,17 +3798,17 @@ test "the feed's headers and a landing row's stage word are drawn in their state
             return out.buffered();
         }
     };
-    // row 0 is the quiet line; landing's header, its chips, building's header follow
+    // row 0 is the quiet line, 1 the strip; the open list's header and its chips follow
     const quiet = try at.row(&app, &f, &pen, &buf, 0);
     try std.testing.expect(std.mem.indexOf(u8, quiet, "nothing needs you") != null);
 
     pen = .{};
-    var head = try at.row(&app, &f, &pen, &buf, 1);
+    var head = try at.row(&app, &f, &pen, &buf, 2);
     try std.testing.expect(std.mem.indexOf(u8, head, try sgr(&want, violet_head)) != null);
     try std.testing.expect(std.mem.indexOf(u8, head, "◒ landing 2") != null);
 
     pen = .{};
-    const chips = try at.row(&app, &f, &pen, &buf, 2);
+    const chips = try at.row(&app, &f, &pen, &buf, 3);
     const reviewing = try std.fmt.allocPrint(std.testing.allocator, "{s}reviewing", .{try sgr(&want, ink(&app, "amber", 4))});
     defer std.testing.allocator.free(reviewing);
     try std.testing.expect(std.mem.indexOf(u8, chips, reviewing) != null);
@@ -3802,7 +3820,8 @@ test "the feed's headers and a landing row's stage word are drawn in their state
     try std.testing.expect(std.mem.indexOf(u8, chips, repo) != null);
 
     pen = .{};
-    head = try at.row(&app, &f, &pen, &buf, 3);
+    feed.build(&f, &b, &.{}, 56, 80, 1795262400, 0, .building);
+    head = try at.row(&app, &f, &pen, &buf, 2);
     try std.testing.expect(std.mem.indexOf(u8, head, try sgr(&want, ink(&app, "amber", 4))) != null);
     try std.testing.expect(std.mem.indexOf(u8, head, "◐ building 1") != null);
 }
@@ -3821,7 +3840,7 @@ test "the feed draws Your move's header bold, a send-back in the error colour, a
     defer b.deinit();
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     var f: feed.Feed = undefined;
-    feed.build(&f, &b, &.{}, 56, 40, 1795262400, 1795262400 - 12 * 3600);
+    feed.build(&f, &b, &.{}, 56, 80, 1795262400, 1795262400 - 12 * 3600, .landed);
     var buf: [2048]u8 = undefined;
     const has = struct {
         fn in(drawn: []const u8, style: vt.Style, text: []const u8) !bool {
@@ -3857,12 +3876,7 @@ test "the feed draws Your move's header bold, a send-back in the error colour, a
                     try std.testing.expect(std.mem.indexOf(u8, line.text, "sent back") != null);
                 } else try std.testing.expect(!try has(drawn, ink(&app, "emberdim", 1), "▌ "));
             },
-            .building_chips => {
-                seen += 1;
-                const error_ink = ink(&app, "emberdim", 1);
-                try std.testing.expect(try has(drawn, error_ink, "✗"));
-                try std.testing.expect(try has(drawn, error_ink, "#495"));
-            },
+            .strip => seen += 1,
             .landed => {
                 seen += 1;
                 try std.testing.expect(try has(drawn, ink(&app, "dim", 8), "✓ landed today 1"));
@@ -3871,6 +3885,14 @@ test "the feed draws Your move's header bold, a send-back in the error colour, a
         }
     }
     try std.testing.expectEqual(@as(usize, 4), seen);
+
+    feed.build(&f, &b, &.{}, 56, 80, 1795262400, 1795262400 - 12 * 3600, .building);
+    for (0..f.count()) |i| if (f.line(i).kind == .building_chips) {
+        const drawn = try row(&app, &f, &buf, i);
+        const error_ink = ink(&app, "emberdim", 1);
+        try std.testing.expect(try has(drawn, error_ink, "✗"));
+        try std.testing.expect(try has(drawn, error_ink, "#495"));
+    };
 }
 
 test "the done strip's picked card is lit while the board has the keys and dims like its neighbours once the column has them" {
@@ -3921,12 +3943,12 @@ test "a pinned ticket's mark in next is drawn in the accent" {
     defer b.deinit();
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     var f: feed.Feed = undefined;
-    feed.build(&f, &b, &.{}, 70, 40, 1795262400, 0);
+    feed.build(&f, &b, &.{}, 70, 80, 1795262400, 0, .next);
     var buf: [2048]u8 = undefined;
     var want: [64]u8 = undefined;
     var out: Writer = .fixed(&buf);
     var pen: Pen = .{};
-    try feedRow(&app, &out, &pen, &f, 2, 70);
+    try feedRow(&app, &out, &pen, &f, 3, 70);
     const pin = try std.fmt.allocPrint(std.testing.allocator, "{s}  ▪", .{try sgr(&want, ink(&app, "amber", 4))});
     defer std.testing.allocator.free(pin);
     try std.testing.expect(std.mem.indexOf(u8, out.buffered(), pin) != null);
@@ -4389,7 +4411,7 @@ test "the feed draws at every width and with every item picked, with a long next
     var buf: [4096]u8 = undefined;
     for (8..120) |width| {
         var f: feed.Feed = undefined;
-        feed.build(&f, &b, &.{}, width, 40, 1795262400, 0);
+        feed.build(&f, &b, &.{}, width, 80, 1795262400, 0, null);
         for (0..f.itemCount() + 1) |pick| {
             app.board_view = .{ .home = true, .focus = .orchestrator, .pick = pick };
             for (0..f.count() + 1) |row| {

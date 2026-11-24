@@ -101,22 +101,22 @@ From the top down, its parts are:
    `▲ waits on you`, `idle`, `◌ restarting`, `off`), and its context share. `` ` fold `` sits on the
    right.
 2. **The feed**, drawn by arena from board.json, the same source as the board. arena draws it, not
-   a Claude Code mod, so it is always at the top. It has four parts:
+   a Claude Code mod, so it is always at the top. It has two parts, Your move and a strip of chips:
    - **▲ your move N**: everything the human has to act on, each item settled in place (see
      [the feed](#the-feed-settled-in-place)). With nothing in it, the part is one dim line,
      `nothing needs you`.
-   - **◒ landing N**: tickets in babylon's pipeline, in queue order, each with its stage and how
-     long it has been there. One row for each two tickets, up to two rows, then `+N`.
-   - **◐ building N**: doing tickets, each with its holder's mark and age. `▲` marks one whose
-     Claude waits on the human, `○` one no Claude holds. Two rows at most.
-   - **✓ landed today N**: one line, and `⏎ recent` opens the board's recent column. Landings
-     are never listed one by one here, because they wait until the human looks
-     ([principle 8](principles.md)).
+   - **The strip**: `▷ next 7   ◐ building 5   ◒ landing 1   ✓ 44 today   auto 5/6`, one row or
+     two. Each chip is a click, and `⏎` on it when it is the pick, and opens its list as a popover
+     over the pane (`esc` closes it; the pane keeps its height): **▷ next** the plan's next,
+     **◒ landing** the pipeline's tickets in queue order with their stage and age, **◐ building**
+     doing tickets with their holder's mark and age (`▲` one whose Claude waits on the human, `○`
+     one no Claude holds), **✓ today** the tickets landed today. `auto` opens auto's settings.
+     Landings are never pushed at the human here ([principle 8](principles.md)).
 3. **A rule**, then **the orchestrator's live pane**: its transcript and its prompt, as today's
    column has. Typing into it is talking to it.
 
 The feed takes what it needs, up to half the column's height. Past that, Your move scrolls inside
-its part, and landing and building keep their two rows each.
+its part, and the strip keeps its rows.
 
 **The feed points at the board.** Picking a feed item lights its card on the board with the dim
 pick, as the rail and the board point at each other. Picking a card whose ticket has a Your move

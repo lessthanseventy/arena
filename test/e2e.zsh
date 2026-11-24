@@ -1652,7 +1652,7 @@ feed_above() {
 }
 check "the feed sits atop the orchestrator's column, Your move above its pane's first line" await feed_above
 check "each item as babylon words it, its actions under it" see '▌     1 Blue   c in words'
-check "the pane under the feed is as tall as what is left of the column" await eval '(( $(inner display -p -t orchestrator:orch "#{pane_height}") == 22 - $(rowof "✓ landed today") - 1 ))'
+check "the pane under the feed is as tall as what is left of the column" await eval '(( $(inner display -p -t orchestrator:orch "#{pane_height}") == 22 - $(rowof "✓ 0 today") - 1 ))'
 print -r -- "${$(jq -c '.tickets += [{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[],"stage":"failed"}]' $tmp/board.pipe)%\}}"',"orchestrator":{"on":true,"running":true},"needs_you":['\
 '{"id":"ask:5","kind":"ask","ticket":8,"repo":"arena","text":"#8 arena  asks: Blue or green?",'\
 '"actions":[{"key":"1","label":"Blue","argv":["babylon","answer","5","1"]},{"key":"c","label":"in words","argv":["babylon","answer","5","--words"],"needs":"words"}]},'\
@@ -1696,8 +1696,8 @@ key Enter
 check "Enter runs the action with the words as its last argument" await last 'answer 5 --words in words'
 check "and the line is gone, the feed has its keys" await feed_lit '#8 arena  asks'
 jq -c '. + {"hold":false,"auto":{"on":true,"cap":6,"working":2,"idle":{"slots":1,"why":"next empty"},"repo_caps":{"arena":3,"babylon":2,"tlon":1}},"plan":{"next":[{"ticket":655,"repo":"arena","title":"Typing reaches no pane","why":"third sighting","set_by":"orchestrator"},{"ticket":656,"repo":"babylon","title":"Held lines","why":"","set_by":"orchestrator"}]}}' $tmp/run/babylon/board.json >$tmp/board.tmp && mv $tmp/board.tmp $tmp/run/babylon/board.json
-see '▷ next 2 · 1 slot idle'
-check "next is under Your move, and its tickets a row each" see '#656 babylon  Held lines'
+see '▷ next 2'
+check "next is a chip of the strip under Your move, its tickets not in the column" hides '#656 babylon  Held lines'
 check "the column has no auto row, and none for its repos" hides 'auto on · 2 of 6|arena 3 · babylon 2'
 : >$tmp/babylon
 mouse 0 $(( $(autocol) + 3 )) $(( $(tabrow) - 1 )) M
@@ -1713,6 +1713,9 @@ zselect -t 30
 check "once, not a command for each click" eval '(( $(grep -c -- "--repo-cap arena=" $tmp/babylon) == 1 ))'
 key Escape
 check "esc closes the settings" gone 'working 2 of 6'
+r=$(rowof '▷ next'); l=$(screen | sed -n ${r}p); c=$(( ${#${l%%'▷ next'*}} + 1 ))
+mouse 0 $((c + 2)) $r M
+check "a click on the strip's next chip opens its list as a popover, a row for each ticket" see '#656 babylon  Held lines'
 key j
 check "and the feed has its keys again: the pick goes on to next's tickets" await feed_lit '#655 arena  third sighting'
 touch $tmp/refuse-next
@@ -1728,6 +1731,8 @@ key K
 check "K moves the one under it up" await last 'next 656 --at 1'
 key x
 check "x drops it from next" await last 'next 655 --drop'
+key Escape
+check "esc closes the popover" gone 'Held lines'
 jq -c "del(.hold,.auto,.plan)" $tmp/run/babylon/board.json >$tmp/board.tmp && mv $tmp/board.tmp $tmp/run/babylon/board.json
 key k k
 key i
@@ -1962,8 +1967,14 @@ peeks() {
 r=$(rowof ' one '); check "resting on a Claude in the rail peeks its last words" peeks 4 $r 'said: Hovered'
 r=$(rowof 'P4 Start #40'); c=$(colof $r 'P4 Start')
 check "on a needs you item in the feed, its ticket" peeks $((c + 2)) $r 'arena · med · default model'
+r=$(rowof '◐ building'); c=$(colof $r '◐ building')
+mouse 0 $((c + 2)) $r M
+check "a click on the building chip opens its list over the column's pane" see '◐ building 1'
+check "with its ticket a row there" see '#41 menard'
 r=$(rowof '#41 menard'); c=$(colof $r '#41 menard')
-check "on a ticket building in the feed, that ticket" peeks $((c + 2)) $r 'menard · med · default model'
+check "on a ticket building in the popover, that ticket" peeks $((c + 2)) $r 'menard · med · default model'
+key Escape
+check "esc closes it" gone '#41 menard ○'
 r=$(rowof '#42 Landed'); c=$(colof $r '#42 Landed')
 check "on a card in recent, its ticket" peeks $((c + 3)) $r 'arena · med · default model'
 r=$(rowof '#41 Over'); c=$(colof $r '#41 Over')
