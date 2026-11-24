@@ -5,6 +5,7 @@ const draw = @import("draw.zig");
 const keys = @import("keys.zig");
 const control = @import("control.zig");
 const Theme = @import("theme.zig").Theme;
+const Roles = @import("theme.zig").Roles;
 const App = @import("app.zig").App;
 const posix = std.posix;
 const Writer = std.Io.Writer;
@@ -68,6 +69,7 @@ const ThemeFile = struct {
         app.gpa.free(file.text);
         file.text = text;
         app.theme = Theme.parse(text);
+        app.roles = Roles.parse(text);
         app.dirty = true;
         file.ask_again = true;
         try tty.writeStreamingAll(app.io, color.Palette.query);

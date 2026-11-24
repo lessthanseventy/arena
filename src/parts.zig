@@ -127,12 +127,56 @@ pub fn window(w: *Writer, r: Roles, x: usize, y: usize, width: usize, h: usize, 
     try shadow(w, r, x, y, width, h, r.ground);
 }
 
-const unset: RGB = .{ .r = 1, .g = 2, .b = 3 };
+/// A title bar `width` cells wide at (`x`, `y`): `◆ name`, and, focused, the bar raised and
+/// striped `═══` in half-strength amber to its end; what sits on it is drawn after.
+pub fn titleBar(w: *Writer, r: Roles, x: usize, y: usize, width: usize, name: []const u8, focused: bool) !void {
+    const face = if (focused) r.raised else r.tile;
+    try moveTo(w, x, y);
+    try paint(w, r.text, face, false);
+    try spaces(w, width);
+    try moveTo(w, x + 1, y);
+    try paint(w, if (focused) r.accent else r.dim, face, false);
+    try w.writeAll("◆ ");
+    try paint(w, if (focused) r.text else r.dim, face, true);
+    const named = text_mod.clip(name, width -| 4);
+    try w.writeAll(named);
+    const from = x + 3 + text_mod.cells(named) + 1;
+    if (focused and from < x + width) {
+        try moveTo(w, from, y);
+        try paint(w, r.accent.mix(r.raised, 0.5), face, false);
+        for (from..x + width) |_| try w.writeAll("═");
+    }
+}
 
-const Cell = struct { cp: u21, fg: RGB, bg: RGB, bold: bool };
+/// A row `width` cells wide on the ground, under a title bar, that tabs are drawn on.
+pub fn tabRow(w: *Writer, r: Roles, x: usize, y: usize, width: usize) !void {
+    try moveTo(w, x, y);
+    try paint(w, r.text, r.ground, false);
+    try spaces(w, width);
+}
+
+/// A tab with `label` as it reads (padded) at (`x`, `y`): the current one is the panel, so it joins
+/// the window below it, and the others are tiles.
+pub fn tab(w: *Writer, r: Roles, x: usize, y: usize, label: []const u8, current: bool, quiet: bool) !void {
+    try moveTo(w, x, y);
+    try paint(w, if (current) r.text else if (quiet) r.queued else r.dim, if (current) r.panel else r.tile, current);
+    try w.writeAll(label);
+}
+
+/// A button of the title bar with `label` as it reads: raised, in `fg`, or, `filled`, `fg` is the
+/// face and the words are ink.
+pub fn headButton(w: *Writer, r: Roles, x: usize, y: usize, label: []const u8, fg: RGB, filled: bool) !void {
+    try moveTo(w, x, y);
+    try paint(w, if (filled) r.on_accent else fg, if (filled) fg else r.raised, filled);
+    try w.writeAll(label);
+}
+
+pub const unset: RGB = .{ .r = 1, .g = 2, .b = 3 };
+
+pub const Cell = struct { cp: u21, fg: RGB, bg: RGB, bold: bool };
 
 /// The cell at (`x`, `y`) of `frame` drawn on an 80 by 24 terminal; a colour never set is `unset`.
-fn probe(frame: []const u8, x: usize, y: usize) !Cell {
+pub fn probe(frame: []const u8, x: usize, y: usize) !Cell {
     const gpa = std.testing.allocator;
     var term: vt.Terminal = try .init(std.testing.io, gpa, .{ .cols = 80, .rows = 24, .max_scrollback_bytes = 0 });
     defer term.deinit(gpa);
@@ -177,7 +221,7 @@ const palette =
     \\PALETTE_VIOLET=#B98AFF
 ;
 
-fn roles() Roles {
+pub fn roles() Roles {
     return Roles.parse(palette).?;
 }
 

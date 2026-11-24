@@ -6,6 +6,7 @@ const keys = @import("keys.zig");
 const menu = @import("menu.zig");
 const color = @import("color.zig");
 const Theme = @import("theme.zig").Theme;
+const Roles = @import("theme.zig").Roles;
 const Pass = @import("pass.zig").Pass;
 const tickets = @import("board.zig");
 const feed = @import("feed.zig");
@@ -463,6 +464,8 @@ pub const App = struct {
     follow_active: bool = false,
     palette: color.Palette = .{},
     theme: ?Theme = null,
+    /// Workbench's roles from the same palette; none draws the board's header in the terminal's own colours.
+    roles: ?Roles = null,
     /// Off under ARENA_REDUCED_MOTION: the border stands still and strips jump.
     motion: bool = true,
     phase: f32 = 0,
@@ -3166,7 +3169,7 @@ pub const App = struct {
         const lane = app.pickLane();
         const top = app.cardStart(col, lane, view.row) orelse return 0;
         const bottom = top + app.cardHeight(lane, col, view.row) -| 1;
-        const shown = @max(1, app.view_h -| 3);
+        const shown = @max(1, app.view_h -| (first_line + 1));
         return if (bottom >= shown) @min(top, bottom - shown + 1) else 0;
     }
 
@@ -3339,11 +3342,11 @@ pub const App = struct {
 
     fn boardCardAt(app: *const App, x: u16, y: u16) ?CardAt {
         const left = app.boardColX(0);
-        if (x < left or y < 2 or y + 1 >= app.view_h) return null;
+        if (x < left or y < first_line or y + 1 >= app.view_h) return null;
         const col = for (0..app.boardCols()) |c| {
             if (x < app.boardColX(c) + app.boardColW(c)) break c;
         } else return null;
-        const at = app.columnLineAt(col, y - 2 + app.columnScroll(col)) orelse return null;
+        const at = app.columnLineAt(col, y - first_line + app.columnScroll(col)) orelse return null;
         return switch (at.what) {
             .card => |card| .{ .lane = at.lane, .col = col, .row = card.row },
             else => null,
@@ -3986,7 +3989,7 @@ pub const App = struct {
         const view = app.board_view orelse return null;
         if (view.detail == null) return null;
         const width = detailWidth(app.boardW());
-        const top: u16 = 2;
+        const top: u16 = first_line;
         const bottom = app.view_h -| 2;
         if (bottom < top + 3 or width.inner == 0) return null;
         return .{ .x = app.boardX() + (app.boardW() -| width.box) / 2, .y = top, .w = width.box, .h = bottom - top + 1 };
@@ -4222,6 +4225,11 @@ pub const App = struct {
             },
             .orch => if (short) " ● " else " ● orch ",
             .auto => blk: {
+                if (app.roles != null and !(app.auto() != null and app.now < app.auto_armed_until)) {
+                    const state = app.auto() orelse break :blk if (short) " ▐● ▌" else "auto ▐● ▌";
+                    const lead = if (short) " " else "auto ";
+                    break :blk (if (state.tools) |t| (if (short) std.fmt.bufPrint(buf, " ▐ ●▌ {d}/{d}", .{ state.working, state.cap }) else std.fmt.bufPrint(buf, "auto ▐ ●▌ {d}/{d} · tools {d}/{d}", .{ state.working, state.cap, t.working, t.cap })) else std.fmt.bufPrint(buf, "{s}▐ ●▌ {d}/{d}", .{ lead, state.working, state.cap })) catch "▐ ●▌";
+                }
                 const word = if (short) "" else "auto ";
                 if (app.auto() != null and app.now < app.auto_armed_until) break :blk " ◐ turn off? ";
                 break :blk if (app.auto()) |state|
@@ -4251,6 +4259,10 @@ pub const App = struct {
         return std.fmt.bufPrint(buf, " {s} {s} ", .{ action.key(), word }) catch " ? ";
     }
 
+    /// Rows the board's head takes: its title bar, then its tabs. The columns' top edge is the next, and their lines start under it.
+    pub const head_rows: u16 = 2;
+    pub const first_line: u16 = head_rows + 1;
+
     /// The title the board's first row begins with.
     pub const board_title = " ▤ board";
 
@@ -4270,7 +4282,8 @@ pub const App = struct {
         const count = if (app.board) |*b| b.repos(&repos) else 0;
         const ox = app.boardX();
         const right = ox + app.boardW();
-        const start = ox + @as(u16, @intCast(cellCount(board_title))) + 1;
+        const title_end = ox + @as(u16, @intCast(cellCount(board_title))) + 1;
+        const start = ox + 1;
 
         var tabs: [max_repos + 2]Button = undefined;
         var tab_n: usize = 0;
@@ -4296,16 +4309,14 @@ pub const App = struct {
         group[group_n] = .{ .what = .auto, .x = 0, .y = 0, .w = 0 };
         group_n += 1;
 
-        var tabs_w: usize = 0;
-        for (tabs[0..tab_n]) |tab| tabs_w += cellCount(app.buttonLabel(tab, &buf)) + 1;
         const full_w = groupWidth(app, group[0..group_n], false);
-        const short = start + tabs_w + 1 + full_w > right;
+        const short = title_end + full_w > right;
         for (group[0..group_n]) |*item| item.short = short;
         var group_w: u16 = @intCast(groupWidth(app, group[0..group_n], short));
 
-        // what does not fit beside the tabs' first, which is the one that says where we are
-        var first_w: u16 = @intCast(cellCount(app.buttonLabel(tabs[0], &buf)));
-        while (group_n > 0 and start + first_w + 1 + group_w > right) {
+        // what does not fit beside the title
+        var first_w: u16 = 0;
+        while (group_n > 0 and title_end + group_w > right) {
             group_n -= 1;
             group_w = @intCast(groupWidth(app, group[0..group_n], short));
         }
@@ -4318,7 +4329,7 @@ pub const App = struct {
             n += 1;
             x += w + 1;
         }
-        const limit = right - group_w -| 1;
+        const limit = right;
 
         // the tabs, in room before the right group's, and one cell of it for a `…` when some are left
         var left: [max_repos + 2]Button = undefined;
@@ -4327,7 +4338,7 @@ pub const App = struct {
         for (tabs[0..tab_n]) |tab| {
             first_w = @intCast(cellCount(app.buttonLabel(tab, &buf)));
             if (x + first_w > limit) break;
-            left[left_n] = .{ .what = tab.what, .x = x, .y = 0, .w = first_w };
+            left[left_n] = .{ .what = tab.what, .x = x, .y = 1, .w = first_w };
             left_n += 1;
             x += first_w + 1;
         }
@@ -4362,7 +4373,7 @@ pub const App = struct {
         var buf: [64]u8 = undefined;
         var n = app.header(out).n;
         if (cw >= 12 and n < out.len) {
-            out[n] = .{ .what = .new, .x = app.boardColX(0) + cw - 4, .y = 1, .w = 3 };
+            out[n] = .{ .what = .new, .x = app.boardColX(0) + cw - 4, .y = first_line - 1, .w = 3 };
             n += 1;
         }
         const card = app.boardCard(view.col, view.row) orelse return out[0..n];
@@ -4373,7 +4384,7 @@ pub const App = struct {
             const line = top + app.cardHeight(lane, view.col, view.row) - 2;
             const scroll = app.columnScroll(view.col);
             if (line < scroll) return out[0..n];
-            break :blk @intCast(@min(2 + line - scroll, app.view_h));
+            break :blk @intCast(@min(first_line + line - scroll, app.view_h));
         };
         if (!strip and y + 1 >= app.view_h) return out[0..n];
         var have: [12]CardAction = undefined;
@@ -4584,7 +4595,7 @@ pub const App = struct {
     fn cardNeedsClick(app: *App, at: CardAt, m: keys.Mouse) !bool {
         const card = app.groupCard(at.lane, at.col, at.row) orelse return false;
         if (card.proposal == null or app.boardStrip(at.col)) return false;
-        const line = app.columnLineAt(at.col, m.y - 2 + app.columnScroll(at.col)) orelse return false;
+        const line = app.columnLineAt(at.col, m.y - first_line + app.columnScroll(at.col)) orelse return false;
         const part = switch (line.what) {
             .card => |spot| spot.part,
             else => return false,
@@ -6383,7 +6394,7 @@ test "the board's first row: tabs with their counts, then babylon's state agains
     try std.testing.expectEqual(app.boardX() + app.boardW(), last.x + last.w);
 
     // with less room the right group loses its words first, then tabs go, ending in …
-    app.view_w = 60;
+    app.view_w = 40;
     try std.testing.expectEqualStrings("every 3|arena 2|menard 0|▲ 0|●|◐ 2/3|", try labels(&app, &out));
     const narrow = app.header(&buttons);
     try std.testing.expect(narrow.more != null);
@@ -6435,7 +6446,7 @@ test "the every view's done column is a strip: narrow, a card a row, its reopen 
     const view = app.board_view.?;
     try eq(@as(usize, 1), view.row);
     // under arena's heading
-    try eq(view.row, app.boardCardAt(app.boardColX(3) + 1, 2 + 2).?.row);
+    try eq(view.row, app.boardCardAt(app.boardColX(3) + 1, App.first_line + 2).?.row);
     var buttons: [48]App.Button = undefined;
     const shown = app.boardButtons(&buttons);
     const last = shown[shown.len - 1];

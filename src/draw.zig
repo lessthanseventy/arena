@@ -4,6 +4,7 @@ const layout = @import("layout.zig");
 const menu = @import("menu.zig");
 const color = @import("color.zig");
 const theme = @import("theme.zig");
+const bench = @import("parts.zig");
 const app_mod = @import("app.zig");
 const tickets = @import("board.zig");
 const feed = @import("feed.zig");
@@ -1777,11 +1778,16 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     var pen: Pen = .{};
     var buf: [160]u8 = undefined;
 
-    try w.print("\x1b[1;{d}H", .{ox + 1});
-    try pen.set(w, heading(app), null);
-    try w.writeAll(App.board_title);
-    try pen.set(w, .{}, null);
-    try fitted(w, "", app.boardW() -| cellCount(App.board_title));
+    if (app.roles) |r| {
+        try bench.titleBar(w, r, ox, 0, app.boardW(), App.board_title[App.board_title.len - "board".len ..], true);
+        try bench.tabRow(w, r, ox, 1, app.boardW());
+    } else {
+        try w.print("\x1b[1;{d}H", .{ox + 1});
+        try pen.set(w, heading(app), null);
+        try w.writeAll(App.board_title);
+        try pen.set(w, .{}, null);
+        try fitted(w, "", app.boardW() -| cellCount(App.board_title));
+    }
 
     const lanes = app.boardLanes();
     for (0..app.boardCols()) |c| {
@@ -1791,7 +1797,7 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         const total = if (lanes) app.boardCount(tickets.statuses[c]) else app.boardColumnAll(c);
         const label = std.fmt.bufPrint(&buf, " {s} {d} ", .{ name, total }) catch "";
         try pen.set(w, edge, null);
-        try w.print("\x1b[2;{d}H╭─", .{x + 1});
+        try w.print("\x1b[{d};{d}H╭─", .{ App.first_line, x + 1 });
         try pen.set(w, dim, null);
         const shown = clip(label, inner -| 1);
         try w.writeAll(shown);
@@ -1801,7 +1807,7 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         try columnLines(app, w, &pen, view, c, x, inner);
         if (total == 0 and app.view_h > 3) {
             try pen.set(w, dim, null);
-            try w.print("\x1b[3;{d}H", .{x + 2});
+            try w.print("\x1b[{d};{d}H", .{ App.first_line + 1, x + 2 });
             try fitted(w, " none", inner);
             try pen.set(w, edge, null);
         }
@@ -2015,6 +2021,36 @@ fn doneNote(app: *const App, id: u32) []const u8 {
     return "";
 }
 
+/// A header button in Workbench's look, over the title bar or on its tab row; false for one that
+/// is not part of the header.
+fn workbenchButton(app: *const App, w: *Writer, r: theme.Roles, button: App.Button, view: app_mod.BoardView, buf: []u8) !bool {
+    const label = app.buttonLabel(button, buf);
+    const board = if (app.board) |*b| b else return false;
+    switch (button.what) {
+        .repo => |i| try bench.tab(w, r, button.x, button.y, label, i == view.repo and !view.backlog, app.tabCount(i) == 0),
+        .backlog => try bench.tab(w, r, button.x, button.y, label, view.backlog, board.backlog().len == 0),
+        .needs => {
+            const n = board.needsYou().len;
+            try bench.headButton(w, r, button.x, button.y, label, if (n > 0) r.you else r.dim, n > 0);
+        },
+        .gate => try bench.headButton(w, r, button.x, button.y, label, r.checking, false),
+        .orch => try bench.headButton(w, r, button.x, button.y, label, if (app.orchestrator().?.running) r.text else r.dim, false),
+        .auto => {
+            const armed = app.auto() != null and app.now < app.auto_armed_until;
+            if (armed) {
+                try bench.headButton(w, r, button.x, button.y, label, r.accent, true);
+                return true;
+            }
+            const used = try bench.toggle(w, r, button.x, button.y, if (button.short) "" else "auto", app.auto() != null, r.raised);
+            const at = std.mem.indexOf(u8, label, "▌") orelse return true;
+            const rest = label[at + "▌".len ..];
+            if (rest.len > 0 and used < button.w) try bench.headButton(w, r, button.x + used, button.y, rest, r.dim, false);
+        },
+        else => return false,
+    }
+    return true;
+}
+
 /// The board's buttons over what is drawn under them: the repo tabs, the one shown lit, and the
 /// gate; the + on the to-do column; the picked card's actions as chips; and, at the first row's
 /// end, where its keys are.
@@ -2023,7 +2059,7 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     var buf: [64]u8 = undefined;
     var buttons: [48]App.Button = undefined;
     const shown = app.boardButtons(&buttons);
-    var end: u16 = 0;
+    var end: u16 = app.boardX() + @as(u16, @intCast(cellCount(App.board_title)));
     var right = app.boardX() + app.boardW();
     var refusal_at: ?App.Button = null;
     const said: ?[]const u8 = if (app.start_refused) |text| text else if (app.report_said != null and !app.feedFocused()) app.report_said else null;
@@ -2048,8 +2084,11 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
             },
         };
 
-        try pen.set(w, style, null);
-        try w.print("\x1b[{d};{d}H{s}", .{ button.y + 1, button.x + 1, app.buttonLabel(button, &buf) });
+        const drawn = if (app.roles) |r| try workbenchButton(app, w, r, button, view, &buf) else false;
+        if (!drawn) {
+            try pen.set(w, style, null);
+            try w.print("\x1b[{d};{d}H{s}", .{ button.y + 1, button.x + 1, app.buttonLabel(button, &buf) });
+        }
         if (button.y != 0) continue;
         switch (button.what) {
             .repo, .backlog => end = button.x + button.w,
@@ -2066,8 +2105,7 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     var heads: [48]App.Button = undefined;
     if (app.header(&heads).more) |at| {
         try pen.set(w, ink(app, "dim", 8), null);
-        try w.print("\x1b[1;{d}H…", .{at + 1});
-        end = at + 1;
+        try w.print("\x1b[2;{d}H…", .{at + 1});
     }
     const hint = for ([_][]const u8{ "? keys · esc close", "? keys" }) |text| {
         if (end + 2 + cellCount(text) + 1 <= right) break text;
@@ -2298,7 +2336,7 @@ fn columnLines(app: *const App, w: *Writer, pen: *Pen, view: app_mod.BoardView, 
     const with_repo = app.cardRepoShown();
     var lines = App.ColumnLines.init(app, c);
     for (0..app.columnScroll(c)) |_| _ = lines.next();
-    var y: u16 = 2;
+    var y: u16 = App.first_line;
     while (y + 1 < app.view_h) : (y += 1) {
         try w.print("\x1b[{d};{d}H", .{ y + 1, x + 1 });
         try pen.set(w, edge, null);
@@ -2944,23 +2982,89 @@ test "the board's first row ends on its keys' hint, the short one with less room
     try std.testing.expect(has(wide.buffered(), "? keys · esc close"));
     try std.testing.expect(!has(wide.buffered(), "…"));
 
-    app.view_w = 90;
-    app.term_w = 90;
+    app.view_w = 44;
+    app.term_w = 44;
     var short: Writer = .fixed(&buf);
     try boardButtons(&app, &short, app.board_view.?);
     try std.testing.expect(has(short.buffered(), "? keys"));
     try std.testing.expect(!has(short.buffered(), "esc close"));
-    try std.testing.expect(!has(short.buffered(), "…"));
 
-    app.view_w = 60;
-    app.term_w = 60;
+    app.view_w = 30;
+    app.term_w = 30;
     var heads: [48]App.Button = undefined;
     const more = app.header(&heads).more.?;
     var narrow: Writer = .fixed(&buf);
     try boardButtons(&app, &narrow, app.board_view.?);
     var at: [24]u8 = undefined;
-    try std.testing.expect(has(narrow.buffered(), try std.fmt.bufPrint(&at, "\x1b[1;{d}H…", .{more + 1})));
-    try std.testing.expect(!has(narrow.buffered(), "? keys"));
+    try std.testing.expect(has(narrow.buffered(), try std.fmt.bufPrint(&at, "\x1b[2;{d}H…", .{more + 1})));
+}
+
+test "the board's head in Workbench's look: a striped title bar, tabs under it that join the window, need-you filled violet, the auto switch" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 20;
+    app.roles = bench.roles();
+    const r = app.roles.?;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"repo":"arena","title":"a","status":"todo"},
+        \\{"id":2,"repo":"menard","title":"b","status":"todo"}
+        \\],"auto":{"on":true,"cap":3,"working":2},
+        \\"needs_you":[{"id":"ask:3","kind":"ask","ticket":1,"repo":"arena","text":"#1 arena  asks: Blue?",
+        \\ "actions":[{"key":"1","label":"Blue","argv":["babylon","answer","3","1"]}]}]}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{};
+    var buf: [16384]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try boardView(&app, &out, app.board_view.?);
+    const drawn = out.buffered();
+
+    var buttons: [48]App.Button = undefined;
+    const head = app.header(&buttons);
+    var needs: ?App.Button = null;
+    var auto: ?App.Button = null;
+    for (buttons[0..head.n]) |b| switch (b.what) {
+        .needs => needs = b,
+        .auto => auto = b,
+        else => {},
+    };
+    const tab = buttons[0];
+    const next = buttons[1];
+    const eq = std.testing.expectEqual;
+
+    const bar = try bench.probe(drawn, 1, 0);
+    try eq(@as(u21, '◆'), bar.cp);
+    try eq(r.accent, bar.fg);
+    try eq(r.raised, bar.bg);
+    const stripe = try bench.probe(drawn, 12, 0);
+    try eq(@as(u21, '═'), stripe.cp);
+    try eq(r.accent.mix(r.raised, 0.5), stripe.fg);
+
+    try eq(@as(u16, 1), tab.y);
+    const here = try bench.probe(drawn, tab.x + 1, 1);
+    try eq(@as(u21, 'e'), here.cp);
+    try eq(r.panel, here.bg);
+    try eq(r.tile, (try bench.probe(drawn, next.x + 1, 1)).bg);
+    try eq(r.ground, (try bench.probe(drawn, 79, 1)).bg);
+
+    const ask = needs.?;
+    const asks = try bench.probe(drawn, ask.x + 1, 0);
+    try eq(@as(u21, '▲'), asks.cp);
+    try eq(r.on_accent, asks.fg);
+    try eq(r.you, asks.bg);
+
+    const sw = auto.?;
+    try eq(@as(u21, 'a'), (try bench.probe(drawn, sw.x, 0)).cp);
+    const cap = try bench.probe(drawn, sw.x + 5, 0);
+    try eq(@as(u21, '▐'), cap.cp);
+    try eq(r.accent, cap.fg);
+    const knob = try bench.probe(drawn, sw.x + 7, 0);
+    try eq(@as(u21, '●'), knob.cp);
+    try eq(r.accent, knob.bg);
+    try eq(@as(u21, '2'), (try bench.probe(drawn, sw.x + 10, 0)).cp);
+    try eq(app.boardX() + app.boardW(), sw.x + sw.w);
 }
 
 test "the board's keys end on a card's edge and its marks, and a 24-row terminal has them whole" {
