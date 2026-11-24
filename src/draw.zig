@@ -2962,3 +2962,39 @@ test "the report's answer is drawn under the picked feed line, the tab strip's r
     const at = std.mem.indexOf(u8, out.buffered(), "filed #9").?;
     try std.testing.expect(std.mem.indexOf(u8, out.buffered()[at - 12 .. at], tab_row) == null);
 }
+
+test "the feed draws at every width and with every item picked, with a long next and every line present" {
+    var b = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":338,"repo":"arena","title":"a","status":"doing","stage":"failed","claimed_by":"%3","claimed_at":"2026-11-21T11:23:00Z"},
+        \\{"id":757,"repo":"arena","title":"a","status":"doing","claimed_by":"%3","claimed_at":"2026-11-21T11:48:00Z"},
+        \\{"id":759,"repo":"arena","title":"b","status":"doing","claimed_by":"%4","claimed_at":"2026-11-21T11:54:00Z"},
+        \\{"id":760,"repo":"arena","title":"c","status":"doing","claimed_by":"%5","claimed_at":"2026-11-21T11:59:00Z"},
+        \\{"id":619,"repo":"arena","title":"e","status":"review","stage":"queued","submitted_at":"2026-11-21T11:30:00Z"}],
+        \\"needs_you":[],"hold":false,
+        \\"auto":{"on":true,"cap":6,"working":4,"repo_caps":{"arena":3,"babylon":2,"tlon":0}},
+        \\"plan":{"next":[
+        \\{"ticket":346,"repo":"arena","title":"Board 13: / finds cards by number, title or repo, live","why":"the board's / finds cards by number, title or repo"},
+        \\{"ticket":758,"repo":"arena","title":"The board is laggy: measure where a frame's time goes and fix it","why":"the board is laggy; measure where each frame goes and fix it"},
+        \\{"ticket":459,"repo":"arena","title":"Normal mode 7: the gate's modal, a run's stages with times, the failing check's output and the review's verdict","why":"normal mode step 7: the gate's modal, a run's stages with times and the failing check; after #338"}]}}
+    );
+    defer b.deinit();
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    var buf: [4096]u8 = undefined;
+    for (8..120) |width| {
+        var f: feed.Feed = undefined;
+        for (0..4) |sel| {
+            feed.build(&f, &b, &.{}, width, 40, 1795262400, 0, sel);
+            for (0..f.itemCount() + 1) |pick| {
+                app.board_view = .{ .home = true, .focus = .orchestrator, .pick = pick };
+                for (0..f.count() + 1) |row| {
+                    for (2..140) |inner| {
+                        var out: Writer = .fixed(&buf);
+                        var pen: Pen = .{};
+                        try feedRow(&app, &out, &pen, &f, row, @intCast(inner));
+                    }
+                }
+            }
+        }
+    }
+}
