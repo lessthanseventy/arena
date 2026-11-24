@@ -1831,6 +1831,7 @@ pub const App = struct {
         if (std.mem.eql(u8, text, "\r")) {
             if (look == .ticket and app.board_view != null) {
                 _ = app.pickCard(look.ticket);
+                app.board_view.?.focus = .board;
                 return false;
             }
             if (was.?.win) |win| if (win.agent_pane != 0) {
@@ -7280,10 +7281,11 @@ test "⏎ on a card's peek picks that card and is left to the board, not sent to
         \\]}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .col = 0, .row = 0 };
+    app.board_view = .{ .col = 0, .row = 0, .focus = .orchestrator };
     app.look = .{ .ticket = 6 };
     try std.testing.expect(!try app.lookKey("\r"));
     try std.testing.expect(app.look == null);
+    try std.testing.expect(app.board_view.?.focus == .board);
     try std.testing.expectEqual(@as(u32, 6), app.boardCard(app.board_view.?.col, app.board_view.?.row).?.id);
 }
 
