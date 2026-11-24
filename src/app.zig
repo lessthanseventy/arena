@@ -1728,9 +1728,17 @@ pub const App = struct {
         } else if (app.look_rest) |rest| app.look_off = rest;
     }
 
-    /// The ticket the board's pick is on, which a peek follows after a pause with no key.
+    /// What the pick is on, the board's card or the rail's entry, which a peek follows after a
+    /// pause with no key.
     fn focusLook(app: *const App) ?Look {
-        const view = app.board_view orelse return null;
+        const view = app.board_view orelse {
+            if (!app.key_typed or app.menu != null or app.prompt != null) return null;
+            return switch (app.railPicked() orelse return null) {
+                .agent => |id| .{ .window = id },
+                .fold => |key| .{ .fold = key },
+                .session => null,
+            };
+        };
         if (!app.key_typed or view.boxed() or view.focus != .board or app.planShown() or app.menu != null or app.prompt != null) return null;
         const card = app.boardCard(view.col, view.row) orelse return null;
         return .{ .ticket = card.id };
@@ -1804,8 +1812,8 @@ pub const App = struct {
     }
 
     /// A key while a peek is open: Esc puts it away, as does any other, which then goes on to do
-    /// what it does. ⏎ goes to what the peek is of and space opens its card, for a peek not
-    /// of the pick. Returns whether the key was the peek's.
+    /// what it does. ⏎ goes to a Claude's pane, and on a card's peek picks the card and leaves
+    /// the key to the board; space opens its card. Returns whether the key was the peek's.
     fn lookKey(app: *App, text: []const u8) !bool {
         app.key_at = app.now;
         app.key_typed = for ([_][]const u8{ "j", "k", "h", "l", "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D", "\x1bOA", "\x1bOB", "\x1bOC", "\x1bOD" }) |move| {
@@ -1821,6 +1829,10 @@ pub const App = struct {
         if (std.mem.eql(u8, text, "\x1b") and !app.typing()) return true;
         if (app.typing() or was == null) return false;
         if (std.mem.eql(u8, text, "\r")) {
+            if (look == .ticket and app.board_view != null) {
+                _ = app.pickCard(look.ticket);
+                return false;
+            }
             if (was.?.win) |win| if (win.agent_pane != 0) {
                 try app.showPane(win.agent_pane);
                 return true;
@@ -7254,6 +7266,40 @@ test "in Workbench's look a click on the picked tile's button does its action, a
     } else return error.NoReopen;
     try eq(app.listH() + 3, reopen.y);
     try eq(app.boardX() + app.stripCell() + 1, reopen.x);
+}
+
+test "⏎ on a card's peek picks that card and is left to the board, not sent to a Claude's pane" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 100;
+    app.view_w = 100;
+    app.view_h = 30;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":4,"repo":"tlon","title":"d","status":"todo"},
+        \\{"id":6,"repo":"tlon","title":"f","status":"todo"}
+        \\]}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{ .col = 0, .row = 0 };
+    app.look = .{ .ticket = 6 };
+    try std.testing.expect(!try app.lookKey("\r"));
+    try std.testing.expect(app.look == null);
+    try std.testing.expectEqual(@as(u32, 6), app.boardCard(app.board_view.?.col, app.board_view.?.row).?.id);
+}
+
+test "the pick on a rail entry opens its peek after the pause, once a key has moved it" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.normal = true;
+    app.rail_pick = .{ .agent = 5 };
+    try std.testing.expect(app.focusLook() == null);
+    app.key_typed = true;
+    app.key_at = 1000;
+    app.now = 1000;
+    try std.testing.expect(app.lookStep() > 0);
+    try std.testing.expect(app.look == null);
+    app.now = 1000 + look_ms;
+    _ = app.lookStep();
+    try std.testing.expectEqual(@as(u32, 5), app.look.?.window);
 }
 
 test "the board opens on a ticket by its id: its lane, its repo's columns or the backlog, its question shown" {
