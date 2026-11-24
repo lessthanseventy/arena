@@ -1490,7 +1490,6 @@ key M-h
 zselect -t 50
 kill -CONT $server
 check "and Alt+h back" await orch_at orch
-
 inner kill-window -t orchestrator:two
 key M-b
 await in_session alpha
