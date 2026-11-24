@@ -3317,6 +3317,7 @@ pub const App = struct {
     /// count of those it shows.
     pub fn boardColumn(app: *const App, col: usize, out: []*const tickets.Card) usize {
         const b = if (app.board) |*b| b else return 0;
+        if (app.boardStrip(col)) return app.stripPicks(out);
         if (app.boardBacklog()) {
             var n: usize = 0;
             for (b.backlog()) |*card| if (card.finds(app.findText())) {
@@ -3350,6 +3351,10 @@ pub const App = struct {
 
     /// The cards in column `col` of lane `lane`: those shown, and all of them.
     pub fn laneCounts(app: *const App, lane: usize, col: usize) struct { shown: usize, total: usize } {
+        if (app.boardStrip(col)) {
+            const n = app.stripPicks(&.{});
+            return .{ .shown = n, .total = n };
+        }
         const repo = app.laneRepo(lane) orelse return .{ .shown = 0, .total = 0 };
         const total = app.columnOf(tickets.statuses[col], repo, app.findText(), &.{});
         return .{ .shown = app.shownIn(tickets.statuses[col], total), .total = total };
@@ -3494,6 +3499,7 @@ pub const App = struct {
 
     /// Card `row` of column `col` in lane `lane`.
     pub fn laneCard(app: *const App, lane: usize, col: usize, row: usize) ?*const tickets.Card {
+        if (app.boardStrip(col)) return app.boardCard(col, row);
         const repo = app.laneRepo(lane) orelse return null;
         var out: [max_cards]*const tickets.Card = undefined;
         const n = app.shownIn(tickets.statuses[col], app.columnOf(tickets.statuses[col], repo, app.findText(), &out));
@@ -3758,6 +3764,16 @@ pub const App = struct {
         return n;
     }
 
+    /// The strip's entries as the pick has them: by their place among those drawn, whatever lane
+    /// they are in; the count of those drawn, as many as fit in `out` copied.
+    fn stripPicks(app: *const App, out: []*const tickets.Card) usize {
+        var cards: [strip_n]*const tickets.Card = undefined;
+        const n = app.stripCards(&cards);
+        const m = @min(n, out.len);
+        @memcpy(out[0..m], cards[0..m]);
+        return n;
+    }
+
     /// The width of one of the strip's entries.
     pub fn stripCell(app: *const App) u16 {
         return app.boardW() / strip_n;
@@ -3766,6 +3782,12 @@ pub const App = struct {
     /// Where the pick of card `card` is in column `col`, that column's own rows or, in the every
     /// view, its repo's lane.
     fn spotOf(app: *const App, col: usize, id: u32) ?CardAt {
+        if (app.boardStrip(col)) {
+            var out: [strip_n]*const tickets.Card = undefined;
+            const n = app.stripPicks(&out);
+            for (out[0..n], 0..) |card, row| if (card.id == id) return .{ .lane = app.pickLane(), .col = col, .row = row };
+            return null;
+        }
         if (!app.boardLanes()) {
             var out: [max_cards]*const tickets.Card = undefined;
             const n = @min(app.boardColumn(col, &out), max_cards);
@@ -7323,6 +7345,37 @@ test "in the every view a click on a recent entry whose repo has no open card pi
     try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = app.listH() + 1, .release = false }));
     try eq(@as(usize, 3), app.board_view.?.col);
     try eq(@as(u32, 6), app.boardCard(3, app.board_view.?.row).?.id);
+}
+
+test "in the every view a find leaves a recent entry outside the last five closed, and it is picked by click" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 100;
+    app.view_w = 100;
+    app.view_h = 30;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":4,"repo":"a","title":"d","status":"doing"},
+        \\{"id":10,"repo":"a","title":"x","status":"done"},
+        \\{"id":11,"repo":"a","title":"x","status":"done"},
+        \\{"id":12,"repo":"a","title":"x","status":"done"},
+        \\{"id":13,"repo":"a","title":"x","status":"done"},
+        \\{"id":14,"repo":"a","title":"x","status":"done"},
+        \\{"id":15,"repo":"b","title":"zeta","status":"done"}
+        \\]}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{ .col = 1 };
+    @memcpy(app.find[0..4], "zeta");
+    app.find_len = 4;
+    const eq = std.testing.expectEqual;
+
+    var recent: [App.strip_n]*const tickets.Card = undefined;
+    try eq(@as(usize, 1), app.stripCards(&recent));
+    const x = app.boardX() + 1;
+    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = app.listH() + 1, .release = false }));
+    try eq(@as(usize, 3), app.board_view.?.col);
+    try eq(@as(u32, 15), app.boardCard(3, app.board_view.?.row).?.id);
 }
 
 test "in Workbench's look a click on the picked tile's button does its action, and one on a recent entry picks it" {
