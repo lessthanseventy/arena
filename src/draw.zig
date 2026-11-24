@@ -1276,7 +1276,7 @@ fn nextRun(app: *const App, text: []const u8, at: usize) Run {
 fn feedWord(app: *const App, kind: feed.Kind, word: []const u8, idx: usize, failed: bool) vt.Style {
     const dim = ink(app, "dim", 8);
     const error_ink = ink(app, "emberdim", 1);
-    const first = @intFromBool(failed);
+    const first: usize = @intFromBool(failed);
     if (word[0] == '+') return dim;
     if (idx < first) return error_ink;
     if (idx == first) return if (failed) error_ink else ink(app, "amber", 4);
@@ -2551,6 +2551,72 @@ test "the feed's headers and a landing row's stage word are drawn in their state
     head = try at.row(&app, &f, &pen, &buf, 3);
     try std.testing.expect(std.mem.indexOf(u8, head, try sgr(&want, ink(&app, "amber", 4))) != null);
     try std.testing.expect(std.mem.indexOf(u8, head, "◐ building 1") != null);
+}
+
+test "the feed draws Your move's header bold, a send-back in the error colour, a sent back chip's ✗ and words in it, and the landed line dim" {
+    var b = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":495,"repo":"arena","title":"a","status":"doing","claimed_by":"%610","claimed_at":"2026-11-21T11:00:00Z","stage":"failed"},
+        \\{"id":9,"repo":"arena","title":"b","status":"done","stage":"landed","closed_at":"2026-11-21T11:30:00Z"}],
+        \\"needs_you":[
+        \\{"id":"ask:3","kind":"ask","ticket":16,"repo":"arena","text":"#16 arena  asks: Blue?",
+        \\ "actions":[{"key":"1","label":"Blue","argv":["babylon","answer","3","1"]}]},
+        \\{"id":"sendback:12","kind":"sendback","ticket":12,"repo":"arena","text":"✗ #12 arena  sent back, free: red",
+        \\ "actions":[{"key":"G","label":"give","argv":null,"needs":"pick"}]}]}
+    );
+    defer b.deinit();
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    var f: feed.Feed = undefined;
+    feed.build(&f, &b, &.{}, 56, 40, 1795262400, 1795262400 - 12 * 3600, 0);
+    var buf: [2048]u8 = undefined;
+    const has = struct {
+        fn in(drawn: []const u8, style: vt.Style, text: []const u8) !bool {
+            var buf_: [64]u8 = undefined;
+            var pat: [128]u8 = undefined;
+            return std.mem.indexOf(u8, drawn, try std.fmt.bufPrint(&pat, "{s}{s}", .{ try sgr(&buf_, style), text })) != null;
+        }
+    }.in;
+    const row = struct {
+        fn of(app_: *const App, f_: *const feed.Feed, out_: []u8, i: usize) ![]const u8 {
+            var out: Writer = .fixed(out_);
+            var pen: Pen = .{};
+            try feedRow(app_, &out, &pen, f_, i, 56);
+            return out.buffered();
+        }
+    }.of;
+
+    var bold = heading(&app);
+    bold.flags.bold = true;
+    const head = try row(&app, &f, &buf, 0);
+    try std.testing.expect(try has(head, bold, "▲ your move 2"));
+
+    var seen: usize = 0;
+    for (0..f.count()) |i| {
+        const line = f.line(i);
+        const drawn = try row(&app, &f, &buf, i);
+        switch (line.kind) {
+            .item => {
+                seen += 1;
+                const bar = if (line.failed) ink(&app, "emberdim", 1) else ink(&app, "amber", 4);
+                try std.testing.expect(try has(drawn, bar, "▌ "));
+                if (line.failed) {
+                    try std.testing.expect(std.mem.indexOf(u8, line.text, "sent back") != null);
+                } else try std.testing.expect(!try has(drawn, ink(&app, "emberdim", 1), "▌ "));
+            },
+            .building_chips => {
+                seen += 1;
+                const error_ink = ink(&app, "emberdim", 1);
+                try std.testing.expect(try has(drawn, error_ink, "✗"));
+                try std.testing.expect(try has(drawn, error_ink, "#495"));
+            },
+            .landed => {
+                seen += 1;
+                try std.testing.expect(try has(drawn, ink(&app, "dim", 8), "✓ landed today 1"));
+            },
+            else => {},
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 4), seen);
 }
 
 test "auto's line draws a paused repo in the error colour, hold on in bold, and a pinned ticket's mark in the accent" {
