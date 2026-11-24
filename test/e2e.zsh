@@ -1058,12 +1058,34 @@ key 1
 refused() { [[ -f $tmp/notified && $(<$tmp/notified) == *'babylon: no session to answer'* ]] }
 check "and refused by babylon, it says why" await refused
 rm $tmp/refuse
+settled() { screen | awk '{ s = $0; out = ""; while (match(s, / [0-9]+[smhd]/)) { tok = substr(s, RSTART, RLENGTH); gsub(/[0-9]/, "N", tok); out = out substr(s, 1, RSTART - 1) tok; s = substr(s, RSTART + RLENGTH) } print out s }' }
+foot_at() { local l=$(screen | grep -m1 "╰─ q close"); print $(( ${l[(i)╰]} - 1 )) }
+outside() { settled | sed -n '1,2p;$p'; screen | cut -c1-12 }
+board_before=$(settled)
+outside_before=$(outside)
 key ' '
 check "Space shows the picked card's whole ticket, as babylon tells it" see '│ the whole of it '
+check "in a frame with its close button in the foot" see '╰─ q close '
+check "no cell outside it has changed" eval '[[ $(outside) == "$outside_before" ]]'
 key j j j j j
 check "and j scrolls it no further than its last line" see '│ the whole of it '
 key Escape
 check "and Escape puts it away" gone 'the whole of it'
+check "leaving the screen as it was" await eval '[[ $(settled) == "$board_before" ]]'
+key ' '
+see 'the whole of it'
+mouse 0 $(( $(foot_at) + 3 )) $(screen | grep -n -m1 "╰─ q close" | cut -d: -f1) M
+check "a click on its close button puts it away" gone 'the whole of it'
+key ' '
+see 'the whole of it'
+mouse 0 $(( $(foot_at) + 4 )) 10 M
+check "a click inside it leaves it open" shows 'the whole of it'
+mouse 0 $(( $(foot_at) + 4 )) 2 M
+check "and a click outside it closes it" gone 'the whole of it'
+key ' '
+see 'the whole of it'
+key q
+check "q closes it too" gone 'the whole of it'
 nofile() { [[ ! -e $tmp/run/babylon/detail-7.txt ]] }
 check "leaving no file of it behind" await nofile
 key ' '

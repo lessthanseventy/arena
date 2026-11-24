@@ -1740,34 +1740,25 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
 /// A ticket's whole detail over the board, as babylon gave it, its lines cut to the box's width
 /// and run on under one another, scrolled `scroll` rows down.
 fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
-    const width = app_mod.detailWidth(app.boardW());
-    const bw = width.box;
-    const inner = width.inner;
-    const x = app.boardX() + (app.boardW() -| bw) / 2;
-    const top: u16 = 3;
-    const bottom: u16 = app.view_h -| 1;
+    const rect = app.modalRect() orelse return;
+    const inner = app_mod.detailWidth(app.boardW()).inner;
+    const x = rect.x;
+    const top = rect.y + 1;
+    const bottom = rect.y + rect.h;
     var buf: [24]u8 = undefined;
     const title = std.fmt.bufPrint(&buf, " #{d} ", .{id}) catch " detail ";
-    if (bottom < top + 3 or inner == 0 or bw < cellCount(title) + 3) return;
+    if (rect.w < cellCount(title) + 3) return;
     const edge = ink(app, "amber", 4);
     var pen: Pen = .{};
-
-    try pen.set(w, edge, null);
-    try w.print("\x1b[{d};{d}H╭─", .{ top, x + 1 });
-    try pen.set(w, heading(app), null);
-    try w.writeAll(title);
-    try pen.set(w, edge, null);
-    for (cellCount(title) + 1..bw - 2) |_| try w.writeAll("─");
-    try w.writeAll("╮");
 
     const dim = ink(app, "dim", 8);
     const note = doneNote(app, id);
     var note_rows: u16 = 0;
     var counted = app_mod.DetailLines.init(note, inner);
     if (note.len > 0) while (counted.next()) |_| {
-        if (note_rows < bottom - top - 3) note_rows += 1;
+        if (note_rows < bottom - top - 2) note_rows += 1;
     };
-    const text_end = bottom - 1 - note_rows;
+    const text_end = bottom - note_rows;
 
     const text = if (app.detail.items.len > 0) app.detail.items else "…";
     var y = top + 1;
@@ -1780,12 +1771,45 @@ fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
     }
     while (y < text_end) : (y += 1) try boxLine(w, &pen, edge, .{}, x, y, "", inner);
     var noted = app_mod.DetailLines.init(note, inner);
-    while (y < bottom - 1) : (y += 1) try boxLine(w, &pen, edge, dim, x, y, noted.next() orelse "", inner);
-    try boxLine(w, &pen, edge, dim, x, y, "jk scroll · esc puts it away", inner);
+    while (y < bottom) : (y += 1) try boxLine(w, &pen, edge, dim, x, y, noted.next() orelse "", inner);
+    try modalFrame(app, w, rect, title, " j k scroll ");
+}
+
+/// The modal frame every thing opens in: the rounded box at `rect` with its head in the top edge
+/// and, in the bottom edge, the open modal's buttons, the pointer's underlined, then `hint`.
+fn modalFrame(app: *const App, w: *Writer, rect: App.ModalRect, head: []const u8, hint: []const u8) !void {
+    const edge = ink(app, "amber", 4);
+    var pen: Pen = .{};
+    const right = rect.x + rect.w;
     try pen.set(w, edge, null);
-    try w.print("\x1b[{d};{d}H╰", .{ bottom, x + 1 });
-    for (0..bw - 2) |_| try w.writeAll("─");
+    try w.print("\x1b[{d};{d}H╭─", .{ rect.y + 1, rect.x + 1 });
+    try pen.set(w, heading(app), null);
+    try w.writeAll(head);
+    try pen.set(w, edge, null);
+    for (cellCount(head) + 3..rect.w) |_| try w.writeAll("─");
+    try w.writeAll("╮");
+
+    const foot = rect.y + rect.h;
+    try w.print("\x1b[{d};{d}H╰─", .{ foot, rect.x + 1 });
+    for (3..rect.w) |_| try w.writeAll("─");
     try w.writeAll("╯");
+
+    var buttons: [4]App.ModalButton = undefined;
+    const hovered = app.hovered();
+    var end = rect.x + 2;
+    for (app.modalButtons(&buttons), 0..) |button, i| {
+        var style = ink(app, "amber", 4);
+        style.flags.inverse = true;
+        if (hovered == .modal and hovered.modal == i) style.flags.underline = .single;
+        try pen.set(w, style, null);
+        try w.print("\x1b[{d};{d}H{s}", .{ button.y + 1, button.x + 1, button.label });
+        end = button.x + button.width();
+    }
+    if (end + cellCount(hint) < right) {
+        try pen.set(w, ink(app, "dim", 8), null);
+        try w.print("\x1b[{d};{d}H{s}", .{ foot, end + 1, hint });
+    }
+    try pen.set(w, .{}, null);
 }
 
 /// Why babylon left done ticket `id`'s Claude running, empty when it says nothing of it.

@@ -3651,11 +3651,70 @@ pub const App = struct {
 
     /// What a click at the pointer would act on, underlined while the pointer is on it: a board
     /// button by its place in `boardButtons`, a card, or a row of the rail.
-    pub const Hovered = union(enum) { none, button: usize, card: CardAt, rail: u16 };
+    pub const Hovered = union(enum) { none, button: usize, card: CardAt, rail: u16, modal: usize };
+
+    /// What a modal button does when pressed.
+    pub const ModalAction = enum { close };
+
+    /// A button in the foot of the modal frame, where it is drawn and clicked: 0-based.
+    pub const ModalButton = struct {
+        action: ModalAction,
+        label: []const u8,
+        x: u16,
+        y: u16,
+
+        pub fn width(button: ModalButton) u16 {
+            return @intCast(cellCount(button.label));
+        }
+
+        pub fn hit(button: ModalButton, x: u16, y: u16) bool {
+            return y == button.y and x >= button.x and x < button.x + button.width();
+        }
+    };
+
+    /// Where the modal frame is: its corner and size, 0-based.
+    pub const ModalRect = struct {
+        x: u16,
+        y: u16,
+        w: u16,
+        h: u16,
+
+        pub fn contains(rect: ModalRect, x: u16, y: u16) bool {
+            return x >= rect.x and x < rect.x + rect.w and y >= rect.y and y < rect.y + rect.h;
+        }
+    };
+
+    /// The frame of the modal open over the board, centred over it, when there is room for one.
+    pub fn modalRect(app: *const App) ?ModalRect {
+        const view = app.board_view orelse return null;
+        if (view.detail == null) return null;
+        const width = detailWidth(app.boardW());
+        const top: u16 = 2;
+        const bottom = app.view_h -| 2;
+        if (bottom < top + 3 or width.inner == 0) return null;
+        return .{ .x = app.boardX() + (app.boardW() -| width.box) / 2, .y = top, .w = width.box, .h = bottom - top + 1 };
+    }
+
+    /// The buttons in the open modal's foot, in the order they are drawn.
+    pub fn modalButtons(app: *const App, out: []ModalButton) []ModalButton {
+        const rect = app.modalRect() orelse return out[0..0];
+        out[0] = .{ .action = .close, .label = " q close ", .x = rect.x + 2, .y = rect.y + rect.h - 1 };
+        return out[0..1];
+    }
+
+    fn pressModal(app: *App, action: ModalAction) void {
+        switch (action) {
+            .close => app.board_view.?.detail = null,
+        }
+    }
 
     pub fn hovered(app: *const App) Hovered {
         const p = app.pointer;
         if (app.menu != null or app.prompt != null or app.overview != null or app.drag != .none) return .none;
+        if (p.x >= app.railDrawnW()) {
+            var modal: [4]ModalButton = undefined;
+            for (app.modalButtons(&modal), 0..) |button, i| if (button.hit(p.x, p.y)) return .{ .modal = i };
+        }
         const rail_w = app.railDrawnW();
         if (p.x < rail_w) return if (p.x > 0 and p.x + 1 < rail_w and app.railActs(p.y)) .{ .rail = p.y } else .none;
         const view = app.board_view orelse return .none;
@@ -3957,6 +4016,14 @@ pub const App = struct {
         const open = &app.board_view.?;
         // a box over the board takes the click, as a key would, so nothing hidden under it is pressed
         if (open.boxed()) {
+            if (app.modalRect()) |rect| {
+                var modal: [4]ModalButton = undefined;
+                for (app.modalButtons(&modal)) |button| if (button.hit(m.x, m.y)) {
+                    app.pressModal(button.action);
+                    return true;
+                };
+                if (rect.contains(m.x, m.y)) return true;
+            }
             open.help = false;
             open.detail = null;
             open.answering = false;
