@@ -1337,7 +1337,7 @@ check "under them the window of the Claude holding it, then what it waits on" se
 check "its priority said by its bar, not in words" gone '· high'
 key '?'
 mouse 0 $(tabcol tlon) $(tabrow) M
-check "a click while the keys are shown only puts them away" tablit arena
+check "a click while the keys are shown only puts them away" await tablit arena
 mouse 0 $(tabcol tlon) $(tabrow) M
 check "a click on a tab narrows it to that repo" see '#7 Lights'
 check "and only that" gone '#8 Board'
@@ -1867,7 +1867,12 @@ hovered() {
   local text before after
   local -a cells
   park
-  zselect -t 30
+  local settled i
+  for i in {1..20}; do
+    settled=$(screen)
+    zselect -t 50
+    [[ $(screen) == "$settled" ]] && break
+  done
   before=$(pic) text=$(screen)
   mouse 35 $1 $2 M
   zselect -t 30
