@@ -23,7 +23,8 @@
       {
         "hooks": [
           { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/claude-state.sh\" stop" },
-          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/babylon-inbox.sh\" stop" }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/babylon-inbox.sh\" stop" },
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/handoff-nudge.sh\"" }
         ]
       }
     ],

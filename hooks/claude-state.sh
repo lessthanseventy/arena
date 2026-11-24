@@ -240,7 +240,7 @@ stop)
 	branch
 	;;
 end)
-	[ -z "$sid" ] || rm -f "$sessions/$sid.json" "$sessions/$sid.meter" "$sessions/.$sid.lock"
+	[ -z "$sid" ] || rm -f "$sessions/$sid.json" "$sessions/$sid.meter" "$sessions/$sid.nudged" "$sessions/.$sid.lock"
 	for o in @arena_claude @arena_claude_since @arena_claude_prompt @arena_claude_doing @arena_claude_title \
 		@arena_claude_topic @arena_claude_prompts @arena_claude_said @arena_claude_tokens @arena_claude_agents @arena_claude_background \
 		@arena_claude_running \

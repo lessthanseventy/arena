@@ -31,6 +31,7 @@ run = [
   "zsh test/tmux-guard.zsh",
   "zsh test/ask-reminder.zsh",
   "zsh test/session-record.zsh",
+  "zsh test/handoff-nudge.zsh",
 ]
 
 [tasks.plugin]
