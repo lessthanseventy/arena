@@ -5003,7 +5003,6 @@ pub const App = struct {
             switch (held) {
                 .select => |from| if (app.paneById(from.pane)) |pane| try app.copy(pane),
                 .title => |id| if (m.release) try app.dropWindow(s, id, drop),
-
                 else => {},
             }
             return;
