@@ -1,8 +1,9 @@
 # Goals from an idea
 
 This design is for #812, held to [the principles](principles.md) and read with
-[Home is the plan](plan-view.md), whose goals section it grows. Nothing in it is built yet. The
-build is the tickets at the end.
+[Home is the plan](plan-view.md), whose goals section it grows. The human approved it as drawn on
+2026-11-24 ("go, file the build tickets"). Nothing in it is built yet. The
+build is epic #813, the tickets at the end.
 
 The human, 2026-11-24: "a 'goal' is kinda sorta an epic right? so like if i have a pie in the sky
 idea, i could type it somewhere and have something break it out into tickets and plan the work".
@@ -224,24 +225,24 @@ goal and draft.
 
 babylon, in order:
 
-1. **Ideas.** `babylon idea TEXT [--plan]` and `babylon idea N --plan`, and an MCP tool
+1. **Ideas (#814).** `babylon idea TEXT [--plan]` and `babylon idea N --plan`, and an MCP tool
    `file_idea`: an epic filed `backlog`, its title cut from the text and the text as its body.
    `plan.ideas` in board.json with each idea's state, and `plan.goals` without backlog epics.
-2. **The plan ticket.** `--plan` files the plan ticket (label `plan`, Opus, no repo, `relates` the
+2. **The plan ticket (#815).** `--plan` files the plan ticket (label `plan`, Opus, no repo, `relates` the
    epic, the planning brief in its body) and starts it at once in `~/projects` with no worktree and
    outside the lanes. After 1.
-3. **The draft's go.** `babylon adopt N` (backlog steps to todo, the look answered, the plan
+3. **The draft's go (#816).** `babylon adopt N` (backlog steps to todo, the look answered, the plan
    ticket done), and the `draft` kind in needs_you. After 2.
-4. **Driving.** `driving` in the orchestrator's settings, `babylon drive N`, `plan.driving`, the
-   `drive` needs-you item when it lands, and the orchestrator's prompt filling next from it first.
+4. **Driving (#817).** `driving` in the orchestrator's settings, `babylon drive N`, `plan.driving`, the
+   `drive` needs-you item when it lands, and the orchestrator's prompt filling next from it first. After 1.
 
 arena, one stack:
 
-5. **`+ goal`.** The button on the goals window's title bar, `+` on Plan, and the modal with its
+5. **`+ goal` (#818).** The button on the goals window's title bar, `+` on Plan, and the modal with its
    two choices, running `babylon idea`. After 1 and 2.
-6. **Ideas on Plan.** The ideas rows under the goals, with `⏎`, `space`, `e` and `x` per state.
+6. **Ideas on Plan (#819).** The ideas rows under the goals, with `⏎`, `space`, `e` and `x` per state.
    After 1.
-7. **The draft.** The draft tile in Your move and the draft modal, with `y`, `r` and `e`. After 3
+7. **The draft (#820).** The draft tile in Your move and the draft modal, with `y`, `r` and `e`. After 3
    and 6.
-8. **Driving, picked.** The focal window from `plan.driving`, `d` on a goal, and the "what next?"
+8. **Driving, picked (#821).** The focal window from `plan.driving`, `d` on a goal, and the "what next?"
    window. After 4.
