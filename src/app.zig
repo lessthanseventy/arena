@@ -1838,8 +1838,6 @@ pub const App = struct {
         app.dirty = true;
     }
 
-    /// The doc of a row, opened: a link by `xdg-open`, a file of the ticket's repo in a
-    /// window of its own, in `glow` else `less`.
     /// The doc the needs-you item of ticket `id` names, opened as the inbox's `o` opens it.
     fn openAskDoc(app: *App, id: u32) !void {
         const b = if (app.board) |*b| b else return;
@@ -1849,6 +1847,8 @@ pub const App = struct {
         };
     }
 
+    /// The doc of a row, opened: a link by `xdg-open`, a file of the ticket's repo in a
+    /// window of its own, in `glow` else `less`.
     fn openDoc(app: *App, need: tickets.Need) !bool {
         const doc = need.doc orelse return true;
         if (std.mem.startsWith(u8, doc, "http://") or std.mem.startsWith(u8, doc, "https://")) {
