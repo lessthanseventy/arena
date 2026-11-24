@@ -28,6 +28,8 @@ const stir_s = 60;
 /// How long arena keeps trying to have a Claude show a subagent, how long it leaves a key to be
 /// drawn before it reads the screen again, and how many Downs it sends to reach the list.
 const pick_ms = 3000;
+/// How long the auto switch, asked "turn off?", waits for the second click.
+const auto_confirm_ms = 3000;
 const pick_key_ms = 150;
 const pick_downs = 3;
 pub const max_tabs = 32;
@@ -487,6 +489,8 @@ pub const App = struct {
     ended: bool = false,
     /// Milliseconds on a clock that only goes forward, set each turn of the loop.
     now: i64 = 0,
+    /// Until when a click on the auto switch, which has asked "turn off?", is answered by a second.
+    auto_armed_until: i64 = 0,
     /// Seconds since the epoch, set each turn of the loop.
     epoch: i64 = 0,
     /// Seconds the local clock is ahead of UTC, for where today began.
@@ -4163,6 +4167,7 @@ pub const App = struct {
             .orch => if (short) " ● " else " ● orch ",
             .auto => blk: {
                 const word = if (short) "" else "auto ";
+                if (app.auto() != null and app.now < app.auto_armed_until) break :blk " ◐ turn off? ";
                 break :blk if (app.auto()) |state|
                     (if (state.tools) |t| (if (short) std.fmt.bufPrint(buf, " ◐ {d}/{d} ", .{ state.working, state.cap }) else std.fmt.bufPrint(buf, " ◐ auto {d}/{d} · tools {d}/{d} ", .{ state.working, state.cap, t.working, t.cap })) else std.fmt.bufPrint(buf, " ◐ {s}{d}/{d} ", .{ word, state.working, state.cap })) catch " ◐ "
                 else if (short) " ◐ " else " ◐ auto ";
@@ -4335,6 +4340,13 @@ pub const App = struct {
         return out[0..n];
     }
 
+    /// Whether `m` is on a button of the board's first row, not a card's.
+    fn onHeaderButton(app: *App, m: keys.Mouse) bool {
+        var buttons: [48]Button = undefined;
+        for (app.boardButtons(&buttons)) |button| if (button.what != .card and button.hit(m.x, m.y)) return true;
+        return false;
+    }
+
     fn pressButton(app: *App, button: Button) !void {
         const view = &app.board_view.?;
         switch (button.what) {
@@ -4351,7 +4363,13 @@ pub const App = struct {
             },
             .gate => try app.gateModal(),
             .orch => try app.toOrchestrator(),
-            .auto => try app.toggleAuto(),
+            .auto => if (app.auto() != null and app.now >= app.auto_armed_until) {
+                app.auto_armed_until = app.now + auto_confirm_ms;
+                app.dirty = true;
+            } else {
+                app.auto_armed_until = 0;
+                try app.toggleAuto();
+            },
             .needs => try app.toFeed("]", null),
             .new => try app.newTicket(),
             .card => |action| try app.act(action),
@@ -4453,7 +4471,9 @@ pub const App = struct {
             }
             return true;
         }
-        if (m.leftPress()) view.focus = .board;
+        // a click on the header's buttons leaves the keys where they were: what is typed next
+        // still reaches the orchestrator's column
+        if (m.leftPress() and !app.onHeaderButton(m)) view.focus = .board;
         if (m.wheel()) {
             if (app.navStep()) try app.boardKey(if (m.code & 1 == 0) "k" else "j");
             return true;

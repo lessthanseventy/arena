@@ -1226,6 +1226,17 @@ check "with room, the header's auto switch says the tools slots when babylon's f
 outer resize-window -t o -x 121
 check "and with less room, only the slots in use" see ' ◐ 4/4( |$)'
 cp $tmp/board.noauto $tmp/run/babylon/board.json
+print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":2,"working":1}}' >$tmp/run/babylon/board.json
+see ' ◐ auto 1/2( |$)'
+auto_offs() { grep -cx 'auto off' $tmp/babylon }
+offs=$(auto_offs)
+mouse 0 $(autocol) $(screen | grep -n -m1 ' board  every' | cut -d: -f1) M
+check "one click on the switch of auto on only asks to turn it off" see ' ◐ turn off\?( |$)'
+zselect -t 30
+check "and does not turn it off" eval '(( $(auto_offs) == offs ))'
+mouse 0 $(autocol) $(screen | grep -n -m1 ' board  every' | cut -d: -f1) M
+check "a second click does" await eval '(( $(auto_offs) > offs ))'
+cp $tmp/board.noauto $tmp/run/babylon/board.json
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"orchestrator":{"on":true,"running":false}}' >$tmp/run/babylon/board.json
 check "the board's row atop the rail says an orchestrator is not running" see '^│ ▤ board orch  '
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"orchestrator":{"on":false,"running":false}}' >$tmp/run/babylon/board.json
@@ -1440,6 +1451,13 @@ key M-l
 check "Alt+l from the board focuses it, lit as the focused column" await orch_lit
 key 'echo side' Enter
 check "what is typed then reaches its pane" see '│side +│'
+for control in ' every' ' arena'; do
+  mouse 0 ${(z)$(spot $control)} M
+  mouse 0 ${(z)$(spot $control)} m
+  key -l "echo after${control// /}-jkdufltb"
+  key Enter
+  check "a click on the header's$control leaves the column the keys: a sentence reaches its pane whole" await eval "inner capture-pane -p -t orchestrator:orch | grep -qx after${control// /}-jkdufltb"
+done
 check "and none of it the board, which stays open" eval '[[ ! -s $tmp/babylon ]] && shows " board  every"'
 inner send-keys -t orchestrator:orch "stty -echo -icanon; cat $tmp/clicks; timeout 2 cat -v; printf '\\033[?1006l\\033[?1000l'; stty sane" Enter
 await mousing orchestrator:orch
@@ -1915,6 +1933,7 @@ mouse 0 100 24 m
 key -l 'echo restarted-jkdufltb'
 key Enter
 check "a click on the row under the column leaves it the keys, in insert: a sentence reaches its pane whole" await said orchestrator:orch restarted-jkdufltb
+
 key M-b
 gone ' board  every'
 key -l 'echo worker-jkdufltb'

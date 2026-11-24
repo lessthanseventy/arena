@@ -524,6 +524,10 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
             app.yoff = layout.step(app.yoff, 0);
             app.dirty = true;
         }
+        if (app.auto_armed_until != 0 and now >= app.auto_armed_until) {
+            app.auto_armed_until = 0;
+            app.dirty = true;
+        }
         const strip = app.cur();
         if (strip) |s| if (s.placed and s.scroll != app.target(s)) {
             s.scroll = if (app.motion) layout.step(s.scroll, app.target(s)) else app.target(s);
