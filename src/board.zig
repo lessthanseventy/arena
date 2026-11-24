@@ -9,6 +9,7 @@ pub const Ask = struct {
     id: u32,
     question: []const u8,
     options: []const []const u8 = &.{},
+    asked_at: ?[]const u8 = null,
 };
 
 pub const Card = struct {

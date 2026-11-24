@@ -1689,6 +1689,10 @@ pub const App = struct {
             if (moves > 0) view.pick = if (view.pick + 1 < moves) view.pick + 1 else 0;
         } else if (anyKey(key, &.{"["})) {
             if (moves > 0) view.pick = if (view.pick > 0 and view.pick <= moves) view.pick - 1 else moves - 1;
+        } else if (anyKey(key, &.{" "})) {
+            const id = f.item(view.pick).?.ticket orelse return true;
+            _ = app.pickCard(id);
+            _ = try app.openDetail(id);
         } else return app.feedAct(f.item(view.pick).?, key);
         app.dirty = true;
         if (view.pick != was) if (f.item(view.pick).?.ticket) |id| {
@@ -1836,6 +1840,15 @@ pub const App = struct {
 
     /// The doc of a row, opened: a link by `xdg-open`, a file of the ticket's repo in a
     /// window of its own, in `glow` else `less`.
+    /// The doc the needs-you item of ticket `id` names, opened as the inbox's `o` opens it.
+    fn openAskDoc(app: *App, id: u32) !void {
+        const b = if (app.board) |*b| b else return;
+        for (b.needsYou()) |need| if (need.ticket == id and need.doc != null) {
+            _ = try app.openDoc(need);
+            return;
+        };
+    }
+
     fn openDoc(app: *App, need: tickets.Need) !bool {
         const doc = need.doc orelse return true;
         if (std.mem.startsWith(u8, doc, "http://") or std.mem.startsWith(u8, doc, "https://")) {
@@ -2852,6 +2865,7 @@ pub const App = struct {
     /// The rows the card's detail takes in its box.
     pub fn detailRows(app: *const App) usize {
         const inner = detailWidth(app.boardW()).inner;
+        if (app.board_view) |view| if (view.gate) return gateOutputRows(gateOutput(gateLastRun(app.detail.items)), inner);
         var n: usize = 0;
         var lines = DetailLines.init(if (app.detail.items.len > 0) app.detail.items else "…", inner);
         while (lines.next()) |_| n += 1;
@@ -3903,7 +3917,7 @@ pub const App = struct {
 
     /// Fills `head` with the card's title whole, its stage, holder, model and branch, what blocks
     /// it, the question it asks with its options, and what it was sent back for.
-    pub fn cardHead(card: *const tickets.Card, inner: usize, head: *CardHead) void {
+    pub fn cardHead(card: *const tickets.Card, inner: usize, epoch: i64, head: *CardHead) void {
         head.* = .{};
         head.wrap(.plain, card.title, inner, head.lines.len);
         var meta: [256]u8 = undefined;
@@ -3920,8 +3934,13 @@ pub const App = struct {
             for (card.blocked_by) |id| wr.print(" #{d}", .{id}) catch {};
             head.add(.dim, "{s}", .{wr.buffered()});
         }
+        if (card.proposal) |proposal| head.add(.warn, "▲ proposed: {s}", .{proposal.why});
         if (card.ask) |ask| {
             head.add(.warn, "▲ asks: {s}", .{ask.question});
+            if (tickets.epochOf(ask.asked_at)) |at| {
+                var age: [8]u8 = undefined;
+                head.add(.dim, "waiting {s}", .{waited(&age, epoch - at)});
+            }
             head.options = head.n;
             head.add(.options, "", .{});
         }
@@ -3956,7 +3975,7 @@ pub const App = struct {
         }
         if (app.modalCard()) |card| {
             var head: CardHead = undefined;
-            cardHead(card, detailWidth(app.boardW()).inner, &head);
+            cardHead(card, detailWidth(app.boardW()).inner, app.epoch, &head);
             if (head.options) |line| if (card.ask) |ask| for (ask.options, 1..) |option, number| {
                 if (number > 9 or n == out.len) break;
                 const key = "123456789"[number - 1 ..][0..1];
@@ -3971,6 +3990,7 @@ pub const App = struct {
             for (cardActions(card, &have)) |action| {
                 const key: []const u8 = switch (action) {
                     .go => "⏎",
+                    .no => "x",
                     .give => "G",
                     .edit => "e",
                     .priority => "p",
@@ -4057,6 +4077,8 @@ pub const App = struct {
             return;
         }
         if (is(key, &.{"g"})) return app.openGate(view.detail orelse return);
+        if (is(key, &.{"d"})) return app.openAskDoc(view.detail orelse return);
+        if (is(key, &.{"x"}) and (app.modalCard() orelse return).proposal != null) return app.pressModal(.{ .card = .no });
         const card = app.modalCard() orelse return;
         if (key.len == 1 and key[0] >= '1' and key[0] <= '9') return app.pressModal(.{ .option = key[0] - '0' });
         const action: ModalAction = if (is(key, &.{"\r"})) .{ .card = .go } else if (is(key, &.{"G"})) .{ .card = .give } else if (is(key, &.{"e"})) .{ .card = .edit } else if (is(key, &.{"p"})) .{ .card = .priority } else if (is(key, &.{">"})) .{ .card = .close } else if (is(key, &.{"<"})) .{ .card = .reopen } else if (is(key, &.{"c"}) and app.claudeOf(card) != null) .claude else return;
@@ -5751,6 +5773,40 @@ pub fn gateStage(run: []const u8, name: []const u8) ?GateStage {
     return null;
 }
 
+/// What a gate run's modal scrolls: the output of the first stage that failed, else the review's
+/// once it has ended.
+pub fn gateOutput(run: []const u8) []const u8 {
+    var review: []const u8 = "";
+    for (gate_stages) |name| {
+        const stage = gateStage(run, name) orelse continue;
+        if (std.mem.eql(u8, stage.result, "failed") or std.mem.eql(u8, stage.result, "error")) return std.mem.trimEnd(u8, stage.body, "\n");
+        if (std.mem.eql(u8, name, "review") and stage.end != null) review = std.mem.trimEnd(u8, stage.body, "\n");
+    }
+    return review;
+}
+
+/// The rows `output` takes in `inner` cells, each line's indent under its stage taken off.
+pub fn gateOutputRows(output: []const u8, inner: usize) usize {
+    var n: usize = 0;
+    var lines = std.mem.splitScalar(u8, output, '\n');
+    while (lines.next()) |raw| {
+        var wrapped = DetailLines.init(if (std.mem.startsWith(u8, raw, "    ")) raw[4..] else raw, inner);
+        var any = false;
+        while (wrapped.next()) |_| {
+            any = true;
+            n += 1;
+        }
+        if (!any) n += 1;
+    }
+    return n;
+}
+
+/// How long ago `secs` seconds is, as a wait reads: `45s`, `12m`, `3h`, `2d`.
+pub fn waited(buf: []u8, secs: i64) []const u8 {
+    const s = @max(0, secs);
+    return (if (s < 60) std.fmt.bufPrint(buf, "{d}s", .{s}) else if (s < 3600) std.fmt.bufPrint(buf, "{d}m", .{@divFloor(s, 60)}) else if (s < 86400) std.fmt.bufPrint(buf, "{d}h", .{@divFloor(s, 3600)}) else std.fmt.bufPrint(buf, "{d}d", .{@divFloor(s, 86400)})) catch "";
+}
+
 /// The detail box's width, and the text's within its border.
 pub fn detailWidth(view_w: u16) struct { box: u16, inner: u16 } {
     const box = @min(view_w -| 4, 100);
@@ -6318,6 +6374,19 @@ test "a gate run's last run is read into its stages, their results, times and ou
     try std.testing.expect(gateStage(run, "land") == null);
 }
 
+test "a gate modal's scroll stops at the last line of the output it scrolls" {
+    const run =
+        \\run submitted 2026-11-24T05:00:00Z
+        \\  rebase: ok (2026-11-24T05:00:01Z to 2026-11-24T05:00:05Z)
+        \\  gate: failed (2026-11-24T05:00:05Z to 2026-11-24T05:02:03Z)
+        \\    one
+        \\    two
+        \\
+    ;
+    try std.testing.expectEqual(@as(usize, 2), gateOutputRows(gateOutput(run), 40));
+    try std.testing.expectEqualStrings("", gateOutput("run submitted x\n  rebase: ok (2026-11-24T05:00:01Z to 2026-11-24T05:00:05Z)\n"));
+}
+
 test "a card moves along its column only with a repo, out of the backlog" {
     var have: [12]App.CardAction = undefined;
     const has = struct {
@@ -6450,7 +6519,7 @@ test "a card's modal runs a long title on over as many lines as it takes, none o
         .status = .doing,
     };
     var head: App.CardHead = undefined;
-    App.cardHead(&card, 40, &head);
+    App.cardHead(&card, 40, 0, &head);
     var rows: usize = 0;
     var last: []const u8 = "";
     for (head.lines[0..head.n], head.kinds[0..head.n]) |line, kind| if (kind == .plain) {

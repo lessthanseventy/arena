@@ -1784,7 +1784,7 @@ fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
     };
     const card = app.modalCard();
     var head: App.CardHead = .{};
-    if (card) |it| App.cardHead(it, inner, &head);
+    if (card) |it| App.cardHead(it, inner, app.epoch, &head);
     const win = if (card) |it| app.claudeOf(it) else null;
     const claude_rows: u16 = if (win != null and bottom - top - 2 > note_rows + head.n + 1) 1 else 0;
     const text_end = bottom - note_rows - claude_rows;
@@ -1850,20 +1850,14 @@ fn gateBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
     var pen: Pen = .{};
     const run = app_mod.gateLastRun(if (app.detail.items.len > 0) app.detail.items else "");
     var y = rect.y + 2;
-    var output: []const u8 = "";
-    var failed = false;
+    var output = app_mod.gateOutput(run);
     for (app_mod.gate_stages) |name| {
         var line_buf: [256]u8 = undefined;
         var dur_buf: [16]u8 = undefined;
         const stage = app_mod.gateStage(run, name);
         const mark: []const u8, const style: vt.Style = if (stage) |s| blk: {
-            if (std.mem.eql(u8, s.result, "failed") or std.mem.eql(u8, s.result, "error")) {
-                if (!failed) output = s.body;
-                failed = true;
-                break :blk .{ "✗", ink(app, "emberdim", 1) };
-            }
+            if (std.mem.eql(u8, s.result, "failed") or std.mem.eql(u8, s.result, "error")) break :blk .{ "✗", ink(app, "emberdim", 1) };
             if (s.end == null) break :blk .{ "◒", ink(app, "amber", 4) };
-            if (!failed and std.mem.eql(u8, name, "review")) output = s.body;
             break :blk .{ "✓", .{} };
         } else .{ "·", dim };
         const dur = if (stage) |s| (if (tickets.epochOf(s.start)) |from| took(&dur_buf, (tickets.epochOf(s.end) orelse app.epoch) - from) else "") else "";

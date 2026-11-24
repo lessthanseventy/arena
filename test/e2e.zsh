@@ -1063,6 +1063,12 @@ key 2
 checked() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == 'answer 5 2' ]] }
 check "and a number answers it through babylon" await checked
 check "and puts it away" gone 'Which colour'
+: >$tmp/babylon
+key ' '
+check "space opens its modal, the question and its options as numbered buttons" see ' 1 red  +2 blue '
+key 2
+check "a number answers it there through babylon" await checked
+check "and closes it" gone ' 1 red '
 touch $tmp/refuse
 key a
 check "asked again" see '│ Which colour\? +│'
@@ -1492,7 +1498,7 @@ key Enter
 check "with the board open, a sentence of the board's own letters reaches the orchestrator's pane whole" await said orchestrator:orch jkdufltb
 check "and the board is still open" see ' board  every'
 key C-Space
-key -l 'echo nojkdu'
+key -l 'nojkdu'
 key Enter
 zselect -t 50
 check "Ctrl+Space makes that column normal: none of it reaches the pane" eval '! said orchestrator:orch nojkdu'
