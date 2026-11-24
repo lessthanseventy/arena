@@ -185,7 +185,7 @@ fn appendCodepoint(text: *std.ArrayList(u8), gpa: Allocator, cp: u21) !void {
     try text.appendSlice(gpa, buf[0..try std.unicode.utf8Encode(cp, &buf)]);
 }
 
-fn cellStyle(line: anytype, x: usize) vt.Style {
+pub fn cellStyle(line: anytype, x: usize) vt.Style {
     const raw = line.items(.raw)[x];
     var style: vt.Style = if (raw.style_id != 0) line.items(.style)[x] else .{};
     switch (raw.content_tag) {

@@ -1,6 +1,6 @@
 const std = @import("std");
-
-pub const RGB = @import("color.zig").RGB;
+const color = @import("color.zig");
+pub const RGB = color.RGB;
 
 pub const Theme = struct {
     amber: RGB,
@@ -35,6 +35,67 @@ pub const Theme = struct {
             };
         }
         return null;
+    }
+};
+
+/// Workbench's roles, each a palette colour (docs/redesign/workbench.md, "Palette roles").
+pub const Roles = struct {
+    ground: RGB,
+    panel: RGB,
+    tile: RGB,
+    raised: RGB,
+    well: RGB,
+    text: RGB,
+    dim: RGB,
+    accent: RGB,
+    on_accent: RGB,
+    you: RGB,
+    /// In `repo_names` order.
+    repo: [5]RGB,
+    building: RGB,
+    checking: RGB,
+    queued: RGB,
+    failed: RGB,
+    landed: RGB,
+
+    pub const repo_names = [5][]const u8{ "arena", "babylon", "ficciones", "menard", "tlon" };
+
+    /// Reads the roles from the machine palette; null unless every colour they use is there.
+    pub fn parse(text: []const u8) ?Roles {
+        const grey = Theme.find(text, "GREY") orelse return null;
+        const tile = Theme.find(text, "SURFACE3") orelse return null;
+        const amber = Theme.find(text, "AMBER") orelse return null;
+        const violet = Theme.find(text, "VIOLET") orelse return null;
+        const cyan = Theme.find(text, "CYAN") orelse return null;
+        const dim = dimmed(grey, tile);
+        return .{
+            .ground = Theme.find(text, "SURFACE0") orelse return null,
+            .panel = Theme.find(text, "SURFACE2") orelse return null,
+            .tile = tile,
+            .raised = Theme.find(text, "SURFACE4") orelse return null,
+            .well = Theme.find(text, "BG") orelse return null,
+            .text = grey,
+            .dim = dim,
+            .accent = amber,
+            .on_accent = Theme.find(text, "INK") orelse return null,
+            .you = violet,
+            .repo = .{ amber, violet, cyan, Theme.find(text, "MOSS") orelse return null, Theme.find(text, "PINK") orelse return null },
+            .building = amber,
+            .checking = cyan,
+            .queued = dim,
+            .failed = Theme.find(text, "RED") orelse return null,
+            .landed = Theme.find(text, "MOSS") orelse return null,
+        };
+    }
+
+    /// `text` 40% toward `tile`, or less where that would fall under the contrast floor.
+    fn dimmed(grey: RGB, tile: RGB) RGB {
+        var t: f32 = 0.4;
+        while (t > 0) : (t -= 0.05) {
+            const c = grey.mix(tile, t);
+            if (color.contrast(c, tile) >= color.floor) return c;
+        }
+        return grey;
     }
 };
 

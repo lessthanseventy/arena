@@ -609,6 +609,7 @@ test {
     _ = @import("draw.zig");
     _ = @import("control.zig");
     _ = @import("theme.zig");
+    _ = @import("parts.zig");
     _ = @import("board.zig");
     _ = @import("feed.zig");
     _ = @import("plan.zig");
