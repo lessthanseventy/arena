@@ -4,6 +4,7 @@ const color = @import("color.zig");
 const draw = @import("draw.zig");
 const keys = @import("keys.zig");
 const control = @import("control.zig");
+const update = @import("update.zig");
 const Theme = @import("theme.zig").Theme;
 const Roles = @import("theme.zig").Roles;
 const App = @import("app.zig").App;
@@ -216,8 +217,28 @@ fn takeRefusal(app: *App, id: []const u8) !void {
 }
 
 pub fn main(init: std.process.Init) !void {
-    if (try run(init)) return;
-    try std.Io.File.stderr().writeStreamingAll(init.io, "arena: tmux gave no session to show\n");
+    const exe: ?[:0]u8 = std.process.executablePathAlloc(init.io, init.gpa) catch null;
+    defer if (exe) |path| init.gpa.free(path);
+    switch (try run(init, exe)) {
+        .shown => return,
+        .none => {
+            try std.Io.File.stderr().writeStreamingAll(init.io, "arena: tmux gave no session to show\n");
+            std.process.exit(1);
+        },
+        .update => try replaceSelf(init, exe.?),
+    }
+}
+
+/// Runs the build now at `exe` in this process's place, with the arguments it was given. The
+/// new one starts its own watch from what it is, so one install is one restart.
+fn replaceSelf(init: std.process.Init, exe: []const u8) !void {
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    const argv = try init.arena.allocator().dupe([]const u8, args);
+    argv[0] = exe;
+    const failed = std.process.replace(init.io, .{ .argv = argv });
+    update.discard(init);
+    var said: [256]u8 = undefined;
+    try std.Io.File.stderr().writeStreamingAll(init.io, std.fmt.bufPrint(&said, "arena: the new build would not start: {t}\n", .{failed}) catch "arena: the new build would not start\n");
     std.process.exit(1);
 }
 
@@ -328,8 +349,11 @@ fn tell(init: std.process.Init, tmux: []const []const u8, message: []const u8) !
     return told;
 }
 
-/// Runs until the user leaves or tmux has no session left; false when none was ever shown.
-fn run(init: std.process.Init) !bool {
+const Ended = enum { shown, none, update };
+
+/// Runs until the user leaves or tmux has no session left, or a new build is installed: `none`
+/// when no session was ever shown.
+fn run(init: std.process.Init, exe: ?[]const u8) !Ended {
     const gpa = init.gpa;
     const io = init.io;
 
@@ -344,7 +368,7 @@ fn run(init: std.process.Init) !bool {
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "-h") or std.mem.eql(u8, args[i], "--help")) {
             try std.Io.File.stdout().writeStreamingAll(io, usage);
-            return true;
+            return .shown;
         } else if (std.mem.eql(u8, args[i], "-L") and i + 1 < args.len) {
             try argv.appendSlice(gpa, &.{ "-L", args[i + 1] });
             i += 1;
@@ -364,14 +388,14 @@ fn run(init: std.process.Init) !bool {
         } else session = args[i];
     }
     if (door) |message| {
-        if (try tell(init, argv.items, message)) return true;
+        if (try tell(init, argv.items, message)) return .shown;
         try std.Io.File.stderr().writeStreamingAll(io, "arena: none is running there\n");
         std.process.exit(no_arena);
     }
     if (card) |id| {
         const message = try std.fmt.allocPrint(gpa, control.card_message ++ "{d}", .{id});
         defer gpa.free(message);
-        if (try tell(init, argv.items, message)) return true;
+        if (try tell(init, argv.items, message)) return .shown;
     }
     // A named session is attached or made. With no name, the most recent one, or a first one
     // when there is none: starting the server is what lets tmux's own restore bring sessions back.
@@ -412,16 +436,27 @@ fn run(init: std.process.Init) !bool {
     var shown = false;
     // with no session named, arena opens home
     var open: Open = if (card) |id| .{ .card = id } else if (session == null) .home else .as_is;
+    // an arena that replaced itself opens where the one before it left off, and says so once
+    const arrival = update.arrive(init);
+    if (arrival.kept) |was| open = .{ .kept = was };
+    var told_of: ?update.Arrival = if (arrival.kept != null or arrival.ticket != null) arrival else null;
+    var watch: ?update.Watch = if (exe) |path| update.Watch.init(io, path) else null;
     var target_buf: [16]u8 = undefined;
     while (true) {
         var kept: ?App.Kept = null;
-        switch (try attached(init, argv.items, tty, open, &kept)) {
-            .left => return true,
-            .never => return shown,
+        const outcome = try attached(init, argv.items, tty, open, &kept, if (watch) |*w| w else null, told_of);
+        told_of = null;
+        switch (outcome) {
+            .left => return .shown,
+            .never => return if (shown) .shown else .none,
             .lost => shown = true,
+            .update => {
+                try update.save(init, kept);
+                return .update;
+            },
         }
         open = if (kept) |was| .{ .kept = was } else .as_is;
-        if (!try hasSession(init, tmux, null)) return true;
+        if (!try hasSession(init, tmux, null)) return .shown;
         argv.items.len = tmux.len;
         try argv.appendSlice(gpa, &.{ "-C", "attach" });
         // home stays where the human was, not in the session tmux would pick
@@ -458,7 +493,7 @@ fn ticketId(arg: []const u8) ?u32 {
     return std.fmt.parseInt(u32, arg, 10) catch null;
 }
 
-const Outcome = enum { left, lost, never };
+const Outcome = enum { left, lost, never, update };
 
 /// What a client opens once tmux's sessions are known: as tmux shows it, the board on a ticket,
 /// home, or home as the client before it left it.
@@ -467,7 +502,7 @@ const Open = union(enum) { as_is, card: u32, home, kept: App.Kept };
 /// One tmux client's life: until the user leaves (`left`) or tmux ends it, after showing a
 /// session (`lost`) or before (`never`). With `card`, the board opens on that ticket once
 /// tmux's sessions are known.
-fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, open: Open, kept: *?App.Kept) !Outcome {
+fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, open: Open, kept: *?App.Kept, watch: ?*update.Watch, arrived: ?update.Arrival) !Outcome {
     const gpa = init.gpa;
     const io = init.io;
     var child = try std.process.spawn(io, .{ .argv = argv, .stdin = .pipe, .stdout = .pipe });
@@ -524,6 +559,8 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
     var theme_checked: i64 = -theme_check_ms;
     var listed_at: i64 = 0;
     var open_wanted = open;
+    var typed_at: i64 = 0;
+    if (arrived) |was| try app.updated(was.ticket, std.Io.Timestamp.now(io, .awake).toMilliseconds() + update.notice_ms);
 
     while (!app.quit) {
         const now = std.Io.Timestamp.now(io, .awake).toMilliseconds();
@@ -540,6 +577,14 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
             try board_file.check(&app);
             board_file.checkDetail(&app);
             try checkRefusals(&app);
+            if (watch) |w| if (w.changed(io) and app.quiet() and typed.items.len == 0 and now - typed_at >= update.settle_ms) {
+                kept.* = app.kept();
+                return .update;
+            };
+        }
+        if (app.report_until != 0 and now >= app.report_until) {
+            app.report_until = 0;
+            app.clearReportSaid();
         }
         if (app.want_list and !app.listing) try app.requestList();
         if (app.listed and open_wanted != .as_is) {
@@ -601,6 +646,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
         if (fds[0].revents & posix.POLL.IN != 0) {
             const n = try posix.read(posix.STDIN_FILENO, &buf);
             if (n == 0) return .left;
+            typed_at = now;
             try typed.appendSlice(gpa, buf[0..n]);
             const held = try app.onInput(typed.items);
             std.mem.copyForwards(u8, typed.items[0..held], typed.items[typed.items.len - held ..]);
@@ -652,6 +698,7 @@ test {
     _ = @import("pass.zig");
     _ = @import("report.zig");
     _ = @import("text.zig");
+    _ = @import("update.zig");
     _ = color;
     _ = layout;
 }

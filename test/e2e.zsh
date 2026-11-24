@@ -2230,6 +2230,47 @@ gone ' every [0-9]+ +[a-z]'
 key M-q
 check "and leaves as any other" see 'EXIT 0'
 
+# a new build installed under a running arena: it runs again in place, where it was
+mkdir -p $tmp/run/babylon $tmp/run/arena
+print -r -- '{"tickets":[{"id":7,"repo":"arena","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[]},'\
+'{"id":9,"repo":"arena","title":"Doors","kind":"ticket","status":"todo","priority":"med","blocked_by":[]}],"backlog":[]}' \
+  >$tmp/run/babylon/board.json
+cp $bin $tmp/arena-copy
+install_build() { cp $bin $tmp/arena-next && mv $tmp/arena-next $tmp/arena-copy }
+outer kill-session -t o
+outer new-session -d -s o -x 121 -y 24 \
+  "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 $tmp/arena-copy -L $in alpha 2>$tmp/update-err; echo EXIT \$?; cat"
+see '^╭─ sessions'
+key M-b
+see ' every [0-9]+ +arena [0-9]+ '
+mouse 0 ${(z)$(spot '#9')} M
+mouse 0 ${(z)$(spot '#9')} m
+key ' '
+see '#9 Lights'
+key Escape
+gone '#9 Lights'
+print 822 >$tmp/run/arena/installed
+install_build
+check "a build installed under arena is run again, and the foot says which ticket's" await shows 'arena updated · #822'
+check "with no exit between" hides '^EXIT'
+key ' '
+check "and the card picked is still the same one" see '#9 Lights'
+key Escape
+gone '#9 Lights'
+key M-!
+see "What's wrong\?"
+install_build
+zselect -t 350
+check "a build installed while a prompt is open waits for it" shows "What's wrong\?"
+key Escape
+check "and is run once it closes" await shows 'arena updated'
+key M-b
+key M-q
+gone ' every [0-9]+ +[a-z]'
+key M-q
+check "and it leaves as any other" see 'EXIT 0'
+check "with nothing said on its error stream" test ! -s $tmp/update-err
+
 # a crash gives the terminal back as a quit does: no mouse reports typed into the shell
 outer new-session -d -s p -x 100 -y 24 \
   "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 ARENA_TEST_PANIC=1 $bin -L $in alpha 2>$tmp/panic-err; echo EXIT \$?; cat"

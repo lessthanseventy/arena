@@ -540,6 +540,8 @@ pub const App = struct {
     /// What babylon said of the last report filed, drawn on the bottom row until the next key.
     report_said: ?[]u8 = null,
     report_failed: bool = false,
+    /// When `report_said` goes by itself, in `now`'s milliseconds; 0 for one that stays until a key.
+    report_until: i64 = 0,
     /// What the held left button is moving: the line after a pane, to resize it, a window by
     /// its title, along the strip, or a session by its name, along the rail.
     drag: union(enum) {
@@ -2494,7 +2496,29 @@ pub const App = struct {
         app.dirty = true;
     }
 
-    fn clearReportSaid(app: *App) void {
+    /// Says in the foot that arena was replaced by a new build, and which ticket's it was.
+    pub fn updated(app: *App, ticket: ?u32, until: i64) !void {
+        var said: [32]u8 = undefined;
+        const line = if (ticket) |id|
+            try std.fmt.bufPrint(&said, "arena updated · #{d}", .{id})
+        else
+            "arena updated";
+        app.clearReportSaid();
+        app.report_said = try app.gpa.dupe(u8, line);
+        app.report_failed = false;
+        app.report_until = until;
+        app.dirty = true;
+    }
+
+    /// Whether nothing is half done that a restart would drop: no drag, no box or prompt over
+    /// the screen.
+    pub fn quiet(app: *const App) bool {
+        if (app.drag != .none or app.menu != null or app.prompt != null) return false;
+        if (app.overview != null or app.popup != null) return false;
+        return if (app.board_view) |view| !view.boxed() else true;
+    }
+
+    pub fn clearReportSaid(app: *App) void {
         const text = app.report_said orelse return;
         app.gpa.free(text);
         app.report_said = null;
@@ -6886,7 +6910,8 @@ pub const App = struct {
             const part = keys.next(rest);
             rest = part.rest;
             app.trailText(part.text);
-            app.clearReportSaid();
+            // the terminal's answers to arena's own questions are no key of the human's
+            if (part.event == null or part.event.? != .osc) app.clearReportSaid();
             const taken = part.text.len > 0 and try app.lookKey(part.text);
             if (!taken) {
                 if (app.typing()) try app.forward(part.text) else try app.menuKeys(part.text);
