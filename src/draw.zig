@@ -419,9 +419,10 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
                 try w.writeAll(orch);
             }
             try pen.set(w, if (open) chip(app) else ink(app, "dim", 8), null);
-            try fitted(w, "", inner -| head -| cellCount(counts));
-            try w.writeAll(counts);
-            filled = head + (inner -| head -| cellCount(counts)) + cellCount(counts);
+            const shown = clip(counts, inner -| head);
+            try fitted(w, "", inner -| head -| cellCount(shown));
+            try w.writeAll(shown);
+            filled = @min(inner, head + (inner -| head -| cellCount(shown)) + cellCount(shown));
         } else {
             var spun: [8]u8 = undefined;
             const mark = spun[0 .. std.unicode.utf8Encode(glyph(app, .working), &spun) catch 0];
@@ -3460,6 +3461,29 @@ test "a stalled orchestrator's head says stalled in the frame" {
     var out: Writer = .fixed(&buf);
     try frame(&app, &out, .all);
     try std.testing.expect(std.mem.indexOf(u8, out.buffered(), "orchestrator · stalled") != null);
+}
+
+test "a frame of the board with an orchestrator column draws at every width from 40 to 120" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"orchestrator":{"on":true,"running":true}}
+    );
+    defer board.deinit();
+    var orch: Session = .{ .id = 2, .name = @constCast("orchestrator") };
+    var win: Window = .{ .id = 1, .name = @constCast("orch"), .claude = .working };
+    var wins = [_]*Window{&win};
+    orch.wins = .fromOwnedSlice(&wins);
+    var sessions = [_]*Session{&orch};
+    var app = homeApp(&board);
+    app.sessions = .fromOwnedSlice(&sessions);
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    for (40..121) |term_w| {
+        app.term_w = @intCast(term_w);
+        app.fit();
+
+        out.clearRetainingCapacity();
+        try frame(&app, &out.writer, .all);
+    }
 }
 
 test "the report's answer is drawn under the picked feed line, the tab strip's row untouched" {
