@@ -44,6 +44,8 @@ pub const Line = struct {
     /// Of a send-back of Your move: drawn in a send-back's colour. Of auto's line: hold is on.
     failed: bool = false,
     text: []const u8,
+    /// Of a Your move item's row: its place in babylon's needs_you.
+    need: ?usize = null,
     /// What a line of next says in place of its title while it is the pick.
     alt: []const u8 = "",
     /// Of auto's line, its parts, split at ` · `: those drawn dim and those drawn as paused.
@@ -185,7 +187,7 @@ pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, wi
     if (needs.len == 0) f.move.add(.quiet, false, "nothing needs you", .{});
     if (needs.len > 0) f.move.add(.move_head, false, "▲ your move {d}", .{needs.len});
     f.move.total = needs.len;
-    for (needs) |need| {
+    for (needs, 0..) |need, need_at| {
         // an item is held whole or not at all: its row, a refusal or up to four rows of buttons
         if (f.move.items == f.move.starts.len or f.move.n + 5 > f.move.lines.len) break;
         const failed = std.mem.eql(u8, need.kind, "sendback");
@@ -195,6 +197,7 @@ pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, wi
         // a look's text already names its doc; any other row with one wears a mark
         const marked = need.doc != null and !std.mem.eql(u8, need.kind, "look");
         f.move.add(.item, failed, "{s}{s}", .{ need.text, if (marked) " ¶" else "" });
+        f.move.lines[f.move.n - 1].need = need_at;
         if (refusalOf(refused, need.id)) |why| {
             f.move.add(.refused, failed, "{s}", .{why});
             continue;

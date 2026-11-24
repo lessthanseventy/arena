@@ -115,10 +115,57 @@ const Column = struct {
     mark_at: ?usize = null,
     /// Dim at the right end of its top edge.
     right: []const u21 = &.{},
+    /// Drawn as Workbench's window: a title bar, a panel for sides and a well along the foot.
+    roles: ?theme.Roles = null,
+
+    fn benchBorder(col: Column, r: theme.Roles, pen: *Pen, w: *Writer, cx: usize, y: u16) !void {
+        const app = col.app;
+        const quiet = !col.focused;
+        if (y == 0) {
+            const face = if (quiet) r.tile else r.raised;
+            const right_at = col.w -| 2 -| col.right.len;
+            var style = paintStyle(r.text, face, false);
+            var cp: u21 = ' ';
+            if (cx >= 2 and cx - 2 < col.title.len) {
+                cp = col.title[cx - 2];
+                style = paintStyle(if (col.mark_at == cx - 2) r.accent else if (quiet) r.dim else r.text, face, true);
+            } else if (cx >= right_at and cx < col.w -| 2) {
+                cp = col.right[cx - right_at];
+                style = paintStyle(r.dim, face, false);
+            } else if (!quiet and cx > 2 + col.title.len and cx + 1 < right_at) {
+                cp = '═';
+                style = paintStyle(r.accent.mix(r.raised, 0.5), face, false);
+            }
+            try pen.set(w, style, null);
+            return put(w, cp);
+        }
+        if (y == app.view_h - 1) {
+            const hint = if (app.normal) "i insert" else "esc normal";
+            const said = "❯ tell the orchestrator…";
+            const right_at = col.w -| 2 -| cellCount(hint);
+            var style = paintStyle(r.dim, r.well, false);
+            var cp: u21 = ' ';
+            if (cx >= 2 and cx - 2 < cellCount(said) and cx + 1 < right_at) {
+                var it = std.unicode.Utf8View.initUnchecked(said).iterator();
+                for (0..cx - 2) |_| _ = it.nextCodepoint();
+                cp = it.nextCodepoint() orelse ' ';
+                if (cx == 2) style = paintStyle(r.accent, r.well, true);
+            } else if (cx >= right_at and cx < col.w -| 2) {
+                var it = std.unicode.Utf8View.initUnchecked(hint).iterator();
+                for (0..cx - right_at) |_| _ = it.nextCodepoint();
+                cp = it.nextCodepoint() orelse ' ';
+            }
+            try pen.set(w, style, null);
+            return put(w, cp);
+        }
+        try pen.set(w, paintStyle(r.text, r.panel, false), null);
+        try put(w, ' ');
+    }
 
     /// The border cell at (`cx`, `y`) of the column: the frame and the title in its top edge.
     fn border(col: Column, pen: *Pen, w: *Writer, cx: usize, y: u16) !void {
         const app = col.app;
+        if (col.roles) |r| return col.benchBorder(r, pen, w, cx, y);
         const h = app.view_h;
         const top = y == 0;
         const bottom = y == h - 1;
@@ -1122,6 +1169,7 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
             .title = title_cps[0..title_len],
             .mark_at = if (headed and title_len > 0) 1 else if (mark != .none and title_len > 0) title_len - 2 else null,
             .right = if (title_len + right.len + 6 <= col_w) right else right[0..0],
+            .roles = if (headed) app.roles else null,
         };
 
         var pen: Pen = .{};
@@ -1188,15 +1236,167 @@ fn sideHint(app: *const App) []const u8 {
 
 /// Row `row` of the feed atop the orchestrator's column, `inner` cells wide: its line, or past
 /// them, the rule under it.
+/// A style on Workbench's panel when it sets no background of its own.
+fn onPanel(app: *const App, style: vt.Style) vt.Style {
+    const r = app.roles orelse return style;
+    var s = style;
+    switch (s.bg_color.value()) {
+        .none => s.bg_color = .rgb(.{ .r = r.panel.r, .g = r.panel.g, .b = r.panel.b }),
+        else => {},
+    }
+    return s;
+}
+
+fn paintStyle(fg: color.RGB, bg: color.RGB, bold: bool) vt.Style {
+    var s: vt.Style = .{ .fg_color = .rgb(.{ .r = fg.r, .g = fg.g, .b = fg.b }), .bg_color = .rgb(.{ .r = bg.r, .g = bg.g, .b = bg.b }) };
+    s.flags.bold = bold;
+    return s;
+}
+
+/// Cells written one after another on a feed row, `room` of them left.
+const RowOut = struct {
+    w: *Writer,
+    pen: *Pen,
+    room: usize,
+    bg: color.RGB,
+
+    fn say(o: *RowOut, fg: color.RGB, bold: bool, text: []const u8) !void {
+        const t = clip(text, o.room);
+        if (t.len == 0) return;
+        try o.pen.set(o.w, paintStyle(fg, o.bg, bold), null);
+        try o.w.writeAll(t);
+        o.room -= cellCount(t);
+    }
+
+    /// `▎label `: a lead bar and the words on raised, or, `filled`, `lead` the face and ink the words.
+    fn chip(o: *RowOut, r: theme.Roles, lead: color.RGB, label: []const u8, filled: bool) !void {
+        if (o.room < cellCount(label) + 2) return;
+        try o.pen.set(o.w, paintStyle(lead, if (filled) lead else r.raised, false), null);
+        try o.w.writeAll("▎");
+        try o.pen.set(o.w, paintStyle(if (filled) r.on_accent else r.text, if (filled) lead else r.raised, filled), null);
+        try o.w.writeAll(label);
+        try o.w.writeAll(" ");
+        o.room -= cellCount(label) + 2;
+    }
+
+    /// ` key label ` raised with its shadow's `▌` after it, or filled amber when `primary`.
+    fn button(o: *RowOut, r: theme.Roles, key: []const u8, label: []const u8, primary: bool) !void {
+        if (o.room < cellCount(key) + cellCount(label) + 5) return;
+        const face = if (primary) r.accent else r.raised;
+        try o.pen.set(o.w, paintStyle(if (primary) r.on_accent else r.accent, face, primary), null);
+        try o.w.writeAll(" ");
+        try o.w.writeAll(key);
+        try o.pen.set(o.w, paintStyle(if (primary) r.on_accent else r.text, face, primary), null);
+        try o.w.writeAll(" ");
+        try o.w.writeAll(label);
+        try o.w.writeAll(" ");
+        try o.pen.set(o.w, paintStyle(r.well, o.bg, false), null);
+        try o.w.writeAll("▌ ");
+        o.room -= cellCount(key) + cellCount(label) + 5;
+    }
+
+    fn finish(o: *RowOut) !void {
+        try o.say(o.bg, false, spaceRun(o.room));
+    }
+};
+
+const space_run: [512]u8 = @splat(' ');
+
+fn spaceRun(n: usize) []const u8 {
+    return space_run[0..@min(n, space_run.len)];
+}
+
+/// Workbench's row of the feed for the lines that are tiles, buttons or chips: a Your move item a
+/// tile led by its kind's chip, its buttons raised, landing and building chips as chips, the
+/// pick lit raised. Chips keep their cells, so the pick's place is the text's.
+fn benchFeedRow(app: *const App, w: *Writer, pen: *Pen, r: theme.Roles, f: *const feed.Feed, row: usize, inner: u16) !void {
+    const line = f.line(row);
+    const on = if (app.feedFocused()) app.feedPick(f) else null;
+    var head = row;
+    if (line.kind == .buttons or line.kind == .refused) {
+        while (head > 0 and f.line(head).kind != .item) head -= 1;
+    }
+    const tiled = line.kind == .item or line.kind == .buttons or line.kind == .refused;
+    const lit = if (on) |o| tiled and o.line == head else false;
+    var o: RowOut = .{ .w = w, .pen = pen, .room = inner, .bg = if (!tiled) r.panel else if (lit) r.raised else r.tile };
+    try o.say(r.text, false, " ");
+    switch (line.kind) {
+        .item => {
+            try o.say(r.accent, true, if (lit) "▌ " else "  ");
+            const need = if (line.need) |at| app.board.?.needsYou()[at] else null;
+            const kind = if (need) |n| n.kind else "";
+            const eql = std.mem.eql;
+            if (eql(u8, kind, "ask")) try o.chip(r, r.you, "asks", true) else if (eql(u8, kind, "sent_back") or eql(u8, kind, "sendback")) try o.chip(r, r.failed, "sent back", true) else if (eql(u8, kind, "proposal")) try o.chip(r, r.accent, "proposal", true) else if (kind.len > 0) try o.chip(r, r.dim, kind, false);
+            if (need) |n| if (n.ticket) |id| if (std.mem.indexOfScalar(u8, line.text, '#') == null) {
+                var buf: [64]u8 = undefined;
+                try o.say(repoHue(r, n.repo).hue, true, std.fmt.bufPrint(&buf, "#{d} {s} ", .{ id, n.repo }) catch "");
+            };
+            try o.say(r.text, false, line.text);
+        },
+        .buttons => {
+            try o.say(r.accent, true, if (lit) "▌ " else "  ");
+            var primary = true;
+            var pieces = std.mem.splitSequence(u8, line.text, "   ");
+            while (pieces.next()) |piece| {
+                const space = std.mem.indexOfScalar(u8, piece, ' ') orelse piece.len;
+                const key = piece[0..space];
+                const mine = primary and std.mem.eql(u8, key, "⏎");
+                if (mine) primary = false;
+                try o.button(r, key, std.mem.trimStart(u8, piece[space..], " "), mine);
+            }
+        },
+        .refused => {
+            try o.say(r.accent, true, if (lit) "▌ " else "  ");
+            try o.say(r.failed, false, line.text);
+        },
+        .move_head => {
+            const cut = std.mem.lastIndexOfScalar(u8, line.text, ' ') orelse 0;
+            try o.say(r.you, true, line.text[0..cut]);
+            try o.say(r.text, false, " ");
+            try o.chip(r, r.dim, line.text[@min(cut + 1, line.text.len)..], false);
+        },
+        else => {
+            // landing's and building's chips, three cells apart in the text and one here, the chip
+            // taking the gap's two
+            try o.say(r.text, false, " ");
+            const building = line.kind == .building_chips;
+            var at: usize = 0;
+            var pieces = std.mem.splitSequence(u8, line.text, "   ");
+            while (pieces.next()) |piece| {
+                const failed = std.mem.startsWith(u8, piece, "✗ ");
+                const label = if (failed) piece["✗ ".len..] else piece;
+                const here = on != null and on.?.line == row and on.?.at == at;
+                at += cellCount(piece) + 3;
+                if (piece.len == 0) continue;
+                if (piece[0] == '+') {
+                    try o.say(r.dim, false, piece);
+                    continue;
+                }
+                var words = std.mem.tokenizeScalar(u8, label, ' ');
+                _ = words.next();
+                _ = words.next();
+                const stage = words.next() orelse "";
+                const lead = if (here) r.accent else if (failed) r.failed else if (building) r.building else stepHue(r, stage).lead;
+                try o.chip(r, lead, label, here);
+            }
+        },
+    }
+    try o.finish();
+}
+
 fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usize, inner: u16) !void {
     const dim = ink(app, "dim", 8);
+    if (row < f.count()) if (app.roles) |r| switch (f.line(row).kind) {
+        .item, .buttons, .refused, .move_head, .landing_chips, .building_chips => return benchFeedRow(app, w, pen, r, f, row, inner),
+        else => {},
+    };
     if (row >= f.count()) {
-        try pen.set(w, dim, null);
+        try pen.set(w, onPanel(app, dim), null);
         for (0..inner) |_| try w.writeAll("─");
         return;
     }
     const line = f.line(row);
-    try pen.set(w, .{}, null);
+    try pen.set(w, onPanel(app, .{}), null);
     try w.writeAll(" ");
     var room: usize = inner -| 1;
     const bar = if (line.failed) ink(app, "emberdim", 1) else ink(app, "amber", 4);
@@ -1208,7 +1408,7 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
         else => "",
     };
     if (lead.len > 0 and room > cellCount(lead)) {
-        try pen.set(w, bar, null);
+        try pen.set(w, onPanel(app, bar), null);
         try w.writeAll(lead);
         room -= cellCount(lead);
     }
@@ -1257,12 +1457,12 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
         }
         const text = clip(shown[at..end], avail - used);
         if (text.len == 0) break;
-        try pen.set(w, run_style, null);
+        try pen.set(w, onPanel(app, run_style), null);
         try w.writeAll(text);
         used += cellCount(text);
         at += text.len;
     }
-    try pen.set(w, style, null);
+    try pen.set(w, onPanel(app, style), null);
     if (cut) try w.writeAll("…");
     for (used + @intFromBool(cut)..room) |_| try w.writeAll(" ");
 }
@@ -1384,6 +1584,7 @@ fn sideEmpty(app: *const App, w: *Writer) !void {
         .title = title_cps[0..title_len],
         .mark_at = if (title_len > 0) 1 else null,
         .right = if (title_len + right.len + 6 <= app.view_w) right else right[0..0],
+        .roles = app.roles,
     };
     var pen: Pen = .{};
     var the_feed: feed.Feed = undefined;
@@ -1396,7 +1597,7 @@ fn sideEmpty(app: *const App, w: *Writer) !void {
             } else if (y < top) {
                 if (x == 1) try feedRow(app, w, &pen, &the_feed, y - 1, app.view_w - 2);
             } else {
-                try pen.set(w, .{}, null);
+                try pen.set(w, onPanel(app, .{}), null);
                 try w.writeAll(" ");
             }
         }
@@ -4164,4 +4365,62 @@ test "a card's popup in Workbench's look: a window with its ✕, the title whole
     try eq(r.you, (try bench.probe(drawn, rect.x + 2, options[0].y - 1)).fg);
     try eq(r.accent, (try bench.probe(drawn, options[0].x, options[0].y)).bg);
     try eq(r.raised, (try bench.probe(drawn, options[1].x, options[1].y)).bg);
+}
+
+test "the orchestrator's column in Workbench: Your move's three items are tiles led by their kind's chip, each with its buttons raised" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"orchestrator":{"on":true,"running":true},
+        \\"needs_you":[
+        \\{"id":"ask-52","kind":"ask","ticket":760,"repo":"arena","text":"Which visual direction should the board and Home take?",
+        \\ "actions":[{"key":"1","label":"Phosphor"},{"key":"2","label":"Workbench"},{"key":"c","label":"in words","needs":"words"}]},
+        \\{"id":"back-338","kind":"sent_back","ticket":338,"repo":"arena","text":"sent back, free: the review asked for the action row",
+        \\ "actions":[{"key":"G","label":"give"},{"key":"⏎","label":"start"},{"key":"x","label":"close"}]},
+        \\{"id":"prop-41","kind":"proposal","ticket":612,"repo":"tlon","text":"start #612 next: high, two days old",
+        \\ "actions":[{"key":"⏎","label":"go"},{"key":"x","label":"no"}]}]}
+    );
+    defer board.deinit();
+    var app = homeApp(&board);
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 23;
+    app.roles = bench.roles();
+    const r = bench.roles();
+    var f: feed.Feed = undefined;
+    try std.testing.expect(app.feedOf(&f));
+    var buf: [262144]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try sideEmpty(&app, &out);
+    const frame_out = out.buffered();
+
+    const head = try bench.probe(frame_out, 2, 1);
+    try std.testing.expectEqual(@as(u21, '▲'), head.cp);
+    try std.testing.expectEqual(r.you, head.fg);
+    try std.testing.expectEqual(r.panel, head.bg);
+
+    // each item's row: the pick on the first, its chip filled in its kind's colour
+    const kinds = [_]theme.RGB{ r.you, r.failed, r.accent };
+    var seen: usize = 0;
+    for (0..f.count()) |i| {
+        if (f.line(i).kind != .item) continue;
+        const y = i + 1;
+        const lit = seen == 0;
+        const bg = if (lit) r.raised else r.tile;
+        const lead = try bench.probe(frame_out, 2, y);
+        try std.testing.expectEqual(@as(u21, if (lit) '▌' else ' '), lead.cp);
+        try std.testing.expectEqual(bg, lead.bg);
+        const chip_cell = try bench.probe(frame_out, 4, y);
+        try std.testing.expectEqual(@as(u21, '▎'), chip_cell.cp);
+        try std.testing.expectEqual(kinds[seen], chip_cell.fg);
+        try std.testing.expectEqual(kinds[seen], chip_cell.bg);
+        // its buttons on the row under: raised with the key in amber, a proposal's ⏎ the filled primary
+        const button = try bench.probe(frame_out, 5, y + 1);
+        try std.testing.expectEqual(if (seen == 2) r.accent else r.raised, button.bg);
+        try std.testing.expectEqual(if (seen == 2) r.on_accent else r.accent, button.fg);
+        seen += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 3), seen);
+
+    // the foot is a well
+    const foot = try bench.probe(frame_out, 5, app.view_h - 1);
+    try std.testing.expectEqual(r.well, foot.bg);
 }
