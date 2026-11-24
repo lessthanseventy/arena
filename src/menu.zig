@@ -122,7 +122,8 @@ pub const Prompt = struct {
     what: What,
     buf: [200]u8 = undefined,
     len: usize = 0,
-    /// Of a words prompt: the id of the Your move item it answers.
+    /// Of a words prompt: the id of the Your move item it answers; of a why prompt: the ticket's
+    /// number.
     target: [32]u8 = undefined,
     target_len: usize = 0,
     /// Which of the windows listed under a jump prompt Enter goes to.
@@ -130,7 +131,7 @@ pub const Prompt = struct {
     /// The last search found nothing.
     missed: bool = false,
 
-    pub const What = enum { window, session, jump, search, report, words };
+    pub const What = enum { window, session, jump, search, report, words, why };
     pub const Result = enum { none, cancel, commit, up, down };
 
     /// Rows the box takes; the first of a jump prompt's windows is on row `list_row`.

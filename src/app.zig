@@ -1694,7 +1694,7 @@ pub const App = struct {
         const b = if (app.board) |*b| b else return false;
         const named: []const u8 = if (std.mem.eql(u8, key, "\r")) "⏎" else key;
         if (item.auto) return app.autoKey(item, key);
-        if (item.next) |at| return app.nextKey(at, key);
+        if (item.next) |at| return app.nextKey(at, &app.board_view.?.pick, key);
         const at = item.need orelse {
             if (!std.mem.eql(u8, named, "⏎")) return false;
             const id = item.ticket orelse return true;
@@ -1754,6 +1754,32 @@ pub const App = struct {
                 return;
             }
         }
+    }
+
+    /// A line opened at the board's foot for ticket `id`'s why in next, `was` in it to be edited:
+    /// Enter puts the ticket in next, or keeps it there, with what is typed; Escape drops it.
+    fn openWhy(app: *App, id: u32, was: []const u8) bool {
+        var prompt: menu.Prompt = .{ .what = .why };
+        const number = std.fmt.bufPrint(&prompt.target, "{d}", .{id}) catch return true;
+        prompt.target_len = number.len;
+        var keep = @min(was.len, prompt.buf.len - 4);
+        while (keep < was.len and keep > 0 and was[keep] & 0xC0 == 0x80) keep -= 1;
+        @memcpy(prompt.buf[0..keep], was[0..keep]);
+        prompt.len = keep;
+        app.prompt = prompt;
+        app.normal = false;
+        app.dirty = true;
+        return true;
+    }
+
+    /// Enter on a why line: `babylon next N --why TEXT`, which adds the ticket at the bottom of
+    /// next or, with it there, changes its why. Nothing typed runs nothing.
+    fn sendWhy(app: *App, prompt: menu.Prompt) !void {
+        app.endWords();
+        if (prompt.len == 0) return;
+        var said: [40]u8 = undefined;
+        const refusal = std.fmt.bufPrint(&said, "next:{s}", .{prompt.item()}) catch return;
+        _ = try app.runNeed(refusal, &.{ "babylon", "next", prompt.item(), "--why", prompt.text() });
     }
 
     /// The words line gone, the feed having its keys back.
@@ -1817,14 +1843,13 @@ pub const App = struct {
     /// A key on a ticket of next, the `at`th: `J` and `K` move it down and up, `x` drops it from
     /// next and `p` pins it where it is. Each goes through babylon as the human, which marks the
     /// ticket as the human's, so the orchestrator moves it only with a proposal.
-    fn nextKey(app: *App, at: usize, key: []const u8) !bool {
+    fn nextKey(app: *App, at: usize, pick: *usize, key: []const u8) !bool {
         const b = if (app.board) |*b| b else return false;
         const plan = b.next();
         if (at >= plan.len) return false;
         var id: [12]u8 = undefined;
         var place: [12]u8 = undefined;
         const ticket = std.fmt.bufPrint(&id, "{d}", .{plan[at].ticket}) catch return true;
-        const view = &app.board_view.?;
         var said: [24]u8 = undefined;
         const refusal = std.fmt.bufPrint(&said, "next:{d}", .{plan[at].ticket}) catch return true;
         if (anyKey(key, &.{"x"})) return app.runNeed(refusal, &.{ "babylon", "next", ticket, "--drop" });
@@ -1836,7 +1861,7 @@ pub const App = struct {
         if (!down and !anyKey(key, &.{"K"})) return false;
         if (if (down) at + 1 >= plan.len else at == 0) return true;
         const to = std.fmt.bufPrint(&place, "{d}", .{if (down) at + 2 else at}) catch return true;
-        view.pick = if (down) view.pick + 1 else view.pick - 1;
+        pick.* = if (down) pick.* + 1 else pick.* - 1;
         return app.runNeed(refusal, &.{ "babylon", "next", ticket, "--at", to });
     }
 
@@ -3268,6 +3293,17 @@ pub const App = struct {
         if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.plan_pick -|= 1;
         if (is(key, &.{"?"})) view.help = true;
         if (is(key, &.{"B"})) return app.toBoard();
+        if (is(key, &.{ "J", "K", "x", "e" })) {
+            const row = sheet.picked(view.plan_pick) orelse return;
+            if (row.kind != .next) return;
+            const b = &app.board.?;
+            for (b.next(), 0..) |item, at| {
+                if (item.ticket != row.ticket.?) continue;
+                if (is(key, &.{"e"})) _ = app.openWhy(item.ticket, item.why) else _ = try app.nextKey(at, &view.plan_pick, key);
+                break;
+            }
+            return;
+        }
         if (is(key, &.{ "\r", " ", "t" })) {
             const row = sheet.picked(view.plan_pick) orelse return;
             return app.planAct(row, key);
@@ -3561,9 +3597,13 @@ pub const App = struct {
         try app.send(.ignore, "run-shell -b \"babylon auto {s}\"", .{if (app.auto() == null) "on" else "off"});
     }
 
-    /// The todo card picked put in next, at its bottom or at its top.
+    /// The todo card picked put in next at its top, or at its bottom once its why is typed.
     fn toNext(app: *App, id: u32, top: bool) !void {
-        try app.send(.ignore, "run-shell -b \"babylon next {d}{s}\"", .{ id, if (top) " --at 1" else "" });
+        if (!top) {
+            _ = app.openWhy(id, "");
+            return;
+        }
+        try app.send(.ignore, "run-shell -b \"babylon next {d} --at 1\"", .{id});
     }
 
     fn newTicket(app: *App) !void {
@@ -4656,7 +4696,7 @@ pub const App = struct {
             const listed = prompt.what == .jump and m.leftPress() and m.x > at.x and m.x + 1 < at.x + menu.width and
                 m.y >= first and m.y < first + menu.jump_rows;
             if (!listed) {
-                if (prompt.what == .words) app.endWords() else {
+                if (prompt.what == .words or prompt.what == .why) app.endWords() else {
                     app.prompt = null;
                 }
                 return;
@@ -4989,7 +5029,7 @@ pub const App = struct {
                 app.dirty = true;
                 switch (prompt.press(key)) {
                     .none => {},
-                    .cancel => if (prompt.what == .words) app.endWords() else {
+                    .cancel => if (prompt.what == .words or prompt.what == .why) app.endWords() else {
                         app.prompt = null;
                     },
                     .commit => try app.commit(),
@@ -5009,6 +5049,7 @@ pub const App = struct {
         const prompt = app.prompt orelse return;
         if (prompt.what == .search) return app.searchNext();
         if (prompt.what == .words) return app.sendWords(prompt);
+        if (prompt.what == .why) return app.sendWhy(prompt);
         app.prompt = null;
         if (prompt.what == .report) return app.fileReport(prompt.text());
         const s = app.cur() orelse return;
@@ -5021,7 +5062,7 @@ pub const App = struct {
                 if (prompt.selected < n) try app.jumpTo(hits[prompt.selected].session, hits[prompt.selected].index);
                 return;
             },
-            .search, .report, .words => return,
+            .search, .report, .words, .why => return,
             .window => try cmd.writer.print("rename-window -t @{d} -- '", .{(s.focused() orelse return).id}),
             .session => try cmd.writer.print("rename-session -t '${d}' -- '", .{s.id}),
         }

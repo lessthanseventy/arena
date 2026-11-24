@@ -1161,7 +1161,13 @@ last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
 key p
 check "p raises the picked card's priority through babylon" await last 'update 7 --priority high'
 key w
-check "w puts the picked todo card at the bottom of next, through babylon" await last 'next 7'
+check "w asks the picked todo card's why at the board's foot" see '❯ +⏎ save  esc drop'
+key Escape
+check "and Escape drops it" gone '⏎ save  esc drop'
+key w
+key -l 'the lights'
+key Enter
+check "its why puts the card at the bottom of next, through babylon" await last 'next 7 --why the lights'
 key W
 check "and W at its top" await last 'next 7 --at 1'
 inner set -p -t alpha:one @arena_claude_since $(date +%s)
@@ -1850,6 +1856,7 @@ check "arena with no session named opens home: the plan, the orchestrator's colu
 check "the plan, with its head" see '◆ plan  B board'
 check "next as babylon gives it" see '1 #7 +tlon +Lights +free now'
 check "and its why under it" see 'the light switch'
+
 check "the column with the keys" await orch_lit
 key C-Space
 key B
@@ -1857,6 +1864,17 @@ check "B shows the board" see ' board  every'
 check "in the plan's place" gone '◆ plan'
 key b
 check "and b comes home to the plan" see '◆ plan  B board'
+mouse 0 60 1 M
+mouse 0 60 1 m
+key e
+check "e on a next row opens its why, to edit" see '❯ the light switch'
+key -l ' now'
+key Enter
+check "and Enter keeps it there with the new why, through babylon" await last 'next 7 --why the light switch now'
+key x
+check "x takes it out of next, through babylon" await last 'next 7 --drop'
+key l
+key i
 # the click that focuses a new terminal window lands anywhere in it
 mouse 0 100 24 M
 mouse 0 100 24 m

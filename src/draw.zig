@@ -882,7 +882,7 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
     const was: []const u8 = switch (prompt.what) {
         .window => if (session) |s| (if (s.focused()) |win| win.name else "") else "",
         .session => if (session) |s| s.name else "",
-        .jump, .search, .report, .words => "",
+        .jump, .search, .report, .words, .why => "",
     };
 
     try b.edge("╭", "╮");
@@ -895,7 +895,7 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
             .jump => "  → Jump to window",
             .search => "  / Search history",
             .report => "  ! What's wrong?",
-            .words => "",
+            .words, .why => "",
         },
         dim,
         std.fmt.bufPrint(&buf, "{s}  ", .{clip(was, 12)}) catch "",
@@ -933,13 +933,14 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
 }
 
 /// The line the human's words are typed into, at the foot of the orchestrator's column, over its
-/// last row. Returns where its cursor goes.
+/// last row; a ticket's why is typed at the board's foot. Returns where its cursor goes.
 fn wordsLine(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
-    const x = app.term_w - app.view_w;
+    const why = prompt.what == .why;
+    const x = if (why) app.boardX() else app.term_w - app.view_w;
     const y = app.view_h -| 2;
-    const inner = app.view_w -| 4;
+    const inner = (if (why) app.boardW() else app.view_w) -| 4;
     var buf: [256]u8 = undefined;
-    const hint = "  ⏎ send  esc drop";
+    const hint = if (why) "  ⏎ save  esc drop" else "  ⏎ send  esc drop";
     const room = inner -| 2 -| cellCount(hint);
     const text = prompt.text();
     var shown = text;
@@ -1927,7 +1928,7 @@ const board_keys = [_][2][]const u8{
     .{ "J K", "move it down or up among its repo's cards" },
     .{ "n, +", "file a ticket" },
     .{ "r, a tab", "the next repo, the backlog, or the one clicked" },
-    .{ "t w W", "a backlog card to todo; a todo card to next, W at its top" },
+    .{ "t w W", "backlog card to todo; todo card to next, asking its why; W at top" },
     .{ "g", "babylon's gate, while it runs one" },
     .{ "o", "the orchestrator, started if it is not running" },
     .{ "A", "babylon's auto mode, on or off" },
@@ -1942,6 +1943,7 @@ const plan_keys = [_][2][]const u8{
     .{ "j k, arrows", "pick a row: now, next, goals, landed, not planned" },
     .{ "⏎, click it", "go: its Claude, the gate, start it, unfold a row, the board on it" },
     .{ "space, t", "its whole ticket" },
+    .{ "J K x e", "on next: move it down or up, take it out, edit its why" },
     .{ "B, b", "the board, and back to the plan" },
     .{ "] [", "your move, first or last" },
     .{ "l, h", "the orchestrator's column, and back" },
@@ -2479,7 +2481,7 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
         cursor = null;
     }
     if (app.prompt) |*prompt| {
-        cursor = if (prompt.what == .words) try wordsLine(app, w, prompt) else try promptBox(app, w, prompt);
+        cursor = if (prompt.what == .words or prompt.what == .why) try wordsLine(app, w, prompt) else try promptBox(app, w, prompt);
     } else if (app.menu) |open| {
         try menuBox(app, w, open);
         cursor = null;
