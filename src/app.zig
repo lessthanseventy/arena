@@ -1218,7 +1218,7 @@ pub const App = struct {
     }
 
     /// What the rail's pick is on, by id: a session in its list, a Claude's window in its own, or
-    /// a fold of the pipeline's by its repo's hash.
+    /// a fold by its key (`foldKey`): its repo's hash, or its session's id's.
     pub const RailPick = union(enum) { session: u32, agent: u32, fold: u64 };
 
     /// The rail as one list, as it is drawn: each session, then its Claudes, then the pipeline's folds.
