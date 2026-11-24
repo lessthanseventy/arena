@@ -1241,6 +1241,7 @@ pub const App = struct {
             pop.mode = .view;
         } else if (anyKey(key, &.{"r"})) {
             pop.mode = .reply;
+            pop.reply_len = 0;
         } else if (key.len == 1 and key[0] >= '1' and key[0] <= '9') {
             var asked: Asked = .{};
             if (!app.popupAsk(pane, &asked) or key[0] - '0' > asked.n) return;
