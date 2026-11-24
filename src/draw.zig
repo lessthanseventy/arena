@@ -2175,12 +2175,11 @@ fn cardLine(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, p
     while (counted.next()) |_| count += 1;
     const rows = if (picked) count else @min(count, App.title_rows);
     const last = @intFromBool(App.cardHasLast(card, with_repo));
-    if (picked and (part == 0 or part == rows + last + 1)) {
+    if (picked and (part == 0 or part == rows + last + 3)) {
         try pen.set(w, border, null);
         if (part == 0) {
             try w.writeAll("╭");
-            try cardEdge(app, w, pen, card, border, inner - 2);
-            try pen.set(w, border, null);
+            for (0..inner - 2) |_| try w.writeAll("─");
             try w.writeAll("╮");
         } else {
             try w.writeAll("╰");
@@ -2206,31 +2205,24 @@ fn cardLine(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, p
             try pen.set(w, .{}, null);
             try fitted(w, "", width -| (cellCount(shown) + 1));
         } else try fitted(w, line, width);
-    } else try cardLast(app, w, pen, card, with_repo, inner - 2);
+    } else if (row < rows + last) {
+        try cardLast(app, w, pen, card, with_repo, inner - 2);
+    } else if (row == rows + last) {
+        try cardAge(app, w, pen, card, inner - 2);
+    } else try fitted(w, "", inner - 2);
     try pen.set(w, border, null);
     try w.writeAll(if (picked) "│" else " ");
 }
 
-/// The picked card's top edge in `width` cells: its priority and how long since it was filed,
-/// the edge's line run on after.
-fn cardEdge(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, border: vt.Style, width: usize) !void {
+/// The picked card's detail row in `width` cells: its priority and how long since it was filed.
+fn cardAge(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, width: usize) !void {
     var buf: [48]u8 = undefined;
     var age: [8]u8 = undefined;
     const filed = if (tickets.epochOf(card.inserted_at)) |at| ago(&age, app.epoch, @intCast(@max(1, at))) else "";
     const text = if (filed.len > 0) std.fmt.bufPrint(&buf, "{s} · filed {s}", .{ card.priority, filed }) catch card.priority else card.priority;
-    var left = width;
-    if (width >= 4) {
-        const shown = clip(text, width - 2);
-        try pen.set(w, .{}, null);
-        try w.writeAll(" ");
-        try pen.set(w, ink(app, "dim", 8), null);
-        try w.writeAll(shown);
-        try pen.set(w, .{}, null);
-        try w.writeAll(" ");
-        left -= cellCount(shown) + 2;
-    }
-    try pen.set(w, border, null);
-    for (0..left) |_| try w.writeAll("─");
+    try pen.set(w, ink(app, "dim", 8), null);
+    try w.writeAll(" ");
+    try fitted(w, text, width -| 1);
 }
 
 /// Where the pipeline has a card: its glyph, none when it has none, the word for it, and the

@@ -3115,7 +3115,7 @@ pub const App = struct {
         var n: usize = 0;
         while (lines.next()) |_| n += 1;
         const last = @intFromBool(cardHasLast(card, app.cardRepoShown()));
-        return if (app.cardPicked(lane, col, row)) n + last + 2 else @max(1, @min(n, title_rows) + last);
+        return if (app.cardPicked(lane, col, row)) n + last + 4 else @max(1, @min(n, title_rows) + last);
     }
 
     pub const title_rows = 4;
@@ -3626,9 +3626,30 @@ pub const App = struct {
         up,
         down,
         to_next,
+        open,
+
+        /// The key that does it, as the box on the board writes it.
+        pub fn key(action: CardAction) []const u8 {
+            return switch (action) {
+                .go => "⏎",
+                .no => "x",
+                .answer => "a",
+                .give => "G",
+                .edit => "e",
+                .priority => "p",
+                .close => ">",
+                .reopen => "<",
+                .to_todo => "t",
+                .up => "K",
+                .down => "J",
+                .to_next => "w",
+                .open => "space",
+            };
+        }
 
         pub fn label(action: CardAction) []const u8 {
             return switch (action) {
+                .open => "open",
                 .go => "go",
                 .no => "no",
                 .answer => "answer",
@@ -3674,6 +3695,10 @@ pub const App = struct {
     fn act(app: *App, action: CardAction) !void {
         const view = if (app.board_view) |*open| open else return;
         const card = app.boardCard(view.col, view.row) orelse return;
+        if (action == .open) {
+            _ = try app.openDetail(card.id);
+            return;
+        }
         var have: [12]CardAction = undefined;
         if (std.mem.indexOfScalar(CardAction, cardActions(card, &have), action) == null) return;
         var buf: [80]u8 = undefined;
@@ -3692,6 +3717,7 @@ pub const App = struct {
             .close => try app.send(.ignore, "run-shell -b \"babylon update {d} --status done\"", .{card.id}),
             .to_next => try app.toNext(card.id, false),
             .reopen, .to_todo => try app.send(.ignore, "run-shell -b \"babylon update {d} --status todo\"", .{card.id}),
+            .open => unreachable,
             .up, .down => {
                 // a move babylon could not be narrowed to the repo shown would order every repo's cards
                 if (app.pickRepo() != null and narrowed.len == 0) return;
@@ -3951,8 +3977,22 @@ pub const App = struct {
                 break :blk if (short) std.fmt.bufPrint(buf, " ▲ {d} ", .{n}) catch " ▲ " else std.fmt.bufPrint(buf, " ▲ {d} need you ", .{n}) catch " ▲ ";
             },
             .new => " + ",
-            .card => |action| std.fmt.bufPrint(buf, " {s} ", .{action.label()}) catch " ? ",
+            .card => |action| app.cardButtonText(action, buf),
         };
+    }
+
+    /// A picked card's button in the box: its key, then what it does, `⏎ start`; the strip's
+    /// one row has no room for the key. A review card's `space` is its log, a free card's `⏎` starts it.
+    fn cardButtonText(app: *const App, action: CardAction, buf: []u8) []const u8 {
+        const view = app.board_view orelse return " ? ";
+        const card = app.boardCard(view.col, view.row);
+        const word = if (card) |c| switch (action) {
+            .go => if (c.proposal == null and c.holder() == null) "start" else action.label(),
+            .open => if (c.status == .review) "log" else action.label(),
+            else => action.label(),
+        } else action.label();
+        if (app.boardStrip(view.col)) return std.fmt.bufPrint(buf, " {s} ", .{word}) catch " ? ";
+        return std.fmt.bufPrint(buf, " {s} {s} ", .{ action.key(), word }) catch " ? ";
     }
 
     /// The title the board's first row begins with.
@@ -4073,7 +4113,7 @@ pub const App = struct {
         const y: u16 = if (strip) app.view_h -| 1 else blk: {
             const lane = app.pickLane();
             const top = app.cardStart(view.col, lane, view.row) orelse return out[0..n];
-            const line = top + app.cardHeight(lane, view.col, view.row) - 1;
+            const line = top + app.cardHeight(lane, view.col, view.row) - 2;
             const scroll = app.columnScroll(view.col);
             if (line < scroll) return out[0..n];
             break :blk @intCast(@min(2 + line - scroll, app.view_h));
@@ -4089,6 +4129,12 @@ pub const App = struct {
             out[n] = .{ .what = .{ .card = action }, .x = x, .y = y, .w = w };
             n += 1;
             x += w + 1;
+        }
+        if (!strip and n < out.len) {
+            const open: CardAction = .open;
+            const w: u16 = @intCast(cellCount(app.buttonLabel(.{ .what = .{ .card = open }, .x = 0, .y = 0, .w = 0 }, &buf)));
+            if (x + w <= edge) out[n] = .{ .what = .{ .card = open }, .x = x, .y = y, .w = w };
+            if (x + w <= edge) n += 1;
         }
         return out[0..n];
     }
@@ -5806,7 +5852,7 @@ test "the every view's columns grouped by repo: their lines, the pick stepping a
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     app.term_w = 100;
     app.view_w = 80;
-    app.view_h = 6;
+    app.view_h = 8;
     app.board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[
         \\{"id":1,"repo":"arena","title":"a","status":"todo"},
@@ -5820,16 +5866,17 @@ test "the every view's columns grouped by repo: their lines, the pick stepping a
     app.board_view = .{};
     const eq = std.testing.expectEqual;
 
-    // in todo, arena's heading and its two cards, the picked one boxed on three rows and the
-    // other a title's row, then the cards of no repo's; tlon has none there, so no rows
+    // in todo, arena's heading and its two cards, the picked one boxed on five rows (its edges,
+    // title, detail and actions) and the other a title's row, then the cards of no repo's; tlon
+    // has none there, so no rows
     const Line = App.ColumnLine;
     try eq(Line{ .lane = 0, .what = .heading }, app.columnLineAt(0, 0).?);
     try eq(Line{ .lane = 0, .what = .{ .card = .{ .row = 0, .part = 0 } } }, app.columnLineAt(0, 1).?);
-    try eq(Line{ .lane = 0, .what = .{ .card = .{ .row = 0, .part = 2 } } }, app.columnLineAt(0, 3).?);
-    try eq(Line{ .lane = 0, .what = .{ .card = .{ .row = 1, .part = 0 } } }, app.columnLineAt(0, 4).?);
-    try eq(Line{ .lane = 2, .what = .heading }, app.columnLineAt(0, 5).?);
-    try eq(Line{ .lane = 2, .what = .{ .card = .{ .row = 0, .part = 0 } } }, app.columnLineAt(0, 6).?);
-    try eq(@as(?Line, null), app.columnLineAt(0, 7));
+    try eq(Line{ .lane = 0, .what = .{ .card = .{ .row = 0, .part = 4 } } }, app.columnLineAt(0, 5).?);
+    try eq(Line{ .lane = 0, .what = .{ .card = .{ .row = 1, .part = 0 } } }, app.columnLineAt(0, 6).?);
+    try eq(Line{ .lane = 2, .what = .heading }, app.columnLineAt(0, 7).?);
+    try eq(Line{ .lane = 2, .what = .{ .card = .{ .row = 0, .part = 0 } } }, app.columnLineAt(0, 8).?);
+    try eq(@as(?Line, null), app.columnLineAt(0, 9));
     // in doing, arena's then tlon's, each card a title and a last row saying no Claude holds it
     try eq(Line{ .lane = 0, .what = .{ .card = .{ .row = 0, .part = 1 } } }, app.columnLineAt(1, 2).?);
     try eq(Line{ .lane = 1, .what = .heading }, app.columnLineAt(1, 3).?);
@@ -5851,7 +5898,7 @@ test "the every view's columns grouped by repo: their lines, the pick stepping a
     try eq(@as(?u32, 1), picked(&app));
     try app.boardKey("j");
     try eq(@as(?u32, 2), picked(&app));
-    // three lines shown: the picked card's bottom edge kept on the last of them
+    // five lines shown: the picked card's bottom edge kept on the last of them
     try eq(@as(usize, 2), app.columnScroll(0));
     try eq(@as(usize, 0), app.columnScroll(1));
     try app.boardKey("j");
@@ -6025,6 +6072,33 @@ test "the board opens on a ticket by its id: its lane, its repo's columns or the
     try app.showCard(99);
     try eq(@as(?u32, 1), picked(&app));
     try std.testing.expect(app.boardLanes());
+}
+
+test "the picked card's box ends its buttons with space open, a review card's with space log" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 200;
+    app.view_w = 160;
+    app.view_h = 20;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"repo":"arena","title":"a","status":"todo"},
+        \\{"id":2,"repo":"arena","title":"b","status":"review"}
+        \\]}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{};
+    var buttons: [48]App.Button = undefined;
+    var buf: [64]u8 = undefined;
+    const last = struct {
+        fn text(a: *const App, out: []App.Button, b: []u8) []const u8 {
+            const shown = a.boardButtons(out);
+            return std.mem.trim(u8, a.buttonLabel(shown[shown.len - 1], b), " ");
+        }
+    }.text;
+    try std.testing.expectEqualStrings("space open", last(&app, &buttons, &buf));
+    app.board_view.?.col = 2;
+    const open: App.Button = .{ .what = .{ .card = .open }, .x = 0, .y = 0, .w = 0 };
+    try std.testing.expectEqualStrings("space log", std.mem.trim(u8, app.buttonLabel(open, &buf), " "));
 }
 
 test "a card moves along its column only with a repo, out of the backlog" {

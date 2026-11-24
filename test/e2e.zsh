@@ -1005,18 +1005,18 @@ check "babylon's board has a row atop the rail, with its counts" see '^│ ▤ b
 key M-b
 check "Alt+b opens it in place of the strip, its repos as tabs" see ' ▤ board +every [0-9]+ +arena [0-9]+ +tlon [0-9]+ '
 check "and where its keys are" see '\? keys'
-check "the picked card's actions as chips on its own bottom edge" see '╰ go ─ answer ─ '
+check "the picked card's actions as buttons on a row of its box, each with its key" see '⏎ start +a answer '
 rowof() { screen | grep -n -m1 -- "$1" | cut -d: -f1 }
-check "the row under its footer" test $(( $(rowof '#7 Lights') + 2 )) -eq "$(rowof '╰ go ─ answer ─ ')"
+check "under its detail row" test $(( $(rowof '│ med  *│') + 1 )) -eq "$(rowof '⏎ start   a answer ')"
 key l k
-check "l to a column its repo has no card in picks the first repo's that has" see '╰ go ─ edit '
+check "l to a column its repo has no card in picks the first repo's that has" see '⏎ go +e edit '
 key h j
-check "and h back to its own, j off its group's end staying when none is below" see '╰ go ─ answer ─ '
+check "and h back to its own, j off its group's end staying when none is below" see '⏎ start +a answer '
 spot() { local l=$(screen | grep -m1 -- "$1"); local p=${l%%"$1"*}; print $(( ${#p} + 2 )) $(screen | grep -n -m1 -- "$1" | cut -d: -f1) }
 mouse 0 ${(z)$(spot '#8 Board')} M
-check "a click on a card in a repo's group picks it" see '╰ go ─ edit '
+check "a click on a card in a repo's group picks it" see '⏎ go +e edit '
 mouse 0 ${(z)$(spot '#7 Lights')} M
-check "and on another, that one" see '╰ go ─ answer ─ '
+check "and on another, that one" see '⏎ start +a answer '
 key M-!
 check "Alt+! over a card asks what is wrong" see "What's wrong\?"
 key -l 'hover sticks on a card'
@@ -1048,7 +1048,7 @@ check "a card not picked unboxed, a bar down its left, its number and title besi
 check "a long title running on to a second line" see '▌ lanes +│'
 check "and a doing one its holder's window under them, and how long it has held it" see '▌ one · [0-9]+[sm] · '
 check "one in review its stage in the holder's place, and its place in line" see '▌ » queued · 1st +│'
-check "the picked card's priority on its top edge" see '╭ med ─'
+check "the picked card's priority on a row of its own" see '│ med +│'
 claude alpha:one prompt
 check "with its Claude's mark while it works" see '▌ [◐◓◑◒] one · [0-9]+[sm]'
 claude alpha:one end
@@ -1124,7 +1124,7 @@ $bin -L $in board 7
 check "arena board and a ticket's id, run elsewhere, opens the board on it with its question" see '│ Which colour\? +│'
 key Escape
 $bin -L $in board 8
-check "and with the board open, moves the pick to it" see '╰ go ─ edit '
+check "and with the board open, moves the pick to it" see '⏎ go +e edit '
 # past the wait that tells a lone Escape from Alt
 zselect -t 10
 check "the Escape typed before it put the question away, not the board after" shows ' board  every'
@@ -1220,7 +1220,7 @@ check "with nothing of it in babylon's file again, the row says nothing" gone '^
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"proposals":[{"id":4,"action":"start","ticket_id":7,"what":"Start #7","why":"Next in line"}],"needs_you":[{"id":"proposal:4","kind":"proposal","ticket":7,"repo":"tlon","text":"P4 Start #7: Next in line","actions":[]}]}' >$tmp/run/babylon/board.json
 check "a card with an open proposal shows it" see '▲ proposed'
 check "the header counts what needs you" see ' ▲ 1 need you'
-check "and the card has a no beside its go" see '╰ go ─ no '
+check "and the card has a no beside its go" see '⏎ go +x no '
 key Enter
 check "go on it answers the proposal through babylon, not a Claude started" await last 'go 4'
 key x
@@ -1268,7 +1268,7 @@ check "a click on a tab narrows it to that repo" see '#7 Lights'
 check "and only that" gone '#8 Board'
 check "the picked card's border is lit" picked_lit
 check "and, sent back from the pipeline, that first, after a question waiting on you" see '│ \? asks · ✗ sent back +│'
-check "its actions as chips on its bottom edge" see '╰ go ─ answer ─'
+check "its actions as buttons on a row of its box" see '⏎ [a-z]+ +a answer'
 check "the four columns do not show the backlog" gone '#12 Someday'
 key r
 check "r from the last repo goes to the backlog tab, lit" await tablit backlog
@@ -1663,7 +1663,7 @@ check "and its whole ticket says all of why" see '│ left running: it holds #9 
 key Escape
 check "put away again" gone '│ left running: it holds #9 '
 key j j j
-check "where the pick goes no further than the last shown" see '╰ edit ─ priority ╯'
+check "where the pick goes no further than the last shown" see '│ e edit +│'
 $bin -L $in board 21
 check "arena board and the id of a done card older than those shown has its whole ticket over the board" see '│ #21 Lights '
 key Escape
@@ -1773,8 +1773,8 @@ check "and on the + that files a ticket" hovered $((c + 1)) 2
 r=$(rowof '#40 Hover')
 c=$(colof $r '#40')
 check "on a card" hovered $((c + 3)) $r
-r=$(rowof '╰ go ')
-c=$(colof $r ' give ')
+r=$(rowof ' G give ')
+c=$(colof $r ' G give ')
 check "and on one of the picked card's actions" hovered $((c + 2)) $r
 rail_w=$(colof 1 '╮')
 r=$(rowof '│ alpha ')
