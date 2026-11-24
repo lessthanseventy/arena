@@ -25,8 +25,6 @@ const rail_narrow = 10;
 const dwell_ms = 300;
 const quiet_s = 600;
 const stir_s = 60;
-/// How long arena keeps trying to have a Claude show a subagent, how long it leaves a key to be
-/// drawn before it reads the screen again, and how many Downs it sends to reach the list.
 /// A tmux `run-shell -b` of `cmd` whose output tmux never shows: it would open view mode on a pane,
 /// which swallows every key typed to it. What it prints, a refusal, goes to a notification.
 fn captured(comptime cmd: []const u8) []const u8 {
@@ -34,6 +32,8 @@ fn captured(comptime cmd: []const u8) []const u8 {
         "{{ command -v notify-send >/dev/null && notify-send -a arena -- \\\"\\$out\\\"; }}\"";
 }
 
+/// How long arena keeps trying to have a Claude show a subagent, how long it leaves a key to be
+/// drawn before it reads the screen again, and how many Downs it sends to reach the list.
 const pick_ms = 3000;
 /// How long the auto switch, asked "turn off?", waits for the second click.
 const auto_confirm_ms = 3000;
