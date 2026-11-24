@@ -3386,7 +3386,94 @@ pub const App = struct {
 
     /// The row after the last the columns' windows take: their shadow is on the one before.
     pub fn listH(app: *const App) u16 {
-        return app.view_h - app.footRows();
+        return app.view_h - app.footRows() - app.barRows();
+    }
+
+    /// The board's last row is its key bar in Workbench's look, when there is room for the columns above it.
+    pub fn barRows(app: *const App) u16 {
+        return if (app.workbench() and app.view_h >= first_line + 8) 1 else 0;
+    }
+
+    /// A key of the board's foot bar, where it is drawn and clicked: 0-based, as the mouse has it.
+    pub const BarKey = struct {
+        what: union(enum) { card: CardAction, key: []const u8 },
+        key: []const u8,
+        word: []const u8,
+        x: u16,
+        /// A rule is drawn before it: it starts a group.
+        group: bool,
+
+        pub fn width(k: BarKey) u16 {
+            return @intCast(cellCount(k.key) + cellCount(k.word) + 3);
+        }
+
+        pub fn hit(k: BarKey, app: *const App, x: u16, y: u16) bool {
+            return y == app.view_h - 1 and x >= k.x and x < k.x + k.width();
+        }
+    };
+
+    /// Below this many cells the bar keeps fewer keys.
+    const bar_full_w = 110;
+
+    /// The foot bar's keys, in three groups: the picked card's, the board's, and `?` with `esc`.
+    /// Half width keeps `⏎ start  space open  G give  e edit │ + new  / find │ ? keys`. None
+    /// while a word of babylon's is said in the bar's place.
+    pub fn keyBar(app: *const App, out: []BarKey) []BarKey {
+        if (app.barRows() == 0 or (app.report_said != null and !app.feedFocused())) return out[0..0];
+        const view = app.board_view orelse return out[0..0];
+        const full = app.boardW() >= bar_full_w;
+        const Item = struct { what: @FieldType(BarKey, "what"), key: []const u8, word: []const u8, group: u8 };
+        var items: [24]Item = undefined;
+        var m: usize = 0;
+        if (app.boardCard(view.col, view.row)) |card| {
+            var have: [12]CardAction = undefined;
+            const actions = cardActions(card, &have);
+            const order = [_]CardAction{ .go, .open, .no, .answer, .give, .edit, .priority, .close, .reopen, .to_todo, .up, .down, .to_next };
+            for (order) |action| {
+                const there = action == .open or std.mem.indexOfScalar(CardAction, actions, action) != null;
+                const wanted = full or action == .go or action == .open or action == .give or action == .edit;
+                if (there and wanted) {
+                    items[m] = .{ .what = .{ .card = action }, .key = action.key(), .word = cardWord(card, action), .group = 0 };
+                    m += 1;
+                }
+            }
+        }
+        const board = [_]struct { []const u8, []const u8, bool }{
+            .{ "+", "new", true },   .{ "r", "repo", false }, .{ "/", "find", true },
+            .{ "A", "auto", false }, .{ "o", "orch", false }, .{ "g", "gate", false },
+        };
+        for (board) |pair| if (full or pair[2]) {
+            items[m] = .{ .what = .{ .key = pair[0] }, .key = pair[0], .word = pair[1], .group = 1 };
+            m += 1;
+        };
+        items[m] = .{ .what = .{ .key = "?" }, .key = "?", .word = if (full) "all keys" else "keys", .group = 2 };
+        m += 1;
+        if (full) {
+            items[m] = .{ .what = .{ .key = "\x1b" }, .key = "esc", .word = "close", .group = 2 };
+            m += 1;
+        }
+        const right = app.boardX() + app.boardW();
+        var x = app.boardX() + 1;
+        var n: usize = 0;
+        for (items[0..m], 0..) |item, i| {
+            const group = i > 0 and items[i - 1].group != item.group;
+            const k: BarKey = .{ .what = item.what, .key = item.key, .word = item.word, .x = x + @as(u16, if (group) 3 else 1), .group = group };
+            if (k.x + k.width() > right or n == out.len) break;
+            out[n] = k;
+            n += 1;
+            x = k.x + k.width();
+        }
+        return out[0..n];
+    }
+
+    /// The word a card's key says on the board: a free card's `⏎` starts it, a review card's
+    /// `space` is its log.
+    fn cardWord(card: *const tickets.Card, action: CardAction) []const u8 {
+        return switch (action) {
+            .go => if (card.proposal == null and card.holder() == null) "start" else action.label(),
+            .open => if (card.status == .review) "log" else action.label(),
+            else => action.label(),
+        };
     }
 
     /// The cards the recent strip shows, the last closed first.
@@ -3425,7 +3512,7 @@ pub const App = struct {
     /// The card of the strip under (`x`, `y`), where the strip is drawn.
     fn stripCardAt(app: *const App, x: u16, y: u16) ?CardAt {
         const foot = app.footRows();
-        if (foot == 0 or y <= app.listH() or y + 1 >= app.view_h or x < app.boardX()) return null;
+        if (foot == 0 or y <= app.listH() or y + 1 >= app.view_h -| app.barRows() or x < app.boardX()) return null;
         const k = (x - app.boardX()) / @max(1, app.stripCell());
         var cards: [strip_n]*const tickets.Card = undefined;
         if (k >= app.stripCards(&cards)) return null;
@@ -4549,7 +4636,7 @@ pub const App = struct {
         const card = app.boardCard(view.col, view.row) orelse return out[0..n];
         const strip = app.boardStrip(view.col);
         const foot = app.footRows() > 0;
-        const y: u16 = if (strip) app.view_h -| 1 else blk: {
+        const y: u16 = if (strip) app.view_h -| 1 -| app.barRows() else blk: {
             const lane = app.pickLane();
             const top = app.cardStart(view.col, lane, view.row) orelse return out[0..n];
             const line = top + app.cardHeight(lane, view.col, view.row) - 2;
@@ -4760,6 +4847,14 @@ pub const App = struct {
             try app.goHome();
             return true;
         }
+        var bar: [24]BarKey = undefined;
+        for (app.keyBar(&bar)) |k| if (k.hit(app, m.x, m.y)) {
+            switch (k.what) {
+                .card => |action| try app.act(action),
+                .key => |key| try app.boardKey(key),
+            }
+            return true;
+        };
         var buttons: [48]Button = undefined;
         for (app.boardButtons(&buttons)) |button| if (button.hit(m.x, m.y)) {
             try app.pressButton(button);
@@ -6584,6 +6679,32 @@ test "a press on a card arms its drag, the picked one's included, with or withou
     try eq(@as(u32, 2), app.drag.card.id);
     try std.testing.expect(!app.drag.card.opens);
     try eq(@as(usize, 1), app.board_view.?.row);
+}
+
+test "a click on a key of the foot bar does what the key does, and half width keeps fewer keys" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    defer app.deinit();
+    app.term_w = 100;
+    app.view_w = 100;
+    app.view_h = 30;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1,"repo":"arena","title":"a","status":"todo"}]}
+    );
+    app.board_view = .{};
+    var bar_keys: [24]App.BarKey = undefined;
+    const half = app.keyBar(&bar_keys).len;
+    try std.testing.expect(half >= 5);
+    app.term_w = 200;
+    app.view_w = 200;
+    try std.testing.expect(app.keyBar(&bar_keys).len > half);
+    app.term_w = 100;
+    app.view_w = 100;
+    const bar = app.keyBar(&bar_keys);
+    const help = bar[bar.len - 1];
+    try std.testing.expectEqualStrings("?", help.key);
+    try std.testing.expectEqual(true, try app.boardMouse(.{ .code = 0, .x = help.x + 1, .y = app.view_h - 1, .release = false }));
+    try std.testing.expectEqual(true, app.board_view.?.help);
 }
 
 test "in the backlog a card let go on a repo's tab is bound for todo" {

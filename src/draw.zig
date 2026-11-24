@@ -2291,7 +2291,30 @@ fn benchBoard(app: *App, w: *Writer, r: theme.Roles, view: app_mod.BoardView) !v
         try benchLines(app, w, r, view, c, x, cw);
     }
     if (app.footRows() > 0) try benchRecent(app, w, r, view);
+    try benchBar(app, w, r);
     if (app.drag == .card) try benchHeld(app, w, r);
+}
+
+/// The board's last row: its keys, each a chip with the key in amber, in three groups with a rule
+/// between; babylon's word of a drop or a report is said in its place.
+fn benchBar(app: *const App, w: *Writer, r: theme.Roles) !void {
+    if (app.barRows() == 0) return;
+    const y = app.view_h - 1;
+    try bench.fill(w, app.boardX(), y, app.boardW(), r.ground);
+    if (app.report_said != null and !app.feedFocused()) {
+        const room = app.boardW() -| 2;
+        try bench.say(w, app.boardX() + 1, y, clip(app.report_said.?, room), if (app.report_failed) r.failed else r.accent, r.ground, false);
+        return;
+    }
+    var keys: [24]App.BarKey = undefined;
+    for (app.keyBar(&keys)) |k| {
+        if (k.group) try bench.say(w, k.x - 2, y, "│", r.dim, r.ground, false);
+        try bench.say(w, k.x, y, " ", r.text, r.raised, false);
+        try bench.say(w, k.x + 1, y, k.key, r.accent, r.raised, true);
+        try bench.say(w, k.x + 1 + cellCount(k.key), y, " ", r.text, r.raised, false);
+        try bench.say(w, k.x + 2 + cellCount(k.key), y, k.word, r.text, r.raised, false);
+        try bench.say(w, k.x + 2 + cellCount(k.key) + cellCount(k.word), y, " ", r.text, r.raised, false);
+    }
 }
 
 /// The card being dragged, under the pointer.
@@ -2929,7 +2952,7 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     var end: u16 = app.boardX() + @as(u16, @intCast(cellCount(App.board_title)));
     var right = app.boardX() + app.boardW();
     var refusal_at: ?App.Button = null;
-    const said: ?[]const u8 = if (app.start_refused) |text| text else if (app.report_said != null and !app.feedFocused()) app.report_said else null;
+    const said: ?[]const u8 = if (app.start_refused) |text| text else if (app.report_said != null and !app.feedFocused() and app.barRows() == 0) app.report_said else null;
     const said_ink = if (app.start_refused != null) ink(app, "emberdim", 1) else reportInk(app);
     for (shown) |button| {
         if (said != null and button.what == .card) {
@@ -3513,7 +3536,7 @@ fn reportSaid(app: *App, w: *Writer, text: []const u8) !void {
         for (cellCount(clip(text, room))..room) |_| try w.writeAll(" ");
         return;
     };
-    if (app.board_view != null and !app.feedFocused() and cardActionsShown(app)) return;
+    if (app.board_view != null and !app.feedFocused() and (cardActionsShown(app) or app.barRows() > 0)) return;
     try w.print("\x1b[{d};{d}H{s}", .{ app.view_h, ox + 1, clip(text, app.view_w) });
 }
 
@@ -4018,12 +4041,25 @@ test "the board in Workbench's look: windows, the picked tile raised with its ch
 
     // recent is a strip along the foot, its entry a mark and its number in the repo's hue
     const foot = app.listH();
-    try eq(@as(u16, 20), foot);
+    try eq(@as(u16, 19), foot);
     try eq(@as(u21, 'r'), (try bench.probe(drawn, 3, foot)).cp);
     try eq(@as(u21, '✓'), (try bench.probe(drawn, 1, foot + 1)).cp);
     const entry = try bench.probe(drawn, 1, foot + 2);
     try eq(@as(u21, '#'), entry.cp);
     try eq(r.repo[3], entry.fg);
+
+    // the foot bar on the last row: the picked card's keys, a rule, the board's, a rule, ?
+    const bar_y = app.view_h - 1;
+    var keys: [24]App.BarKey = undefined;
+    const bar = app.keyBar(&keys);
+    const first = try bench.probe(drawn, bar[0].x + 1, bar_y);
+    try eq(@as(u21, '⏎'), first.cp);
+    try eq(r.accent, first.fg);
+    try eq(r.raised, first.bg);
+    try std.testing.expect(bar.len >= 6);
+    for (bar) |k| if (k.group) try eq(@as(u21, '│'), (try bench.probe(drawn, k.x - 2, bar_y)).cp);
+    try std.testing.expectEqualStrings("?", bar[bar.len - 1].key);
+    try std.testing.expectEqualStrings("keys", bar[bar.len - 1].word);
 }
 
 test "unpicked cards are filled tiles a blank row apart, their chips pills on their own fill" {
