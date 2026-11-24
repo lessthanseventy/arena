@@ -3430,7 +3430,7 @@ pub const App = struct {
             return n;
         }
         if (app.boardLanes()) if (app.pickRepo()) |repo| if (app.folded(repo)) return 0;
-        return app.shownIn(tickets.statuses[col], app.columnOf(tickets.statuses[col], app.pickRepo(), app.findText(), out));
+        return app.shownIn(tickets.statuses[col], app.pickRepo(), app.columnOf(tickets.statuses[col], app.pickRepo(), app.findText(), out));
     }
 
     /// What the board's cards are narrowed to: what is being typed after `/`, else what Enter kept.
@@ -3448,9 +3448,12 @@ pub const App = struct {
     /// Done shows its last few closed, the first in its column, and then how many more it has.
     pub const done_shown = 3;
 
-    /// Of `total` cards in `status`'s column, how many are shown.
-    pub fn shownIn(app: *const App, status: tickets.Status, total: usize) usize {
-        return if (status == .done) @min(total, @as(usize, if (app.workbench()) strip_n else done_shown)) else total;
+    /// Of `total` cards in `status`'s column of `repo`, how many are shown: in done, every `try`
+    /// card, pinned above the capped recent ones.
+    pub fn shownIn(app: *const App, status: tickets.Status, repo: ?[]const u8, total: usize) usize {
+        if (status != .done) return total;
+        const tries = app.columnOf(.@"try", repo, app.findText(), &.{});
+        return @min(total, tries + @as(usize, if (app.workbench()) strip_n else done_shown));
     }
 
     /// The cards in column `col` of lane `lane`: those shown, and all of them.
@@ -3461,7 +3464,7 @@ pub const App = struct {
         }
         const repo = app.laneRepo(lane) orelse return .{ .shown = 0, .total = 0 };
         const total = app.columnOf(tickets.statuses[col], repo, app.findText(), &.{});
-        const shown = if (app.folded(repo)) 0 else app.shownIn(tickets.statuses[col], total);
+        const shown = if (app.folded(repo)) 0 else app.shownIn(tickets.statuses[col], repo, total);
         return .{ .shown = shown, .total = total };
     }
 
@@ -3692,7 +3695,7 @@ pub const App = struct {
         if (app.footStrip(col)) return app.boardCard(col, row);
         const repo = app.laneRepo(lane) orelse return null;
         var out: [max_cards]*const tickets.Card = undefined;
-        const n = app.shownIn(tickets.statuses[col], app.columnOf(tickets.statuses[col], repo, app.findText(), &out));
+        const n = app.shownIn(tickets.statuses[col], repo, app.columnOf(tickets.statuses[col], repo, app.findText(), &out));
         return if (row < @min(n, max_cards)) out[row] else null;
     }
 
@@ -4873,7 +4876,7 @@ pub const App = struct {
     /// to, babylon having no move among the cards of none alone.
     pub fn cardActions(card: *const tickets.Card, out: *[12]CardAction) []CardAction {
         var n: usize = 0;
-        const movable = card.status != .backlog and plainName(card.repo orelse "");
+        const movable = card.status != .backlog and card.status != .@"try" and plainName(card.repo orelse "");
         const all = [_]struct { CardAction, bool }{
             .{ .go, card.proposal != null or card.holder() != null or givable(card) }, .{ .no, card.proposal != null },    .{ .answer, card.ask != null },
             .{ .give, givable(card) },                                                 .{ .edit, true },                   .{ .priority, true },
@@ -8346,6 +8349,25 @@ test "a card moves along its column only with a repo, out of the backlog" {
     try std.testing.expect(!has(.{ .id = 2, .title = "b", .status = .todo }, &have));
     try std.testing.expect(!has(.{ .id = 4, .repo = "two words", .title = "d", .status = .todo }, &have));
     try std.testing.expect(!has(.{ .id = 3, .repo = "arena", .title = "c", .status = .backlog }, &have));
+    try std.testing.expect(!has(.{ .id = 5, .repo = "arena", .title = "e", .status = .@"try" }, &have));
+}
+
+test "the done column's cap leaves the to-try cards out of its count, they are all shown" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    defer app.pending.deinit(std.testing.allocator);
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"repo":"arena","title":"a","status":"try"},
+        \\{"id":2,"repo":"arena","title":"b","status":"try"},
+        \\{"id":3,"repo":"arena","title":"c","status":"done"},
+        \\{"id":4,"repo":"arena","title":"d","status":"done"},
+        \\{"id":5,"repo":"arena","title":"e","status":"done"},
+        \\{"id":6,"repo":"arena","title":"f","status":"done"}
+        \\]}
+    );
+    defer app.board.?.deinit();
+    try std.testing.expectEqual(@as(usize, 2 + App.done_shown), app.shownIn(.done, "arena", 6));
+    try std.testing.expectEqual(@as(usize, 4), app.shownIn(.done, "arena", 4));
 }
 
 test "a capture tmux refuses, its pane gone, takes the cursor asked with it off what is awaited" {
