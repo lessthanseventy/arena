@@ -3789,11 +3789,11 @@ pub const App = struct {
     /// A click on the `▲ proposed` a card wears on its top edge or footer, whose ticket has an item
     /// of Your move: the feed's pick goes to that item. Whether it was that click.
     fn cardNeedsClick(app: *App, at: CardAt, m: keys.Mouse) !bool {
-        const card = app.boardCard(at.col, at.row) orelse return false;
+        const card = (if (app.boardLanes()) app.laneCard(at.lane, at.col, at.row) else app.boardCard(at.col, at.row)) orelse return false;
         if (card.proposal == null or app.cardRows(at.col) != card_rows) return false;
         const part: CardRow = if (app.boardLanes()) blk: {
-            const line = app.laneLineAt(m.y - 2 + app.laneScroll()) orelse return false;
-            break :blk @fromBackingInt(@intCast(line.row % card_rows));
+            const line = app.columnLineAt(at.col, m.y - 2 + app.columnScroll(at.col)) orelse return false;
+            break :blk @fromBackingInt(@intCast((line.row orelse return false) % card_rows));
         } else (cardRowAt(m.y) orelse return false).part;
         if (part != .top and part != .footer) return false;
         const x = app.boardColX(at.col) + 2;
