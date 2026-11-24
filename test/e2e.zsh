@@ -2224,6 +2224,23 @@ await shows '│ +3 +gamma'
 : >$tmp/babylon
 key Enter
 check "and ⏎ answers the lit one, which its label said" await last 'answer 8 1'
+print -r -- '{"tickets":[{"id":930,"repo":"arena","title":"Lights","kind":"ticket","status":"try","stage":"landed","priority":"med","blocked_by":[],'\
+'"checks":[{"n":1,"text":"it is told","result":null},{"n":2,"text":"it has buttons","result":null}]}]}' >$tmp/run/babylon/board.json
+check "a card to try leads the done column, marked ▲, and is counted in it" await shows '▲ #930'
+mouse 0 ${(z)$(spot '#930')} M
+mouse 35 80 24 M
+key ' '
+check "its modal lists its checks, a row each" await shows '· 2 it has buttons'
+: >$tmp/babylon
+key j
+key y
+check "j picks a check and y says it works, through babylon" await last 'tried 930 2 ok'
+key n
+check "n asks what went wrong" see 'what went wrong\?'
+key -l 'too late'
+key Enter
+check "and ⏎ sends it back with those words, through babylon" await last 'tried 930 2 no too late'
+key Escape
 key M-b
 key M-q
 gone ' every [0-9]+ +[a-z]'

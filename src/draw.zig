@@ -937,7 +937,7 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
     const was: []const u8 = switch (prompt.what) {
         .window => if (session) |s| (if (s.focused()) |win| win.name else "") else "",
         .session => if (session) |s| s.name else "",
-        .jump, .search, .report, .words, .why, .find => "",
+        .jump, .search, .report, .words, .why, .find, .tried => "",
     };
 
     try b.edge("╭", "╮");
@@ -950,7 +950,7 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
             .jump => "  → Jump to window",
             .search => "  / Search history",
             .report => "  ! What's wrong?",
-            .words, .why, .find => "",
+            .words, .why, .find, .tried => "",
         },
         dim,
         std.fmt.bufPrint(&buf, "{s}  ", .{clip(was, 12)}) catch "",
@@ -996,12 +996,12 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
 /// The line the human's words are typed into, at the foot of the orchestrator's column, over its
 /// last row; a ticket's why is typed at the board's foot. Returns where its cursor goes.
 fn wordsLine(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
-    const why = prompt.what == .why;
+    const why = prompt.what == .why or prompt.what == .tried;
     const x = if (why) app.boardX() else app.term_w - app.view_w;
     const y = app.view_h -| 2;
     const inner = (if (why) app.boardW() else app.view_w) -| 4;
     var buf: [256]u8 = undefined;
-    const hint = if (why) "  ⏎ save  esc drop" else "  ⏎ send  esc drop";
+    const hint = if (prompt.what == .tried) "  what went wrong?  ⏎ send it back  esc not ✗" else if (why) "  ⏎ save  esc drop" else "  ⏎ send  esc drop";
     const room = inner -| 2 -| cellCount(hint);
     const text = prompt.text();
     var shown = text;
@@ -2350,9 +2350,10 @@ fn benchLines(app: *const App, w: *Writer, r: theme.Roles, view: app_mod.BoardVi
                 const card = app.groupCard(at.lane, c, spot.row).?;
                 if (app.boardStrip(c)) {
                     var buf: [160]u8 = undefined;
-                    const text = std.fmt.bufPrint(&buf, "✓ #{d} {s}", .{ card.id, card.title }) catch card.title;
+                    const trying = card.status == .@"try";
+                    const text = std.fmt.bufPrint(&buf, "{s} #{d} {s}", .{ if (trying) "▲" else "✓", card.id, card.title }) catch card.title;
                     const lit = app.cardPicked(at.lane, c, spot.row) and !app.columnFocused();
-                    try bench.say(w, x + 2, y, clip(text, cw -| 5), if (lit) r.accent else r.dim, r.panel, lit);
+                    try bench.say(w, x + 2, y, clip(text, cw -| 5), if (lit) r.accent else if (trying) r.you else r.dim, r.panel, lit);
                 } else try benchTile(app, w, r, card, spot.part, app.cardPicked(at.lane, c, spot.row), x + 1, y, cw - 3, cw);
             },
         }
@@ -2392,6 +2393,7 @@ fn benchState(app: *const App, card: *const tickets.Card, r: theme.Roles, buf: [
     const eql = std.mem.eql;
     const stage = card.stage orelse "";
     if (card.proposal != null) return .{ .label = "▲ proposed", .lead = r.you, .words = r.on_accent, .filled = true };
+    if (card.status == .@"try") return .{ .label = "▲ try it", .lead = r.you, .words = r.on_accent, .filled = true };
     if (card.isEpic()) {
         const got = if (app.board) |*b| b.epicProgress(card.id) else null;
         const label = if (got) |g| std.fmt.bufPrint(buf, "◆ epic {d}/{d}", .{ g.landed, g.total }) catch "◆ epic" else "◆ epic";
@@ -2516,8 +2518,9 @@ fn benchRecent(app: *App, w: *Writer, r: theme.Roles, view: app_mod.BoardView) !
         var age: [8]u8 = undefined;
         const since = if (tickets.epochOf(card.closed_at)) |t| ago(&age, app.epoch, @intCast(@max(1, t))) else "";
         var buf: [200]u8 = undefined;
-        const head = std.fmt.bufPrint(&buf, "{s} {s} ", .{ if (landed) "◆" else "✓", since }) catch "◆";
-        try bench.say(w, cx + 1, y0 + 1, head, if (lit) r.accent else if (landed) r.landed else r.dim, r.ground, lit);
+        const trying = card.status == .@"try";
+        const head = if (trying) "▲ try it " else std.fmt.bufPrint(&buf, "{s} {s} ", .{ if (landed) "◆" else "✓", since }) catch "◆";
+        try bench.say(w, cx + 1, y0 + 1, head, if (lit) r.accent else if (trying) r.you else if (landed) r.landed else r.dim, r.ground, lit);
         var dashes: [256]u8 = undefined;
         var out: Writer = .fixed(&dashes);
         for (@min(cx + 1 + cellCount(head), cx + span_w)..cx + span_w) |_| out.writeAll("─") catch break;
@@ -2639,7 +2642,7 @@ fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
         if (y >= text_end) break;
         const style: vt.Style = switch (kind) {
             .plain, .options => .{},
-            .dim => dim,
+            .dim, .check => dim,
             .warn => ink(app, "amber", 4),
         };
         try boxLine(w, &pen, edge, style, x, y, line, inner);
@@ -2804,7 +2807,7 @@ fn benchDetail(app: *const App, w: *Writer, r: theme.Roles, id: u32, rect: App.M
     var y = rect.y + 1;
     var band = false;
     var facts = false;
-    for (head.lines[0..head.n], head.kinds[0..head.n]) |line, kind| {
+    for (head.lines[0..head.n], head.kinds[0..head.n], 0..) |line, kind, at| {
         if (y >= text_end) break;
         if (kind == .warn) band = true;
         const bg = if (band) r.tile else r.panel;
@@ -2818,6 +2821,11 @@ fn benchDetail(app: *const App, w: *Writer, r: theme.Roles, id: u32, rect: App.M
                 try benchFacts(app, w, r, card.?, x0, y, inner);
             },
             .warn => try bench.say(w, x0, y, clip(line, inner), r.you, bg, true),
+            .check => {
+                const settled = card.?.checks[at - head.checks.?].result != null;
+                const lit = at - head.checks.? + 1 == @min(@max(app.board_view.?.check_pick, 1), card.?.checks.len);
+                try bench.say(w, x0, y, clip(line, inner), if (lit) r.accent else if (settled) r.dim else r.text, bg, lit);
+            },
             .options => for (modal) |button| if ((button.action == .option or button.action == .words) and button.y == y) {
                 const lit = button.action == .option and button.action.option == app.board_view.?.ask_pick;
                 _ = try bench.button(w, r, button.x, y, button.key, button.label, lit, r.tile);
@@ -3399,7 +3407,7 @@ fn columnLines(app: *const App, w: *Writer, pen: *Pen, view: app_mod.BoardView, 
                     const style = if (picked and !app.columnFocused()) heading(app) else ink(app, "dim", 8);
                     try pen.set(w, style, null);
                     try w.writeAll(" ");
-                    try fitted(w, std.fmt.bufPrint(&buf, "✓ #{d} {s}", .{ it.id, it.title }) catch it.title, inner -| 1);
+                    try fitted(w, std.fmt.bufPrint(&buf, "{s} #{d} {s}", .{ if (it.status == .@"try") "▲" else "✓", it.id, it.title }) catch it.title, inner -| 1);
                 } else try cardLine(app, w, pen, it, spot.part, picked, with_repo, inner);
             },
         }
@@ -3725,7 +3733,7 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
         cursor = null;
     }
     if (app.prompt) |*prompt| {
-        cursor = if (prompt.what == .words or prompt.what == .why) try wordsLine(app, w, prompt) else if (prompt.what == .find) try findLine(app, w) else try promptBox(app, w, prompt);
+        cursor = if (prompt.what == .words or prompt.what == .why or prompt.what == .tried) try wordsLine(app, w, prompt) else if (prompt.what == .find) try findLine(app, w) else try promptBox(app, w, prompt);
     } else if (app.menu) |open| {
         try menuBox(app, w, open);
         cursor = null;
@@ -4883,4 +4891,39 @@ test "the plan's head and the board's head show the same pair of tabs, the curre
         try eq(i == 0, plan.bold);
         try eq(i == 1, link.bold);
     }
+}
+
+test "a card to try wears ▲ try it in the you colour, filled, and leads the recent strip with the same mark" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 24;
+    app.roles = bench.roles();
+    const r = app.roles.?;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":2,"repo":"menard","title":"old","status":"done","closed_at":"2026-11-24T00:00:00Z"},
+        \\{"id":7,"repo":"tlon","title":"Lights","status":"try","stage":"landed","checks":[{"n":1,"text":"it is told","result":null}]},
+        \\{"id":8,"repo":"tlon","title":"Ask","status":"review","ask":{"id":1,"question":"q?"}}
+        \\]}
+    );
+    defer app.board.?.deinit();
+    const eq = std.testing.expectEqual;
+    var buf: [64]u8 = undefined;
+    const state = benchState(&app, &app.board.?.cards()[1], r, &buf).?;
+    try std.testing.expectEqualStrings("▲ try it", state.label);
+    try eq(r.you, state.lead);
+    try eq(r.on_accent, state.words);
+    try std.testing.expect(state.filled);
+    const asks = benchState(&app, &app.board.?.cards()[2], r, &buf).?;
+    try std.testing.expectEqualStrings("▲ asks you", asks.label);
+    try std.testing.expect(!std.mem.eql(u8, state.label, asks.label));
+
+    app.board_view = .{};
+    var out_buf: [65536]u8 = undefined;
+    var out: Writer = .fixed(&out_buf);
+    try boardView(&app, &out, app.board_view.?);
+    const first = try bench.probe(out.buffered(), 1, app.listH() + 1);
+    try eq(@as(u21, '▲'), first.cp);
+    try eq(r.you, first.fg);
 }

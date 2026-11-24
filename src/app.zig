@@ -368,6 +368,8 @@ pub const BoardView = struct {
     detail_scroll: usize = 0,
     /// The option of the modal's open ask that ⏎ answers, from 1.
     ask_pick: u8 = 1,
+    /// The check of the modal's to-try ticket that `y` and `n` act on, from 1.
+    check_pick: u8 = 1,
     /// The open modal is that ticket's gate run, not its detail; and `W` has asked whether to
     /// withdraw it.
     gate: bool = false,
@@ -3261,6 +3263,7 @@ pub const App = struct {
         view.detail = id;
         view.detail_scroll = 0;
         view.ask_pick = 1;
+        view.check_pick = 1;
         view.gate = gate;
         view.withdrawing = false;
         app.detail.clearRetainingCapacity();
@@ -4891,7 +4894,7 @@ pub const App = struct {
     };
 
     /// What a modal button does when pressed.
-    pub const ModalAction = union(enum) { close, card: CardAction, option: u8, words, claude, whole_log, ticket, bump, withdraw };
+    pub const ModalAction = union(enum) { close, card: CardAction, option: u8, words, claude, whole_log, ticket, bump, withdraw, tried_ok, tried_no };
 
     /// A button of the modal frame, where it is drawn and clicked: 0-based. It reads ` key label `.
     pub const ModalButton = struct {
@@ -4935,7 +4938,7 @@ pub const App = struct {
 
     /// What a card's modal says of it above its body, a line each.
     pub const CardHead = struct {
-        pub const Kind = enum { plain, dim, warn, options };
+        pub const Kind = enum { plain, dim, warn, options, check };
         buf: [1024]u8 = undefined,
         used: usize = 0,
         lines: [64][]const u8 = undefined,
@@ -4943,6 +4946,8 @@ pub const App = struct {
         n: usize = 0,
         /// The first of the lines of the open ask's options, a button each, and its words after.
         options: ?usize = null,
+        /// The first of a to-try ticket's check lines, one each.
+        checks: ?usize = null,
 
         fn add(head: *CardHead, kind: Kind, comptime fmt: []const u8, args: anytype) void {
             if (head.n == head.lines.len) return;
@@ -5003,6 +5008,16 @@ pub const App = struct {
             head.options = head.n;
             for (0..@min(ask.options.len, max_ask_options) + @intFromBool(words)) |_| head.add(.options, "", .{});
         }
+        if (card.status == .@"try" and card.checks.len > 0) {
+            var tried: usize = 0;
+            for (card.checks) |check| tried += @intFromBool(check.result != null);
+            head.add(.warn, "▲ try it: {d} of {d} tried", .{ tried, card.checks.len });
+            head.checks = head.n;
+            for (card.checks) |check| {
+                const sign: []const u8 = if (check.result) |result| (if (std.mem.eql(u8, result, "ok")) "✓" else "✗") else "·";
+                head.add(.check, "{s} {d} {s}", .{ sign, check.n, check.text });
+            }
+        }
     }
 
     /// The buttons of the open modal, in the order they are drawn: the open ask's options, then
@@ -5061,6 +5076,20 @@ pub const App = struct {
                 n += 1;
                 x += button.width() + 1;
             }
+            if (card.status == .@"try" and card.checks.len > 0) {
+                const tries = [_]ModalButton{
+                    .{ .action = .tried_ok, .key = "y", .label = "✓ it works", .x = x, .y = foot },
+                    .{ .action = .tried_no, .key = "n", .label = "✗ it failed", .x = x, .y = foot },
+                };
+                for (tries) |item| {
+                    var button = item;
+                    button.x = x;
+                    if (x + button.width() > right or n == out.len) break;
+                    out[n] = button;
+                    n += 1;
+                    x += button.width() + 1;
+                }
+            }
             var have: [12]CardAction = undefined;
             for (cardActions(card, &have)) |action| {
                 if (action == .go and shown > 0) continue;
@@ -5095,6 +5124,22 @@ pub const App = struct {
             n += 1;
         }
         return out[0..n];
+    }
+
+    /// Check number `pick` (from 1) of a to-try card, held to the ones it has.
+    pub fn pickedCheck(card: *const tickets.Card, pick: u8) ?*const tickets.Check {
+        if (card.checks.len == 0) return null;
+        return &card.checks[@min(@max(pick, 1), card.checks.len) - 1];
+    }
+
+    /// Enter on a tried prompt: `babylon tried N n no WORDS`, the check failed and the ticket sent
+    /// back. Nothing typed runs nothing.
+    fn sendTried(app: *App, prompt: menu.Prompt) !void {
+        app.endWords();
+        if (prompt.len == 0) return;
+        const item = prompt.item();
+        const colon = std.mem.indexOfScalar(u8, item, ':') orelse return;
+        _ = try app.runNeed("tried", &.{ "babylon", "tried", item[0..colon], item[colon + 1 ..], "no", prompt.text() });
     }
 
     /// The words action of `card`'s open ask, as babylon's Your move item gives it.
@@ -5140,6 +5185,25 @@ pub const App = struct {
                 view.detail = null;
                 _ = app.openWords(w.need);
             },
+            .tried_ok => {
+                const card = app.modalCard() orelse return;
+                const check = pickedCheck(card, view.check_pick) orelse return;
+                var ticket: [12]u8 = undefined;
+                var step: [12]u8 = undefined;
+                const id = std.fmt.bufPrint(&ticket, "{d}", .{card.id}) catch return;
+                const n = std.fmt.bufPrint(&step, "{d}", .{check.n}) catch return;
+                _ = try app.runNeed("tried", &.{ "babylon", "tried", id, n, "ok" });
+            },
+            .tried_no => {
+                const card = app.modalCard() orelse return;
+                const check = pickedCheck(card, view.check_pick) orelse return;
+                var prompt: menu.Prompt = .{ .what = .tried };
+                const item = std.fmt.bufPrint(&prompt.target, "{d}:{d}", .{ card.id, check.n }) catch return;
+                prompt.target_len = item.len;
+                app.prompt = prompt;
+                app.normal = false;
+                app.dirty = true;
+            },
             .whole_log => try app.ticketWindow("babylon gate {d} | less", .{view.detail orelse return}),
             .ticket => _ = try app.openDetail(view.detail orelse return),
             .bump => try app.send(.ignore, captured("babylon bump {d}"), .{view.detail orelse return}),
@@ -5165,6 +5229,18 @@ pub const App = struct {
         const was_withdrawing = view.withdrawing;
         view.withdrawing = false;
         if (is(key, &.{ "\x1b", "q", " " })) return app.pressModal(.close);
+        if (!view.gate) if (app.modalCard()) |card| if (card.status == .@"try" and card.checks.len > 0) {
+            if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) {
+                view.check_pick = @intCast(@min(view.check_pick + 1, card.checks.len));
+                return;
+            }
+            if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) {
+                view.check_pick = @max(view.check_pick -| 1, 1);
+                return;
+            }
+            if (is(key, &.{"y"})) return app.pressModal(.tried_ok);
+            if (is(key, &.{"n"})) return app.pressModal(.tried_no);
+        };
         if (is(key, &.{ "j", "\x1b[B", "\x1bOB" }) and view.detail_scroll + 1 < app.detailRows()) view.detail_scroll += 1;
         if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.detail_scroll -|= 1;
         if (view.gate) {
@@ -5643,6 +5719,7 @@ pub const App = struct {
         if (from == to) return .stay;
         return switch (to) {
             .doing, .review => .{ .refuse = "doing and review are a claim's and the pipeline's, not a drop's" },
+            .@"try" => .{ .refuse = "a card to try is tried, not dropped" },
             .todo => if (from == .backlog or from == .done) .{ .status = "todo" } else .{ .refuse = "a claimed card goes on through the pipeline, not back to todo" },
             .done => if (from == .todo) .{ .status = "done" } else .{ .refuse = "only a todo card is closed by hand" },
             .backlog => if (from == .todo) .{ .status = "backlog" } else .{ .refuse = "only a todo card goes to the backlog" },
@@ -6190,7 +6267,7 @@ pub const App = struct {
             const listed = prompt.what == .jump and m.leftPress() and m.x > at.x and m.x + 1 < at.x + menu.width and
                 m.y >= first and m.y < first + menu.jump_rows;
             if (!listed) {
-                if (prompt.what == .words or prompt.what == .why) app.endWords() else {
+                if (prompt.what == .words or prompt.what == .why or prompt.what == .tried) app.endWords() else {
                     app.prompt = null;
                 }
                 return;
@@ -6563,7 +6640,7 @@ pub const App = struct {
                 app.dirty = true;
                 switch (prompt.press(key)) {
                     .none => if (prompt.what == .find) app.refind(),
-                    .cancel => if (prompt.what == .find) app.clearFind() else if (prompt.what == .words or prompt.what == .why) app.endWords() else {
+                    .cancel => if (prompt.what == .find) app.clearFind() else if (prompt.what == .words or prompt.what == .why or prompt.what == .tried) app.endWords() else {
                         app.prompt = null;
                     },
                     .commit => try app.commit(),
@@ -6584,6 +6661,7 @@ pub const App = struct {
         if (prompt.what == .search) return app.searchNext();
         if (prompt.what == .words) return app.sendWords(prompt);
         if (prompt.what == .why) return app.sendWhy(prompt);
+        if (prompt.what == .tried) return app.sendTried(prompt);
         if (prompt.what == .find) return app.keepFind(prompt);
         app.prompt = null;
         if (prompt.what == .report) return app.fileReport(prompt.text());
@@ -6597,7 +6675,7 @@ pub const App = struct {
                 if (prompt.selected < n) try app.jumpHit(hits[prompt.selected]);
                 return;
             },
-            .search, .report, .words, .why, .find => return,
+            .search, .report, .words, .why, .find, .tried => return,
             .window => try cmd.writer.print("rename-window -t @{d} -- '", .{(s.focused() orelse return).id}),
             .session => try cmd.writer.print("rename-session -t '${d}' -- '", .{s.id}),
         }
@@ -8892,4 +8970,66 @@ test "j stays in its column, past the last todo card; a folded repo is its headi
     var fresh: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     fresh.loadFolds("tlon\n\narena\n");
     try std.testing.expect(fresh.folded("tlon") and fresh.folded("arena") and !fresh.folded("menard"));
+}
+
+test "a to-try card's modal lists its checks, j and k pick one, y says it works and n asks what went wrong" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 140;
+    app.view_w = 140;
+    app.view_h = 30;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":7,"repo":"arena","title":"Lights","status":"try","stage":"landed",
+        \\"checks":[{"n":1,"text":"it is told","result":"ok"},{"n":2,"text":"it has buttons","result":null},{"n":3,"text":"from the phone","result":null}]}]}
+    );
+    defer app.board.?.deinit();
+    const eq = std.testing.expectEqual;
+    const eql = std.testing.expectEqualStrings;
+
+    app.board_view = .{ .col = 3, .detail = 7 };
+    const card = app.modalCard().?;
+    var head: App.CardHead = undefined;
+    App.cardHead(card, 60, 0, false, &head);
+    var first: ?usize = null;
+    for (head.kinds[0..head.n], 0..) |kind, at| if (kind == .check and first == null) {
+        first = at;
+    };
+    try eq(head.checks, first);
+    try eql("✓ 1 it is told", head.lines[first.?]);
+    try eql("· 2 it has buttons", head.lines[first.? + 1]);
+    try eql("▲ try it: 1 of 3 tried", head.lines[first.? - 1]);
+
+    var buttons: [16]App.ModalButton = undefined;
+    var pressed: [3][]const u8 = undefined;
+    var found: usize = 0;
+    for (app.modalButtons(&buttons)) |button| if (button.action == .tried_ok or button.action == .tried_no) {
+        pressed[found] = button.key;
+        found += 1;
+    };
+    try eq(@as(usize, 2), found);
+    try eql("y", pressed[0]);
+
+    try app.modalKey("j");
+    try eq(@as(u8, 2), app.board_view.?.check_pick);
+    try app.modalKey("j");
+    try app.modalKey("j");
+    try eq(@as(u8, 3), app.board_view.?.check_pick);
+    try app.modalKey("k");
+    try app.modalKey("y");
+    var got: [1024]u8 = undefined;
+    var len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'tried' '7' '2' 'ok'") != null);
+
+    try app.modalKey("n");
+    try eq(menu.Prompt.What.tried, app.prompt.?.what);
+    try eql("7:2", app.prompt.?.item());
+    for ("late") |byte| _ = app.prompt.?.press(&.{byte});
+    try app.commit();
+    try std.testing.expect(app.prompt == null);
+    len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'tried' '7' '2' 'no' 'late'") != null);
 }

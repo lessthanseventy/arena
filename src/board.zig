@@ -1,7 +1,8 @@
 //! babylon's board, from the file it keeps: the tickets every Claude on the machine shares.
 const std = @import("std");
 
-pub const Status = enum { todo, doing, review, done, backlog };
+/// `try` is landed and waiting on the human's hands: drawn in the done column, above the done cards.
+pub const Status = enum { todo, doing, review, @"try", done, backlog };
 pub const statuses = [_]Status{ .todo, .doing, .review, .done };
 
 /// A decision a session is waiting on its human for.
@@ -10,6 +11,13 @@ pub const Ask = struct {
     question: []const u8,
     options: []const []const u8 = &.{},
     asked_at: ?[]const u8 = null,
+};
+
+/// One step of a to-try ticket: `result` is null until tried, then `ok` or `no`.
+pub const Check = struct {
+    n: u32,
+    text: []const u8,
+    result: ?[]const u8 = null,
 };
 
 pub const Card = struct {
@@ -51,6 +59,9 @@ pub const Card = struct {
     /// The orchestrator's open proposal about it, the oldest when there are several; set as the
     /// board is parsed, never read from a card's own fields.
     proposal: ?Proposal = null,
+    /// The steps a to-try ticket waits on the human for, and when it landed.
+    checks: []Check = &.{},
+    landed_at: ?[]const u8 = null,
 
     /// Whether it is an epic: a goal over other tickets, which no session ever holds.
     pub fn isEpic(card: *const Card) bool {
@@ -268,6 +279,7 @@ pub const Board = struct {
             card.title = try cleanLine(arena, card.title);
             card.session_note = try cleanLine(arena, card.session_note);
             card.stage_note = try cleanLine(arena, card.stage_note);
+            for (card.checks) |*check| check.text = try cleanLine(arena, check.text);
         }
         for (parsed.value.backlog) |*card| card.title = try cleanLine(arena, card.title);
         for (parsed.value.needs_you) |*need| {
@@ -456,7 +468,7 @@ pub const Board = struct {
     /// How many cards of `status` are work for a Claude, the epics left out, narrowed by `find`.
     pub fn work(b: *const Board, status: Status, find: []const u8) usize {
         var n: usize = 0;
-        for (b.cards()) |*card| n += @intFromBool(card.status == status and !card.isEpic() and card.finds(find));
+        for (b.cards()) |*card| n += @intFromBool((card.status == status or (status == .done and card.status == .@"try")) and !card.isEpic() and card.finds(find));
         return n;
     }
 
@@ -467,7 +479,7 @@ pub const Board = struct {
         var total: u32 = 0;
         for (b.cards()) |card| if (card.epic_id == epic) {
             total += 1;
-            landed += @intFromBool(card.status == .done);
+            landed += @intFromBool(card.status == .done or card.status == .@"try");
         };
         if (total > 0) return .{ .landed = landed, .total = total };
         const given = b.plan() orelse return null;
@@ -484,8 +496,9 @@ pub const Board = struct {
     /// `column` without the epics that have a bar in `bars`: an epic with none stays a card.
     pub fn columnBars(b: *const Board, status: Status, repo: ?[]const u8, find: []const u8, bars: []const Goal, out: []*const Card) usize {
         var n: usize = 0;
-        for ([_]bool{ false, true }) |waiting| for (b.cards()) |*card| {
-            if (card.status != status or (card.blocked_by.len > 0) != waiting or card.barred(bars)) continue;
+        const shown: []const Status = if (status == .done) &.{ .@"try", .done } else &.{status};
+        for (shown) |of| for ([_]bool{ false, true }) |waiting| for (b.cards()) |*card| {
+            if (card.status != of or (card.blocked_by.len > 0) != waiting or card.barred(bars)) continue;
             if (repo) |only| if (!std.mem.eql(u8, card.repo orelse "", only)) continue;
             if (!card.finds(find)) continue;
             if (n < out.len) out[n] = card;
@@ -589,6 +602,29 @@ test "an epic is left out of a column only while it has a bar, and counted from 
     const progress = b.epicProgress(1).?;
     try std.testing.expectEqual(@as(u32, 1), progress.landed);
     try std.testing.expectEqual(@as(u32, 2), progress.total);
+}
+
+test "a try card parses its checks, counts as landed, and is first in the done column" {
+    var b = try Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"title":"e","kind":"epic","status":"doing"},
+        \\{"id":2,"epic_id":1,"title":"old","status":"done"},
+        \\{"id":3,"epic_id":1,"title":"fresh","status":"try","landed_at":"2026-11-24T21:02:00Z",
+        \\ "checks":[{"n":1,"text":"it is told","result":null},{"n":2,"text":"spend matches","result":"ok"}]}
+        \\]}
+    );
+    defer b.deinit();
+    var out: [4]*const Card = undefined;
+    try std.testing.expectEqual(@as(usize, 2), b.column(.done, null, "", &out));
+    try std.testing.expectEqual(@as(u32, 3), out[0].id);
+    try std.testing.expectEqual(Status.@"try", out[0].status);
+    try std.testing.expectEqual(@as(usize, 2), out[0].checks.len);
+    try std.testing.expectEqualStrings("it is told", out[0].checks[0].text);
+    try std.testing.expectEqual(@as(?[]const u8, null), out[0].checks[0].result);
+    try std.testing.expectEqualStrings("ok", out[0].checks[1].result.?);
+    try std.testing.expectEqualStrings("2026-11-24T21:02:00Z", out[0].landed_at.?);
+    try std.testing.expectEqual(@as(usize, 0), b.column(.review, null, "", &out));
+    try std.testing.expectEqual(@as(u32, 2), b.epicProgress(1).?.landed);
 }
 
 test "find keeps the cards whose number, title or repo hold it, letter case aside" {
