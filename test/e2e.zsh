@@ -1240,8 +1240,9 @@ check "with nothing of the orchestrator in babylon's file, the board's header ha
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":4,"working":4,"tools":{"working":1,"cap":1}}}' >$tmp/run/babylon/board.json
 outer resize-window -t o -x 160
 check "with room, the header's auto switch says the tools slots when babylon's file gives them" see ' ◐ auto 4/4 · tools 1/1( |$)'
-outer resize-window -t o -x 121
+outer resize-window -t o -x 70
 check "and with less room, only the slots in use" see ' ◐ 4/4( |$)'
+outer resize-window -t o -x 121
 cp $tmp/board.noauto $tmp/run/babylon/board.json
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":2,"working":1}}' >$tmp/run/babylon/board.json
 see ' ◐ auto 1/2( |$)'
@@ -1749,7 +1750,7 @@ check "where one with work is not" tab_lit arena
 cp $tmp/run/babylon/board.json $tmp/board.lanes
 print -r -- "${$(<$tmp/board.lanes)%\}}"',"auto":{"on":true,"cap":2,"working":1}}' >$tmp/run/babylon/board.json
 check "with room, the header says auto beside every button" see ' ▲ 0 need you +◒ gate +◐ auto 1/2( |$)'
-outer resize-window -t o -x 105
+outer resize-window -t o -x 66
 check "and with less room still, it keeps the switch" see ' ◐ 1/2( |$)'
 outer resize-window -t o -x 121
 cp $tmp/board.lanes $tmp/run/babylon/board.json

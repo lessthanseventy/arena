@@ -470,7 +470,7 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
             filled = inner;
         }
     } else try pen.set(w, .{}, null);
-    for (filled..inner) |_| try w.writeAll(" ");
+    for (@min(filled, inner)..inner) |_| try w.writeAll(" ");
 }
 
 /// The `inner` cells of a row of the rail's agents. Wide, a Claude's row has its mark, name,
