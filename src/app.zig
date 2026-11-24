@@ -3641,7 +3641,7 @@ pub const App = struct {
                 if (!std.mem.eql(u8, item.state, "building")) try app.toGate();
             },
             .next => if (row.ticket) |id| try app.send(.ignore, captured("babylon start {d}"), .{id}),
-            .goal => {
+            .goal, .focal => {
                 try app.toBoard();
                 for (given.goals) |goal| {
                     if (goal.epic != row.ticket) continue;
