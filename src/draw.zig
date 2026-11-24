@@ -1412,7 +1412,7 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
         .item => "▌ ",
         .buttons, .refused => "▌     ",
         .next_refused => "    ",
-        .landing_chips, .building_chips, .next_item, .auto_line, .auto_repos => "  ",
+        .landing_chips, .building_chips, .next_item => "  ",
         else => "",
     };
     if (lead.len > 0 and room > cellCount(lead)) {
@@ -1435,7 +1435,7 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
             strong.flags.bold = true;
             break :blk strong;
         },
-        .auto_line, .auto_repos, .next_item => .{},
+        .next_item => .{},
         .quiet, .more, .landed, .buttons => dim,
         .refused, .next_refused => ink(app, "emberdim", 1),
         .item, .landing_chips, .building_chips => .{},
@@ -1482,7 +1482,6 @@ const Run = struct { end: usize, style: vt.Style };
 /// their own. The stage word is coloured as the board's cards colour it.
 fn feedRun(app: *const App, line: feed.Line, text: []const u8, at: usize, base: vt.Style) Run {
     const kind = line.kind;
-    if (kind == .auto_line or kind == .auto_repos) return autoRun(app, line, text, at);
     if (kind == .next_item) return nextRun(app, text, at);
     if (kind != .landing_chips and kind != .building_chips) return .{ .end = text.len, .style = base };
     if (text[at] == ' ') return .{ .end = std.mem.indexOfNonePos(u8, text, at, " ") orelse text.len, .style = .{} };
@@ -1500,36 +1499,6 @@ fn feedRun(app: *const App, line: feed.Line, text: []const u8, at: usize, base: 
         const next = std.mem.indexOfNonePos(u8, text, end, " ") orelse text.len;
         idx = if (next - end >= 3) 0 else idx + 1;
         pos = next;
-    }
-}
-
-/// The run of auto's line that starts at `at`: its parts are split at ` · `, the first auto's
-/// state, the last hold's, a repo between them paused in the error colour or dim at its cap.
-fn autoRun(app: *const App, line: feed.Line, text: []const u8, at: usize) Run {
-    const dim = ink(app, "dim", 8);
-    const sep = " · ";
-    var part: u4 = 0;
-    var pos: usize = 0;
-    while (true) {
-        const end = std.mem.indexOfPos(u8, text, pos, sep) orelse text.len;
-        if (at < end) {
-            const bit = @as(u16, 1) << part;
-            const last = end == text.len;
-            var style: vt.Style = .{};
-            if (part == 0 and line.kind == .auto_line) {
-                style = if (line.dimmed & bit != 0) dim else ink(app, "violet", 5);
-                style.flags.bold = line.dimmed & bit == 0;
-            } else if (last and line.kind == .auto_line) {
-                style = if (line.failed) ink(app, "emberdim", 1) else dim;
-                style.flags.bold = line.failed;
-            } else if (line.paused & bit != 0) {
-                style = ink(app, "emberdim", 1);
-            } else if (line.dimmed & bit != 0) style = dim;
-            return .{ .end = end, .style = style };
-        }
-        if (at < end + sep.len) return .{ .end = end + sep.len, .style = dim };
-        pos = end + sep.len;
-        part +|= 1;
     }
 }
 
@@ -1996,6 +1965,7 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         for (cellCount(row.text) + 1..width) |_| try w.writeAll(" ");
     }
     if (view.detail) |id| try detailBox(app, w, id, view.detail_scroll);
+    try autoBox(app, w);
     if (view.help) try helpBox(app, w);
 }
 
@@ -2612,6 +2582,7 @@ fn benchOver(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     if (view.answering) if (app.boardCard(view.col, view.row)) |card| if (card.ask) |ask| try askBox(app, w, card.id, ask);
     if (view.giving) |picked| if (app.boardCard(view.col, view.row)) |card| try giveBox(app, w, card.id, picked);
     if (view.detail) |id| try detailBox(app, w, id, view.detail_scroll);
+    try autoBox(app, w);
     if (view.help) try helpBox(app, w);
 }
 
@@ -2684,6 +2655,106 @@ fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
     while (y < bottom) : (y += 1) try boxLine(w, &pen, edge, dim, x, y, noted.next() orelse "", inner);
     try modalFrame(app, w, rect, title, " j k scroll ");
 }
+
+/// A switch as text: the knob right when on.
+fn knobText(on: bool) []const u8 {
+    return if (on) "▐ ●▌" else "▐● ▌";
+}
+
+/// Auto's settings over the board: auto as a switch, how many of its cap work, hold as a switch,
+/// and each repo's cap as a stepper, `paused` at 0, with the Claudes working it. The foot says
+/// babylon's refusal, else the keys. Its rows are where `App.autoClick` looks.
+fn autoBox(app: *const App, w: *Writer) !void {
+    const rect = app.autoRect() orelse return;
+    const view = app.board_view.?;
+    const pick = view.auto_pick.?;
+    const state = app.board.?.autoState() orelse tickets.Auto{};
+    const on = app.auto() != null;
+    const hold = app.holding();
+    const rows = @min(app.autoRepos(), App.autoRoom(rect));
+    const stepper = app.autoStepper(rect);
+    const x0 = rect.x + 2;
+    const foot = rect.y + rect.h - 1;
+    var line: [96]u8 = undefined;
+    const said = app.auto_wants.refused;
+    const hint = " j k pick   + - step   a auto   H hold   esc close ";
+    const working = std.fmt.bufPrint(&line, "working {d} of {d}", .{ state.working, state.cap }) catch "";
+    if (app.roles) |r| {
+        try bench.window(w, r, rect.x, rect.y, rect.w - 1, rect.h, "auto", null, true);
+        try bench.say(w, rect.x + rect.w - 4, rect.y, "✕", r.text, r.raised, true);
+        _ = try bench.toggle(w, r, x0, rect.y + 1, "auto", on, r.panel);
+        try bench.say(w, x0 + 10, rect.y + 1, if (on) "on" else "off", if (on) r.accent else r.dim, r.panel, pick == 0);
+        try bench.say(w, x0, rect.y + 2, working, r.dim, r.panel, false);
+        _ = try bench.toggle(w, r, x0, rect.y + 3, "hold", hold, r.panel);
+        try bench.say(w, x0 + 10, rect.y + 3, if (hold) "on" else "off", if (hold) r.accent else r.dim, r.panel, pick == 1);
+        if (pick < 2) try bench.say(w, rect.x + 1, rect.y + 1 + 2 * @as(u16, @intCast(pick)), "▌", r.accent, r.panel, true);
+        for (0..rows) |i| {
+            const repo = app.autoRepo(i) orelse continue;
+            const y = rect.y + 5 + @as(u16, @intCast(i));
+            const picked = pick == 2 + i;
+            if (picked) try bench.say(w, rect.x + 1, y, "▌", r.accent, r.panel, true);
+            try bench.say(w, x0, y, repo.name, if (picked) r.text else r.dim, r.panel, picked);
+            try bench.say(w, stepper.minus, y, "[-]", r.accent, r.tile, true);
+            const value = std.fmt.bufPrint(&line, "{d:^3}", .{repo.cap}) catch "";
+            try bench.say(w, stepper.minus + 3, y, value, r.text, r.panel, true);
+            try bench.say(w, stepper.plus, y, "[+]", r.accent, r.tile, true);
+            const n = feed.working(&app.board.?, repo.name);
+            const note = if (repo.cap == 0) "paused" else std.fmt.bufPrint(&line, "{d} working", .{n}) catch "";
+            try bench.say(w, stepper.plus + 4, y, note, if (repo.cap == 0) r.failed else r.dim, r.panel, false);
+        }
+        if (said) |text| {
+            try bench.say(w, x0, foot, clip(text, rect.w -| 5), r.failed, r.panel, true);
+        } else if (cellCount(hint) < rect.w -| 4) try bench.say(w, x0, foot, hint, r.dim, r.panel, false);
+        return;
+    }
+    const edge = ink(app, "amber", 4);
+    const dim = ink(app, "dim", 8);
+    const name_w = stepper.minus - 2 - x0;
+    const inner = rect.w -| 4;
+    var pen: Pen = .{};
+    try pen.set(w, edge, null);
+    try w.print("\x1b[{d};{d}H╭─", .{ rect.y + 1, rect.x + 1 });
+    try pen.set(w, heading(app), null);
+    try w.writeAll(" auto ");
+    try pen.set(w, edge, null);
+    for (9..rect.w) |_| try w.writeAll("─");
+    try w.writeAll("╮");
+    var y: u16 = 1;
+    while (y < rect.h - 1) : (y += 1) {
+        var buf: [160]u8 = undefined;
+        var style: vt.Style = .{};
+        var text: []const u8 = "";
+        if (y == 1 or y == 3) {
+            const picked = pick == (y - 1) / 2;
+            const set = if (y == 1) on else hold;
+            style.flags.bold = picked;
+            text = std.fmt.bufPrint(&buf, "{s}  {s} {s}", .{ if (y == 1) "auto" else "hold", knobText(set), if (set) "on" else "off" }) catch "";
+        } else if (y == 2) {
+            style = dim;
+            text = working;
+        } else if (y >= 5 and y - 5 < rows) {
+            const i = y - 5;
+            const repo = app.autoRepo(i) orelse continue;
+            var tail: [32]u8 = undefined;
+            const note = if (repo.cap == 0) "paused" else std.fmt.bufPrint(&tail, "{d} working", .{feed.working(&app.board.?, repo.name)}) catch "";
+            style.flags.bold = pick == 2 + i;
+            text = std.fmt.bufPrint(&buf, "{s}{s}  [-]{d:^3}[+]  {s}", .{ repo.name, spaces[0..name_w -| cellCount(repo.name)], repo.cap, note }) catch "";
+        }
+        try boxLine(w, &pen, edge, style, rect.x, rect.y + y + 1, text, inner);
+    }
+    try pen.set(w, edge, null);
+    try w.print("\x1b[{d};{d}H╰─", .{ rect.y + rect.h, rect.x + 1 });
+    for (3..rect.w) |_| try w.writeAll("─");
+    try w.writeAll("╯");
+    const foot_text = if (said) |text| clip(text, rect.w -| 5) else hint;
+    if (cellCount(foot_text) + 3 < rect.w) {
+        try pen.set(w, if (said != null) ink(app, "emberdim", 1) else dim, null);
+        try w.print("\x1b[{d};{d}H{s}", .{ rect.y + rect.h, rect.x + 3, foot_text });
+    }
+    try pen.set(w, .{}, null);
+}
+
+const spaces: [64]u8 = @splat(' ');
 
 /// The card's modal in Workbench's look: a window over the board with its shadow and `✕`, the
 /// title whole, the facts as chips, the open ask as a violet band with its options as buttons,
@@ -3667,7 +3738,7 @@ test "the feed's headers and a landing row's stage word are drawn in their state
     defer b.deinit();
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     var f: feed.Feed = undefined;
-    feed.build(&f, &b, &.{}, 56, 40, 1795262400, 0, 0);
+    feed.build(&f, &b, &.{}, 56, 40, 1795262400, 0);
 
     var buf: [2048]u8 = undefined;
     var pen: Pen = .{};
@@ -3722,7 +3793,7 @@ test "the feed draws Your move's header bold, a send-back in the error colour, a
     defer b.deinit();
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     var f: feed.Feed = undefined;
-    feed.build(&f, &b, &.{}, 56, 40, 1795262400, 1795262400 - 12 * 3600, 0);
+    feed.build(&f, &b, &.{}, 56, 40, 1795262400, 1795262400 - 12 * 3600);
     var buf: [2048]u8 = undefined;
     const has = struct {
         fn in(drawn: []const u8, style: vt.Style, text: []const u8) !bool {
@@ -3813,7 +3884,7 @@ test "the done strip's picked card is lit while the board has the keys and dims 
     try std.testing.expect(std.mem.indexOf(u8, column_keys_drawn, picked_lit) == null);
 }
 
-test "auto's line draws a paused repo in the error colour, hold on in bold, and a pinned ticket's mark in the accent" {
+test "a pinned ticket's mark in next is drawn in the accent" {
     var b = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[],"needs_you":[],"hold":true,
         \\"auto":{"on":true,"cap":6,"working":4,"idle":{"slots":2,"why":"next empty"},"repo_caps":{"arena":2,"tlon":0}},
@@ -3822,26 +3893,12 @@ test "auto's line draws a paused repo in the error colour, hold on in bold, and 
     defer b.deinit();
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     var f: feed.Feed = undefined;
-    feed.build(&f, &b, &.{}, 70, 40, 1795262400, 0, 0);
+    feed.build(&f, &b, &.{}, 70, 40, 1795262400, 0);
     var buf: [2048]u8 = undefined;
     var want: [64]u8 = undefined;
     var out: Writer = .fixed(&buf);
     var pen: Pen = .{};
     try feedRow(&app, &out, &pen, &f, 2, 70);
-    const auto = out.buffered();
-    const paused = try std.fmt.allocPrint(std.testing.allocator, "{s}tlon paused", .{try sgr(&want, ink(&app, "emberdim", 1))});
-    defer std.testing.allocator.free(paused);
-
-    try std.testing.expect(std.mem.indexOf(u8, auto, paused) != null);
-    var hold = ink(&app, "emberdim", 1);
-    hold.flags.bold = true;
-    const held = try std.fmt.allocPrint(std.testing.allocator, "{s}hold on", .{try sgr(&want, hold)});
-    defer std.testing.allocator.free(held);
-    try std.testing.expect(std.mem.indexOf(u8, auto, held) != null);
-
-    out = .fixed(&buf);
-    pen = .{};
-    try feedRow(&app, &out, &pen, &f, 3, 70);
     const pin = try std.fmt.allocPrint(std.testing.allocator, "{s}  ▪", .{try sgr(&want, ink(&app, "amber", 4))});
     defer std.testing.allocator.free(pin);
     try std.testing.expect(std.mem.indexOf(u8, out.buffered(), pin) != null);
@@ -4301,16 +4358,14 @@ test "the feed draws at every width and with every item picked, with a long next
     var buf: [4096]u8 = undefined;
     for (8..120) |width| {
         var f: feed.Feed = undefined;
-        for (0..4) |sel| {
-            feed.build(&f, &b, &.{}, width, 40, 1795262400, 0, sel);
-            for (0..f.itemCount() + 1) |pick| {
-                app.board_view = .{ .home = true, .focus = .orchestrator, .pick = pick };
-                for (0..f.count() + 1) |row| {
-                    for (2..140) |inner| {
-                        var out: Writer = .fixed(&buf);
-                        var pen: Pen = .{};
-                        try feedRow(&app, &out, &pen, &f, row, @intCast(inner));
-                    }
+        feed.build(&f, &b, &.{}, width, 40, 1795262400, 0);
+        for (0..f.itemCount() + 1) |pick| {
+            app.board_view = .{ .home = true, .focus = .orchestrator, .pick = pick };
+            for (0..f.count() + 1) |row| {
+                for (2..140) |inner| {
+                    var out: Writer = .fixed(&buf);
+                    var pen: Pen = .{};
+                    try feedRow(&app, &out, &pen, &f, row, @intCast(inner));
                 }
             }
         }

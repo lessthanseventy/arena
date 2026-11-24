@@ -1224,20 +1224,26 @@ rm $tmp/refuse
 inner set -pu -t alpha:one @arena_claude_since
 check "with no auto in babylon's file, the board says nothing of it" hides 'auto [0-9]'
 key A
-check "A turns babylon's auto mode on" await last 'auto on'
+check "A opens auto's settings over the board" see 'working [0-9]+ of [0-9]+'
+key a
+check "a in them turns babylon's auto mode on" await last 'auto on'
+key Escape
+check "and esc closes them" gone 'working [0-9]+ of [0-9]+'
 cp $tmp/run/babylon/board.json $tmp/board.noauto
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":2,"working":1}}' >$tmp/run/babylon/board.json
 check "on, the switch beside the tabs says how many work of the cap" see ' ◐ auto 1/2( |$)'
 check "and so does the board's row atop the rail" see '^│ ▤ board auto 1/2 '
 key A
-check "and A turns it off" await last 'auto off'
+key a
+check "and a turns it off" await last 'auto off'
+key Escape
 cp $tmp/board.noauto $tmp/run/babylon/board.json
 check "off, the state is gone" gone 'auto [0-9]'
 tabrow() { screen | grep -n -m1 -E ' every [0-9]+ +[a-z]' | cut -d: -f1 }
 tabcol() { local l=$(screen | grep -m1 -E ' every [0-9]+ +[a-z]'); local p=${l%%" $1 "*}; print $(( ${#p} + 2 )) }
 autocol() { local l=$(screen | sed -n "$(( $(tabrow) - 1 ))p"); local p=${l%% ◐ *}; print $(( ${#p} + 2 )) }
 mouse 0 $(autocol) $(( $(tabrow) - 1 )) M
-check "a click on the switch turns it on as A does" await last 'auto on'
+check "a click on the switch turns it on" await last 'auto on'
 check "with nothing of the orchestrator in babylon's file, the board's header has no button for it" hides ' ● orch '
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":4,"working":4,"tools":{"working":1,"cap":1}}}' >$tmp/run/babylon/board.json
 outer resize-window -t o -x 160
@@ -1682,24 +1688,24 @@ check "Enter runs the action with the words as its last argument" await last 'an
 check "and the line is gone, the feed has its keys" await feed_lit '#8 arena  asks'
 jq -c '. + {"hold":false,"auto":{"on":true,"cap":6,"working":2,"idle":{"slots":1,"why":"next empty"},"repo_caps":{"arena":3,"babylon":2,"tlon":1}},"plan":{"next":[{"ticket":655,"repo":"arena","title":"Typing reaches no pane","why":"third sighting","set_by":"orchestrator"},{"ticket":656,"repo":"babylon","title":"Held lines","why":"","set_by":"orchestrator"}]}}' $tmp/run/babylon/board.json >$tmp/board.tmp && mv $tmp/board.tmp $tmp/run/babylon/board.json
 see '▷ next 2 · 1 slot idle'
-check "next is under Your move, auto's line at its top" see 'auto on · 2 of 6 · hold off'
-check "and its repos under it" see 'arena 3 · babylon 2 · tlon 1'
-check "and a ticket of it a row" see '#656 babylon  Held lines'
-key j
-check "the pick goes on to auto's line, a repo of it lit" await feed_lit 'arena 3'
-key Right Right
-check "the arrows pick another repo" await feed_lit 'tlon 1'
+check "next is under Your move, and its tickets a row each" see '#656 babylon  Held lines'
+check "the column has no auto row, and none for its repos" hides 'auto on · 2 of 6|arena 3 · babylon 2'
 : >$tmp/babylon
-key -
-check "- lowers its cap through babylon, 0 pausing it" await last 'auto --repo-cap tlon=0'
-key +
-check "and + raises it" await last 'auto --repo-cap tlon=2'
-key a
-check "a turns auto off through babylon" await last 'auto off'
-key H
-check "and H puts the pipeline on hold" await last 'hold on'
+mouse 0 $(( $(autocol) + 3 )) $(( $(tabrow) - 1 )) M
+check "a click on the header's auto words opens its settings, one row for each repo" see 'arena +\[-\] +3 +\[\+\]'
+check "and says how many work of the cap" see 'working 2 of 6'
+repo_row() { screen | grep -n -m1 -E "$1 +\\[-\\]" | cut -d: -f1 }
+plus_col() { local l=$(screen | grep -m1 -E "$1 +\\[-\\]"); local p=${l%%\[+\]*}; print $(( ${#p} + 2 )) }
+press=$'\e'"[<0;$(plus_col arena);$(repo_row arena)M"
+outer send-keys -t o -l "$press$press"
+check "two clicks on a repo's [+] show its cap two up at once" see 'arena +\[-\] +5 +\[\+\]'
+check "and babylon is told the last value only" await last 'auto --repo-cap arena=5'
+zselect -t 30
+check "once, not a command for each click" eval '(( $(grep -c -- "--repo-cap arena=" $tmp/babylon) == 1 ))'
+key Escape
+check "esc closes the settings" gone 'working 2 of 6'
 key j
-check "the pick goes on to next's tickets" await feed_lit '#655 arena  third sighting'
+check "and the feed has its keys again: the pick goes on to next's tickets" await feed_lit '#655 arena  third sighting'
 touch $tmp/refuse-next
 key p
 check "a next key babylon refuses says why under the ticket's row" see 'babylon: ticket #655 is c'

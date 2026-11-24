@@ -4,15 +4,14 @@ const std = @import("std");
 const tickets = @import("board.zig");
 const Card = tickets.Card;
 
-pub const Kind = enum { move_head, quiet, item, buttons, refused, next_refused, more, next_head, auto_line, auto_repos, next_item, landing_head, building_head, landing_chips, building_chips, landed };
+pub const Kind = enum { move_head, quiet, item, buttons, refused, next_refused, more, next_head, next_item, landing_head, building_head, landing_chips, building_chips, landed };
 
 /// babylon's refusal of what was asked of a Your move item, by the item's id: said in place of
 /// its buttons.
 pub const Refusal = struct { id: []const u8, text: []const u8 };
 
 /// Something in the feed the pick can be on: a Your move item, its whole first line, a ticket in
-/// next, auto's line with one of its repos lit, or a ticket landing or building, `w` cells of its
-/// line from `at`.
+/// next, or a ticket landing or building, `w` cells of its line from `at`.
 pub const Item = struct {
     line: usize,
     at: usize = 0,
@@ -22,35 +21,27 @@ pub const Item = struct {
     need: ?usize = null,
     /// Its place in next, for a ticket there.
     next: ?usize = null,
-    /// Auto's line, and the repo of its caps that is lit, in the order babylon gives them.
-    auto: bool = false,
-    repo: usize = 0,
 };
 
 /// What the pick can be on in the rest of the feed: a ticket's chip on a line of landing or
-/// building, a ticket of next, or auto's line.
+/// building, or a ticket of next.
 const Spot = struct {
     line: usize,
     at: usize = 0,
     w: usize = 0,
     ticket: ?u32 = null,
     next: ?usize = null,
-    auto: bool = false,
-    repo: usize = 0,
 };
 
 pub const Line = struct {
     kind: Kind,
-    /// Of a send-back of Your move: drawn in a send-back's colour. Of auto's line: hold is on.
+    /// Of a send-back of Your move: drawn in a send-back's colour.
     failed: bool = false,
     text: []const u8,
     /// Of a Your move item's row: its place in babylon's needs_you.
     need: ?usize = null,
     /// What a line of next says in place of its title while it is the pick.
     alt: []const u8 = "",
-    /// Of auto's line, its parts, split at ` · `: those drawn dim and those drawn as paused.
-    dimmed: u16 = 0,
-    paused: u16 = 0,
 };
 
 /// Lines and the text they point into: Your move's, or what follows it.
@@ -152,8 +143,8 @@ pub const Feed = struct {
         return n;
     }
 
-    /// The `i`th thing the pick can be on: Your move's items first, then next's, auto's line at its
-    /// top, then landing, then building.
+    /// The `i`th thing the pick can be on: Your move's items first, then next's, then landing,
+    /// then building.
     pub fn item(f: *const Feed, i: usize) ?Item {
         if (i < f.items_shown) return .{ .line = f.move.starts[i], .ticket = f.move.tickets[i], .need = i };
         const at = i - f.items_shown;
@@ -166,8 +157,6 @@ pub const Feed = struct {
             .w = spot.w,
             .ticket = spot.ticket,
             .next = spot.next,
-            .auto = spot.auto,
-            .repo = spot.repo,
         };
     }
 
@@ -181,7 +170,7 @@ pub const Feed = struct {
 /// a day that began at `today`. Your move keeps its head and first item; the rest of it is cut to
 /// whole items, and what follows is cut to what is left. An item babylon refused says why in place
 /// of its buttons.
-pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, width: usize, room: usize, epoch: i64, today: i64, repo_sel: usize) void {
+pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, width: usize, room: usize, epoch: i64, today: i64) void {
     f.* = .{};
     const needs = board.needsYou();
     if (needs.len == 0) f.move.add(.quiet, false, "nothing needs you", .{});
@@ -222,7 +211,7 @@ pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, wi
         }
     }
 
-    next(&f.rest, board, refused, repo_sel, width);
+    next(&f.rest, board, refused);
     landing(&f.rest, board, width, epoch);
     building(&f.rest, board, width, epoch);
     var landed: usize = 0;
@@ -248,10 +237,9 @@ pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, wi
     f.rest.n = @min(f.rest.n, room -| (f.count() - f.rest.n));
 }
 
-/// Next, under its head auto's line, then a line for each ticket in it, the pin of the human's
-/// in front. A line says its why in place of the title while it is the pick. `repo_sel` is the
-/// repo of auto's caps that is lit.
-fn next(p: *Part, board: *const tickets.Board, refused: []const Refusal, repo_sel: usize, width: usize) void {
+/// Next, a line for each ticket in it, the pin of the human's in front. A line says its why in
+/// place of the title while it is the pick.
+fn next(p: *Part, board: *const tickets.Board, refused: []const Refusal) void {
     const plan = board.next();
     const auto = board.autoState();
     if (plan.len == 0 and auto == null) return;
@@ -259,10 +247,6 @@ fn next(p: *Part, board: *const tickets.Board, refused: []const Refusal, repo_se
     if (idle > 0) {
         p.add(.next_head, false, "▷ next {d} · {d} slot{s} idle", .{ plan.len, idle, if (idle == 1) "" else "s" });
     } else p.add(.next_head, false, "▷ next {d}", .{plan.len});
-    if (auto) |a| {
-        autoLine(p, board, a, repo_sel, width);
-        if (refusalOf(refused, "auto")) |why| p.add(.next_refused, false, "{s}", .{why});
-    }
     for (plan, 0..) |item, i| {
         const pin: []const u8 = if (item.pinned()) "▪ " else "";
         p.add(.next_item, false, "{s}#{d} {s}  {s}", .{ pin, item.ticket, item.repo, item.title });
@@ -273,80 +257,8 @@ fn next(p: *Part, board: *const tickets.Board, refused: []const Refusal, repo_se
     }
 }
 
-/// Which of auto's parts a line says.
-const AutoPart = enum { all, head, repos };
-
-/// `auto on · 5 of 6 · arena 3 · babylon 2 · tlon paused · hold off`, or its `head` or `repos`:
-/// a repo at cap 0 reads paused, and one with its cap's worth working is dimmed. `dimmed` and
-/// `paused` have a bit for each part, split at ` · `, and the repo lit is where `lit_at` says.
-const AutoText = struct {
-    buf: [256]u8 = undefined,
-    len: usize = 0,
-    dimmed: u16 = 0,
-    paused: u16 = 0,
-    lit_at: usize = 0,
-    lit_w: usize = 0,
-
-    fn text(t: *const AutoText) []const u8 {
-        return t.buf[0..t.len];
-    }
-};
-
-fn autoText(board: *const tickets.Board, auto: tickets.Auto, repo_sel: usize, which: AutoPart) AutoText {
-    var t: AutoText = .{};
-    var w: std.Io.Writer = .fixed(&t.buf);
-    var part: u4 = 0;
-    const sep = " · ";
-    if (which != .repos) {
-        w.print("auto {s}{s}{d} of {d}", .{ if (auto.on) "on" else "off", sep, auto.working, auto.cap }) catch {};
-        if (!auto.on) t.dimmed |= 1;
-        part = 2;
-    }
-    if (which != .head) {
-        const caps = auto.repo_caps.map;
-        const sel = if (caps.count() == 0) 0 else @min(repo_sel, caps.count() - 1);
-        for (caps.keys(), caps.values(), 0..) |repo, cap, i| {
-            if (w.buffered().len > 0) w.writeAll(sep) catch {};
-            const from = cellCount(w.buffered());
-            if (cap == 0) {
-                w.print("{s} paused", .{repo}) catch {};
-                t.paused |= @as(u16, 1) << part;
-            } else {
-                w.print("{s} {d}", .{ repo, cap }) catch {};
-                if (working(board, repo) >= cap) t.dimmed |= @as(u16, 1) << part;
-            }
-            if (i == sel) {
-                t.lit_at = from;
-                t.lit_w = cellCount(w.buffered()) - from;
-            }
-            part +|= 1;
-        }
-    }
-    if (which != .repos) w.print("{s}hold {s}", .{ sep, if (board.hold()) "on" else "off" }) catch {};
-    t.len = w.buffered().len;
-    return t;
-}
-
-/// Auto's line, on one line when it fits `width` and else as two: its state and hold, then its
-/// repos, where the pick is lit.
-fn autoLine(p: *Part, board: *const tickets.Board, auto: tickets.Auto, repo_sel: usize, width: usize) void {
-    const sel = if (auto.repo_caps.map.count() == 0) 0 else @min(repo_sel, auto.repo_caps.map.count() - 1);
-    const whole = autoText(board, auto, repo_sel, .all);
-    const split = cellCount(whole.text()) > width -| 1 and auto.repo_caps.map.count() > 0;
-    const shown = if (split) autoText(board, auto, repo_sel, .head) else whole;
-    p.add(.auto_line, board.hold(), "{s}", .{shown.text()});
-    p.lines[p.n - 1].dimmed = shown.dimmed;
-    p.lines[p.n - 1].paused = shown.paused;
-    if (!split) return p.spot(.{ .line = p.n - 1, .at = whole.lit_at, .w = whole.lit_w, .auto = true, .repo = sel });
-    const repos = autoText(board, auto, repo_sel, .repos);
-    p.add(.auto_repos, false, "{s}", .{repos.text()});
-    p.lines[p.n - 1].dimmed = repos.dimmed;
-    p.lines[p.n - 1].paused = repos.paused;
-    p.spot(.{ .line = p.n - 1, .at = repos.lit_at, .w = repos.lit_w, .auto = true, .repo = sel });
-}
-
 /// The Claudes working a repo's tickets.
-fn working(board: *const tickets.Board, repo: []const u8) u32 {
+pub fn working(board: *const tickets.Board, repo: []const u8) u32 {
     var n: u32 = 0;
     for (board.cards()) |card| {
         if (card.status == .doing and card.holder() != null and std.mem.eql(u8, card.repo orelse "", repo)) n += 1;
@@ -512,7 +424,7 @@ test "the feed draws babylon's needs_you as given, then landing in queue order, 
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var f: Feed = undefined;
-    build(&f, &b, &.{}, 56, 40, now, now - 12 * 3600, 0);
+    build(&f, &b, &.{}, 56, 40, now, now - 12 * 3600);
     var out: [64][]const u8 = undefined;
     const want = [_][]const u8{
         "▲ your move 3",
@@ -541,7 +453,7 @@ test "a short column cuts Your move to whole items and says how many more, and k
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var f: Feed = undefined;
-    build(&f, &b, &.{}, 56, 11, now, 0, 0);
+    build(&f, &b, &.{}, 56, 11, now, 0);
     try std.testing.expectEqual(@as(usize, 11), f.count());
     try std.testing.expectEqualStrings("⏎ go   x no", f.line(2).text);
     try std.testing.expectEqualStrings("↓ 2 more", f.line(3).text);
@@ -562,7 +474,7 @@ test "more items than the feed holds are counted in ↓ N more, and only whole i
     var b = try tickets.Board.parse(std.testing.allocator, json.items);
     defer b.deinit();
     var f: Feed = undefined;
-    build(&f, &b, &.{}, 56, 200, now, 0, 0);
+    build(&f, &b, &.{}, 56, 200, now, 0);
     try std.testing.expect(f.items_shown < 30);
     var want: [16]u8 = undefined;
     try std.testing.expectEqualStrings(try std.fmt.bufPrint(&want, "↓ {d} more", .{30 - f.items_shown}), f.line(f.shown).text);
@@ -575,7 +487,7 @@ test "with nothing that needs the human, the feed shrinks to one dim line above 
     );
     defer b.deinit();
     var f: Feed = undefined;
-    build(&f, &b, &.{}, 56, 20, now, 0, 0);
+    build(&f, &b, &.{}, 56, 20, now, 0);
     try std.testing.expectEqual(@as(usize, 2), f.count());
     try std.testing.expectEqual(Kind.quiet, f.line(0).kind);
     try std.testing.expectEqualStrings("✓ landed today 0", f.line(1).text);
@@ -585,7 +497,7 @@ test "the pick goes through Your move's items, then each ticket landing and buil
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var f: Feed = undefined;
-    build(&f, &b, &.{}, 56, 40, now, 0, 0);
+    build(&f, &b, &.{}, 56, 40, now, 0);
     try std.testing.expectEqual(@as(usize, 11), f.itemCount());
     try std.testing.expectEqual(Item{ .line = 1, .ticket = 7, .need = 0 }, f.item(0).?);
     try std.testing.expectEqual(Item{ .line = 5, .ticket = 12, .need = 2 }, f.item(2).?);
@@ -599,7 +511,7 @@ test "an item babylon refused says why in place of its buttons" {
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var f: Feed = undefined;
-    build(&f, &b, &.{.{ .id = "ask:3", .text = "babylon: no session to answer" }}, 56, 40, now, 0, 0);
+    build(&f, &b, &.{.{ .id = "ask:3", .text = "babylon: no session to answer" }}, 56, 40, now, 0);
     try std.testing.expectEqualStrings("#16 arena  asks: Blue?", f.line(3).text);
     try std.testing.expectEqual(Kind.refused, f.line(4).kind);
     try std.testing.expectEqualStrings("babylon: no session to answer", f.line(4).text);
@@ -616,77 +528,41 @@ const planned =
     \\{"ticket":656,"repo":"babylon","title":"Held lines","why":"","set_by":"orchestrator"}]}}
 ;
 
-test "next says its idle slots, then auto's line with a paused repo and one at its cap, then each ticket" {
+test "next says its idle slots, then each ticket, and no line of auto's" {
     var b = try tickets.Board.parse(std.testing.allocator, planned);
     defer b.deinit();
     var f: Feed = undefined;
-    build(&f, &b, &.{}, 70, 40, now, 0, 1);
+    build(&f, &b, &.{}, 70, 40, now, 0);
     var out: [64][]const u8 = undefined;
     const got = texts(&f, &out);
     try std.testing.expectEqualStrings("▷ next 2 · 2 slots idle", got[1]);
-    try std.testing.expectEqualStrings("auto on · 4 of 6 · arena 2 · babylon 3 · tlon paused · hold on", got[2]);
-    try std.testing.expectEqualStrings("▪ #655 arena  Typing reaches no pane", got[3]);
-    try std.testing.expectEqualStrings("#656 babylon  Held lines", got[4]);
-    const auto = f.line(2);
-    try std.testing.expect(auto.kind == .auto_line and auto.failed);
-    // arena has its cap's worth working: dimmed (part 2); tlon is paused (part 4)
-    try std.testing.expectEqual(@as(u16, 1 << 2), auto.dimmed);
-    try std.testing.expectEqual(@as(u16, 1 << 4), auto.paused);
-    try std.testing.expectEqualStrings("▪ #655 arena  third sighting", f.line(3).alt);
+    try std.testing.expectEqualStrings("▪ #655 arena  Typing reaches no pane", got[2]);
+    try std.testing.expectEqualStrings("#656 babylon  Held lines", got[3]);
+    try std.testing.expectEqualStrings("▪ #655 arena  third sighting", f.line(2).alt);
 }
 
-test "babylon's refusal of an auto key is said under auto's line, and of a next key under that ticket's row" {
+test "babylon's refusal of a next key is said under that ticket's row" {
     var b = try tickets.Board.parse(std.testing.allocator, planned);
     defer b.deinit();
     var f: Feed = undefined;
-    const refused = [_]Refusal{
-        .{ .id = "auto", .text = "refused: hold is on" },
-        .{ .id = "next:656", .text = "refused: ticket #656 is claimed by pane %1010" },
-    };
-    build(&f, &b, &refused, 70, 40, now, 0, 1);
+    const refused = [_]Refusal{.{ .id = "next:656", .text = "refused: ticket #656 is claimed by pane %1010" }};
+    build(&f, &b, &refused, 70, 40, now, 0);
     var out: [64][]const u8 = undefined;
     const got = texts(&f, &out);
-    try std.testing.expectEqualStrings("auto on · 4 of 6 · arena 2 · babylon 3 · tlon paused · hold on", got[2]);
-    try std.testing.expectEqualStrings("refused: hold is on", got[3]);
-    try std.testing.expectEqual(Kind.next_refused, f.line(3).kind);
-    try std.testing.expectEqualStrings("▪ #655 arena  Typing reaches no pane", got[4]);
-    try std.testing.expectEqualStrings("#656 babylon  Held lines", got[5]);
-    try std.testing.expectEqualStrings("refused: ticket #656 is claimed by pane %1010", got[6]);
-    try std.testing.expectEqual(@as(usize, 5), f.item(2).?.line);
-    try std.testing.expectEqual(@as(?u32, 656), f.item(2).?.ticket);
+    try std.testing.expectEqualStrings("#656 babylon  Held lines", got[3]);
+    try std.testing.expectEqualStrings("refused: ticket #656 is claimed by pane %1010", got[4]);
+    try std.testing.expectEqual(Kind.next_refused, f.line(4).kind);
+    try std.testing.expectEqual(@as(?u32, 656), f.item(1).?.ticket);
 }
 
-test "the pick goes to auto's line, lit on the repo picked, then to next's tickets" {
+test "the pick goes through next's tickets" {
     var b = try tickets.Board.parse(std.testing.allocator, planned);
     defer b.deinit();
     var f: Feed = undefined;
-    build(&f, &b, &.{}, 70, 40, now, 0, 1);
-    const on_auto = f.item(0).?;
-    try std.testing.expect(on_auto.auto and on_auto.repo == 1);
-    // "auto on · 4 of 6 · " is 19 cells, "arena 2 · " another 10: babylon's part starts at 29
-    try std.testing.expectEqual(@as(usize, 29), on_auto.at);
-    try std.testing.expectEqual(@as(usize, 9), on_auto.w);
-    try std.testing.expectEqual(@as(?usize, 0), f.item(1).?.next);
-    try std.testing.expectEqual(@as(?u32, 655), f.item(1).?.ticket);
-    try std.testing.expectEqual(@as(?usize, 1), f.item(2).?.next);
-    // a repo picked past the last is the last
-    build(&f, &b, &.{}, 70, 40, now, 0, 9);
-    try std.testing.expectEqual(@as(usize, 2), f.item(0).?.repo);
-}
-
-test "auto's line is two when one does not fit: its state and hold, then its repos, where the pick is lit" {
-    var b = try tickets.Board.parse(std.testing.allocator, planned);
-    defer b.deinit();
-    var f: Feed = undefined;
-    build(&f, &b, &.{}, 40, 40, now, 0, 2);
-    try std.testing.expectEqualStrings("auto on · 4 of 6 · hold on", f.line(2).text);
-    try std.testing.expectEqualStrings("arena 2 · babylon 3 · tlon paused", f.line(3).text);
-    try std.testing.expect(f.line(3).kind == .auto_repos);
-    const on = f.item(0).?;
-    try std.testing.expectEqual(@as(usize, 3), on.line);
-    try std.testing.expectEqual(@as(usize, 22), on.at);
-    try std.testing.expectEqual(@as(usize, 11), on.w);
-    try std.testing.expectEqual(@as(?usize, 0), f.item(1).?.next);
+    build(&f, &b, &.{}, 70, 40, now, 0);
+    try std.testing.expectEqual(@as(?usize, 0), f.item(0).?.next);
+    try std.testing.expectEqual(@as(?u32, 655), f.item(0).?.ticket);
+    try std.testing.expectEqual(@as(?usize, 1), f.item(1).?.next);
 }
 
 test "a decision that names a doc keeps its place, wears a mark and says o opens it; one without says nothing of it" {
@@ -699,7 +575,7 @@ test "a decision that names a doc keeps its place, wears a mark and says o opens
     );
     defer b.deinit();
     var f: Feed = undefined;
-    build(&f, &b, &.{}, 56, 40, now, 0, 0);
+    build(&f, &b, &.{}, 56, 40, now, 0);
     var out: [64][]const u8 = undefined;
     const got = texts(&f, &out);
     try std.testing.expectEqualStrings("#307 tlon  asks: A or B? ¶", got[1]);
@@ -717,7 +593,7 @@ test "a look at says it can be opened, then babylon's own actions, and names its
     defer b.deinit();
     try std.testing.expectEqualStrings("docs/asterion.md", b.needsYou()[0].doc.?);
     var f: Feed = undefined;
-    build(&f, &b, &.{}, 56, 40, now, 0, 0);
+    build(&f, &b, &.{}, 56, 40, now, 0);
     var out: [64][]const u8 = undefined;
     const got = texts(&f, &out);
     try std.testing.expectEqualStrings("#307 tlon  look at: docs/asterion.md", got[1]);

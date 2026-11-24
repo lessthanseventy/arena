@@ -176,7 +176,14 @@ fn checkRefusals(app: *App) !void {
     try takeRefusal(app, "report");
     const b = if (app.board) |*b| b else return;
     for (b.needsYou()) |need| try takeRefusal(app, need.id);
-    try takeRefusal(app, "auto");
+    var wanted = app.auto_wants.list.items.len;
+    while (wanted > 0) {
+        wanted -= 1;
+        const want = app.auto_wants.list.items[wanted];
+        if (want.due != 0) continue;
+        var id: [96]u8 = undefined;
+        try takeRefusal(app, want.id(&id));
+    }
     for (b.next()) |item| {
         var id: [24]u8 = undefined;
         try takeRefusal(app, std.fmt.bufPrint(&id, "next:{d}", .{item.ticket}) catch continue);
@@ -191,6 +198,7 @@ fn takeRefusal(app: *App, id: []const u8) !void {
     const text = std.Io.Dir.cwd().readFileAlloc(app.io, path, app.gpa, .limited(1 << 12)) catch return;
     defer app.gpa.free(text);
     std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
+    if (std.mem.startsWith(u8, id, "auto:")) return app.autoRefused(id, text);
     if (std.mem.eql(u8, id, "start")) return app.startAnswered(text);
     if (std.mem.eql(u8, id, "report")) return app.reportAnswered(text);
     if (std.mem.eql(u8, id, "move")) {
@@ -570,7 +578,8 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
             idle_ms;
         const lone = keys.lone(typed.items);
         const pick_ms = try app.pickStep();
-        _ = try posix.poll(&fds, @intCast(@min(wait_ms, idle_ms, @max(1, app.dwell()), @max(1, pick_ms), if (lone) @as(i64, keys.lone_wait_ms) else idle_ms)));
+        const auto_ms = try app.sendAuto();
+        _ = try posix.poll(&fds, @intCast(@min(wait_ms, idle_ms, @max(1, app.dwell()), @max(1, pick_ms), @max(1, auto_ms), if (lone) @as(i64, keys.lone_wait_ms) else idle_ms)));
 
         if (fds[0].revents & posix.POLL.IN != 0) {
             const n = try posix.read(posix.STDIN_FILENO, &buf);
@@ -619,6 +628,7 @@ test {
     _ = @import("parts.zig");
     _ = @import("board.zig");
     _ = @import("feed.zig");
+    _ = @import("auto.zig");
     _ = @import("plan.zig");
     _ = @import("keys.zig");
     _ = @import("menu.zig");

@@ -133,14 +133,13 @@ column focused:
 
 | key | does |
 | --- | --- |
-| `j` `k` | the pick through the feed's items: Your move first, then next (auto's line at its top), then landing, then building |
+| `j` `k` | the pick through the feed's items: Your move first, then next, then landing, then building |
 | `]` `[` | the pick to the next or previous Your move item, from anywhere at home |
 | `1`…`9` | answer the picked ask with that option |
 | `⏎` | the picked item's first action: `go` on a proposal, `start` on a free send-back, and go to its Claude on a landing or building item |
 | `x` | `no` on a proposal, `close` on a free send-back |
 | `J` `K` | on a ticket of next, move it down or up; `p` pins it where it is, `x` drops it. Each goes through `babylon next` as the human, so the orchestrator moves a pinned one only with a proposal |
-| `a` `H` | on auto's line, at the top of next: turn auto on or off, and hold on or off |
-| `←` `→` `+` `-` | on auto's line, pick a repo of its caps and raise or lower it, 0 pausing it (`babylon auto --repo-cap REPO=N`); `h` goes back to the board from there |
+| `A` | auto's settings over the board: auto and hold as switches, each repo's cap as a stepper (`babylon auto --repo-cap REPO=N`, 0 pausing it). `j` `k` pick a row, `+` `-` step a cap, `a` `H` switch, `esc` closes; the keys come back to the column after |
 | `G` | give the picked free send-back to a running Claude, as on the board |
 | `c` | answer the picked ask in words, in a line at the column's foot |
 | `o` `⏎` `y` | on a look at: open its doc (a repo file in a window of its own, in `glow` else `less`; a link by `xdg-open`), then say it looks good |

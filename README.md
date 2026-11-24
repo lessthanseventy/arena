@@ -102,9 +102,12 @@ always did; arena draws them and leaves them running when it quits.
     (todo to backlog or done, and back); onto the `▤ board` title it joins next, as `w`. `/` finds
     cards by number or title. `space` shows the whole ticket over the board: its body, links,
     stage and the note on it, and the last of its gate's log.
-  - `o` goes to the orchestrator, started first when it is not running; `A`, or the `auto` button,
-    turns babylon's auto mode on and off: while it is on, babylon starts a Claude on each free
-    ticket, from the top of next, up to its cap of Claudes working, and the header says `auto 1/2`.
+  - `o` goes to the orchestrator, started first when it is not running. While babylon's auto mode
+    is on, babylon starts a Claude on each free ticket, from the top of next, up to its cap of
+    Claudes working, and the header says `auto 1/2`. `A`, or a click on the header's `auto`,
+    opens its settings: auto and hold as switches, and each repo's cap as `[-] 2 [+]`, 0 pausing
+    it (`j` `k` pick, `+` `-` step, `a` `H` switch, `esc` closes). A change shows at once and
+    babylon is told the last value; a click on the switch itself still turns auto on or off.
 - **Jump** to any window in any session by typing part of its name.
 - **A menu** for everything, for when you would rather click.
 - **Mouse throughout**: click, wheel, drag to select and copy (shift-drag over a program that takes

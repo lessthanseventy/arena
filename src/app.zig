@@ -10,6 +10,7 @@ const Roles = @import("theme.zig").Roles;
 const Pass = @import("pass.zig").Pass;
 const tickets = @import("board.zig");
 const feed = @import("feed.zig");
+const autos = @import("auto.zig");
 const sheets = @import("plan.zig");
 const capture = @import("report.zig");
 const draw = @import("draw.zig");
@@ -369,6 +370,11 @@ pub const BoardView = struct {
     /// withdraw it.
     gate: bool = false,
     withdrawing: bool = false,
+    /// Auto's settings shown over the board, and the row picked: auto, hold, then each repo.
+    auto_pick: ?usize = null,
+    /// The keys were in the orchestrator's column when it opened, and go back there.
+    auto_from_column: bool = false,
+    auto_normal: bool = false,
     /// The board's keys shown over it, until the next key.
     help: bool = false,
     /// Opened as home: the orchestrator's column beside it while the orchestrator is not running.
@@ -376,8 +382,6 @@ pub const BoardView = struct {
     /// The feed's pick, by its place: Your move's items, then next's and auto's line, then
     /// landing's tickets, then building's.
     pick: usize = 0,
-    /// The repo of auto's line that is lit, by its place among its caps.
-    auto_repo: usize = 0,
     /// Home drawn as the plan, when babylon's file has one, in the board's place.
     plan: bool = false,
     /// The plan's pick among its rows that can be picked, and the stages unfolded, a bit each.
@@ -389,7 +393,7 @@ pub const BoardView = struct {
 
     /// Whether a box lies over the board, the keys its own.
     pub fn boxed(view: BoardView) bool {
-        return view.help or view.detail != null or view.answering or view.giving != null;
+        return view.help or view.detail != null or view.answering or view.giving != null or view.auto_pick != null;
     }
 };
 
@@ -520,6 +524,8 @@ pub const App = struct {
     now: i64 = 0,
     /// Until when a click on the auto switch, which has asked "turn off?", is answered by a second.
     auto_armed_until: i64 = 0,
+    /// What the human asked of auto in its modal that babylon's file does not yet say.
+    auto_wants: autos.Wants = .{},
     /// Seconds since the epoch, set each turn of the loop.
     epoch: i64 = 0,
     /// Seconds the local clock is ahead of UTC, for where today began.
@@ -610,6 +616,7 @@ pub const App = struct {
             app.gpa.free(r.text);
         }
         app.refusals.deinit(app.gpa);
+        app.auto_wants.deinit(app.gpa);
         if (app.start_refused) |text| app.gpa.free(text);
         if (app.report_said) |text| app.gpa.free(text);
         if (app.report_text.len > 0) app.gpa.free(app.report_text);
@@ -2022,7 +2029,7 @@ pub const App = struct {
     pub fn feedOf(app: *const App, f: *feed.Feed) bool {
         const b = if (app.board) |*b| b else return false;
         const today = app.epoch - @mod(app.epoch + app.utc_offset, 86400);
-        feed.build(f, b, app.refusals.items, app.view_w -| 4, (app.view_h -| 2) / 2, app.epoch, today, if (app.board_view) |view| view.auto_repo else 0);
+        feed.build(f, b, app.refusals.items, app.view_w -| 4, (app.view_h -| 2) / 2, app.epoch, today);
         return true;
     }
 
@@ -2137,7 +2144,6 @@ pub const App = struct {
     fn feedAct(app: *App, item: feed.Item, key: []const u8) !bool {
         const b = if (app.board) |*b| b else return false;
         const named: []const u8 = if (std.mem.eql(u8, key, "\r")) "⏎" else key;
-        if (item.auto) return app.autoKey(item, key);
         if (item.next) |at| return app.nextKey(at, &app.board_view.?.pick, key);
         const at = item.need orelse {
             if (!std.mem.eql(u8, named, "⏎")) return false;
@@ -2301,34 +2307,6 @@ pub const App = struct {
         return true;
     }
 
-    /// A key on auto's line: `a` turns auto on or off, `H` hold, the arrows pick a repo of its
-    /// caps and `+` `-` raise or lower the one picked, 0 pausing it. Each runs babylon as the
-    /// human, and the line is drawn again from the board once babylon has written it.
-    fn autoKey(app: *App, item: feed.Item, key: []const u8) !bool {
-        const b = if (app.board) |*b| b else return false;
-        const view = &app.board_view.?;
-        const state = b.autoState() orelse return false;
-        if (anyKey(key, &.{ "\x1b[C", "\x1bOC" })) {
-            view.auto_repo = item.repo + 1;
-        } else if (anyKey(key, &.{ "\x1b[D", "\x1bOD" })) {
-            view.auto_repo = item.repo -| 1;
-        } else if (anyKey(key, &.{"a"})) {
-            return app.runNeed("auto", &.{ "babylon", "auto", if (state.on) "off" else "on" });
-        } else if (anyKey(key, &.{"H"})) {
-            return app.runNeed("auto", &.{ "babylon", "hold", if (b.hold()) "off" else "on" });
-        } else if (anyKey(key, &.{ "+", "=", "-" })) {
-            const caps = state.repo_caps.map;
-            if (item.repo >= caps.count()) return true;
-            const cap = caps.values()[item.repo];
-            if (anyKey(key, &.{"-"}) and cap == 0) return true;
-            var arg: [96]u8 = undefined;
-            const set = std.fmt.bufPrint(&arg, "{s}={d}", .{ caps.keys()[item.repo], if (anyKey(key, &.{"-"})) cap - 1 else cap + 1 }) catch return true;
-            return app.runNeed("auto", &.{ "babylon", "auto", "--repo-cap", set });
-        } else return false;
-        app.dirty = true;
-        return true;
-    }
-
     /// A key on a ticket of next, the `at`th: `J` and `K` move it down and up, `x` drops it from
     /// next and `p` pins it where it is. Each goes through babylon as the human, which marks the
     /// ticket as the human's, so the orchestrator moves it only with a proposal.
@@ -2363,13 +2341,13 @@ pub const App = struct {
     /// `runNeed`, and with `report` also a word on success, `ok`, for arena to read: the board's
     /// start closes it only then.
     fn runWith(app: *App, id: []const u8, argv: []const []const u8, report: bool) !bool {
-        // a refusal under auto's line or a next row stays only until the next key of either
-        if (std.mem.eql(u8, id, "auto") or std.mem.startsWith(u8, id, "next:")) {
+        // a refusal under a next row stays only until the next key of either
+        if (std.mem.startsWith(u8, id, "next:")) {
             var i: usize = app.refusals.items.len;
             while (i > 0) {
                 i -= 1;
                 const r = app.refusals.items[i];
-                if (!std.mem.eql(u8, r.id, "auto") and !std.mem.startsWith(u8, r.id, "next:")) continue;
+                if (!std.mem.startsWith(u8, r.id, "next:")) continue;
                 app.gpa.free(r.id);
                 app.gpa.free(r.text);
                 _ = app.refusals.orderedRemove(i);
@@ -3123,6 +3101,7 @@ pub const App = struct {
         if (app.board) |*b| b.deinit();
         app.board = if (text) |t| tickets.Board.parse(app.gpa, t) catch null else null;
         if (app.board == null) try app.closeBoard();
+        app.settleAuto();
         // the feed's height may change, and the orchestrator's window with it
         app.want_list = true;
         // a refusal goes with its item
@@ -4065,7 +4044,7 @@ pub const App = struct {
         if (is(key, &.{"`"})) return app.foldSide();
         if (is(key, &.{"g"})) return app.toGate();
         if (is(key, &.{"o"})) return if (app.halfHome()) app.swapHome(true) else app.toOrchestrator();
-        if (is(key, &.{"A"})) return app.toggleAuto();
+        if (is(key, &.{"A"})) return app.openAuto();
         if (is(key, &.{"P"})) return app.jumpProposed();
         if (is(key, &.{ "]", "[" })) return app.toFeed(key, null);
         if (is(key, &.{ "l", "\x1b[C", "\x1bOC" }) and app.sided()) {
@@ -4222,11 +4201,9 @@ pub const App = struct {
     fn columnKey(app: *App, key: []const u8) !void {
         const view = &app.board_view.?;
         if (anyKey(key, &.{ "\x1b", "q" })) return app.closeBoard();
-        // the arrows pick a repo on auto's line, and only h goes back to the board from it
-        var f: feed.Feed = undefined;
-        const on_auto = app.feedOf(&f) and (if (app.feedPick(&f)) |picked| picked.auto else false);
-        if (anyKey(key, &.{"h"}) or (!on_auto and anyKey(key, &.{ "\x1b[D", "\x1bOD" }))) view.focus = .board;
+        if (anyKey(key, &.{ "h", "\x1b[D", "\x1bOD" })) view.focus = .board;
         if (anyKey(key, &.{"B"})) return app.toBoard();
+        if (anyKey(key, &.{"A"})) return app.openAuto();
         if (anyKey(key, &.{"\r"}) and app.orchestratorState() == .off) {
             return app.send(.ignore, captured("babylon orchestrator"), .{});
         }
@@ -4263,6 +4240,7 @@ pub const App = struct {
         app.dirty = true;
         const view = &app.board_view.?;
         const is = anyKey;
+        if (view.auto_pick != null) return app.autoKey(key);
         if (view.answering) return app.answerKey(key);
         if (view.giving != null) return app.giveKey(key);
         if (view.help) {
@@ -4339,7 +4317,7 @@ pub const App = struct {
         if (is(key, &.{"`"})) return app.foldSide();
         if (is(key, &.{"g"})) return app.gateModal();
         if (is(key, &.{"o"})) return app.toOrchestrator();
-        if (is(key, &.{"A"})) return app.toggleAuto();
+        if (is(key, &.{"A"})) return app.openAuto();
         if (is(key, &.{"P"})) return app.jumpProposed();
         if (is(key, &.{ "]", "[" })) return app.toFeed(key, null);
         if (is(key, &.{"x"})) return app.act(.no);
@@ -4395,9 +4373,191 @@ pub const App = struct {
         return if (app.board) |*b| b.orchestrator() else null;
     }
 
-    /// babylon's auto mode, while it is on.
+    /// babylon's auto mode, while it is on, or as the human just asked it to be.
     pub fn auto(app: *const App) ?tickets.Auto {
-        return if (app.board) |*b| b.auto() else null;
+        const b = if (app.board) |*b| b else return null;
+        var state = b.autoState() orelse return null;
+        if (app.auto_wants.get(.on, "")) |on| state.on = on != 0;
+        return if (state.on) state else null;
+    }
+
+    /// Whether babylon holds its pipeline, or as the human just asked it to.
+    pub fn holding(app: *const App) bool {
+        const b = if (app.board) |*b| b else return false;
+        return if (app.auto_wants.get(.hold, "")) |on| on != 0 else b.hold();
+    }
+
+    /// How many repos have a cap of their own in auto's modal.
+    pub fn autoRepos(app: *const App) usize {
+        const b = if (app.board) |*b| b else return 0;
+        return (b.autoState() orelse return 0).repo_caps.map.count();
+    }
+
+    /// Repo `i` of auto's caps and its cap, as the human just asked it to be.
+    pub fn autoRepo(app: *const App, i: usize) ?struct { name: []const u8, cap: u32 } {
+        const b = if (app.board) |*b| b else return null;
+        const caps = (b.autoState() orelse return null).repo_caps.map;
+        if (i >= caps.count()) return null;
+        const name = caps.keys()[i];
+        return .{ .name = name, .cap = app.auto_wants.get(.cap, name) orelse caps.values()[i] };
+    }
+
+    /// Auto's modal: a window over the board with a row for auto, its count, hold, a blank row, a
+    /// row for each repo, a blank one and the foot. Its rows are `autoRows`.
+    pub fn autoRect(app: *const App) ?ModalRect {
+        const view = app.board_view orelse return null;
+        if (view.auto_pick == null) return null;
+        const width: u16 = @min(app.boardW() -| 4, 48);
+        const bottom = app.view_h -| 2;
+        if (width < 30 or bottom < first_line + 7) return null;
+        const h: u16 = @intCast(@min(7 + app.autoRepos(), bottom - first_line + 1));
+        return .{ .x = app.boardX() + (app.boardW() -| width) / 2, .y = first_line, .w = width, .h = h };
+    }
+
+    /// How many repo rows auto's modal has room for.
+    pub fn autoRoom(rect: ModalRect) usize {
+        return rect.h - 7;
+    }
+
+    /// Where auto's modal puts a repo row's `[-]` and its `[+]`: the name's cells, then the stepper.
+    pub fn autoStepper(app: *const App, rect: ModalRect) struct { minus: u16, plus: u16 } {
+        var name_w: usize = 4;
+        for (0..app.autoRepos()) |i| name_w = @max(name_w, cellCount((app.autoRepo(i) orelse continue).name));
+        const minus = rect.x + 2 + @as(u16, @intCast(name_w)) + 2;
+        return .{ .minus = minus, .plus = minus + 6 };
+    }
+
+    /// Opens auto's modal, with the keys on the board.
+    fn openAuto(app: *App) !void {
+        const view = &app.board_view.?;
+        view.auto_pick = 0;
+        // too small a screen for the window: no box that takes the keys unseen
+        if (app.autoRect() == null) {
+            view.auto_pick = null;
+            return;
+        }
+        view.auto_from_column = view.focus == .orchestrator;
+        view.auto_normal = app.normal;
+        view.focus = .board;
+        app.dirty = true;
+    }
+
+    fn closeAuto(app: *App) void {
+        const view = &app.board_view.?;
+        view.auto_pick = null;
+        if (view.auto_from_column) {
+            view.focus = .orchestrator;
+            app.normal = view.auto_normal;
+        }
+        app.dirty = true;
+    }
+
+    /// A key in auto's modal: `j` `k` pick a row, `+` `-` step the cap of a repo, `a` and `H` turn
+    /// auto and hold on or off, and Escape closes it.
+    fn autoKey(app: *App, key: []const u8) !void {
+        const view = &app.board_view.?;
+        const is = anyKey;
+        const pick = &view.auto_pick.?;
+        app.dirty = true;
+        if (is(key, &.{ "\x1b", "q" })) return app.closeAuto();
+        const last = app.autoRepos() + 1;
+        if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) pick.* = @min(pick.* + 1, last);
+        if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) pick.* -|= 1;
+        if (is(key, &.{"a"})) try app.autoToggle(.on);
+        if (is(key, &.{"H"})) try app.autoToggle(.hold);
+        if (is(key, &.{ "\r", " " }) and pick.* < 2) try app.autoToggle(if (pick.* == 0) .on else .hold);
+        if (pick.* < 2) return;
+        if (is(key, &.{ "+", "=" })) try app.autoStep(pick.* - 2, true);
+        if (is(key, &.{"-"})) try app.autoStep(pick.* - 2, false);
+    }
+
+    /// Turns auto or hold the other way, shown at once and sent once the presses stop.
+    fn autoToggle(app: *App, kind: autos.Kind) !void {
+        const now_on = if (kind == .on) app.auto() != null else app.holding();
+        try app.auto_wants.set(app.gpa, kind, "", @intFromBool(!now_on), app.now);
+    }
+
+    /// Raises or lowers repo `i`'s cap by one, never under 0, which pauses it.
+    fn autoStep(app: *App, i: usize, up: bool) !void {
+        const repo = app.autoRepo(i) orelse return;
+        if (!up and repo.cap == 0) return;
+        try app.auto_wants.set(app.gpa, .cap, repo.name, if (up) repo.cap + 1 else repo.cap - 1, app.now);
+    }
+
+    /// A click in auto's modal: a switch, a stepper button, a row to pick, or outside it to close.
+    fn autoClick(app: *App, m: keys.Mouse) !void {
+        const view = &app.board_view.?;
+        const rect = app.autoRect() orelse return app.closeAuto();
+        const close = app.workbench() and m.y == rect.y and m.x + 4 >= rect.x + rect.w and m.x + 2 <= rect.x + rect.w;
+        if (close or !rect.contains(m.x, m.y)) return app.closeAuto();
+        if (m.y == rect.y + 1) {
+            view.auto_pick = 0;
+            try app.autoToggle(.on);
+        } else if (m.y == rect.y + 3) {
+            view.auto_pick = 1;
+            try app.autoToggle(.hold);
+        } else if (m.y >= rect.y + 5 and m.y - rect.y - 5 < @min(app.autoRepos(), autoRoom(rect))) {
+            const i = m.y - rect.y - 5;
+            view.auto_pick = 2 + i;
+            const stepper = app.autoStepper(rect);
+            if (m.x >= stepper.minus and m.x < stepper.minus + 3) try app.autoStep(i, false);
+            if (m.x >= stepper.plus and m.x < stepper.plus + 3) try app.autoStep(i, true);
+        }
+    }
+
+    /// Sends each value asked of auto whose presses have stopped, the last one only: babylon runs
+    /// in the background. Returns how long until the next is due.
+    pub fn sendAuto(app: *App) !i64 {
+        const never = std.math.maxInt(i64);
+        app.settleAuto();
+        var i: usize = 0;
+        while (i < app.auto_wants.list.items.len) : (i += 1) {
+            const want = app.auto_wants.list.items[i];
+            if (want.due == 0 or app.now < want.due) continue;
+            var id: [96]u8 = undefined;
+            var arg: [96]u8 = undefined;
+            const word: []const u8 = if (want.value != 0) "on" else "off";
+            const argv: []const []const u8 = switch (want.kind) {
+                .on => &.{ "babylon", "auto", word },
+                .hold => &.{ "babylon", "hold", word },
+                .cap => &.{ "babylon", "auto", "--repo-cap", std.fmt.bufPrint(&arg, "{s}={d}", .{ want.repo, want.value }) catch continue },
+            };
+            _ = try app.runNeed(want.id(&id), argv);
+            app.auto_wants.list.items[i].due = 0;
+            app.auto_wants.list.items[i].sent_at = app.now;
+        }
+        return app.auto_wants.nextDue(app.now) orelse never;
+    }
+
+    /// Drops what the human asked of auto that babylon's file now says, or has said nothing of
+    /// since it was sent, and what is back at the value the file has before it was sent.
+    pub fn settleAuto(app: *App) void {
+        const b = if (app.board) |*b| b else return;
+        const state = b.autoState() orelse tickets.Auto{};
+        var i = app.auto_wants.list.items.len;
+        while (i > 0) {
+            i -= 1;
+            const want = app.auto_wants.list.items[i];
+            const has: ?u32 = switch (want.kind) {
+                .on => @intFromBool(state.on),
+                .hold => @intFromBool(b.hold()),
+                .cap => state.repo_caps.map.get(want.repo),
+            };
+            const said = if (has) |value| value == want.value else false;
+            const stale = want.due == 0 and app.now - want.sent_at >= autos.trust_ms;
+            if (said or stale) app.auto_wants.drop(app.gpa, i);
+        }
+    }
+
+    /// babylon refused what was sent for `id`: the board's value shows again, and why is said.
+    pub fn autoRefused(app: *App, id: []const u8, text: []const u8) !void {
+        const line = std.mem.trim(u8, text, " \n");
+        const first = line[0 .. std.mem.indexOfScalar(u8, line, '\n') orelse line.len];
+        var clean: std.ArrayList(u8) = .empty;
+        defer clean.deinit(app.gpa);
+        try @import("text.zig").appendClean(&clean, app.gpa, first);
+        try app.auto_wants.refuse(app.gpa, id, clean.items);
+        app.dirty = true;
     }
 
     fn toggleAuto(app: *App) !void {
@@ -5027,7 +5187,17 @@ pub const App = struct {
         return false;
     }
 
-    fn pressButton(app: *App, button: Button) !void {
+    /// Whether column `x` of the auto button is on its switch, not its words.
+    fn onAutoSwitch(app: *const App, button: Button, x: u16) bool {
+        var buf: [96]u8 = undefined;
+        const label = app.buttonLabel(button, &buf);
+        const at = x - button.x;
+        const knob = std.mem.indexOf(u8, label, "▐") orelse return at < 3;
+        const from = cellCount(label[0..knob]);
+        return at >= from and at < from + 4;
+    }
+
+    fn pressButton(app: *App, button: Button, x: u16) !void {
         const view = &app.board_view.?;
         switch (button.what) {
             .repo => |i| {
@@ -5043,7 +5213,9 @@ pub const App = struct {
             },
             .gate => try app.gateModal(),
             .orch => try app.toOrchestrator(),
-            .auto => if (app.auto() != null and app.now >= app.auto_armed_until) {
+            .auto => if (app.now >= app.auto_armed_until and !app.onAutoSwitch(button, x)) {
+                try app.openAuto();
+            } else if (app.auto() != null and app.now >= app.auto_armed_until) {
                 app.auto_armed_until = app.now + auto_confirm_ms;
                 app.dirty = true;
             } else {
@@ -5165,6 +5337,10 @@ pub const App = struct {
         const open = &app.board_view.?;
         // a box over the board takes the click, as a key would, so nothing hidden under it is pressed
         if (open.boxed()) {
+            if (open.auto_pick != null) {
+                try app.autoClick(m);
+                return true;
+            }
             if (app.modalRect()) |rect| {
                 var modal: [16]ModalButton = undefined;
                 for (app.modalButtons(&modal)) |button| if (button.hit(m.x, m.y)) {
@@ -5202,7 +5378,7 @@ pub const App = struct {
         };
         var buttons: [48]Button = undefined;
         for (app.boardButtons(&buttons)) |button| if (button.hit(m.x, m.y)) {
-            try app.pressButton(button);
+            try app.pressButton(button, m.x);
             return true;
         };
         const at = app.boardCardAt(m.x, m.y) orelse return true;
@@ -7281,6 +7457,61 @@ test "the auto button says the tools slots when babylon gives them, and the shor
     try std.testing.expectEqualStrings(" ◐ auto 4/4 · tools 1/1 ", app.buttonLabel(button, &buf));
     button.short = true;
     try std.testing.expectEqualStrings(" ◐ 4/4 ", app.buttonLabel(button, &buf));
+}
+
+test "auto's modal shows a step at once, and a cap babylon refused is back at its own" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 140;
+    app.view_w = 120;
+    app.view_h = 24;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"auto":{"on":true,"cap":4,"working":1,"repo_caps":{"arena":2,"tlon":0}}}
+    );
+    defer app.board.?.deinit();
+    defer app.auto_wants.deinit(std.testing.allocator);
+    app.board_view = .{ .focus = .orchestrator };
+    try app.boardKey("A");
+    try std.testing.expectEqual(@as(?usize, 0), app.board_view.?.auto_pick);
+    try std.testing.expect(app.board_view.?.focus == .board);
+    try app.boardKey("j");
+    try app.boardKey("j");
+    try app.boardKey("+");
+    try app.boardKey("+");
+    try std.testing.expectEqual(@as(u32, 4), app.autoRepo(0).?.cap);
+    try std.testing.expectEqual(@as(usize, 1), app.auto_wants.list.items.len);
+    try app.boardKey("j");
+    try app.boardKey("-");
+    try std.testing.expectEqual(@as(u32, 0), app.autoRepo(1).?.cap);
+    try app.boardKey("H");
+    try std.testing.expect(app.holding());
+    try app.boardKey("a");
+    try std.testing.expect(app.auto() == null);
+
+    app.auto_wants.list.items[0].due = 0;
+    try app.autoRefused("auto:cap:arena", "babylon: no such repo\nmore");
+    try std.testing.expectEqual(@as(u32, 2), app.autoRepo(0).?.cap);
+    try std.testing.expectEqualStrings("babylon: no such repo", app.auto_wants.refused.?);
+
+    try app.boardKey("\x1b");
+    try std.testing.expectEqual(@as(?usize, null), app.board_view.?.auto_pick);
+}
+
+test "a click on the header's auto words opens its modal and one on its switch does not" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 140;
+    app.view_w = 120;
+    app.view_h = 24;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"auto":{"on":false,"cap":4,"working":0}}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{};
+    const button: App.Button = .{ .what = .auto, .x = 10, .y = 0, .w = 8, .short = false };
+    try std.testing.expect(app.onAutoSwitch(button, 10));
+    try std.testing.expect(app.onAutoSwitch(button, 12));
+    try std.testing.expect(!app.onAutoSwitch(button, 16));
+    try app.pressButton(button, 16);
+    try std.testing.expectEqual(@as(?usize, 0), app.board_view.?.auto_pick);
 }
 
 test "the every view's done column is a strip: narrow, a card a row, its reopen on its foot" {
