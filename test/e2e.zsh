@@ -59,7 +59,7 @@ key() { outer send-keys -t o "$@" }
 mouse() { outer send-keys -t o -l $'\e'"[<$1;$2;$3$4" }
 
 # Up to ten seconds for a command to succeed: babylon runs the gate on a busy machine.
-await() {
+poll() {
   local i
   for i in {1..200}; do
     "$@" && return 0
@@ -67,21 +67,31 @@ await() {
   done
   return 1
 }
+# A wait outside a check that times out fails the run too: what came after it ran on a screen it
+# did not expect, so its own failures would name the wrong cause.
+await() {
+  poll "$@" && return 0
+  ((checking)) || fail "waited for: $*"
+  return 1
+}
 shows() { screen | grep -qE -- "$1" }
 hides() { ! shows "$1" }
 see() { await shows "$1" }
 gone() { await hides "$1" }
 
+fail() {
+  print "FAIL  $1"
+  screen | sed 's/^/      | /'
+  fails=$((fails + 1))
+}
+checking=0
 check() {
-  local name=$1
+  local name=$1 passed=0
   shift
-  if "$@"; then
-    print "ok    $name"
-  else
-    print "FAIL  $name"
-    screen | sed 's/^/      | /'
-    fails=$((fails + 1))
-  fi
+  checking=1
+  "$@" && passed=1
+  checking=0
+  if ((passed)); then print "ok    $name"; else fail $name; fi
 }
 
 # the checks read sh's own prompt, not one handed down
@@ -200,7 +210,7 @@ print -u $sizer 'refresh-client -C 120x24,9x19'
 print -u $sizer 'refresh-client -C 121x24,9x19'
 outer_cells() { [[ $(outer display -p -t o '#{window_cell_width}') == 9 ]] }
 cells() { [[ $(inner display -p -t alpha:one '#{window_cell_width}x#{window_cell_height}') == $1 ]] }
-if await outer_cells; then
+if poll outer_cells; then
   check "the terminal's cell size in pixels reaches the panes" await cells 9x19
 else
   print "skip  the terminal's cell size in pixels reaches the panes: this tmux has no pixels patch"
@@ -392,7 +402,7 @@ sessions() { [[ $(inner list-sessions | wc -l) -eq $1 ]] }
 mouse 0 5 21 M
 mouse 0 5 21 m
 check "a click on + new makes a session" await sessions 3
-see '│ [0-9]+ +1 │'
+see '│.[0-9]+ +1 │'
 mouse 1 5 5 M
 mouse 1 5 5 m
 check "a middle click on a session asks before closing it" see 'Close session [0-9]+\?'
@@ -665,7 +675,6 @@ while true; do
   esac
 done
 EOF
-was=$(inner list-clients -F '#{session_name}:#{window_name}')
 inner new-window -d -t alpha -n subs "zsh $tmp/bin/fake-agents"
 claude alpha:subs stop '{"last_assistant_message": "Waiting", "background_tasks": [
   {"id": "s1", "type": "subagent", "status": "running", "description": "Explore the rail"},
@@ -691,20 +700,18 @@ check "a click on another, with the pointer in the list, goes up from it" await 
 check "and the light goes with it" await eval 'sub_lit "Explore the rail" && sub_dim "Review it"'
 claude alpha:subs end
 inner kill-window -t alpha:subs
-inner select-window -t $was
-await at $was
 claude beta:solo prompt
 mouse 0 5 4 M
 mouse 0 5 4 m
 await at beta:solo
-see '│ ◐ solo '
+see '│.◐ solo '
 claude alpha:three waiting '{"message": "Claude needs your permission to use Bash"}'
 see '│ ▲ three '
 notified() { [[ $(tail -1 $tmp/notified 2>/dev/null) == $1 ]] }
 check "a Claude out of view come to wait is a desktop notification" await notified '-a|arena|--|three|allow Bash|'
 told=$(wc -l <$tmp/notified)
 claude beta:solo stop '{"last_assistant_message": "All done"}'
-see '│ ◉ solo '
+see '│.○ solo '
 check "and the one in view is not" [ $(wc -l <$tmp/notified) -eq $told ]
 claude alpha:three stop '{"last_assistant_message": "$(touch '$tmp'/ran) \"q\" `x` #{pane_id}"}'
 check "one done too, its words as they are, run by no shell" await notified '-a|arena|--|three|$(touch '$tmp'/ran) "q" x #{pane_id}|'
@@ -912,7 +919,7 @@ claude beta:solo stop
 in_view_cleared() { [[ -z $(inner show -pqv -t beta:solo @arena_claude) ]] }
 check "a done Claude in view is taken as looked at" await in_view_cleared
 for w in $(inner list-windows -t alpha -F "#{window_index}"); claude alpha:$w stop
-see '│ alpha +◉ +3 │'
+see '│ alpha +◉3 +3 │'
 key M-k
 looked() { [[ -z $(inner show -pqv -t "alpha:$(inner display -p -t alpha '#{window_index}')" @arena_claude) ]] }
 await looked
@@ -1230,7 +1237,7 @@ cp $tmp/run/babylon/board.json $tmp/board.kept
 print -r -- '{"tickets":[{"id":13,"repo":"babylon","title":"Gatekeeping","kind":"ticket","status":"todo","priority":"med","blocked_by":[]}]}' \
   >$tmp/run/babylon/board.json
 key M-b
-see '#13 Gatekeepi'
+see '│ Gatekeeping '
 key Enter
 check "Enter on a babylon card starts it through babylon too" await last 'start 13'
 check "and closes the board" gone ' board  every'
@@ -1359,7 +1366,7 @@ check "what is typed after the board closes, before tmux has switched back, reac
 check "and none of it the orchestrator's" eval '! said orchestrator:orch home'
 inner new-window -d -t orchestrator: -n two sh
 key M-b
-see '╭─ ○ orchestrator · idle ─*╮ ╭─ 2 t'
+see '` fold ─╮ ╭─ 2 t'
 key M-b
 await in_session alpha
 orch_at() { [[ $(inner display -p -t orchestrator: '#{window_name}') == $1 ]] }
