@@ -668,9 +668,6 @@ const Scene = struct {
         const blocked = cd.blocked_by.len > 0;
         const title_fg = if (blocked) s.dim else s.text;
         const inner = w - 4;
-        // measure: number + title over two rows
-        var probe = sc.*;
-        _ = &probe;
         const title = sc.fmt("#{d} {s}", .{ cd.id, cd.title });
         const rows: usize = if (text_mod.cells(title) > inner) 2 else 1;
         const h = rows + 3;
@@ -906,9 +903,6 @@ fn column(sc: *Scene, focused: bool, pick: usize) void {
         y += 1;
         const said = if (std.mem.eql(u8, need.kind, "ask")) need.text else if (std.mem.indexOf(u8, need.text, ": ")) |cut| need.text[cut + 2 ..] else need.text;
         y += sc.wrap(ix + 2, y, iw - 4, if (tall == 4) 2 else 1, said, .{ .fg = s.text, .bold = picked });
-        if (tall == 3 or picked or i == 0) {
-            if (tall == 3) {} else {}
-        }
         var bx = ix + 2;
         for (need.actions, 0..) |action, ai| {
             if (bx + text_mod.cells(action.label) + 6 > ix + iw) break;
@@ -921,7 +915,6 @@ fn column(sc: *Scene, focused: bool, pick: usize) void {
 
     // what is moving
     const plan = sc.board.plan().?;
-    y += 0;
     _ = c.print(ix, y, "◒ landing", .{ .fg = s.checking, .bold = true }, 12);
     var cx = ix + 12;
     for (plan.now) |item| {
@@ -1304,7 +1297,7 @@ fn popup(sc: *Scene) void {
     // its actions, the first filled
     const ay = y + h - 2;
     bx = ix;
-    const acts = [_][2][]const u8{ .{ "⏎", "go to its Claude" }, .{ "G", "give" }, .{ "e", "edit" }, .{ "p", "priority" }, .{ ">", "close" } };
+    const acts = [_][2][]const u8{ .{ "⏎", "go to its Claude" }, .{ "G", "give" }, .{ "e", "edit" }, .{ "p", "priority" }, .{ "q", "close" } };
     for (acts, 0..) |a, i| bx += sc.button(bx, ay, a[0], a[1], i == 0) + 2;
     _ = c.print(x + w - 16, ay, "j k scroll", .{ .fg = s.dim }, 12);
 
