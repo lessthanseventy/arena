@@ -2761,9 +2761,14 @@ pub const App = struct {
 
     /// The rows the card's detail takes in its box.
     pub fn detailRows(app: *const App) usize {
-        var lines = DetailLines.init(if (app.detail.items.len > 0) app.detail.items else "…", detailWidth(app.boardW()).inner);
+        const inner = detailWidth(app.boardW()).inner;
         var n: usize = 0;
+        var lines = DetailLines.init(if (app.detail.items.len > 0) app.detail.items else "…", inner);
         while (lines.next()) |_| n += 1;
+        if (app.modalCard()) |card| if (card.stage_note.len > 0) {
+            var note = DetailLines.init(card.stage_note, inner);
+            while (note.next()) |_| n += 1;
+        };
         return n;
     }
 
@@ -3723,8 +3728,8 @@ pub const App = struct {
         pub const Kind = enum { plain, dim, warn, options };
         buf: [1024]u8 = undefined,
         used: usize = 0,
-        lines: [8][]const u8 = undefined,
-        kinds: [8]Kind = undefined,
+        lines: [64][]const u8 = undefined,
+        kinds: [64]Kind = undefined,
         n: usize = 0,
         /// The line of the open ask's options, which are buttons.
         options: ?usize = null,
@@ -3736,6 +3741,18 @@ pub const App = struct {
             head.lines[head.n] = text;
             head.kinds[head.n] = kind;
             head.n += 1;
+        }
+
+        /// `text` run on over lines of `inner` cells, up to `rows` of them.
+        fn wrap(head: *CardHead, kind: Kind, text: []const u8, inner: usize, rows: usize) void {
+            var it = DetailLines.init(text, inner);
+            var n: usize = 0;
+            while (it.next()) |line| : (n += 1) {
+                if (n == rows or head.n == head.lines.len) return;
+                head.lines[head.n] = line;
+                head.kinds[head.n] = kind;
+                head.n += 1;
+            }
         }
     };
 
@@ -3751,7 +3768,7 @@ pub const App = struct {
     /// it, the question it asks with its options, and what it was sent back for.
     pub fn cardHead(card: *const tickets.Card, inner: usize, head: *CardHead) void {
         head.* = .{};
-        for (titleLines(card.title, inner)) |line| if (line.len > 0) head.add(.plain, "{s}", .{line});
+        head.wrap(.plain, card.title, inner, head.lines.len);
         var meta: [256]u8 = undefined;
         var wr: Writer = .fixed(&meta);
         wr.print("{s}", .{@tagName(card.status)}) catch {};
@@ -3771,7 +3788,6 @@ pub const App = struct {
             head.options = head.n;
             head.add(.options, "", .{});
         }
-        if (card.stage_note.len > 0) head.add(.dim, "{s}", .{card.stage_note});
     }
 
     /// The buttons of the open modal, in the order they are drawn: the open ask's options, then
@@ -6120,6 +6136,25 @@ test "a card's title wraps at a space onto its second row" {
     const one_word = titleLines("#3Boardcards", 8);
     try eql("#3Boardc", one_word[0]);
     try eql("ards", one_word[1]);
+}
+
+test "a card's modal runs a long title on over as many lines as it takes, none of it cut" {
+    const card: tickets.Card = .{
+        .id = 1,
+        .title = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega alpha beta gamma delta epsilon zeta eta theta iota kappa lambda",
+        .status = .doing,
+    };
+    var head: App.CardHead = undefined;
+    App.cardHead(&card, 40, &head);
+    var rows: usize = 0;
+    var last: []const u8 = "";
+    for (head.lines[0..head.n], head.kinds[0..head.n]) |line, kind| if (kind == .plain) {
+        try std.testing.expect(cellCount(line) <= 40);
+        rows += 1;
+        last = line;
+    };
+    try std.testing.expect(rows >= 5);
+    try std.testing.expect(std.mem.endsWith(u8, last, "kappa lambda"));
 }
 
 test "a card's detail runs its long lines on, cut at the box's width" {

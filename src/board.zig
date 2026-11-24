@@ -239,6 +239,7 @@ pub const Board = struct {
         for (parsed.value.tickets) |*card| {
             card.title = try cleanLine(arena, card.title);
             card.session_note = try cleanLine(arena, card.session_note);
+            card.stage_note = try cleanLine(arena, card.stage_note);
         }
         for (parsed.value.backlog) |*card| card.title = try cleanLine(arena, card.title);
         for (parsed.value.needs_you) |*need| {
@@ -431,6 +432,14 @@ test "a note's escapes and control characters are gone once the board is parsed,
     );
     defer b.deinit();
     try std.testing.expectEqualStrings("it holds #6", b.cards()[0].session_note);
+}
+
+test "a stage note's escapes and control characters are gone once the board is parsed, and it is one line" {
+    var b = try Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1,"title":"Board","status":"doing","stage_note":"\u001b[31msent back\u0007\nwhy\u001b]0;t\u0007"}]}
+    );
+    defer b.deinit();
+    try std.testing.expectEqualStrings("sent back why", b.cards()[0].stage_note);
 }
 
 test "a title's escapes and control characters are gone once the board is parsed" {

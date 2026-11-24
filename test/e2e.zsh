@@ -983,6 +983,7 @@ check "and takes it off the rail" gone '│ beta '
 one=$(inner display -p -t alpha:one '#{pane_id}')
 mkdir -p $tmp/run/babylon
 print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[],"stage":"failed",'\
+'"stage_note":"the review sent it back: the first reason runs long enough to need a second row in the box, and\nthe last words of it are never cut off",'\
 '"ask":{"id":5,"question":"Which colour?","options":["red","blue"]}},'\
 '{"id":8,"repo":"arena","title":"Board of the lanes","kind":"ticket","status":"doing","priority":"high","claimed_by":"'$one'",'\
 '"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[7]},'\
@@ -1083,6 +1084,7 @@ outside_before=$(print -r -- "$board_before" | mask)
 check "no cell outside it has changed" eval '[[ $(outside) == "$outside_before" ]]'
 check "it says the card whole: its title, stage and the ask's options as buttons" see '│ #7 Lights'
 check "and its actions in the foot, the ones that apply" see '╰─ .*e edit'
+check "a send-back's reason is in the body whole, on as many rows as it takes" see 'last words of it are never cut off'
 key j j j j j
 check "and j scrolls it no further than its last line" see '│ the whole of it '
 key Escape

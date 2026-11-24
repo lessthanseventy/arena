@@ -1780,11 +1780,18 @@ fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
     }
     const text = if (app.detail.items.len > 0) app.detail.items else "…";
     var row: usize = 0;
-    var lines = app_mod.DetailLines.init(text, inner);
-    while (lines.next()) |line| : (row += 1) {
-        if (row < scroll or y >= text_end) continue;
-        try boxLine(w, &pen, edge, .{}, x, y, line, inner);
-        y += 1;
+    const parts = [2]struct { text: []const u8, style: vt.Style }{
+        .{ .text = if (card) |it| it.stage_note else "", .style = dim },
+        .{ .text = text, .style = .{} },
+    };
+    for (parts) |part| {
+        if (part.text.len == 0) continue;
+        var lines = app_mod.DetailLines.init(part.text, inner);
+        while (lines.next()) |line| : (row += 1) {
+            if (row < scroll or y >= text_end) continue;
+            try boxLine(w, &pen, edge, part.style, x, y, line, inner);
+            y += 1;
+        }
     }
     while (y < text_end) : (y += 1) try boxLine(w, &pen, edge, .{}, x, y, "", inner);
     if (claude_rows > 0) if (win) |it| {
