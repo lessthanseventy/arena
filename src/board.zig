@@ -244,6 +244,9 @@ const File = struct {
 
 pub const Board = struct {
     parsed: std.json.Parsed(File),
+    /// Found once at parse, since a frame asks for them on every line it draws.
+    names: []const []const u8 = &.{},
+    lane_names: []const []const u8 = &.{},
 
     pub fn parse(gpa: std.mem.Allocator, text: []const u8) !Board {
         var parsed = try std.json.parseFromSlice(File, gpa, text, .{ .ignore_unknown_fields = true, .allocate = .alloc_always });
@@ -279,7 +282,43 @@ pub const Board = struct {
                 if (card.id == id and card.proposal == null) card.proposal = proposal.*;
             };
         }
-        return .{ .parsed = parsed };
+        var b: Board = .{ .parsed = parsed };
+        b.names = try b.findRepos(arena);
+        b.lane_names = try b.findLanes(arena);
+        return b;
+    }
+
+    fn findRepos(b: *const Board, arena: std.mem.Allocator) ![]const []const u8 {
+        var names: std.ArrayList([]const u8) = .empty;
+        for (b.cards()) |card| {
+            const repo = card.repo orelse continue;
+            const seen = for (names.items) |had| {
+                if (std.mem.eql(u8, had, repo)) break true;
+            } else false;
+            if (!seen) try names.append(arena, repo);
+        }
+        std.mem.sort([]const u8, names.items, {}, struct {
+            fn before(_: void, a: []const u8, z: []const u8) bool {
+                return std.mem.order(u8, a, z) == .lt;
+            }
+        }.before);
+        return names.items;
+    }
+
+    fn findLanes(b: *const Board, arena: std.mem.Allocator) ![]const []const u8 {
+        var found: std.ArrayList([]const u8) = .empty;
+        for (b.names) |repo| {
+            const live = for (b.cards()) |card| {
+                const open = card.status == .todo or card.status == .doing or card.status == .review;
+                if (open and std.mem.eql(u8, card.repo orelse "", repo)) break true;
+            } else false;
+            if (live) try found.append(arena, repo);
+        }
+        for (b.cards()) |card| if (card.repo == null and card.status != .done) {
+            try found.append(arena, "");
+            break;
+        };
+        return found.items;
     }
 
     fn cleanLine(arena: std.mem.Allocator, text: []const u8) ![]const u8 {
@@ -375,22 +414,15 @@ pub const Board = struct {
 
     /// The repos on the board, each once and in order of name, as many as fit in `out`.
     pub fn repos(b: *const Board, out: [][]const u8) usize {
-        var n: usize = 0;
-        for (b.cards()) |card| {
-            const repo = card.repo orelse continue;
-            const seen = for (out[0..n]) |had| {
-                if (std.mem.eql(u8, had, repo)) break true;
-            } else false;
-            if (seen or n == out.len) continue;
-            out[n] = repo;
-            n += 1;
-        }
-        std.mem.sort([]const u8, out[0..n], {}, struct {
-            fn before(_: void, a: []const u8, z: []const u8) bool {
-                return std.mem.order(u8, a, z) == .lt;
-            }
-        }.before);
+        const n = @min(out.len, b.names.len);
+        @memcpy(out[0..n], b.names[0..n]);
         return n;
+    }
+
+    /// The repos with a card to do, doing or in review, in order of name, then "" when a card of
+    /// none is not done.
+    pub fn lanes(b: *const Board) []const []const u8 {
+        return b.lane_names;
     }
 
     /// The cards in `status`'s column, of `repo` alone when given and matching `find`, in board

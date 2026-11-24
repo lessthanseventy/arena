@@ -3032,3 +3032,56 @@ test "the feed draws at every width and with every item picked, with a long next
         }
     }
 }
+
+/// A board the size of the one the human called laggy: five repos, 23 to do, 7 doing, 2 in
+/// review and 330 done, titles long enough to wrap.
+fn bigBoard(gpa: std.mem.Allocator) !tickets.Board {
+    var json: std.Io.Writer.Allocating = .init(gpa);
+    defer json.deinit();
+    const w = &json.writer;
+    try w.writeAll("{\"tickets\":[");
+    const repos = [_][]const u8{ "arena", "babylon", "ficciones", "menard", "tlon" };
+    const counts = [_]struct { []const u8, usize }{ .{ "todo", 23 }, .{ "doing", 7 }, .{ "review", 2 }, .{ "done", 330 } };
+    var id: usize = 1;
+    for (counts) |count| for (0..count[1]) |k| {
+        if (id > 1) try w.writeAll(",");
+        try w.print(
+            \\{{"id":{d},"repo":"{s}","title":"A ticket title long enough to wrap twice in a column, as the board's titles do, number {d}","status":"{s}","priority":"{s}","claimed_by":{s},"blocked_by":{s},"closed_at":"2026-11-20T10:00:00Z","inserted_at":"2026-11-20T09:00:00Z"}}
+        , .{ id, repos[k % repos.len], id, count[0], if (k % 3 == 0) "high" else "med", if (std.mem.eql(u8, count[0], "doing")) "\"%3\"" else "null", if (k % 7 == 1 and std.mem.eql(u8, count[0], "todo")) "[1]" else "[]" });
+        id += 1;
+    };
+    try w.writeAll("],\"needs_you\":[]}");
+    return tickets.Board.parse(gpa, json.written());
+}
+
+test "a frame of a board of five repos and 362 cards takes under 4ms" {
+    const gpa = std.testing.allocator;
+    var board = try bigBoard(gpa);
+    defer board.deinit();
+    var app: App = .{ .gpa = gpa, .io = std.testing.io, .tmux_in = undefined };
+    app.term_w = 240;
+    app.view_w = 80;
+    app.view_h = 60;
+    app.board = board;
+    app.listed = true;
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    const views = [_]app_mod.BoardView{
+        .{ .home = true },
+        .{ .home = true, .col = 0, .row = 3, .lane = 2 },
+        .{ .home = true, .repo = 1 },
+        .{ .home = true, .backlog = true },
+    };
+    for (views) |view| {
+        app.board_view = view;
+        const rounds = 20;
+        const start = std.Io.Timestamp.now(std.testing.io, .awake);
+        for (0..rounds) |_| {
+            out.clearRetainingCapacity();
+            try frame(&app, &out.writer, .all);
+        }
+        const ns = start.durationTo(std.Io.Timestamp.now(std.testing.io, .awake)).toNanoseconds();
+        // half of main's 8ms between frames, with room for a loaded machine
+        try std.testing.expect(@divTrunc(ns, rounds) < 4 * std.time.ns_per_ms);
+    }
+}

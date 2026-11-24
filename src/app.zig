@@ -2989,17 +2989,8 @@ pub const App = struct {
     /// order of name, then "" for such cards of none.
     pub fn laneRepos(app: *const App, out: *[max_repos + 1][]const u8) usize {
         const b = if (app.board) |*b| b else return 0;
-        var all: [max_repos][]const u8 = undefined;
-        var n: usize = 0;
-        for (all[0..b.repos(&all)]) |repo| if (app.live(repo)) {
-            out[n] = repo;
-            n += 1;
-        };
-        for (b.cards()) |card| if (card.repo == null and card.status != .done) {
-            out[n] = "";
-            n += 1;
-            break;
-        };
+        const n = @min(out.len, b.lanes().len);
+        @memcpy(out[0..n], b.lanes()[0..n]);
         return n;
     }
 
@@ -3012,12 +3003,6 @@ pub const App = struct {
         if (i > n) return 0;
         const repo: ?[]const u8 = if (i == 0) null else repos[i - 1];
         return b.column(.todo, repo, "", &.{}) + b.column(.doing, repo, "", &.{}) + b.column(.review, repo, "", &.{});
-    }
-
-    /// Whether `repo` has a card to do, doing or in review.
-    pub fn live(app: *const App, repo: []const u8) bool {
-        const b = if (app.board) |*b| b else return false;
-        return b.column(.todo, repo, "", &.{}) + b.column(.doing, repo, "", &.{}) + b.column(.review, repo, "", &.{}) > 0;
     }
 
     pub fn laneRepo(app: *const App, lane: usize) ?[]const u8 {
