@@ -15,7 +15,10 @@ const unfolded_rows = 2;
 /// The tickets of next that are drawn; the rest are `+N`.
 const next_shown = 7;
 
-pub const Kind = enum { head, blank, now, folded, next, why, more, goal, landed, unplanned, focal, card_top, goal_bar, goal_next, goal_block };
+/// Rows kept past the goals for the foot: a gap, not planned's head and row, a gap, landed.
+const foot_rows = 5;
+
+pub const Kind = enum { head, blank, now, folded, next, why, more, goals_more, goal, landed, unplanned, focal, card_top, goal_bar, goal_next, goal_block };
 pub const Style = enum { normal, dim, heading, attention };
 
 pub const Row = struct {
@@ -300,7 +303,10 @@ pub const Sheet = struct {
         if (!s.narrow) for (given.goals) |goal| {
             name_w = @max(name_w, @min(text_mod.cells(goal.title), 26));
         };
-        for (given.goals, 0..) |goal, i| {
+        const per: usize = if (s.bench) 5 else 1;
+        const room_rows = max_rows -| s.n -| foot_rows;
+        const shown = if (given.goals.len * per <= room_rows) given.goals.len else (room_rows -| 1) / per;
+        for (given.goals[0..shown], 0..) |goal, i| {
             if (s.bench) {
                 inline for (.{ .card_top, .goal, .goal_bar, .goal_next, .goal_block }) |kind| {
                     s.add(.{ .kind = kind, .item = i, .pick = if (kind == .goal) 0 else null, .ticket = if (kind == .goal) goal.epic else null });
@@ -328,6 +334,7 @@ pub const Sheet = struct {
             const line = s.print("{s}{s}{s}", .{ head, strip, after });
             s.add(.{ .kind = .goal, .pick = 0, .ticket = goal.epic, .text = s.clipped(width, line) });
         }
+        if (shown < given.goals.len) s.add(.{ .kind = .goals_more, .pick = 0, .style = .dim, .text = s.print("  +{d} more goals", .{given.goals.len - shown}) });
     }
 
     pub fn stepMark(state: []const u8) []const u8 {
@@ -525,4 +532,20 @@ test "the focal goal is the first with a step being built, a card is five rows, 
     var cards: usize = 0;
     for (s.rows[0..s.n]) |row| cards += @intFromBool(row.kind == .card_top);
     try std.testing.expectEqual(@as(usize, 2), cards);
+}
+
+test "goals past what fits fold into one row, and landed and not planned keep theirs" {
+    var buf: [8192]u8 = undefined;
+    var used = (try std.fmt.bufPrint(&buf, "{{\"tickets\":[],\"plan\":{{\"now\":[],\"next\":[],\"goals\":[", .{})).len;
+    for (0..30) |i| {
+        used += (try std.fmt.bufPrint(buf[used..], "{s}{{\"epic\":{d},\"title\":\"g{d}\",\"total\":2,\"landed\":1,\"steps\":[{{\"ticket\":1,\"state\":\"landed\"}},{{\"ticket\":2,\"state\":\"next\"}}]}}", .{ if (i > 0) "," else "", 100 + i, i })).len;
+    }
+    used += (try std.fmt.bufPrint(buf[used..], "],\"landed_today\":{{\"count\":0,\"newest\":[]}},\"not_planned\":{{\"count\":0,\"follow_ups\":0,\"by_repo\":{{}}}}}}}}", .{})).len;
+    var b = try tickets.Board.parse(std.testing.allocator, buf[0..used]);
+    defer b.deinit();
+    var s: Sheet = undefined;
+    s.build(b.plan().?, &b, 100, 0, 0, false, true);
+    try std.testing.expect(rowText(&s, .landed, 0) != null);
+    try std.testing.expect(rowText(&s, .unplanned, 0) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rowText(&s, .goals_more, 0).?, "more goals") != null);
 }
