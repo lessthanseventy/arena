@@ -3317,7 +3317,7 @@ pub const App = struct {
     /// count of those it shows.
     pub fn boardColumn(app: *const App, col: usize, out: []*const tickets.Card) usize {
         const b = if (app.board) |*b| b else return 0;
-        if (app.boardStrip(col)) return app.stripPicks(out);
+        if (app.footStrip(col)) return app.stripPicks(out);
         if (app.boardBacklog()) {
             var n: usize = 0;
             for (b.backlog()) |*card| if (card.finds(app.findText())) {
@@ -3351,7 +3351,7 @@ pub const App = struct {
 
     /// The cards in column `col` of lane `lane`: those shown, and all of them.
     pub fn laneCounts(app: *const App, lane: usize, col: usize) struct { shown: usize, total: usize } {
-        if (app.boardStrip(col)) {
+        if (app.footStrip(col)) {
             const n = app.stripPicks(&.{});
             return .{ .shown = n, .total = n };
         }
@@ -3499,7 +3499,7 @@ pub const App = struct {
 
     /// Card `row` of column `col` in lane `lane`.
     pub fn laneCard(app: *const App, lane: usize, col: usize, row: usize) ?*const tickets.Card {
-        if (app.boardStrip(col)) return app.boardCard(col, row);
+        if (app.footStrip(col)) return app.boardCard(col, row);
         const repo = app.laneRepo(lane) orelse return null;
         var out: [max_cards]*const tickets.Card = undefined;
         const n = app.shownIn(tickets.statuses[col], app.columnOf(tickets.statuses[col], repo, app.findText(), &out));
@@ -3764,6 +3764,12 @@ pub const App = struct {
         return n;
     }
 
+    /// Whether column `col` is the recent strip drawn along the board's foot, from `stripCards`,
+    /// not as lanes of its own.
+    fn footStrip(app: *const App, col: usize) bool {
+        return app.footRows() > 0 and app.boardStrip(col);
+    }
+
     /// The strip's entries as the pick has them: by their place among those drawn, whatever lane
     /// they are in; the count of those drawn, as many as fit in `out` copied.
     fn stripPicks(app: *const App, out: []*const tickets.Card) usize {
@@ -3782,7 +3788,7 @@ pub const App = struct {
     /// Where the pick of card `card` is in column `col`, that column's own rows or, in the every
     /// view, its repo's lane.
     fn spotOf(app: *const App, col: usize, id: u32) ?CardAt {
-        if (app.boardStrip(col)) {
+        if (app.footStrip(col)) {
             var out: [strip_n]*const tickets.Card = undefined;
             const n = app.stripPicks(&out);
             for (out[0..n], 0..) |card, row| if (card.id == id) return .{ .lane = app.pickLane(), .col = col, .row = row };
