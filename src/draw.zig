@@ -2376,7 +2376,7 @@ fn reportSaid(app: *App, w: *Writer, text: []const u8) !void {
         for (cellCount(clip(text, room))..room) |_| try w.writeAll(" ");
         return;
     };
-    if (app.board_view != null and cardActionsShown(app)) return;
+    if (app.board_view != null and !app.feedFocused() and cardActionsShown(app)) return;
     try w.print("\x1b[{d};{d}H{s}", .{ app.view_h, ox + 1, clip(text, app.view_w) });
 }
 
