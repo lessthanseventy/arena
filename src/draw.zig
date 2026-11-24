@@ -1015,7 +1015,7 @@ fn benchFind(app: *const App, w: *Writer, r: theme.Roles, x: usize, text: []cons
     const lead = 2;
     const hinted = lead + cellCount(text) + cellCount(hint) <= room;
     const left = room -| lead -| (if (hinted) cellCount(hint) else 0);
-    var cut: [160]u8 = undefined;
+    var cut: [204]u8 = undefined;
     const shown = if (cellCount(text) <= left) text else (std.fmt.bufPrint(&cut, "{s}…", .{clip(text, left -| 1)}) catch text);
     try bench.fill(w, x, 0, room, r.raised);
     if (room < lead) return null;
