@@ -112,6 +112,7 @@ check "the pointer on it has each window's number and name in place of its dot" 
 x=$(col '2 two')
 mouse 0 $x 24 M
 mouse 0 $x 24 m
+key -l i
 mouse 35 60 10 M
 check "a click on a name goes to its window, and away from the row it is dots again" await dots '○ ● ○'
 mouse 35 60 24 M
@@ -135,6 +136,7 @@ see '1 one'
 x=$(col '1 one')
 mouse 0 $x 24 M
 mouse 0 $x 24 m
+key -l i
 mouse 35 60 10 M
 await dots '● ○ ○'
 
