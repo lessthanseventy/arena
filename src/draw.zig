@@ -984,8 +984,9 @@ fn findLine(app: *const App, w: *Writer) !?Cursor {
     if (!typing and text.len == 0) return null;
     var pen: Pen = .{};
     const x: usize = app.boardX() + cellCount(App.board_title) + 2;
-    const room = @as(usize, app.boardW()) -| cellCount(App.board_title) -| 3;
     const hint = if (typing) "  ⏎ keep  esc clear" else "  esc clear";
+    if (app.roles) |r| return benchFind(app, w, r, x, text, hint, typing);
+    const room = @as(usize, app.boardW()) -| cellCount(App.board_title) -| 3;
     var shown = text;
     while (cellCount(shown) + 2 + cellCount(hint) > room and shown.len > 0) shown = shown[1..];
     while (shown.len > 0 and shown[0] & 0xC0 == 0x80) shown = shown[1..];
@@ -1000,6 +1001,28 @@ fn findLine(app: *const App, w: *Writer) !?Cursor {
     try pen.set(w, .{}, null);
     for (used + cellCount(hint)..room) |_| try w.writeAll(" ");
     return if (typing) .{ .x = @intCast(x + used), .y = 0 } else null;
+}
+
+/// The find line on the title bar's raised face, in the room the right group leaves: the hint goes
+/// first when it does not fit, then the text, cut with `…`.
+fn benchFind(app: *const App, w: *Writer, r: theme.Roles, x: usize, text: []const u8, hint: []const u8, typing: bool) !?Cursor {
+    var heads: [48]App.Button = undefined;
+    var right: usize = app.boardX() + app.boardW();
+    for (heads[0..app.header(&heads).n]) |b| {
+        if (b.y == 0) right = @min(right, b.x);
+    }
+    const room = right -| x -| 1;
+    const lead = 2;
+    const hinted = lead + cellCount(text) + cellCount(hint) <= room;
+    const left = room -| lead -| (if (hinted) cellCount(hint) else 0);
+    var cut: [160]u8 = undefined;
+    const shown = if (cellCount(text) <= left) text else (std.fmt.bufPrint(&cut, "{s}…", .{clip(text, left -| 1)}) catch text);
+    try bench.fill(w, x, 0, room, r.raised);
+    if (room < lead) return null;
+    try bench.say(w, x, 0, "/ ", r.accent, r.raised, true);
+    try bench.say(w, x + lead, 0, shown, r.text, r.raised, false);
+    if (hinted) try bench.say(w, x + lead + cellCount(shown), 0, hint, r.dim, r.raised, false);
+    return if (typing) .{ .x = @intCast(x + lead + cellCount(shown)), .y = 0 } else null;
 }
 
 /// One cell of a window's inside, at (`tx`, `ty`) from its top left: a pane's cell, the line
@@ -2739,8 +2762,12 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         if (end + 2 + cellCount(text) + 1 <= right) break text;
     } else "";
     if (hint.len > 0) {
-        try pen.set(w, ink(app, "dim", 8), null);
-        try w.print("\x1b[1;{d}H{s}", .{ right - 1 - cellCount(hint), hint });
+        if (app.roles) |r| {
+            try bench.say(w, right - 1 - cellCount(hint) - 1, 0, hint, r.dim, r.raised, false);
+        } else {
+            try pen.set(w, ink(app, "dim", 8), null);
+            try w.print("\x1b[1;{d}H{s}", .{ right - 1 - cellCount(hint), hint });
+        }
     }
     try pen.set(w, .{}, null);
 }
@@ -3807,6 +3834,47 @@ test "unpicked cards are filled tiles a blank row apart, their chips pills on th
     try std.testing.expect(color.contrast(r.card(false), r.panel) >= 1.15);
     try eq(r.repo[0], (try bench.probe(drawn, 1, 10)).fg);
     try eq(r.well, (try bench.probe(drawn, 4, 11)).bg);
+}
+
+test "with the roles set, the find line is on the bar's face, clipped before the right group, and the hint is dim on it" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 60;
+    app.view_w = 60;
+    app.view_h = 20;
+    app.roles = bench.roles();
+    const r = app.roles.?;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1,"repo":"arena","title":"a","status":"todo"}],"auto":{"on":true,"cap":3,"working":2}}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{};
+    app.find_len = 30;
+    @memset(app.find[0..30], 'x');
+    var buf: [16384]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try boardView(&app, &out, app.board_view.?);
+    const drawn = out.buffered();
+    const eq = std.testing.expectEqual;
+
+    var heads: [48]App.Button = undefined;
+    var right: u16 = app.boardX() + app.boardW();
+    for (heads[0..app.header(&heads).n]) |b| right = @min(right, b.x);
+    try std.testing.expect(right < app.boardX() + app.boardW());
+    const slash = try bench.probe(drawn, 10, 0);
+    try eq(@as(u21, '/'), slash.cp);
+    try eq(r.raised, slash.bg);
+    try eq(@as(u21, '…'), (try bench.probe(drawn, right - 2, 0)).cp);
+    try eq(r.raised, (try bench.probe(drawn, right - 2, 0)).bg);
+    try eq(r.raised, (try bench.probe(drawn, right - 1, 0)).bg);
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "esc clear") == null);
+
+    app.find_len = 2;
+    var short: Writer = .fixed(&buf);
+    try boardView(&app, &short, app.board_view.?);
+    const hint = try bench.probe(short.buffered(), 16, 0);
+    try eq(@as(u21, 'e'), hint.cp);
+    try eq(r.dim, hint.fg);
+    try eq(r.raised, hint.bg);
 }
 
 test "the board's keys end on a card's edge and its marks, and a 24-row terminal has them whole" {

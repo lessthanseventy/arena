@@ -4365,7 +4365,8 @@ pub const App = struct {
     /// words when the tabs would not all fit beside it, and tabs that still do not fit are
     /// left out with a `…` after the last.
     pub fn header(app: *const App, out: []Button) Header {
-        if (app.findText().len > 0 or (app.prompt != null and app.prompt.?.what == .find)) return .{ .n = 0, .more = null };
+        const finding = app.findText().len > 0 or (app.prompt != null and app.prompt.?.what == .find);
+        if (finding and !app.workbench()) return .{ .n = 0, .more = null };
         var buf: [64]u8 = undefined;
         var repos: [max_repos][]const u8 = undefined;
         const count = if (app.board) |*b| b.repos(&repos) else 0;
@@ -4424,7 +4425,7 @@ pub const App = struct {
         var left: [max_repos + 2]Button = undefined;
         var left_n: usize = 0;
         x = start;
-        for (tabs[0..tab_n]) |tab| {
+        for (tabs[0..if (finding) 0 else tab_n]) |tab| {
             first_w = @intCast(cellCount(app.buttonLabel(tab, &buf)));
             if (x + first_w > limit) break;
             left[left_n] = .{ .what = tab.what, .x = x, .y = 1, .w = first_w };
@@ -4432,7 +4433,7 @@ pub const App = struct {
             x += first_w + 1;
         }
         var more: ?u16 = null;
-        if (left_n < tab_n) {
+        if (left_n < tab_n and !finding) {
             while (left_n > 1 and left[left_n - 1].x + left[left_n - 1].w + 1 > limit) left_n -= 1;
             more = if (left_n > 0) left[left_n - 1].x + left[left_n - 1].w else start;
         }
