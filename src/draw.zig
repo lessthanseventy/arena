@@ -3480,7 +3480,6 @@ test "a frame of the board with an orchestrator column draws at every width from
     for (40..121) |term_w| {
         app.term_w = @intCast(term_w);
         app.fit();
-
         out.clearRetainingCapacity();
         try frame(&app, &out.writer, .all);
     }
