@@ -3536,7 +3536,7 @@ fn reportSaid(app: *App, w: *Writer, text: []const u8) !void {
         for (cellCount(clip(text, room))..room) |_| try w.writeAll(" ");
         return;
     };
-    if (app.board_view != null and !app.feedFocused() and (cardActionsShown(app) or app.barRows() > 0)) return;
+    if (app.board_view != null and !app.planShown() and !app.feedFocused() and (cardActionsShown(app) or app.barRows() > 0)) return;
     try w.print("\x1b[{d};{d}H{s}", .{ app.view_h, ox + 1, clip(text, app.view_w) });
 }
 
@@ -4369,6 +4369,29 @@ test "Home in Workbench's look: the focal goal is the one with a step building, 
     const empty = try bench.probe(f, x + bar_w - 1, y);
     try std.testing.expectEqual(@as(u21, ' '), empty.cp);
     try std.testing.expectEqual(r.well, empty.bg);
+}
+
+test "babylon's refusal, said while the plan is shown, is on screen" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":760,"repo":"arena","status":"doing","title":"Visual redesign"}],
+        \\"plan":{"now":[{"ticket":760,"repo":"arena","title":"Visual redesign","state":"building","since":"2026-11-24T04:38:21Z"}],
+        \\"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer board.deinit();
+    var app = homeApp(&board);
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 23;
+    app.roles = bench.roles();
+    app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
+    try std.testing.expect(app.planShown());
+    try std.testing.expect(app.barRows() > 0);
+    app.report_said = try std.testing.allocator.dupe(u8, "babylon: repo arena is held");
+    defer std.testing.allocator.free(app.report_said.?);
+    var buf: [65536]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try frame(&app, &out, .all);
+    try std.testing.expect(std.mem.indexOf(u8, out.buffered(), "babylon: repo arena is held") != null);
 }
 
 test "a card's popup in Workbench's look: a window with its ✕, the title whole, the ask's options as buttons and the facts as chips" {

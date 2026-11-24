@@ -261,7 +261,7 @@ Four columns do not fit in about 90 cells, so the board shows two: **now** (doin
                                                              ↓ 23 more
 
  ─────────────────────────────────────────────────────────────────────────────────────────
- ⏎ start  space open  G give  e edit   │   n new  / find  tab recent   │   ? keys
+ ⏎ start  space open  G give  e edit   │   n new  / find   │   ? keys
 ```
 
 - In **now** the cards are grouped by stage, with their repo after the title in the every view.
