@@ -825,7 +825,7 @@ check "a digit answers it through babylon" await grep -q '^answer 7 2' $tmp/baby
 check "and the popup stays open" shows '╭─ .* solo'
 key -l r
 key -l 'hello there'
-check "r opens a reply line at the foot" shows 'reply: hello there'
+check "r opens a reply line at the foot" await shows 'reply: hello there'
 key Enter
 check "and Enter types it into the pane" await eval 'inner capture-pane -p -t beta:solo | grep -q "hello there"'
 check "the popup stays open" shows '╭─ .* solo'
