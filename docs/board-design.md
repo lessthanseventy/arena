@@ -243,7 +243,7 @@ Four columns do not fit in about 90 cells, so the board shows two: **now** (doin
  ▌ ◐ t320-design · opus · 5m               │ error (out of usage credits) stays          │
  ▌ #324 The selected agent in the rail     │ "working" in its state, rail and board      │
  ▌ is not marked: highlight its whole      │ med · filed 1d                              │
- ▌ entry · arena                           │ ⏎ start  G give  e edit  p  > close         │
+ ▌ entry · arena                           │ ⏎ start  G give  e edit  p priority  > close│
  ▌ ◐ t324-rail-select · sonnet · 1m        ╰─────────────────────────────────────────────╯
  ▌ #14 The house is for personal life,     ▌ #290 e2e flake: the click that focuses
  ▌ not a software factory · tlon           ▌ window two leaves the strip on window one,

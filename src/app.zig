@@ -780,6 +780,11 @@ pub const App = struct {
         };
     }
 
+    /// The repo of a session's lowest ticket, empty for a session holding none.
+    pub fn sessionRepo(app: *const App, si: usize) []const u8 {
+        return if (app.sessionTicket(si)) |key| key.repo else "";
+    }
+
     /// The lowest ticket among a session's Claudes, null for a session holding none.
     fn sessionTicket(app: *const App, si: usize) ?TicketKey {
         var best: ?TicketKey = null;

@@ -494,7 +494,11 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
     switch (line) {
         .session => |si| {
             const s = app.sessions.items[si];
-            try pen.set(w, if (s.id == app.current and app.board_view == null) heading(app) else dim, null);
+            // the current session's header is lit only while no Claude's row says so
+            const holds = if (s.focused()) |win| win.agent() else false;
+            const repo = app.sessionRepo(si);
+            const lit = s.id == app.current and app.board_view == null and !holds;
+            try pen.set(w, if (lit) heading(app) else if (!wide and repo.len > 0) repoStyle(repo) else dim, null);
             if (wide) {
                 const name = clip(s.name, inner - 2);
                 try w.writeAll(" ");
@@ -658,6 +662,11 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
         },
     }
     for (filled..inner) |_| try w.writeAll(" ");
+}
+
+/// A repo's colour, one of the terminal's own, the same for the same name.
+fn repoStyle(repo: []const u8) vt.Style {
+    return .{ .fg_color = .palette(@intCast(2 + std.hash.Wyhash.hash(0, repo) % 5)) };
 }
 
 /// A Claude's mark in a list of them, where one done and looked at is still listed.

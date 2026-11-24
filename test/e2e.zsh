@@ -785,6 +785,7 @@ check "the Claude in view has its whole row in the selected style" await sel ' 3
 check "and its session's rule and another Claude's row do not" test "$(sel '─beta─' && print y)$(sel ' w3 ' && print y)" = ""
 mouse 35 3 9 M
 check "the pointer resting on it draws it wide over the strip" see '├─ agents · urgency '
+check "with a Claude's age at the right of its row" see '^│[ ▌]. .* [0-9]+[smhd] │'
 mouse 35 72 3 M
 check "and leaving it, narrow again" gone '├─ agents · urgency '
 key M-w
@@ -1980,6 +1981,28 @@ key o
 check "o opens its doc in a window of its own" await doc_window
 check "which says so when the file is not in the ticket's repo" await eval 'inner capture-pane -p -t "$(inner list-windows -a -F "#{window_id} #{window_name}" | awk "\$2==\"doc\"{print \$1}")" | grep -q "no such file: .*projects/tlon/docs/none-jkdufltb.md"'
 cp $tmp/board.nolook $tmp/run/babylon/board.json
+
+# the narrow rail at home holds only what moves: a working and a waiting Claude, the rest of a
+# session's folded into one line, and no orchestrator
+inner new-session -d -s gamma -n g1 sh
+for n in 2 3 4 5; inner new-window -t gamma -n g$n sh
+for n in {1..5}; do
+  inner set -p -t gamma:g$n @arena_claude_branch t90$n-rail
+  claude gamma:g$n prompt
+done
+claude gamma:g1 waiting '{"message": "Claude needs your permission to use Bash"}'
+for n in 3 4 5; claude gamma:g$n stop
+shows '^NORMAL' || key C-Space
+see '^NORMAL'
+key M-w
+see '^│─gamma──│'
+key b
+see ' board  every'
+check "the narrow rail at home lists the session's waiting Claude by ticket" see '^│[ ▌]▲ 901 *│'
+check "and its working one" see '^│[ ▌]◐ 902 *│'
+check "and folds the three idle ones into one line" see '^│[ ▌]· 3 *│'
+check "none of the idle ones is listed, and no orchestrator row is" eval '! screen | cut -c1-10 | grep -qE "903|904|905|orch"'
+
 key M-b
 key M-q
 gone ' board  every'
