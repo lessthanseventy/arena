@@ -4647,7 +4647,14 @@ const PeekRows = struct {
 
     fn add(p: *PeekRows, ink_: PeekInk, comptime fmt: []const u8, args: anytype) void {
         if (p.n >= p.rows.len) return;
-        const text = std.fmt.bufPrint(&p.store[p.n], fmt, args) catch &p.store[p.n];
+        const slot = &p.store[p.n];
+        var wr: Writer = .fixed(slot);
+        const text = if (wr.print(fmt, args)) |_| wr.buffered() else |_| cut: {
+            var end = @min(wr.end, slot.len - "…".len);
+            while (end > 0 and slot[end] & 0xC0 == 0x80) end -= 1;
+            @memcpy(slot[end..][0.."…".len], "…");
+            break :cut slot[0 .. end + "…".len];
+        };
         p.rows[p.n] = .{ .text = text, .ink = ink_ };
         p.n += 1;
     }
@@ -4656,8 +4663,23 @@ const PeekRows = struct {
 /// The peek of a ticket or a Claude, boxed over what is under it: the ticket, where it stands,
 /// what its Claude is doing, and the last lines of its pane, with the keys at its foot.
 fn lookBox(app: *App, w: *Writer, look: App.Look) !void {
-    const peek = app.peekOf(look) orelse return;
     var p: PeekRows = .{};
+    if (look == .fold) {
+        var members: [16]App.Agent = undefined;
+        const n = app.foldMembers(look.fold, &members);
+        if (n == 0) return;
+        p.add(.head, "{d} Claude{s} not moving", .{ n, if (n == 1) "" else "s" });
+        for (members[0..n]) |a| {
+            const id = std.fmt.parseInt(u32, app_mod.branchTicket(a.win.text(.branch)) orelse "", 10) catch null;
+            const card = if (id) |i| app.ticketCard(i) else null;
+            if (card) |c| {
+                p.add(.plain, "{u} #{d} {s}{s}{s}", .{ agentGlyph(app, a.win), c.id, c.title, if (c.stage != null) " · " else "", c.stage orelse "" });
+            } else p.add(.plain, "{u} {s}", .{ agentGlyph(app, a.win), a.win.label() });
+        }
+        p.add(.head, "esc away", .{});
+        return peekBox(app, w, &p);
+    }
+    const peek = app.peekOf(look) orelse return;
     var age_buf: [8]u8 = undefined;
     if (peek.card) |card| {
         p.add(.head, "#{d} {s}", .{ card.id, card.title });
@@ -4705,7 +4727,10 @@ fn lookBox(app: *App, w: *Writer, look: App.Look) !void {
         }
     } else p.add(.dim, "no Claude holds it", .{});
     p.add(.head, "⏎ go   space open card   esc away", .{});
+    return peekBox(app, w, &p);
+}
 
+fn peekBox(app: *App, w: *Writer, p: *const PeekRows) !void {
     const n = p.n;
     const bw: u16 = @min(peek_w, app.term_w -| 2);
     if (bw < 20 or app.view_h < n + 2) return;
@@ -4735,4 +4760,22 @@ fn lookBox(app: *App, w: *Writer, look: App.Look) !void {
     try w.print("\x1b[{d};{d}H╰", .{ y + 2 + n, x + 1 });
     for (0..bw - 2) |_| try w.writeAll("─");
     try w.writeAll("╯");
+}
+
+test "a peek row too long for its slot is cut at a whole character and ends in …" {
+    var p: PeekRows = .{};
+    var long: [250]u8 = undefined;
+    @memset(&long, 'x');
+    p.add(.head, "#1 {s}", .{long});
+    var multi: [300]u8 = undefined;
+    for (0..150) |i| @memcpy(multi[i * 2 ..][0..2], "é");
+    p.add(.dim, "{s}", .{multi});
+    p.add(.plain, "short", .{});
+    for (p.rows[0..2]) |row| {
+        try std.testing.expect(row.text.len <= 200);
+        try std.testing.expect(std.mem.endsWith(u8, row.text, "…"));
+        try std.testing.expect(std.unicode.utf8ValidateSlice(row.text));
+    }
+    try std.testing.expect(std.mem.startsWith(u8, p.rows[0].text, "#1 xxx"));
+    try std.testing.expectEqualStrings("short", p.rows[2].text);
 }

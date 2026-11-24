@@ -795,7 +795,7 @@ pub const App = struct {
         return .{ .repo = card.repo orelse "", .id = id };
     }
 
-    fn ticketCard(app: *const App, id: u32) ?*const tickets.Card {
+    pub fn ticketCard(app: *const App, id: u32) ?*const tickets.Card {
         const board = if (app.board) |*b| b else return null;
         for (board.cards()) |*card| if (card.id == id) return card;
         return null;
@@ -1628,7 +1628,7 @@ pub const App = struct {
     }
 
     /// The peek's target is the ticket's card or the Claude's window.
-    pub const Look = union(enum) { ticket: u32, window: u32 };
+    pub const Look = union(enum) { ticket: u32, window: u32, fold: u64 };
 
     /// What a peek holds: the ticket and the Claude, either of which may be missing.
     pub const Peek = struct { card: ?*const tickets.Card, win: ?*const Window };
@@ -1641,15 +1641,67 @@ pub const App = struct {
             const line = app.railAgentAt(y) orelse return null;
             return switch (line) {
                 .agent, .detail, .meta, .background => |a| .{ .window = a.win.id },
+                .pipeline => |fold| .{ .fold = app.foldKey(fold) },
                 else => null,
             };
         }
+        if (app.feedUnder(x, y)) |look| return look;
         if (app.board_view == null or app.planShown()) return null;
         var buttons: [48]Button = undefined;
         for (app.boardButtons(&buttons)) |button| if (button.hit(x, y)) return null;
         const at = app.boardCardAt(x, y) orelse return null;
         const card = if (app.boardLanes()) app.laneCard(at.lane, at.col, at.row) else app.boardCard(at.col, at.row);
         return if (card) |c| .{ .ticket = c.id } else null;
+    }
+
+    /// The ticket of the feed item at (`x`, `y`), where the orchestrator's column is beside the
+    /// board; its buttons are not part of it.
+    fn feedUnder(app: *const App, x: u16, y: u16) ?Look {
+        if (!app.sided() or y < 1) return null;
+        const left = app.term_w - app.view_w;
+        if (x < left + 2 or x + 2 > app.term_w) return null;
+        var f: feed.Feed = undefined;
+        if (!app.feedOf(&f)) return null;
+        const line = y - 1;
+        if (line >= f.count() or f.line(line).kind == .buttons) return null;
+        const col = x - (left + 2);
+        var held: ?feed.Item = null;
+        for (0..f.itemCount()) |i| {
+            const item = f.item(i).?;
+            if (item.need != null) {
+                if (item.line <= line) held = item;
+            } else if (item.line == line and col >= item.at and col < item.at + item.w) {
+                return if (item.ticket) |id| .{ .ticket = id } else null;
+            }
+        }
+        const item = held orelse return null;
+        return if (line < f.shown) (if (item.ticket) |id| .{ .ticket = id } else null) else null;
+    }
+
+    /// The fold of the rail that holds Claude `a`, if one does.
+    fn agentFold(app: *const App, a: Agent) ?u64 {
+        const card = if (app.agentSelected(a)) null else if (std.fmt.parseInt(u32, branchTicket(a.win.text(.branch)) orelse "", 10)) |id| app.ticketCard(id) else |_| null;
+        if (card) |c| if (c.status == .done) return null;
+        if (app.restFolded()) {
+            if (a.win.claude == .working or a.win.claude == .waiting) return null;
+            return app.foldKey(.{ .repo = "", .count = 0, .open = false, .session = a.session });
+        }
+        const c = card orelse return null;
+        return if (inPipeline(c)) repoHash(c.repo orelse "") else null;
+    }
+
+    /// The Claudes the rail's fold `key` holds, as many as `out` has room for.
+    pub fn foldMembers(app: *const App, key: u64, out: []Agent) usize {
+        var all: [64]Agent = undefined;
+        const total = app.agents(&all);
+        var n: usize = 0;
+        for (all[0..total]) |a| {
+            if (n == out.len) break;
+            if ((app.agentFold(a) orelse continue) != key) continue;
+            out[n] = a;
+            n += 1;
+        }
+        return n;
     }
 
     /// The pointer moved with no button held: what it rests on starts its pause, and leaving
@@ -1720,6 +1772,7 @@ pub const App = struct {
                 const card = app.ticketCard(id) orelse return null;
                 return .{ .card = card, .win = app.claudeOf(card) };
             },
+            .fold => return null,
             .window => |id| {
                 const a = app.agentById(id) orelse return null;
                 const card = if (std.fmt.parseInt(u32, branchTicket(a.win.text(.branch)) orelse "", 10)) |n| app.ticketCard(n) else |_| null;

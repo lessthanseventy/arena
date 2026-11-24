@@ -1900,6 +1900,64 @@ for x y what in $ox 10 'its left edge' 160 10 'its right edge' $((ox + 12)) 1 'i
   $((ox - 1)) 10 'the gap between it and the board' $rail_w 10 "the rail's edge"; do
   check "with the orchestrator's column beside the board, the pointer on $what changes nothing" hovered $x $y
 done
+
+# a peek opens wherever a ticket or a Claude is listed, over the screen and nothing else
+print -r -- '{"tickets":[{"id":40,"repo":"arena","title":"Hover me","kind":"ticket","status":"todo","priority":"med","blocked_by":[]},'\
+'{"id":41,"repo":"menard","title":"Over there","kind":"ticket","status":"doing","priority":"med","blocked_by":[]},'\
+'{"id":42,"repo":"arena","title":"Landed one","kind":"ticket","status":"done","priority":"med","blocked_by":[],"closed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}],'\
+'"proposals":[{"id":4,"action":"start","ticket_id":40,"what":"Start #40","why":"Next in line"}],'\
+'"needs_you":[{"id":"proposal:4","kind":"proposal","ticket":40,"repo":"arena","text":"P4 Start #40: Next in line","actions":[]}],'\
+'"orchestrator":{"on":true,"running":true}}' >$tmp/run/babylon/board.json
+see 'P4 Start #40'
+see '#42 Landed'
+# every cell outside the peek is as it was in $1, a screen's text
+outside() {
+  local -a was=("${(@f)1}") now=("${(@f)$(settled)}")
+  local foot=${(M)#${(@M)now:#*esc away*}} r left top bot
+  for (( r = 1; r <= $#now; r++ )); do [[ $now[r] == *'⏎ go   space'* ]] && foot=$r; done
+  left=$(colof $foot '⏎ go   space'); left=$(( left - 2 ))
+  top=$foot
+  while [[ ${now[top-1][left]} == '│' ]]; do top=$(( top - 1 )); done
+  top=$(( top - 1 )); bot=$(( foot + 1 ))
+  for (( r = 1; r <= $#was; r++ )); do
+    if (( r >= top && r <= bot )); then
+      [[ ${was[r][1,left-1]}${was[r][left+60,-1]} == ${now[r][1,left-1]}${now[r][left+60,-1]} ]] || { print "      row $r changed outside the peek"; return 1 }
+    else
+      [[ $was[r] == $now[r] ]] || { print "      row $r changed outside the peek"; print -rl -- "      was: $was[r]" "      now: $now[r]"; return 1 }
+    fi
+  done
+}
+# resting on column $1, row $2 opens a peek holding $3, and nothing outside it changed; leaving closes it
+peeks() {
+  park
+  zselect -t 50
+  local before=$(settled)
+  mouse 35 $1 $2 M
+  await shows "esc away" || { print "      no peek"; return 1 }
+  await shows "$3" || { print "      peek lacks $3"; return 1 }
+  outside "$before" || return 1
+  park
+  await hides "esc away" || { print "      peek stays"; return 1 }
+}
+r=$(rowof ' one '); check "resting on a Claude in the rail peeks its last words" peeks 4 $r 'said: Hovered'
+r=$(rowof 'P4 Start #40'); c=$(colof $r 'P4 Start')
+check "on a needs you item in the feed, its ticket" peeks $((c + 2)) $r 'arena · med · default model'
+r=$(rowof '#41 menard'); c=$(colof $r '#41 menard')
+check "on a ticket building in the feed, that ticket" peeks $((c + 2)) $r 'menard · med · default model'
+r=$(rowof '#42 Landed'); c=$(colof $r '#42 Landed')
+check "on a card in recent, its ticket" peeks $((c + 3)) $r 'arena · med · default model'
+r=$(rowof '#41 Over'); c=$(colof $r '#41 Over')
+mouse 0 $((c + 3)) $r M
+mouse 0 $((c + 3)) $r m
+park
+key h
+check "and after a key moves the board's pick, a peek of what it is on, with no pointer" await eval 'shows "esc away" && shows "arena · med · default model"'
+key Escape
+print -r -- '{"tickets":[{"id":40,"repo":"arena","title":"Hover me","kind":"ticket","status":"todo","priority":"med","blocked_by":[]},'\
+'{"id":41,"repo":"menard","title":"Over there","kind":"ticket","status":"doing","priority":"med","blocked_by":[]}],'\
+'"orchestrator":{"on":true,"running":true}}' >$tmp/run/babylon/board.json
+gone '#42 Landed'
+park
 pick_ink() {
   local r=$(( $(rowof '#40 Hover') - 1 ))
   local c=$(( $(colof $((r + 1)) '#40') - 2 ))
