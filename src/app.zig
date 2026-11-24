@@ -418,7 +418,7 @@ pub const App = struct {
     /// A name being typed, over everything else.
     prompt: ?menu.Prompt = null,
     /// What the board is narrowed to by `/`, kept after Enter.
-    find: [64]u8 = undefined,
+    find: [200]u8 = undefined,
     find_len: usize = 0,
     /// The window picked in the overview, while it is open in place of the strip.
     overview: ?Spot = null,
@@ -1861,10 +1861,8 @@ pub const App = struct {
 
     /// Enter on the find line: what is typed is kept, and the keys are the board's again.
     fn keepFind(app: *App, prompt: menu.Prompt) void {
-        var keep = @min(prompt.len, app.find.len);
-        while (keep < prompt.len and keep > 0 and prompt.buf[keep] & 0xC0 == 0x80) keep -= 1;
-        @memcpy(app.find[0..keep], prompt.buf[0..keep]);
-        app.find_len = keep;
+        @memcpy(app.find[0..prompt.len], prompt.text());
+        app.find_len = prompt.len;
         app.prompt = null;
         app.normal = app.sideDue();
         app.refind();
@@ -3170,6 +3168,12 @@ pub const App = struct {
     pub fn boardCount(app: *const App, status: tickets.Status) usize {
         const b = if (app.board) |*b| b else return 0;
         return b.column(status, null, app.findText(), &.{});
+    }
+
+    /// The cards in `status` on the whole board: the rail's chip, which no find narrows.
+    pub fn railCount(app: *const App, status: tickets.Status) usize {
+        const b = if (app.board) |*b| b else return 0;
+        return b.column(status, null, "", &.{});
     }
 
     pub fn boardCard(app: *const App, col: usize, row: usize) ?*const tickets.Card {
@@ -6823,4 +6827,31 @@ test "the ticket order holds a Claude's place through its state, and the pipelin
     try std.testing.expectEqual(@as(usize, 3), m);
     try std.testing.expectEqual(@as(usize, 1), lines[0].above);
     try std.testing.expect(lines[2] == .more);
+}
+
+test "a find of a hundred bytes narrows the same before and after Enter, and the rail ignores it" {
+    var typed_buf: [100]u8 = undefined;
+    @memset(&typed_buf, 'x');
+    @memcpy(typed_buf[0..6], "needle");
+    const typed: []const u8 = &typed_buf;
+    const json = try std.fmt.allocPrint(std.testing.allocator,
+        \\{{"tickets":[
+        \\{{"id":1,"repo":"arena","title":"{s}","status":"todo"}},
+        \\{{"id":2,"repo":"arena","title":"needle","status":"todo"}}
+        \\]}}
+    , .{typed});
+    defer std.testing.allocator.free(json);
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.board = try tickets.Board.parse(std.testing.allocator, json);
+    defer app.board.?.deinit();
+    var prompt: menu.Prompt = .{ .what = .find };
+    @memcpy(prompt.buf[0..typed.len], typed);
+    prompt.len = typed.len;
+    app.prompt = prompt;
+    const typing = app.boardCount(.todo);
+    app.keepFind(prompt);
+    try std.testing.expectEqual(typed.len, app.find_len);
+    try std.testing.expectEqual(typing, app.boardCount(.todo));
+    try std.testing.expectEqual(@as(usize, 1), app.boardCount(.todo));
+    try std.testing.expectEqual(@as(usize, 2), app.railCount(.todo));
 }

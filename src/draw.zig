@@ -371,8 +371,8 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
         filled = 1 + cellCount(button);
     } else if (y == 1 and app.board != null) {
         const open = app.board_view != null;
-        const todo = app.boardCount(.todo);
-        const doing = app.boardCount(.doing);
+        const todo = app.railCount(.todo);
+        const doing = app.railCount(.doing);
         var buf: [48]u8 = undefined;
         try pen.set(w, if (open) chip(app) else ink(app, "amber", 4), null);
         var runs: [1]*const tickets.Card = undefined;
