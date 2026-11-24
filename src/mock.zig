@@ -1164,7 +1164,7 @@ fn boardView(sc: *Scene, focused: bool) void {
     for (cols, 0..) |col, ci| {
         const cw = if (ci == cols.len - 1) x0 + W - cx else W * col[2] / 100;
         var list: [64]*const Card = undefined;
-        const all = sc.board.column(col[0], null, &list);
+        const all = sc.board.column(col[0], null, "", &list);
         var n: usize = 0;
         for (list[0..@min(all, list.len)]) |cd| {
             if (!std.mem.eql(u8, cd.kind, "epic")) {
@@ -1203,7 +1203,7 @@ fn boardView(sc: *Scene, focused: bool) void {
     // recent: a thin timeline strip of the last five
     const sy = c.h - l.foot - strip_h - 1;
     var list: [64]*const Card = undefined;
-    const done = sc.board.column(.done, null, &list);
+    const done = sc.board.column(.done, null, "", &list);
     for (x0..x0 + W) |xx| c.put(xx, sy + 1, '━', .{ .fg = s.rule });
     _ = c.print(x0, sy, "recent", .{ .fg = s.text, .bold = true }, 7);
     _ = sc.badge(x0 + 7, sy, done, s.dim);
