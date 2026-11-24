@@ -2307,6 +2307,7 @@ fn benchOver(app: *App, w: *Writer, view: app_mod.BoardView) !void {
 fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
     if (app.board_view.?.gate) return gateBox(app, w, id, scroll);
     const rect = app.modalRect() orelse return;
+    if (app.roles) |r| return benchDetail(app, w, r, id, rect, scroll);
     const inner = app_mod.detailWidth(app.boardW()).inner;
     const x = rect.x;
     const top = rect.y + 1;
@@ -2369,6 +2370,137 @@ fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
     var noted = app_mod.DetailLines.init(note, inner);
     while (y < bottom) : (y += 1) try boxLine(w, &pen, edge, dim, x, y, noted.next() orelse "", inner);
     try modalFrame(app, w, rect, title, " j k scroll ");
+}
+
+/// The card's modal in Workbench's look: a window over the board with its shadow and `✕`, the
+/// title whole, the facts as chips, the open ask as a violet band with its options as buttons,
+/// the body, and the card's actions as buttons along the foot. Its rows are `modalButtons`'.
+fn benchDetail(app: *const App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRect, scroll: usize) !void {
+    const inner = app_mod.detailWidth(app.boardW()).inner;
+    const x0 = rect.x + 2;
+    const foot = rect.y + rect.h - 1;
+    var tbuf: [48]u8 = undefined;
+    const card = app.modalCard();
+    const title = std.fmt.bufPrint(&tbuf, "#{d} \u{b7} {s}", .{ id, if (card) |it| it.repo orelse "no repo" else "" }) catch "";
+    try bench.window(w, r, rect.x, rect.y, rect.w - 1, rect.h, title, null, true);
+    try bench.say(w, rect.x + rect.w - 4, rect.y, "✕", r.text, r.raised, true);
+
+    var head: App.CardHead = .{};
+    if (card) |it| App.cardHead(it, inner, app.epoch, &head);
+    const note = doneNote(app, id);
+    var note_rows: u16 = 0;
+    var counted = app_mod.DetailLines.init(note, inner);
+    while (counted.next()) |_| {
+        if (note_rows < foot - rect.y - 3) note_rows += 1;
+    }
+    const win = if (card) |it| app.claudeOf(it) else null;
+    const claude_rows: u16 = if (win != null and foot - rect.y - 3 > note_rows + head.n + 1) 1 else 0;
+    const text_end = foot - 1 - note_rows - claude_rows;
+
+    var buttons: [16]App.ModalButton = undefined;
+    const modal = app.modalButtons(&buttons);
+    var y = rect.y + 1;
+    var band = false;
+    var facts = false;
+    for (head.lines[0..head.n], head.kinds[0..head.n]) |line, kind| {
+        if (y >= text_end) break;
+        if (kind == .warn) band = true;
+        const bg = if (band) r.tile else r.panel;
+        if (band) try bench.fill(w, rect.x + 1, y, rect.w - 3, bg);
+        switch (kind) {
+            .plain => try bench.say(w, x0, y, clip(line, inner), r.text, bg, true),
+            .dim => if (facts) {
+                try bench.say(w, x0, y, clip(line, inner), r.dim, bg, false);
+            } else {
+                facts = true;
+                try benchFacts(app, w, r, card.?, x0, y, inner);
+            },
+            .warn => try bench.say(w, x0, y, clip(line, inner), r.you, bg, true),
+            .options => for (modal) |button| if (button.action == .option and button.y == y) {
+                _ = try bench.button(w, r, button.x, y, button.key, button.label, button.action.option == 1, r.tile);
+            },
+        }
+        y += 1;
+    }
+    if (band and y < text_end) {
+        try bench.fill(w, rect.x + 1, y, rect.w - 3, r.tile);
+        y += 1;
+    }
+
+    const text = if (app.detail.items.len > 0) app.detail.items else "…";
+    var row: usize = 0;
+    const parts = [2]struct { text: []const u8, fg: color.RGB }{
+        .{ .text = if (card) |it| it.stage_note else "", .fg = r.dim },
+        .{ .text = text, .fg = r.text },
+    };
+    for (parts) |part| {
+        if (part.text.len == 0) continue;
+        var lines = app_mod.DetailLines.init(part.text, inner);
+        while (lines.next()) |line| : (row += 1) {
+            if (row < scroll or y >= text_end) continue;
+            try bench.say(w, x0, y, clip(line, inner), part.fg, r.panel, false);
+            y += 1;
+        }
+    }
+    y = text_end;
+    if (claude_rows > 0) if (win) |it| {
+        var ago_buf: [8]u8 = undefined;
+        var said: [320]u8 = undefined;
+        const state = if (it.claude == .none) "" else @tagName(it.claude);
+        const line = std.fmt.bufPrint(&said, "its Claude: {s} {s} \u{b7} {s}", .{ state, ago(&ago_buf, app.epoch, it.since), it.detail() }) catch "its Claude";
+        try bench.say(w, x0, y, clip(line, inner), r.dim, r.panel, false);
+        y += 1;
+    };
+    var noted = app_mod.DetailLines.init(note, inner);
+    while (noted.next()) |line| {
+        if (y >= foot - 1) break;
+        try bench.say(w, x0, y, clip(line, inner), r.dim, r.panel, false);
+        y += 1;
+    }
+
+    var end = x0;
+    var primary = true;
+    for (modal) |button| {
+        if (button.action == .option) continue;
+        _ = try bench.button(w, r, button.x, button.y, button.key, button.label, primary and button.action != .close, r.ground);
+        if (button.action != .close) primary = false;
+        end = button.x + button.width() + 1;
+    }
+    const hint = " j k scroll ";
+    if (end + cellCount(hint) < rect.x + rect.w - 2) try bench.say(w, end, foot, hint, r.dim, r.panel, false);
+}
+
+/// A card's facts as a row of chips from `x`, as many as `room` cells have: its repo, priority,
+/// where it is, model, who holds it, and how long it has been filed and held.
+fn benchFacts(app: *const App, w: *Writer, r: theme.Roles, card: *const tickets.Card, x: u16, y: u16, room: u16) !void {
+    var at = x;
+    const end = x + room;
+    var sbuf: [96]u8 = undefined;
+    var lbuf: [96]u8 = undefined;
+    const mark = repoHue(r, card.repo);
+    const high = std.mem.eql(u8, card.priority, "high");
+    const low = std.mem.eql(u8, card.priority, "low");
+    const state = benchState(app, card, r, &sbuf);
+    const held = if (card.heldBy()) |pane| std.fmt.bufPrint(&lbuf, "held {s}", .{pane}) catch "" else "";
+    var filed: [8]u8 = undefined;
+    var claimed: [8]u8 = undefined;
+    var fbuf: [24]u8 = undefined;
+    var cbuf: [24]u8 = undefined;
+    const filed_text = if (tickets.epochOf(card.inserted_at)) |t| std.fmt.bufPrint(&fbuf, "filed {s}", .{ago(&filed, app.epoch, @intCast(@max(1, t)))}) catch "" else "";
+    const claimed_text = if (card.claimedAt()) |t| std.fmt.bufPrint(&cbuf, "held {s}", .{ago(&claimed, app.epoch, @intCast(@max(1, t)))}) catch "" else "";
+    const items = [_]struct { label: []const u8, lead: color.RGB, words: color.RGB, filled: bool }{
+        .{ .label = if (card.repo) |repo| repo else "no repo", .lead = mark.hue, .words = mark.hue, .filled = false },
+        .{ .label = if (high) "● high" else if (low) "○ low" else "◉ med", .lead = if (high) r.failed else r.dim, .words = r.text, .filled = false },
+        if (state) |s| .{ .label = s.label, .lead = s.lead, .words = s.words, .filled = s.filled } else .{ .label = @tagName(card.status), .lead = r.dim, .words = r.text, .filled = false },
+        .{ .label = if (card.model) |m| modelName(m) else "", .lead = r.dim, .words = r.text, .filled = false },
+        .{ .label = held, .lead = r.dim, .words = r.text, .filled = false },
+        .{ .label = filed_text, .lead = r.dim, .words = r.text, .filled = false },
+        .{ .label = claimed_text, .lead = r.dim, .words = r.text, .filled = false },
+    };
+    for (items) |item| {
+        if (item.label.len == 0 or at + cellCount(item.label) + 2 > end) continue;
+        at += @as(u16, @intCast(try bench.chipInk(w, r, at, y, item.label, item.lead, item.words, item.filled))) + 1;
+    }
 }
 
 /// Seconds as a stage's time reads: `4s`, `1m 58s`.
@@ -3912,4 +4044,56 @@ test "Home in Workbench's look: the focal goal is the one with a step building, 
     const empty = try bench.probe(f, x + bar_w - 1, y);
     try std.testing.expectEqual(@as(u21, ' '), empty.cp);
     try std.testing.expectEqual(r.well, empty.bg);
+}
+
+test "a card's popup in Workbench's look: a window with its ✕, the title whole, the ask's options as buttons and the facts as chips" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 24;
+    app.roles = bench.roles();
+    const r = app.roles.?;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":4,"repo":"tlon","title":"Which direction should the board take","status":"doing","priority":"high","model":"claude-opus-5-5","claimed_by":"%12","claimed_at":"2026-11-24T00:00:00Z",
+        \\ "ask":{"id":9,"question":"Which one?","options":["Phosphor","Workbench"]}}
+        \\]}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{ .col = 1, .detail = 4 };
+    var buf: [65536]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try boardView(&app, &out, app.board_view.?);
+    const drawn = out.buffered();
+    const eq = std.testing.expectEqual;
+    const rect = app.modalRect().?;
+
+    // the title bar is raised with its ✕ at the right, the face below it the panel, a shadow beside
+    try eq(@as(u21, '◆'), (try bench.probe(drawn, rect.x + 1, rect.y)).cp);
+    const close = try bench.probe(drawn, rect.x + rect.w - 4, rect.y);
+    try eq(@as(u21, '✕'), close.cp);
+    try eq(r.raised, close.bg);
+    try eq(r.panel, (try bench.probe(drawn, rect.x + 3, rect.y + 8)).bg);
+    try eq(@as(u21, '▌'), (try bench.probe(drawn, rect.x + rect.w - 1, rect.y + 3)).cp);
+
+    // the whole title in bold, then the facts: the repo's chip in its hue, the high dot in red
+    const title = try bench.probe(drawn, rect.x + 2, rect.y + 1);
+    try eq(@as(u21, 'W'), title.cp);
+    try std.testing.expect(title.bold);
+    const repo = try bench.probe(drawn, rect.x + 2 + 1, rect.y + 2);
+    try eq(@as(u21, 't'), repo.cp);
+    try eq(r.repo[4], repo.fg);
+
+    // the ask in violet, its options buttons: the first filled amber, the next raised
+    var buttons: [16]App.ModalButton = undefined;
+    var options: [2]App.ModalButton = undefined;
+    var n: usize = 0;
+    for (app.modalButtons(&buttons)) |b| if (b.action == .option) {
+        options[n] = b;
+        n += 1;
+    };
+    try eq(@as(usize, 2), n);
+    try eq(r.you, (try bench.probe(drawn, rect.x + 2, options[0].y - 1)).fg);
+    try eq(r.accent, (try bench.probe(drawn, options[0].x, options[0].y)).bg);
+    try eq(r.raised, (try bench.probe(drawn, options[1].x, options[1].y)).bg);
 }

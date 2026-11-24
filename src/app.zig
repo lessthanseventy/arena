@@ -4660,6 +4660,10 @@ pub const App = struct {
                     try app.pressModal(button.action);
                     return true;
                 };
+                if (app.workbench() and !open.gate and m.y == rect.y and m.x + 4 >= rect.x + rect.w and m.x + 2 <= rect.x + rect.w) {
+                    open.detail = null;
+                    return true;
+                }
                 if (rect.contains(m.x, m.y)) return true;
             }
             open.help = false;
@@ -7176,4 +7180,40 @@ test "a find of a hundred bytes narrows the same before and after Enter, and the
     try std.testing.expectEqual(typing, app.boardCount(.todo));
     try std.testing.expectEqual(@as(usize, 1), app.boardCount(.todo));
     try std.testing.expectEqual(@as(usize, 2), app.railCount(.todo));
+}
+
+test "in Workbench's look a click on a popup's option answers the ask and one on its ✕ closes it" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 24;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":4,"repo":"tlon","title":"d","status":"doing","ask":{"id":9,"question":"Which?","options":["x","y"]}}
+        \\]}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{ .col = 1, .detail = 4 };
+    const eq = std.testing.expectEqual;
+    const rect = app.modalRect().?;
+
+    var buttons: [16]App.ModalButton = undefined;
+    const second = for (app.modalButtons(&buttons)) |b| {
+        if (b.action == .option and b.action.option == 2) break b;
+    } else return error.NoOption;
+    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = second.x + 1, .y = second.y, .release = false }));
+    try eq(@as(?u32, null), app.board_view.?.detail);
+    var got: [512]u8 = undefined;
+    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon answer 9 2") != null);
+
+    app.board_view.?.detail = 4;
+    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = rect.x + rect.w - 4, .y = rect.y, .release = false }));
+    try eq(@as(?u32, null), app.board_view.?.detail);
 }
