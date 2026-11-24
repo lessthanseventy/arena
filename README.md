@@ -24,7 +24,7 @@ always did; arena draws them and leaves them running when it quits.
   its Claudes share it, `▲2`, and with no Claude to mark it has tmux's own `!` for a window that
   rang its bell or `#` for one with output where `monitor-activity` is on. One out of view that comes to wait or is done
   is a desktop notification too, through `notify-send` where there is one. arena's Claude Code plugin sets the pane option `@arena_claude` to
-  `working`, `background`, `done` or `waiting` ([Install](#install)).
+  `working`, `background`, `done`, `waiting` or `stalled` (its turn ended on an API error) ([Install](#install)).
 - **Its Claudes listed** under the sessions in the rail, each session's together: the session whose
   Claude most wants looking at first, and in it the most pressing, or, a click on their rule
   away, the one heard from last first; the session in view has its name in amber there, and the
