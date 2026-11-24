@@ -829,7 +829,7 @@ pub const App = struct {
 
     /// A repo's Claudes whose tickets are only waiting in babylon's pipeline, folded into one row
     /// until it is opened.
-    pub const Fold = struct { repo: []const u8, count: usize, open: bool };
+    pub const Fold = struct { repo: []const u8, count: usize, open: bool, session: ?usize = null };
     pub const max_folds = 8;
 
     /// A row of a list of agents: a session's name over its own, a window with a Claude, its
@@ -856,12 +856,23 @@ pub const App = struct {
         return std.hash.Wyhash.hash(0, repo) | 1;
     }
 
-    fn foldOpen(app: *const App, repo: []const u8) bool {
-        return std.mem.indexOfScalar(u64, &app.pipeline_open, repoHash(repo)) != null;
+    /// What a fold is picked and kept open by: its repo's hash, or for a session's, its id's.
+    pub fn foldKey(app: *const App, fold: Fold) u64 {
+        const si = fold.session orelse return repoHash(fold.repo);
+        return std.hash.Wyhash.hash(1, std.mem.asBytes(&app.sessions.items[si].id)) | 1;
     }
 
-    fn toggleFold(app: *App, repo: []const u8) void {
-        const hash = repoHash(repo);
+    fn foldOpen(app: *const App, key: u64) bool {
+        return std.mem.indexOfScalar(u64, &app.pipeline_open, key) != null;
+    }
+
+    /// Whether the rail folds each session's Claudes that are not moving: narrow, at home.
+    fn restFolded(app: *const App) bool {
+        const view = app.board_view orelse return false;
+        return view.home and app.rail == .narrow;
+    }
+
+    fn toggleFold(app: *App, hash: u64) void {
         if (std.mem.indexOfScalar(u64, &app.pipeline_open, hash)) |at| {
             app.pipeline_open[at] = 0;
         } else if (std.mem.indexOfScalar(u64, &app.pipeline_open, 0)) |free| {
@@ -877,18 +888,19 @@ pub const App = struct {
     fn railList(app: *const App, out: []Agent, folds: []Fold) struct { usize, usize } {
         var all: [64]Agent = undefined;
         const total = app.agents(&all);
+        const rest = app.restFolded();
         var n: usize = 0;
         var nf: usize = 0;
         for (all[0..total]) |a| {
             const card = if (app.agentSelected(a)) null else if (std.fmt.parseInt(u32, branchTicket(a.win.text(.branch)) orelse "", 10)) |id| app.ticketCard(id) else |_| null;
-            if (card) |c| {
-                if (c.status == .done) continue;
-                if (inPipeline(c)) {
-                    const repo = c.repo orelse "";
+            if (card) |c| if (c.status == .done) continue;
+            if (rest) {
+                if (a.win.claude != .working and a.win.claude != .waiting) {
                     const at = for (folds[0..nf], 0..) |f, i| {
-                        if (std.mem.eql(u8, f.repo, repo)) break i;
+                        if (f.session == a.session) break i;
                     } else if (nf < folds.len) blk: {
-                        folds[nf] = .{ .repo = repo, .count = 0, .open = app.foldOpen(repo) };
+                        const fold: Fold = .{ .repo = "", .count = 0, .open = false, .session = a.session };
+                        folds[nf] = .{ .repo = "", .count = 0, .open = app.foldOpen(app.foldKey(fold)), .session = a.session };
                         nf += 1;
                         break :blk nf - 1;
                     } else null;
@@ -897,12 +909,27 @@ pub const App = struct {
                         if (!folds[i].open) continue;
                     }
                 }
-            }
+            } else if (card) |c| if (inPipeline(c)) {
+                const repo = c.repo orelse "";
+                const at = for (folds[0..nf], 0..) |f, i| {
+                    if (std.mem.eql(u8, f.repo, repo)) break i;
+                } else if (nf < folds.len) blk: {
+                    const fold: Fold = .{ .repo = repo, .count = 0, .open = false };
+                    folds[nf] = .{ .repo = repo, .count = 0, .open = app.foldOpen(app.foldKey(fold)) };
+                    nf += 1;
+                    break :blk nf - 1;
+                } else null;
+                if (at) |i| {
+                    folds[i].count += 1;
+                    if (!folds[i].open) continue;
+                }
+            };
             out[n] = a;
             n += 1;
         }
         std.mem.sort(Fold, folds[0..nf], {}, struct {
             fn before(_: void, a: Fold, b: Fold) bool {
+                if (a.session != null and b.session != null) return a.session.? < b.session.?;
                 return std.mem.order(u8, a.repo, b.repo) == .lt;
             }
         }.before);
@@ -953,13 +980,26 @@ pub const App = struct {
         return s.id == app.current and app.board_view == null and s.focused() == a.win;
     }
 
+    /// The line of `session`'s fold of what is not moving, when it has one not yet listed and a row for it.
+    fn restLine(out: []AgentLine, n: *usize, rows: usize, folds: []const Fold, session: usize, emitted: *u16) void {
+        for (folds, 0..) |fold, i| {
+            if (fold.session != session or n.* == rows or emitted.* >> @intCast(i) & 1 == 1) continue;
+            out[n.*] = .{ .pipeline = fold };
+            n.* += 1;
+            emitted.* |= @as(u16, 1) << @intCast(i);
+        }
+    }
+
     fn agentLinesFrom(out: []AgentLine, room: usize, details: bool, found: []const Agent, folds: []const Fold) usize {
         const count = found.len;
         const rows = @min(out.len, room);
         if (rows == 0) return 0;
         var n: usize = 0;
         var last: ?usize = null;
+        var emitted: u16 = 0;
         for (found[0..count]) |a| {
+            if (n == rows) break;
+            if (last) |l| if (l != a.session) restLine(out, &n, rows, folds, l, &emitted);
             if (n == rows) break;
             // a Claude's rows go together: past the first, one they do not all fit is left to the count
             const rest = @as(usize, @intFromBool(details and a.win.detail().len > 0)) +
@@ -993,15 +1033,27 @@ pub const App = struct {
                 n += 1;
             }
         }
+        if (last) |l| restLine(out, &n, rows, folds, l, &emitted);
         var shown: usize = 0;
-        for (out[0..n]) |line| shown += @intFromBool(line == .agent);
-        // the folds come after the Claudes, once all of them have been listed
-        if (shown == count) for (folds) |fold| {
-            if (n == rows) break;
-            out[n] = .{ .pipeline = fold };
-            n += 1;
-            shown += 1;
-        };
+        for (out[0..n]) |line| shown += @intFromBool(line == .agent or line == .pipeline);
+        // a session's fold comes after its Claudes, one with none moving under its own header; the
+        // pipeline's folds after all of them, once all have been listed
+        if (shown - @popCount(emitted) == count) {
+            for (folds, 0..) |fold, i| if (fold.session) |si| {
+                if (emitted >> @intCast(i) & 1 == 1) continue;
+                if (n + 2 > rows) break;
+                out[n] = .{ .session = si };
+                out[n + 1] = .{ .pipeline = fold };
+                n += 2;
+                shown += 1;
+            };
+            for (folds) |fold| if (fold.session == null) {
+                if (n == rows) break;
+                out[n] = .{ .pipeline = fold };
+                n += 1;
+                shown += 1;
+            };
+        }
         if (shown < count + folds.len) {
             if (n == rows) {
                 if (out[n - 1] == .agent or out[n - 1] == .pipeline) shown -= 1;
@@ -1063,7 +1115,7 @@ pub const App = struct {
         switch (line) {
             .above => app.scrollAgents(-page),
             .more => app.scrollAgents(page),
-            .pipeline => |fold| app.toggleFold(fold.repo),
+            .pipeline => |fold| app.toggleFold(app.foldKey(fold)),
             else => {},
         }
     }
@@ -1187,7 +1239,7 @@ pub const App = struct {
         }
         for (folds[0..nf]) |fold| {
             if (n == out.len) break;
-            out[n] = .{ .fold = repoHash(fold.repo) };
+            out[n] = .{ .fold = app.foldKey(fold) };
             n += 1;
         }
         return n;
@@ -1482,7 +1534,7 @@ pub const App = struct {
                 var found: [64]Agent = undefined;
                 var folds: [max_folds]Fold = undefined;
                 _, const nf = app.railList(&found, &folds);
-                for (folds[0..nf]) |fold| if (repoHash(fold.repo) == pick.fold) app.toggleFold(fold.repo);
+                for (folds[0..nf]) |fold| if (app.foldKey(fold) == pick.fold) app.toggleFold(pick.fold);
                 return true;
             }
             app.normal = false;
@@ -1508,7 +1560,7 @@ pub const App = struct {
         const shown = app.railAgents(&lines);
         for (lines[0..shown]) |line| switch (line) {
             .agent => |a| if (pick == .agent and a.win.id == pick.agent) return,
-            .pipeline => |fold| if (pick == .fold and repoHash(fold.repo) == pick.fold) return,
+            .pipeline => |fold| if (pick == .fold and app.foldKey(fold) == pick.fold) return,
             else => {},
         };
         var found: [64]Agent = undefined;
@@ -6812,6 +6864,31 @@ test "the ticket order holds a Claude's place through its state, and the pipelin
     try std.testing.expectEqual(@as(usize, 3), m);
     try std.testing.expectEqual(@as(usize, 1), lines[0].above);
     try std.testing.expect(lines[2] == .more);
+}
+
+test "at home the narrow rail lists a session's working and waiting Claudes and folds the rest into one line" {
+    const gpa = std.testing.allocator;
+    const marks = [_]Mark{ .working, .waiting, .done, .done, .none };
+    var wins: [5]Window = undefined;
+    var slots: [5]*Window = undefined;
+    for (0..5) |i| {
+        wins[i] = .{ .id = @intCast(i + 1), .claude = marks[i], .since = 1 };
+        slots[i] = &wins[i];
+    }
+    var s: Session = .{ .id = 1, .name = @constCast("arena"), .wins = .fromOwnedSlice(&slots) };
+    var pointers = [_]*Session{&s};
+    var app: App = .{ .gpa = gpa, .io = undefined, .tmux_in = undefined, .rail = .narrow, .board_view = .{ .home = true } };
+    app.sessions = .fromOwnedSlice(&pointers);
+
+    var lines: [16]App.AgentLine = undefined;
+    const n = app.agentLines(&lines, 16, false);
+    try std.testing.expectEqual(@as(usize, 4), n);
+    try std.testing.expect(lines[0] == .session);
+    try std.testing.expectEqual(@as(u32, 3), lines[1].agent.win.id + lines[2].agent.win.id);
+    try std.testing.expectEqual(@as(usize, 3), lines[3].pipeline.count);
+
+    app.toggleFold(app.foldKey(lines[3].pipeline));
+    try std.testing.expectEqual(@as(usize, 7), app.agentLines(&lines, 16, false));
 }
 
 test "a find of a hundred bytes narrows the same before and after Enter, and the rail ignores it" {

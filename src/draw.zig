@@ -637,11 +637,13 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
             filled = (if (wide) @as(usize, 9) else 2) + std.fmt.count("{d}", .{count});
         },
         .pipeline => |fold| {
-            const picked = if (app.railPicked()) |pick| pick == .fold and pick.fold == App.repoHash(fold.repo) else false;
+            const picked = if (app.railPicked()) |pick| pick == .fold and pick.fold == app.foldKey(fold) else false;
             try pickBar(app, w, pen, picked, dim);
             try pen.set(w, dim, null);
             var buf: [96]u8 = undefined;
-            const text = if (wide)
+            const text = if (fold.session != null)
+                std.fmt.bufPrint(&buf, " · {d}{s}", .{ fold.count, if (wide) " more" else "" }) catch ""
+            else if (wide)
                 std.fmt.bufPrint(&buf, " {s} {d} in the pipeline{s}{s}", .{ if (fold.open) "▾" else "◌", fold.count, if (fold.repo.len > 0) " · " else "", fold.repo }) catch ""
             else
                 std.fmt.bufPrint(&buf, " ◌{d}", .{fold.count}) catch "";
