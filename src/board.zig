@@ -20,8 +20,13 @@ pub const Card = struct {
     priority: []const u8 = "med",
     /// The tmux pane holding it, as `%12`.
     claimed_by: ?[]const u8 = null,
-    /// When it was claimed, as `2026-11-21T23:20:05Z`.
+    /// When it was filed, and when it was claimed, as `2026-11-21T23:20:05Z`.
+    inserted_at: ?[]const u8 = null,
     claimed_at: ?[]const u8 = null,
+    /// When it came to its pipeline stage, in the same form.
+    stage_at: ?[]const u8 = null,
+    /// The Claude model babylon starts it with, when it names one.
+    model: ?[]const u8 = null,
     /// When it was handed in to the pipeline, and when it was closed, in the same form.
     submitted_at: ?[]const u8 = null,
     closed_at: ?[]const u8 = null,

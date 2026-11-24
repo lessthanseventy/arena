@@ -2829,49 +2829,109 @@ pub const App = struct {
         return if (lane < n) repos[lane] else null;
     }
 
-    /// The rows lane `lane`'s cards take in column `col` under its heading, with a row for how
-    /// many more it has; none when it has no card there.
-    fn groupRows(app: *const App, lane: usize, col: usize) usize {
-        const n = app.laneCounts(lane, col);
-        return n.shown * app.cardRows(col) + @intFromBool(n.total > n.shown);
+    /// The groups a column's cards are in: a repo's each in the every view, by its place among
+    /// `laneRepos`, else the one of what the board is narrowed to.
+    fn groupCount(app: *const App) usize {
+        if (!app.boardLanes()) return 1;
+        var repos: [max_repos + 1][]const u8 = undefined;
+        return app.laneRepos(&repos);
     }
 
-    /// A line of column `col` in the every view, counted from its first: a lane's heading, or
-    /// row `row` of its cards.
-    pub const ColumnLine = struct { lane: usize, row: ?usize };
+    /// The cards of group `lane` in column `col`: those shown, and all of them.
+    pub fn groupCounts(app: *const App, lane: usize, col: usize) struct { shown: usize, total: usize } {
+        if (app.boardLanes()) {
+            const n = app.laneCounts(lane, col);
+            return .{ .shown = n.shown, .total = n.total };
+        }
+        return .{ .shown = @min(app.boardColumn(col, &.{}), max_cards), .total = app.boardColumnAll(col) };
+    }
+
+    /// Card `row` of group `lane` in column `col`.
+    pub fn groupCard(app: *const App, lane: usize, col: usize, row: usize) ?*const tickets.Card {
+        return if (app.boardLanes()) app.laneCard(lane, col, row) else app.boardCard(col, row);
+    }
+
+    /// A line of a column, counted from its first: a repo's heading in the every view, row `part`
+    /// of card `row`, or the line under a group's last saying how many more it has.
+    pub const ColumnLine = struct {
+        lane: usize,
+        what: union(enum) { heading, card: struct { row: usize, part: usize }, more },
+    };
+
+    /// A column's lines from its first, each card as many as it is tall.
+    pub const ColumnLines = struct {
+        app: *const App,
+        col: usize,
+        groups: usize,
+        lane: usize = 0,
+        headed: bool = false,
+        row: usize = 0,
+        part: usize = 0,
+
+        pub fn init(app: *const App, col: usize) ColumnLines {
+            return .{ .app = app, .col = col, .groups = app.groupCount() };
+        }
+
+        pub fn next(it: *ColumnLines) ?ColumnLine {
+            while (it.lane < it.groups) {
+                const n = it.app.groupCounts(it.lane, it.col);
+                if (n.total > 0 and !it.headed) {
+                    it.headed = true;
+                    if (it.app.boardLanes()) return .{ .lane = it.lane, .what = .heading };
+                }
+                if (it.row < n.shown) {
+                    const line: ColumnLine = .{ .lane = it.lane, .what = .{ .card = .{ .row = it.row, .part = it.part } } };
+                    it.part += 1;
+                    if (it.part >= it.app.cardHeight(it.lane, it.col, it.row)) {
+                        it.part = 0;
+                        it.row += 1;
+                    }
+                    return line;
+                }
+                const more = it.row == n.shown and n.total > n.shown;
+                it.row += 1;
+                if (more) return .{ .lane = it.lane, .what = .more };
+                it.lane += 1;
+                it.headed = false;
+                it.row = 0;
+            }
+            return null;
+        }
+    };
 
     pub fn columnLineAt(app: *const App, col: usize, line: usize) ?ColumnLine {
-        var repos: [max_repos + 1][]const u8 = undefined;
-        var start: usize = 0;
-        for (0..app.laneRepos(&repos)) |k| {
-            const rows = app.groupRows(k, col);
-            if (rows == 0) continue;
-            if (line == start) return .{ .lane = k, .row = null };
-            if (line <= start + rows) return .{ .lane = k, .row = line - start - 1 };
-            start += rows + 1;
-        }
+        var lines = ColumnLines.init(app, col);
+        for (0..line) |_| _ = lines.next() orelse return null;
+        return lines.next();
+    }
+
+    /// The line of column `col` card `row` of group `lane` starts on.
+    pub fn cardStart(app: *const App, col: usize, lane: usize, row: usize) ?usize {
+        var lines = ColumnLines.init(app, col);
+        var at: usize = 0;
+        while (lines.next()) |line| : (at += 1) switch (line.what) {
+            .card => |card| if (line.lane == lane and card.row == row and card.part == 0) return at,
+            else => {},
+        };
         return null;
     }
 
-    /// The line of column `col` lane `lane`'s heading is on.
-    pub fn groupStart(app: *const App, col: usize, lane: usize) usize {
-        var start: usize = 0;
-        for (0..lane) |k| {
-            const rows = app.groupRows(k, col);
-            if (rows > 0) start += rows + 1;
-        }
-        return start;
-    }
-
     /// The line of column `col` on its first row inside its border: the picked card's column is
-    /// scrolled to keep it in view, down to its bottom edge.
+    /// scrolled to keep it in view down to its bottom edge, or its top when it is taller than
+    /// the column.
     pub fn columnScroll(app: *const App, col: usize) usize {
         const view = app.board_view orelse return 0;
         if (col != view.col) return 0;
-        const each = app.cardRows(col);
-        const pick = app.groupStart(col, view.lane) + 1 + view.row * each + each - 1;
-        const shown = app.view_h -| 3;
-        return if (pick >= shown) pick - shown + 1 else 0;
+        const lane = app.pickLane();
+        const top = app.cardStart(col, lane, view.row) orelse return 0;
+        const bottom = top + app.cardHeight(lane, col, view.row) -| 1;
+        const shown = @max(1, app.view_h -| 3);
+        return if (bottom >= shown) @min(top, bottom - shown + 1) else 0;
+    }
+
+    /// The group the pick is in: its repo's in the every view, else the one.
+    fn pickLane(app: *const App) usize {
+        return if (app.boardLanes()) app.board_view.?.lane else 0;
     }
 
     /// Card `row` of column `col` in lane `lane`.
@@ -2981,36 +3041,51 @@ pub const App = struct {
         return app.boardLanes() and tickets.statuses[col] == .done;
     }
 
-    /// The rows a card takes in column `col`.
-    pub fn cardRows(app: *const App, col: usize) usize {
-        return if (app.boardStrip(col)) 1 else card_rows;
+    /// Whether card `row` of group `lane` in column `col` is the one picked.
+    pub fn cardPicked(app: *const App, lane: usize, col: usize, row: usize) bool {
+        const view = app.board_view orelse return false;
+        return col == view.col and row == view.row and lane == app.pickLane();
     }
 
-    /// A card is a box: its top edge, its title on two rows, a footer of what else is so of it,
-    /// and its bottom edge, where the picked card's actions go.
-    pub const CardRow = enum(u3) { top, title, title_more, footer, bottom };
-    pub const card_rows = std.enums.values(CardRow).len;
-
-    /// The screen row card `k` of those shown starts on.
-    pub fn cardTop(k: usize) u16 {
-        return @intCast(2 + card_rows * k);
+    /// The rows card `row` of group `lane` takes in column `col`: one in the strip; else its
+    /// title's, `title_rows` at most unless picked, a last row when it has something to say, and
+    /// the picked one's top and bottom edges.
+    pub fn cardHeight(app: *const App, lane: usize, col: usize, row: usize) usize {
+        if (app.boardStrip(col)) return 1;
+        const card = app.groupCard(lane, col, row) orelse return 1;
+        var buf: [160]u8 = undefined;
+        var lines = TitleLines.init(cardTitle(card, &buf), cardTextW(app.boardColW(col)));
+        var n: usize = 0;
+        while (lines.next()) |_| n += 1;
+        const last = @intFromBool(cardHasLast(card, app.cardRepoShown()));
+        return if (app.cardPicked(lane, col, row)) n + last + 2 else @max(1, @min(n, title_rows) + last);
     }
 
-    /// Which card of those shown screen row `y` is in, and which of its rows.
-    pub fn cardRowAt(y: u16) ?struct { k: usize, part: CardRow } {
-        if (y < 2) return null;
-        return .{ .k = (y - 2) / card_rows, .part = @fromBackingInt(@intCast((y - 2) % card_rows)) };
+    pub const title_rows = 4;
+
+    /// The cells a card's text has in a column `w` wide: the column's edges, the card's left mark
+    /// and a space, and a cell after.
+    pub fn cardTextW(w: u16) usize {
+        return w -| 5;
     }
 
-    pub fn boardShown(app: *const App) usize {
-        return @max(1, (app.view_h -| 3) / card_rows);
+    pub fn cardTitle(card: *const tickets.Card, buf: []u8) []const u8 {
+        return std.fmt.bufPrint(buf, "#{d} {s}", .{ card.id, card.title }) catch card.title;
     }
 
-    /// The first card column `col` shows: the picked card's column scrolls to keep it in view.
-    pub fn boardFirst(app: *const App, col: usize) usize {
-        const view = app.board_view orelse return 0;
-        const shown = app.boardShown();
-        return if (col == view.col and view.row >= shown) view.row - shown + 1 else 0;
+    /// Whether a card says its repo: in the backlog, where no heading or tab does.
+    pub fn cardRepoShown(app: *const App) bool {
+        return !app.boardLanes() and app.boardRepo() == null;
+    }
+
+    /// Whether a card has a last row, something to say past its title: a proposal, a question,
+    /// where the pipeline has it, who holds it, what it waits on, and the rest of what is so of it.
+    pub fn cardHasLast(card: *const tickets.Card, with_repo: bool) bool {
+        return card.proposal != null or card.ask != null or card.stage != null or
+            (card.status != .review and (card.holder() != null or card.status == .doing)) or
+            with_repo or card.blocked_by.len > 0 or std.mem.eql(u8, card.kind, "epic") or
+            (card.status == .todo and card.model != null) or
+            (card.status == .done and card.session_note.len > 0);
     }
 
     pub const CardAt = struct { lane: usize, col: usize, row: usize };
@@ -3021,16 +3096,11 @@ pub const App = struct {
         const col = for (0..app.boardCols()) |c| {
             if (x < app.boardColX(c) + app.boardColW(c)) break c;
         } else return null;
-        if (app.boardLanes()) {
-            const at = app.columnLineAt(col, y - 2 + app.columnScroll(col)) orelse return null;
-            const k = (at.row orelse return null) / app.cardRows(col);
-            if (app.laneCard(at.lane, col, k) == null) return null;
-            return .{ .lane = at.lane, .col = col, .row = k };
-        }
-        const at = cardRowAt(y) orelse return null;
-        if (at.k >= app.boardShown()) return null;
-        const row = app.boardFirst(col) + at.k;
-        return if (row < app.boardColumn(col, &.{})) .{ .lane = 0, .col = col, .row = row } else null;
+        const at = app.columnLineAt(col, y - 2 + app.columnScroll(col)) orelse return null;
+        return switch (at.what) {
+            .card => |card| .{ .lane = at.lane, .col = col, .row = card.row },
+            else => null,
+        };
     }
 
     /// The window with pane `id` in it, and that window's place in its session.
@@ -3748,12 +3818,14 @@ pub const App = struct {
         }
         const card = app.boardCard(view.col, view.row) orelse return out[0..n];
         const strip = app.boardStrip(view.col);
-        const y: u16 = if (strip) app.view_h -| 1 else if (app.boardLanes()) blk: {
-            const line = app.groupStart(view.col, view.lane) + 1 + view.row * card_rows + @backingInt(CardRow.bottom);
+        const y: u16 = if (strip) app.view_h -| 1 else blk: {
+            const lane = app.pickLane();
+            const top = app.cardStart(view.col, lane, view.row) orelse return out[0..n];
+            const line = top + app.cardHeight(lane, view.col, view.row) - 1;
             const scroll = app.columnScroll(view.col);
             if (line < scroll) return out[0..n];
             break :blk @intCast(@min(2 + line - scroll, app.view_h));
-        } else cardTop(view.row - app.boardFirst(view.col)) + @backingInt(CardRow.bottom);
+        };
         if (!strip and y + 1 >= app.view_h) return out[0..n];
         var have: [12]CardAction = undefined;
         var x: u16 = app.boardColX(view.col) + 2;
@@ -3914,16 +3986,18 @@ pub const App = struct {
         return true;
     }
 
-    /// A click on the `▲ proposed` a card wears on its top edge or footer, whose ticket has an item
-    /// of Your move: the feed's pick goes to that item. Whether it was that click.
+    /// A click on the `▲ proposed` that starts a card's last row, whose ticket has an item of Your
+    /// move: the feed's pick goes to that item. Whether it was that click.
     fn cardNeedsClick(app: *App, at: CardAt, m: keys.Mouse) !bool {
-        const card = (if (app.boardLanes()) app.laneCard(at.lane, at.col, at.row) else app.boardCard(at.col, at.row)) orelse return false;
-        if (card.proposal == null or app.cardRows(at.col) != card_rows) return false;
-        const part: CardRow = if (app.boardLanes()) blk: {
-            const line = app.columnLineAt(at.col, m.y - 2 + app.columnScroll(at.col)) orelse return false;
-            break :blk @fromBackingInt(@intCast((line.row orelse return false) % card_rows));
-        } else (cardRowAt(m.y) orelse return false).part;
-        if (part != .top and part != .footer) return false;
+        const card = app.groupCard(at.lane, at.col, at.row) orelse return false;
+        if (card.proposal == null or app.boardStrip(at.col)) return false;
+        const line = app.columnLineAt(at.col, m.y - 2 + app.columnScroll(at.col)) orelse return false;
+        const part = switch (line.what) {
+            .card => |spot| spot.part,
+            else => return false,
+        };
+        const picked = app.cardPicked(at.lane, at.col, at.row);
+        if (part + 1 + @intFromBool(picked) != app.cardHeight(at.lane, at.col, at.row)) return false;
         const x = app.boardColX(at.col) + 2;
         if (m.x < x or m.x >= x + cellCount("▲ proposed")) return false;
         const b = if (app.board) |*b| b else return false;
@@ -5216,6 +5290,24 @@ pub fn titleLines(title: []const u8, width: usize) [2][]const u8 {
     return .{ std.mem.trimEnd(u8, title[0..cut], " "), std.mem.trimStart(u8, title[cut..], " ") };
 }
 
+/// A title wrapped to `width` characters a line at a time, cut at spaces where it can.
+pub const TitleLines = struct {
+    rest: []const u8,
+    width: usize,
+
+    pub fn init(title: []const u8, width: usize) TitleLines {
+        return .{ .rest = title, .width = @max(1, width) };
+    }
+
+    pub fn next(it: *TitleLines) ?[]const u8 {
+        if (it.rest.len == 0) return null;
+        const lines = titleLines(it.rest, it.width);
+        if (lines[0].len == 0) return null;
+        it.rest = lines[1];
+        return lines[0];
+    }
+};
+
 /// A card's detail as the box shows it: each of its lines cut to `inner` characters and run on
 /// under one another, the space at a cut dropped.
 pub const DetailLines = struct {
@@ -5454,18 +5546,19 @@ test "the every view's columns grouped by repo: their lines, the pick stepping a
     app.board_view = .{};
     const eq = std.testing.expectEqual;
 
-    // in todo, arena's heading and its two cards, then the cards of no repo's; tlon has none
-    // there, so no rows
-    const cr = App.card_rows;
+    // in todo, arena's heading and its two cards, the picked one boxed on three rows and the
+    // other a title's row, then the cards of no repo's; tlon has none there, so no rows
     const Line = App.ColumnLine;
-    try eq(Line{ .lane = 0, .row = null }, app.columnLineAt(0, 0).?);
-    try eq(Line{ .lane = 0, .row = 0 }, app.columnLineAt(0, 1).?);
-    try eq(Line{ .lane = 0, .row = 2 * cr - 1 }, app.columnLineAt(0, 2 * cr).?);
-    try eq(Line{ .lane = 2, .row = null }, app.columnLineAt(0, 2 * cr + 1).?);
-    try eq(Line{ .lane = 2, .row = 0 }, app.columnLineAt(0, 2 * cr + 2).?);
-    try eq(@as(?Line, null), app.columnLineAt(0, 3 * cr + 2));
-    // in doing, arena's then tlon's
-    try eq(Line{ .lane = 1, .row = null }, app.columnLineAt(1, cr + 1).?);
+    try eq(Line{ .lane = 0, .what = .heading }, app.columnLineAt(0, 0).?);
+    try eq(Line{ .lane = 0, .what = .{ .card = .{ .row = 0, .part = 0 } } }, app.columnLineAt(0, 1).?);
+    try eq(Line{ .lane = 0, .what = .{ .card = .{ .row = 0, .part = 2 } } }, app.columnLineAt(0, 3).?);
+    try eq(Line{ .lane = 0, .what = .{ .card = .{ .row = 1, .part = 0 } } }, app.columnLineAt(0, 4).?);
+    try eq(Line{ .lane = 2, .what = .heading }, app.columnLineAt(0, 5).?);
+    try eq(Line{ .lane = 2, .what = .{ .card = .{ .row = 0, .part = 0 } } }, app.columnLineAt(0, 6).?);
+    try eq(@as(?Line, null), app.columnLineAt(0, 7));
+    // in doing, arena's then tlon's, each card a title and a last row saying no Claude holds it
+    try eq(Line{ .lane = 0, .what = .{ .card = .{ .row = 0, .part = 1 } } }, app.columnLineAt(1, 2).?);
+    try eq(Line{ .lane = 1, .what = .heading }, app.columnLineAt(1, 3).?);
 
     // review and done have nothing, so are as narrow as their headings; todo the widest
     var sum: u16 = 0;
@@ -5484,12 +5577,12 @@ test "the every view's columns grouped by repo: their lines, the pick stepping a
     try eq(@as(?u32, 1), picked(&app));
     try app.boardKey("j");
     try eq(@as(?u32, 2), picked(&app));
-    // three lines shown, and the second card's bottom edge under arena's heading on the eleventh
-    try eq(@as(usize, 2 * cr + 1 - 3), app.columnScroll(0));
+    // three lines shown: the picked card's bottom edge kept on the last of them
+    try eq(@as(usize, 2), app.columnScroll(0));
     try eq(@as(usize, 0), app.columnScroll(1));
     try app.boardKey("j");
     try eq(@as(?u32, 5), picked(&app));
-    try eq(@as(usize, 3 * cr + 2 - 3), app.columnScroll(0));
+    try eq(@as(usize, 4), app.columnScroll(0));
     try app.boardKey("j");
     try eq(@as(?u32, 5), picked(&app));
     // the cards of no repo have none doing: l goes to the first group that has

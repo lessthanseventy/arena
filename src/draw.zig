@@ -1695,7 +1695,6 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     const ox = app.boardX();
     const dim = ink(app, "dim", 8);
     const edge: vt.Style = .{ .fg_color = .palette(8) };
-    const repo = app.boardRepo();
     var pen: Pen = .{};
     var buf: [160]u8 = undefined;
 
@@ -1710,8 +1709,6 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         const name = app.columnName(c);
         const x = app.boardColX(c);
         const inner = app.boardColW(c) -| 2;
-        var cards: [app_mod.max_cards]*const tickets.Card = undefined;
-        const n = app.boardColumn(c, &cards);
         const total = if (lanes) app.boardCount(tickets.statuses[c]) else app.boardColumnAll(c);
         const label = std.fmt.bufPrint(&buf, " {s} {d} ", .{ name, total }) catch "";
         try pen.set(w, edge, null);
@@ -1722,26 +1719,7 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         try pen.set(w, edge, null);
         for (@min(cellCount(shown) + 1, inner)..inner) |_| try w.writeAll("─");
         try w.writeAll("╮");
-        const first = app.boardFirst(c);
-        var y: u16 = 2;
-        if (lanes) {
-            try groupedColumn(app, w, &pen, view, c, x, inner);
-            y = app.view_h;
-        }
-        while (y + 1 < app.view_h) : (y += 1) {
-            try w.print("\x1b[{d};{d}H", .{ y + 1, x + 1 });
-            try pen.set(w, edge, null);
-            try w.writeAll("│");
-            const slot = App.cardRowAt(y).?;
-            const at = first + slot.k;
-            if (at >= @min(n, cards.len) or slot.k >= app.boardShown() or inner < 4) {
-                const more = at == n and slot.part == .top and slot.k < app.boardShown() and total > n;
-                try pen.set(w, dim, null);
-                try fitted(w, if (more) std.fmt.bufPrint(&buf, " {d} more", .{total - n}) catch "" else "", inner);
-            } else try cardLine(app, w, &pen, cards[at], slot.part, c == view.col and at == view.row, hovers(app, 0, c, at), repo == null, inner);
-            try pen.set(w, edge, null);
-            try w.writeAll("│");
-        }
+        try columnLines(app, w, &pen, view, c, x, inner);
         if (total == 0 and app.view_h > 3) {
             try pen.set(w, dim, null);
             try w.print("\x1b[3;{d}H", .{x + 2});
@@ -1897,7 +1875,7 @@ const board_keys = [_][2][]const u8{
     .{ "`", "fold the orchestrator's window beside it, or unfold" },
     .{ "alt+l", "to that window, and alt+h back to the board" },
     .{ "esc, q", "close the board" },
-    .{ "left edge", "its priority: lit for high, dim for low" },
+    .{ "▌", "its priority: amber for high, dim for low" },
     .{ "◐ » ✗ ◆ ?", "working, queued, sent back, landed, asks" },
 };
 
@@ -2065,46 +2043,48 @@ fn boxLine(w: *Writer, pen: *Pen, edge: vt.Style, style: vt.Style, x: u16, y: u1
     try w.writeAll(" │");
 }
 
-/// Column `c` of the every view: each repo with cards in it a heading row, `arena ──── 13`, and
-/// its cards boxed under it. The strip's are a dim row each, ✓ and its number and title, the
-/// picked one lit.
-fn groupedColumn(app: *const App, w: *Writer, pen: *Pen, view: app_mod.BoardView, c: usize, x: u16, inner: u16) !void {
+/// Column `c`'s lines inside its border, scrolled: in the every view each repo with cards in it a
+/// heading row, `arena ──── 13`, its cards under it; a card as tall as what it says. The strip's
+/// are a dim row each, ✓ and its number and title, the picked one lit.
+fn columnLines(app: *const App, w: *Writer, pen: *Pen, view: app_mod.BoardView, c: usize, x: u16, inner: u16) !void {
     const edge: vt.Style = .{ .fg_color = .palette(8) };
-    const scroll = app.columnScroll(c);
+    const with_repo = app.cardRepoShown();
+    var lines = App.ColumnLines.init(app, c);
+    for (0..app.columnScroll(c)) |_| _ = lines.next();
     var y: u16 = 2;
     while (y + 1 < app.view_h) : (y += 1) {
         try w.print("\x1b[{d};{d}H", .{ y + 1, x + 1 });
         try pen.set(w, edge, null);
         try w.writeAll("│");
-        const at = app.columnLineAt(c, y - 2 + scroll);
-        if (at) |line| if (line.row == null) {
-            try groupHeading(app, w, pen, app.laneRepo(line.lane).?, app.laneCounts(line.lane, c).total, line.lane == view.lane and c == view.col, inner);
+        const at = lines.next() orelse {
+            try pen.set(w, .{}, null);
+            try fitted(w, "", inner);
             try pen.set(w, edge, null);
             try w.writeAll("│");
             continue;
         };
-        const each = app.cardRows(c);
-        const k = if (at) |line| line.row.? / each else 0;
-        const card = if (at) |line| app.laneCard(line.lane, c, k) else null;
-        if (card) |it| {
-            const line = at.?;
-            const picked = line.lane == view.lane and c == view.col and k == view.row;
-            const hovered = hovers(app, line.lane, c, k);
-            if (each == 1) {
-                var buf: [160]u8 = undefined;
-                var style = if (picked and !app.columnFocused()) heading(app) else ink(app, "dim", 8);
-                try pen.set(w, style, null);
-                try w.writeAll(" ");
-                if (hovered) style.flags.underline = .single;
-                try pen.set(w, style, null);
-                try fitted(w, std.fmt.bufPrint(&buf, "✓ #{d} {s}", .{ it.id, it.title }) catch it.title, inner -| 1);
-            } else try cardLine(app, w, pen, it, @fromBackingInt(@intCast(line.row.? % each)), picked, hovered, false, inner);
-        } else {
-            var buf: [24]u8 = undefined;
-            const counts = if (at) |line| app.laneCounts(line.lane, c) else null;
-            const more = if (counts) |n| at.?.row.? == n.shown * each and n.total > n.shown else false;
-            try pen.set(w, ink(app, "dim", 8), null);
-            try fitted(w, if (more) std.fmt.bufPrint(&buf, " {d} more", .{counts.?.total - counts.?.shown}) catch "" else "", inner);
+        switch (at.what) {
+            .heading => try groupHeading(app, w, pen, app.laneRepo(at.lane).?, app.laneCounts(at.lane, c).total, at.lane == view.lane and c == view.col, inner),
+            .more => {
+                var buf: [24]u8 = undefined;
+                const n = app.groupCounts(at.lane, c);
+                try pen.set(w, ink(app, "dim", 8), null);
+                try fitted(w, std.fmt.bufPrint(&buf, " {d} more", .{n.total - n.shown}) catch "", inner);
+            },
+            .card => |spot| {
+                const it = app.groupCard(at.lane, c, spot.row).?;
+                const picked = app.cardPicked(at.lane, c, spot.row);
+                const hovered = hovers(app, at.lane, c, spot.row);
+                if (app.boardStrip(c)) {
+                    var buf: [160]u8 = undefined;
+                    var style = if (picked and !app.columnFocused()) heading(app) else ink(app, "dim", 8);
+                    try pen.set(w, style, null);
+                    try w.writeAll(" ");
+                    if (hovered) style.flags.underline = .single;
+                    try pen.set(w, style, null);
+                    try fitted(w, std.fmt.bufPrint(&buf, "✓ #{d} {s}", .{ it.id, it.title }) catch it.title, inner -| 1);
+                } else try cardLine(app, w, pen, it, spot.part, picked, hovered, with_repo, inner);
+            },
         }
         try pen.set(w, edge, null);
         try w.writeAll("│");
@@ -2134,42 +2114,83 @@ fn hovers(app: *const App, lane: usize, col: usize, row: usize) bool {
     return at == .card and std.meta.eql(at.card, .{ .lane = lane, .col = col, .row = row });
 }
 
-/// Row `part` of a card boxed in `inner` cells: its edges, the picked one's lit (dim while the
-/// orchestrator's column has the keys) and its left one a high or low priority's colour, its
-/// number and title on two rows, underlined under the pointer, and its footer and top edge.
-fn cardLine(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, part: App.CardRow, picked: bool, hovered: bool, with_repo: bool, inner: u16) !void {
+/// Row `part` of a card in `inner` cells. One not picked has a bar down its left, amber for high
+/// and dim for low, its number and title wrapped to the column, the last of `title_rows` cut with
+/// `…`, and a last row when it has something to say. The picked one is boxed in its place, lit
+/// (dim while the orchestrator's column has the keys), its title whole, its priority and how long
+/// since it was filed on its top edge. A card waiting on another is dim, and its title is
+/// underlined under the pointer.
+fn cardLine(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, part: usize, picked: bool, hovered: bool, with_repo: bool, inner: u16) !void {
     if (inner < 4) return fitted(w, "", inner);
     var buf: [160]u8 = undefined;
     const dim = ink(app, "dim", 8);
     const border: vt.Style = if (picked and app.columnFocused()) dim else if (picked) heading(app) else .{};
-    const left: vt.Style = if (picked) border else if (std.mem.eql(u8, card.priority, "high")) ink(app, "amber", 4) else if (std.mem.eql(u8, card.priority, "low")) dim else border;
-    const ends: [2][]const u8 = switch (part) {
-        .top => .{ "╭", "╮" },
-        .bottom => .{ "╰", "╯" },
-        else => .{ "│", "│" },
-    };
-    try pen.set(w, left, null);
-    try w.writeAll(ends[0]);
-    switch (part) {
-        .top => try cardText(app, w, pen, card, with_repo, .{ .edge = border }, inner - 2),
-        .bottom => {
+    const bar: vt.Style = if (picked) border else if (std.mem.eql(u8, card.priority, "high")) ink(app, "amber", 4) else if (std.mem.eql(u8, card.priority, "low")) dim else .{};
+    const title = App.cardTitle(card, &buf);
+    const width = App.cardTextW(inner + 2);
+    var count: usize = 0;
+    var counted = app_mod.TitleLines.init(title, width);
+    while (counted.next()) |_| count += 1;
+    const rows = if (picked) count else @min(count, App.title_rows);
+    const last = @intFromBool(App.cardHasLast(card, with_repo));
+    if (picked and (part == 0 or part == rows + last + 1)) {
+        try pen.set(w, border, null);
+        if (part == 0) {
+            try w.writeAll("╭");
+            try cardEdge(app, w, pen, card, border, inner - 2);
             try pen.set(w, border, null);
+            try w.writeAll("╮");
+        } else {
+            try w.writeAll("╰");
             for (0..inner - 2) |_| try w.writeAll("─");
-        },
-        .title, .title_more => {
-            const title = std.fmt.bufPrint(&buf, "#{d} {s}", .{ card.id, card.title }) catch card.title;
-            const lines = app_mod.titleLines(title, inner - 3);
-            var style: vt.Style = if (card.blocked_by.len > 0) dim else .{};
-            try pen.set(w, style, null);
-            try w.writeAll(" ");
-            if (hovered) style.flags.underline = .single;
-            try pen.set(w, style, null);
-            try fitted(w, lines[@intFromBool(part == .title_more)], inner - 3);
-        },
-        .footer => try cardText(app, w, pen, card, with_repo, .footer, inner - 2),
+            try w.writeAll("╯");
+        }
+        return;
+    }
+    const row = if (picked) part - 1 else part;
+    try pen.set(w, bar, null);
+    try w.writeAll(if (picked) "│" else "▌");
+    if (row < rows) {
+        var lines = app_mod.TitleLines.init(title, width);
+        var line: []const u8 = "";
+        for (0..row + 1) |_| line = lines.next() orelse "";
+        var style: vt.Style = if (card.blocked_by.len > 0) dim else .{};
+        try pen.set(w, style, null);
+        try w.writeAll(" ");
+        if (hovered) style.flags.underline = .single;
+        try pen.set(w, style, null);
+        if (!picked and row + 1 == App.title_rows and count > App.title_rows) {
+            const shown = clip(line, width -| 1);
+            try w.writeAll(shown);
+            try w.writeAll("…");
+            try pen.set(w, .{}, null);
+            try fitted(w, "", width -| (cellCount(shown) + 1));
+        } else try fitted(w, line, width);
+    } else try cardLast(app, w, pen, card, with_repo, inner - 2);
+    try pen.set(w, border, null);
+    try w.writeAll(if (picked) "│" else " ");
+}
+
+/// The picked card's top edge in `width` cells: its priority and how long since it was filed,
+/// the edge's line run on after.
+fn cardEdge(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, border: vt.Style, width: usize) !void {
+    var buf: [48]u8 = undefined;
+    var age: [8]u8 = undefined;
+    const filed = if (tickets.epochOf(card.inserted_at)) |at| ago(&age, app.epoch, @intCast(@max(1, at))) else "";
+    const text = if (filed.len > 0) std.fmt.bufPrint(&buf, "{s} · filed {s}", .{ card.priority, filed }) catch card.priority else card.priority;
+    var left = width;
+    if (width >= 4) {
+        const shown = clip(text, width - 2);
+        try pen.set(w, .{}, null);
+        try w.writeAll(" ");
+        try pen.set(w, ink(app, "dim", 8), null);
+        try w.writeAll(shown);
+        try pen.set(w, .{}, null);
+        try w.writeAll(" ");
+        left -= cellCount(shown) + 2;
     }
     try pen.set(w, border, null);
-    try w.writeAll(ends[1]);
+    for (0..left) |_| try w.writeAll("─");
 }
 
 /// Where the pipeline has a card: its glyph, none when it has none, the word for it, and the
@@ -2179,7 +2200,7 @@ fn stageOf(app: *const App, card: *const tickets.Card) ?struct { style: vt.Style
     const eql = std.mem.eql;
     if (eql(u8, s, "failed")) return .{ .style = ink(app, "emberdim", 1), .glyph = '✗', .word = "sent back" };
     if (eql(u8, s, "landed")) return .{ .style = ink(app, "amber", 4), .glyph = '◆', .word = "landed" };
-    if (eql(u8, s, "queued")) return .{ .style = ink(app, "violet", 5), .glyph = if (card.ask == null) '»' else 0, .word = if (card.ask == null) "queued" else "held" };
+    if (eql(u8, s, "queued")) return .{ .style = ink(app, "violet", 5), .glyph = if (card.ask == null) '»' else 0, .word = if (card.ask == null) "queued" else "held: asks" };
     if (eql(u8, s, "verifying") or eql(u8, s, "reviewing")) return .{ .style = ink(app, "amber", 4), .glyph = glyph(app, .working), .word = s };
     return .{ .style = ink(app, "dim", 8), .glyph = 0, .word = s };
 }
@@ -2191,49 +2212,27 @@ fn stageStyle(app: *const App, word: []const u8) ?vt.Style {
     return null;
 }
 
-/// What has a card's footer to itself: the Claude holding it or, in review, where the pipeline
-/// has it. Nothing has a card nobody holds.
-fn cardWho(card: *const tickets.Card) enum { none, holder, stage } {
-    if (card.status == .review) return if (card.stage != null) .stage else .none;
-    return if (card.holder() != null) .holder else .none;
-}
-
-/// A card's footer or its top edge in `width` cells. The footer is who has the card, alone; the
-/// rest of what is so of it is then on the top edge, the edge's line run on after it: a question
-/// waiting on the human, where the pipeline has it as a glyph in its colour, and its detail. A
-/// card nobody has keeps all of that in its footer, and its edge is bare.
-fn cardText(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, with_repo: bool, on: union(enum) { edge: vt.Style, footer }, width: usize) !void {
+/// A card's last row in `width` cells, what is so of it past its title joined by ` · `: the
+/// orchestrator's proposal, a question waiting on the human, where the pipeline has it as a glyph
+/// in its colour, the Claude holding it, and its detail.
+fn cardLast(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, with_repo: bool, width: usize) !void {
     var buf: [160]u8 = undefined;
     var held: [96]u8 = undefined;
-    var spun: [32]u8 = undefined;
+    var spun: [48]u8 = undefined;
     var proposed: [160]u8 = undefined;
     const dim = ink(app, "dim", 8);
-    const who = cardWho(card);
-    const rest = (who == .none) == (on == .footer);
     const stage: struct { vt.Style, []const u8 } = if (stageOf(app, card)) |s|
-        .{ s.style, if (s.glyph == 0) s.word else std.fmt.bufPrint(&spun, "{u} {s}", .{ s.glyph, s.word }) catch s.word }
+        .{ s.style, cardStage(app, card, s.glyph, s.word, &spun) }
     else
         .{ dim, "" };
-    const proposal = if (rest) (if (card.proposal) |p| std.fmt.bufPrint(&proposed, "▲ proposed: {s}", .{p.why}) catch "▲ proposed" else "") else "";
+    const queued = card.stage != null and std.mem.eql(u8, card.stage.?, "queued");
     const parts = [_]struct { vt.Style, []const u8 }{
-        .{ heading(app), proposal },
-        .{ ink(app, "amber", 4), if (rest and card.ask != null) "? asks" else "" },
-        if (if (who == .stage) on == .footer else rest) stage else .{ dim, "" },
-        .{ dim, if (who == .holder and on == .footer) cardHolder(app, card, &held) else "" },
-        .{ dim, if (rest) cardDetail(card, with_repo, &buf) else "" },
+        .{ heading(app), if (card.proposal) |p| std.fmt.bufPrint(&proposed, "▲ proposed: {s}", .{p.why}) catch "▲ proposed" else "" },
+        .{ ink(app, "amber", 4), if (card.ask != null and !queued) "? asks" else "" },
+        stage,
+        .{ dim, if (card.status != .review) cardHolder(app, card, &held) else "" },
+        .{ dim, cardDetail(card, with_repo, &buf) },
     };
-    const fill: struct { vt.Style, []const u8 } = switch (on) {
-        .edge => |border| .{ border, "─" },
-        .footer => .{ .{}, " " },
-    };
-    const bare = for (parts) |part| {
-        if (part[1].len > 0) break false;
-    } else true;
-    if (bare and on == .edge) {
-        try pen.set(w, fill[0], null);
-        for (0..width) |_| try w.writeAll(fill[1]);
-        return;
-    }
     var left = width -| 2;
     try pen.set(w, .{}, null);
     try w.writeAll(" ");
@@ -2259,26 +2258,79 @@ fn cardText(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, w
     }
     try pen.set(w, .{}, null);
     try w.writeAll(" ");
-    try pen.set(w, fill[0], null);
-    for (0..left) |_| try w.writeAll(fill[1]);
+    for (0..left) |_| try w.writeAll(" ");
 }
 
-/// The window of the Claude holding a card, with that Claude's mark and how long it has held it.
+/// Where the pipeline has a card, said: its glyph and word, then for one queued its place in its
+/// repo's line, and for one being gated how long it has been there.
+fn cardStage(app: *const App, card: *const tickets.Card, mark: u21, word: []const u8, buf: []u8) []const u8 {
+    var out: Writer = .fixed(buf);
+    if (mark != 0) out.print("{u} ", .{mark}) catch {};
+    out.writeAll(word) catch {};
+    const s = card.stage.?;
+    const eql = std.mem.eql;
+    if (eql(u8, s, "queued") and card.ask == null) {
+        const place = queuePlace(app, card);
+        const suffix = if (place % 100 / 10 == 1) "th" else switch (place % 10) {
+            1 => "st",
+            2 => "nd",
+            3 => "rd",
+            else => "th",
+        };
+        out.print(" · {d}{s}", .{ place, suffix }) catch {};
+    } else if (eql(u8, s, "verifying") or eql(u8, s, "reviewing") or eql(u8, s, "landing")) {
+        var age: [8]u8 = undefined;
+        if (tickets.epochOf(card.stage_at)) |at| out.print(" · {s}", .{ago(&age, app.epoch, @intCast(@max(1, at)))}) catch {};
+    }
+    return out.buffered();
+}
+
+/// A queued card's place in its repo's line, from 1: babylon runs a repo's queued tickets in the
+/// order they were submitted, then by number.
+fn queuePlace(app: *const App, card: *const tickets.Card) usize {
+    const b = if (app.board) |*b| b else return 1;
+    const eql = std.mem.eql;
+    const mine = card.submitted_at orelse "";
+    var place: usize = 1;
+    for (b.cards()) |*other| {
+        if (other.id == card.id or other.stage == null or !eql(u8, other.stage.?, "queued")) continue;
+        if (!eql(u8, other.repo orelse "", card.repo orelse "")) continue;
+        const at = other.submitted_at orelse "";
+        if (std.mem.order(u8, at, mine) == .lt or (eql(u8, at, mine) and other.id < card.id)) place += 1;
+    }
+    return place;
+}
+
+/// The Claude holding a card: its window with that Claude's mark, the model it was started with,
+/// and how long it has held it; a doing card no Claude holds says so, and since when.
 fn cardHolder(app: *const App, card: *const tickets.Card, buf: []u8) []const u8 {
     var out: Writer = .fixed(buf);
-    const pane = card.holder() orelse return "";
+    var age: [8]u8 = undefined;
+    const since = if (card.claimedAt()) |at| ago(&age, app.epoch, @intCast(@max(1, at))) else "";
+    const pane = card.holder() orelse {
+        if (card.status != .doing) return "";
+        out.writeAll("○ no Claude holds it") catch {};
+        if (since.len > 0) out.print(" · {s}", .{since}) catch {};
+        return out.buffered();
+    };
     if (app.paneWindow(pane)) |at| {
         const win = at.session.wins.items[at.index];
         if (win.claude != .none) out.print("{u} ", .{glyph(app, win.claude)}) catch {};
         out.writeAll(win.name) catch {};
     } else out.writeAll(card.heldBy().?) catch {};
-    var age: [8]u8 = undefined;
-    if (card.claimedAt()) |at| out.print(" · {s}", .{ago(&age, app.epoch, @intCast(@max(1, at)))}) catch {};
+    if (card.model) |model| out.print(" · {s}", .{modelName(model)}) catch {};
+    if (since.len > 0) out.print(" · {s}", .{since}) catch {};
     return out.buffered();
 }
 
-/// What else is so of a card, joined: its repo when the board shows every one, the tickets it
-/// waits on, that it is an epic, a priority not the usual one, why a done one's Claude was left running.
+/// A model id as a card says it: `claude-opus-5-5` is `opus`.
+fn modelName(model: []const u8) []const u8 {
+    const rest = if (std.mem.startsWith(u8, model, "claude-")) model["claude-".len..] else return model;
+    return rest[0 .. std.mem.indexOfScalar(u8, rest, '-') orelse rest.len];
+}
+
+/// What else is so of a card, joined: its repo where nothing else says it, the tickets it waits
+/// on, that it is an epic, a todo card's model, why a done one's Claude was left running.
 fn cardDetail(card: *const tickets.Card, with_repo: bool, buf: []u8) []const u8 {
     var out: Writer = .fixed(buf);
     var sep: []const u8 = "";
@@ -2295,11 +2347,10 @@ fn cardDetail(card: *const tickets.Card, with_repo: bool, buf: []u8) []const u8 
         out.print("{s}epic", .{sep}) catch {};
         sep = " · ";
     }
-    if (!std.mem.eql(u8, card.priority, "med")) {
-        out.print("{s}{s}", .{ sep, card.priority }) catch {};
+    if (card.status == .todo) if (card.model) |model| {
+        out.print("{s}{s}", .{ sep, modelName(model) }) catch {};
         sep = " · ";
-    }
-
+    };
     if (card.status == .done and card.session_note.len > 0) out.print("{s}{s}", .{ sep, card.session_note }) catch {};
     return out.buffered();
 }
@@ -2453,30 +2504,61 @@ test "auto's line draws a paused repo in the error colour, hold on in bold, and 
     try std.testing.expect(std.mem.indexOf(u8, out.buffered(), pin) != null);
 }
 
-test "a queued card with a question open is held, and one without is queued" {
+test "a queued card says its place in its repo's line, and with a question open it is held" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"repo":"arena","title":"a","status":"review","stage":"queued","submitted_at":"2026-11-23T02:00:00Z"},
+        \\{"id":2,"repo":"arena","title":"b","status":"review","stage":"queued","submitted_at":"2026-11-23T01:00:00Z"},
+        \\{"id":3,"repo":"tlon","title":"c","status":"review","stage":"queued","submitted_at":"2026-11-23T00:00:00Z"}
+        \\]}
+    );
+    defer app.board.?.deinit();
     var buf: [512]u8 = undefined;
-    var card: tickets.Card = .{ .id = 1, .title = "Handed in", .status = .review, .stage = "queued" };
+    var card = app.board.?.cards()[0];
 
     var waiting: Writer = .fixed(&buf);
     var pen: Pen = .{};
-    try cardText(&app, &waiting, &pen, &card, false, .footer, 15);
-    try std.testing.expect(std.mem.indexOf(u8, waiting.buffered(), "» queued") != null);
+    try cardLast(&app, &waiting, &pen, &card, false, 30);
+    try std.testing.expect(std.mem.indexOf(u8, waiting.buffered(), "» queued · 2nd") != null);
 
     card.ask = .{ .id = 5, .question = "Which colour?" };
     var held: Writer = .fixed(&buf);
     pen = .{};
-    try cardText(&app, &held, &pen, &card, false, .footer, 15);
+    try cardLast(&app, &held, &pen, &card, false, 30);
     const drawn = held.buffered();
-    try std.testing.expect(std.mem.indexOf(u8, drawn, "held") != null);
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "held: asks") != null);
     try std.testing.expect(std.mem.indexOf(u8, drawn, "queued") == null);
-    try std.testing.expect(std.mem.indexOf(u8, drawn, "…") == null);
     try std.testing.expect(std.mem.indexOf(u8, drawn, "? asks") == null);
+}
 
-    var edge: Writer = .fixed(&buf);
-    pen = .{};
-    try cardText(&app, &edge, &pen, &card, false, .{ .edge = .{} }, 15);
-    try std.testing.expect(std.mem.indexOf(u8, edge.buffered(), "? asks") != null);
+test "a card not picked: its priority bar, its whole title wrapped to four rows, and a last row only with something to say" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    var buf: [1024]u8 = undefined;
+    const Drawn = struct {
+        fn row(a: *App, out: []u8, card: *const tickets.Card, part: usize, inner: u16) ![]const u8 {
+            var w: Writer = .fixed(out);
+            var pen: Pen = .{};
+            try cardLine(a, &w, &pen, card, part, false, false, false, inner);
+            return w.buffered();
+        }
+    };
+    const long: tickets.Card = .{ .id = 7, .title = "one two three four five six seven eight nine ten eleven twelve", .status = .todo, .priority = "high" };
+    try std.testing.expect(!App.cardHasLast(&long, false));
+    var first = try Drawn.row(&app, &buf, &long, 0, 16);
+    try std.testing.expect(std.mem.indexOf(u8, first, "▌") != null);
+    try std.testing.expect(std.mem.indexOf(u8, first, "#7 one two") != null);
+    try std.testing.expect(std.mem.indexOf(u8, first, try sgr(buf[900..], ink(&app, "amber", 4))) != null);
+    const fourth = try Drawn.row(&app, &buf, &long, 3, 16);
+    try std.testing.expect(std.mem.indexOf(u8, fourth, "…") != null);
+
+    const held: tickets.Card = .{ .id = 8, .title = "short", .status = .doing, .model = "claude-opus-5-5" };
+    try std.testing.expect(App.cardHasLast(&held, false));
+    first = try Drawn.row(&app, &buf, &held, 1, 40);
+    try std.testing.expect(std.mem.indexOf(u8, first, "○ no Claude holds it") != null);
+    const todo: tickets.Card = .{ .id = 9, .title = "short", .status = .todo, .model = "claude-opus-5-5", .blocked_by = &.{4} };
+    first = try Drawn.row(&app, &buf, &todo, 1, 40);
+    try std.testing.expect(std.mem.indexOf(u8, first, "waits #4 · opus") != null);
 }
 
 test "the board's keys end on a card's edge and its marks, and a 24-row terminal has them whole" {
@@ -2490,7 +2572,7 @@ test "the board's keys end on a card's edge and its marks, and a 24-row terminal
     var short: Writer = .fixed(&buf);
     try helpBox(&app, &short);
     var drawn = short.buffered();
-    for ([_][]const u8{ "left edge", "its priority: lit for high, dim for low", "◐ » ✗ ◆ ?", "working, queued, sent back, landed, asks" }) |text| {
+    for ([_][]const u8{ "▌", "its priority: amber for high, dim for low", "◐ » ✗ ◆ ?", "working, queued, sent back, landed, asks" }) |text| {
         try std.testing.expect(std.mem.indexOf(u8, drawn, text) != null);
     }
     try std.testing.expect(std.mem.indexOf(u8, drawn, try std.fmt.bufPrint(&at, "\x1b[1;{d}H╭", .{x + 1})) != null);

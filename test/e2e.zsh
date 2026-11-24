@@ -995,7 +995,7 @@ check "Alt+b opens it in place of the strip, its repos as tabs" see ' ▤ board 
 check "and where its keys are" see '\? keys'
 check "the picked card's actions as chips on its own bottom edge" see '╰ go ─ answer ─ '
 rowof() { screen | grep -n -m1 -- "$1" | cut -d: -f1 }
-check "the row under its footer" test $(( $(rowof '#7 Lights') + 3 )) -eq "$(rowof '╰ go ─ answer ─ ')"
+check "the row under its footer" test $(( $(rowof '#7 Lights') + 2 )) -eq "$(rowof '╰ go ─ answer ─ ')"
 key l k
 check "l to a column its repo has no card in picks the first repo's that has" see '╰ go ─ edit '
 key h j
@@ -1032,18 +1032,18 @@ check "in each column, a heading for each repo with cards there, with its count"
 check "an empty column says none" see '│ none +│'
 check "and is no wider than its heading" see '╭─ recent 0 ╮'
 colw() { local l=$(screen | grep -m1 -- "╭─ $1 "); l=${l#*"╭─ $1 "}; print $(( ${#${l%%╮*}} )) }
-check "its cards boxed, their number and title inside" see '│ #8 Board of the +│'
-check "a long title running on to a second line" see '│ lanes +│'
-check "and a doing one its holder's window under them, and how long it has held it, alone on the row" see '│ one · [0-9]+[sm] +│'
-check "one in review its stage in the holder's place" see '│ » queued +│'
-check "what it waits on is on its top edge" see '╭ waits #7 '
+check "a card not picked unboxed, a bar down its left, its number and title beside it" see '▌ #8 Board of the +│'
+check "a long title running on to a second line" see '▌ lanes +│'
+check "and a doing one its holder's window under them, and how long it has held it" see '▌ one · [0-9]+[sm] · '
+check "one in review its stage in the holder's place, and its place in line" see '▌ » queued · 1st +│'
+check "the picked card's priority on its top edge" see '╭ med ─'
 claude alpha:one prompt
-check "with its Claude's mark while it works" see '│ [◐◓◑◒] one · [0-9]+[sm]'
+check "with its Claude's mark while it works" see '▌ [◐◓◑◒] one · [0-9]+[sm]'
 claude alpha:one end
-check "sent back and asking in its footer" see '│ \? asks · ✗ sent ba… │'
+check "sent back and asking in its footer" see '│ \? asks · ✗ sent'
 cardrow() { local l; for l in "${(@f)$(outer capture-pane -ep -t o)}"; [[ $l == *$1* ]] && print -r -- $l }
 picked_lit() { [[ $(cardrow '#7 Lights') == *$'\e[1m\e[38;5;4m│\e[0m #7 Lights'* ]] }
-high_edge() { [[ $(cardrow '#8 Board') == *$'\e[38;5;4m│\e[38;5;8m #8 Board'* ]] }
+high_edge() { [[ $(cardrow '#8 Board') == *$'\e[38;5;4m▌\e[38;5;8m #8 Board'* ]] }
 key a
 check "a shows the picked card's question" see '│ Which colour\? +│'
 check "with its options by number" see '│ 2  blue +│'
@@ -1152,11 +1152,8 @@ print -r -- '{"tickets":['\
 '"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[],"stage":"queued","ask":{"id":6,"question":"Which size?"}},'\
 '{"id":14,"repo":"tlon","title":"Sent back asking","kind":"ticket","status":"review","priority":"med","claimed_by":"'$one'",'\
 '"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[],"stage":"failed","ask":{"id":9,"question":"Which shape?"}}]}' >$tmp/run/babylon/board.json
-check "a held card asking has the question on its top edge" see '╭ \? asks ─'
-check "and where the pipeline has it, held, in its footer" see '│ held +│'
-edge_over() { [[ $(screen | grep -B1 -m1 -- "$1") == *'? asks'* ]] }
-check "a sent back one asking has the question on its top edge too" await edge_over '#14 Sent back'
-check "and ✗ sent back in its footer" see '│ ✗ sent back +│'
+check "a held card asking says so where the pipeline has it" see '[▌│] held: asks +│'
+check "a sent back one asking has the question before it" see '[▌│] \? asks · ✗ sent back +│'
 cp $tmp/board.noauto $tmp/run/babylon/board.json
 check "with the board back, #7 is there" see '#7 Lights'
 mouse 0 ${(z)$(spot '#7 Lights')} M
@@ -1175,10 +1172,10 @@ key r
 tablit() { [[ $(outer capture-pane -ep -t o) =~ $'((\e\\[[0-9;]*m)+) '$1' ' && $match[1] =~ '[[;]7[;m]' ]] }
 check "r narrows it to one repo, its tab lit" await tablit arena
 check "and to its cards" gone '#7 Lights'
-check "which are whole there: number and title" see '│ #8 Board of the lanes +│'
-check "a high card's left edge amber" high_edge
-check "under them the window of the Claude holding it, alone on the row" see '│ one · [0-9]+[sm] +│'
-check "the rest of what is so of it on its top edge" see '╭ waits #7 · high ─*╮'
+check "which are whole there: number and title" see '▌ #8 Board of the lanes +│'
+check "a high card's bar amber" high_edge
+check "under them the window of the Claude holding it, then what it waits on" see '▌ one · [0-9]+[sm] · waits #7 +│'
+check "its priority said by its bar, not in words" gone '· high'
 tabrow() { screen | grep -n -m1 ' board  every' | cut -d: -f1 }
 tabcol() { local l=$(screen | grep -m1 ' board  every'); local p=${l%%" $1 "*}; print $(( ${#p} + 2 )) }
 key '?'
@@ -1555,7 +1552,7 @@ check "and off, it is gone again" gone 'auto [0-9]'
 check "not the rest" gone 'Done 22'
 key r
 check "and so in one repo's view" see '│ 2 more +│'
-check "where one whose Claude babylon left running says why, as far as its card has room" see '│ left running: [^│]*… │'
+check "where one whose Claude babylon left running says why, as far as its card has room" see '[▌│] left running: [^│]*… '
 key l l l ' '
 check "and its whole ticket says all of why" see '│ left running: it holds #9 '
 key Escape
