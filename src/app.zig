@@ -5226,6 +5226,19 @@ test "the board's first row: tabs with their counts, then babylon's state agains
     try std.testing.expect(narrow.more != null);
 }
 
+test "the auto button says the tools slots when babylon gives them, and the short one drops them" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"auto":{"on":true,"cap":4,"working":4,"tools":{"working":1,"cap":1}}}
+    );
+    defer app.board.?.deinit();
+    var buf: [64]u8 = undefined;
+    var button: App.Button = .{ .what = .auto, .x = 0, .y = 0, .w = 0, .short = false };
+    try std.testing.expectEqualStrings(" ◐ auto 4/4 · tools 1/1 ", app.buttonLabel(button, &buf));
+    button.short = true;
+    try std.testing.expectEqualStrings(" ◐ 4/4 ", app.buttonLabel(button, &buf));
+}
+
 test "the every view's done column is a strip: narrow, a card a row, its reopen on its foot" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     app.term_w = 140;
