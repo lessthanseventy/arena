@@ -1234,8 +1234,6 @@ fn sideHint(app: *const App) []const u8 {
     return if (app.columnAlone()) App.half_hint else fold_hint;
 }
 
-/// Row `row` of the feed atop the orchestrator's column, `inner` cells wide: its line, or past
-/// them, the rule under it.
 /// A style on Workbench's panel when it sets no background of its own.
 fn onPanel(app: *const App, style: vt.Style) vt.Style {
     const r = app.roles orelse return style;
@@ -1384,6 +1382,8 @@ fn benchFeedRow(app: *const App, w: *Writer, pen: *Pen, r: theme.Roles, f: *cons
     try o.finish();
 }
 
+/// Row `row` of the feed atop the orchestrator's column, `inner` cells wide: its line, or past
+/// them, the rule under it.
 fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usize, inner: u16) !void {
     const dim = ink(app, "dim", 8);
     if (row < f.count()) if (app.roles) |r| switch (f.line(row).kind) {
