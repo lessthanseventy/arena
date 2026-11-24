@@ -1886,6 +1886,18 @@ check "B shows the board" see ' board  every'
 check "in the plan's place" gone '◆ plan'
 key b
 check "and b comes home to the plan" see '◆ plan  B board'
+outer resize-window -t o -x 105
+check "at half the screen home is the orchestrator's column alone, saying where else it goes" see '╭─ ○ orchestrator .* p plan  B board'
+check "with no plan beside it" gone '◆ plan'
+key C-Space
+key p
+check "p swaps to the plan, which has the width" see '◆ plan  o orchestrator  B board'
+check "and the column is gone" gone '╭─ ○ orchestrator'
+check "its next without a row for its why, the picked row's whole title and why at the foot" see '#7 tlon +Lights — the light switch'
+key o
+check "o swaps back to the column" see '╭─ ○ orchestrator .* p plan  B board'
+outer resize-window -t o -x 121
+check "at more width the plan and the column are side by side again" see '◆ plan  B board'
 mouse 0 60 1 M
 mouse 0 60 1 m
 key e

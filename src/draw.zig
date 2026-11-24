@@ -1060,7 +1060,7 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
 
         var title_buf: [96]u8 = undefined;
         var title_cps: [64]u21 = undefined;
-        var right_cps: [8]u21 = undefined;
+        var right_cps: [24]u21 = undefined;
         const headed = i == 0 and s.orchestrator() and app.sided();
         const title = if (headed) sideHead(app, &title_buf) else std.fmt.bufPrint(&title_buf, " {d} {s} ", .{ i + 1, win.name }) catch title_buf[0..0];
         var title_len = codepoints(title, &title_cps);
@@ -1071,7 +1071,7 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
             title_len += 2;
         }
         if (title_len + 4 > col_w) title_len = 0;
-        const right = if (headed) right_cps[0..codepoints(fold_hint, &right_cps)] else right_cps[0..0];
+        const right = if (headed) right_cps[0..codepoints(sideHint(app), &right_cps)] else right_cps[0..0];
         const col: Column = .{
             .app = app,
             .w = col_w,
@@ -1137,6 +1137,12 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
 }
 
 const fold_hint = " ` fold ";
+
+/// What the column's top edge says at its right: how to fold it, or at half a screen, where else
+/// home goes.
+fn sideHint(app: *const App) []const u8 {
+    return if (app.columnAlone()) App.half_hint else fold_hint;
+}
 
 /// Row `row` of the feed atop the orchestrator's column, `inner` cells wide: its line, or past
 /// them, the rule under it.
@@ -1325,10 +1331,10 @@ fn sideEmpty(app: *const App, w: *Writer) !void {
     const ox = app.term_w - app.view_w;
     var title_buf: [96]u8 = undefined;
     var title_cps: [64]u21 = undefined;
-    var right_cps: [8]u21 = undefined;
+    var right_cps: [24]u21 = undefined;
     var title_len = codepoints(sideHead(app, &title_buf), &title_cps);
     if (title_len + 4 > app.view_w) title_len = 0;
-    const right = right_cps[0..codepoints(fold_hint, &right_cps)];
+    const right = right_cps[0..codepoints(sideHint(app), &right_cps)];
     const col: Column = .{
         .app = app,
         .w = app.view_w,
@@ -1623,6 +1629,30 @@ fn planStyle(app: *const App, style: sheets.Style) vt.Style {
     };
 }
 
+/// At half a screen the plan cuts its titles and drops next's whys: the picked row's whole title
+/// and why are on the plan's last row.
+fn planFoot(app: *App, w: *Writer, sheet: *const sheets.Sheet, pick: usize) !void {
+    const given = app.board.?.plan().?;
+    const row = sheet.picked(pick);
+    var buf: [320]u8 = undefined;
+    var text: []const u8 = "";
+    if (row) |r| if (r.ticket) |id| {
+        for (given.now) |item| if (item.ticket == id) {
+            text = std.fmt.bufPrint(&buf, " #{d} {s}  {s}", .{ id, item.repo, item.title }) catch "";
+        };
+        for (given.next) |item| if (item.ticket == id) {
+            text = std.fmt.bufPrint(&buf, " #{d} {s}  {s}{s}{s}", .{ id, item.repo, item.title, if (item.why.len > 0) " — " else "", item.why }) catch "";
+        };
+        if (text.len == 0) for (given.goals) |goal| if (goal.epic == id) {
+            text = std.fmt.bufPrint(&buf, " #{d}  {s}", .{ id, goal.title }) catch "";
+        };
+    };
+    var pen: Pen = .{};
+    try w.print("\x1b[{d};{d}H", .{ app.view_h, app.boardX() + 1 });
+    try pen.set(w, ink(app, "dim", 8), null);
+    try fitted(w, text, app.boardW());
+}
+
 /// Home's plan in the board's place: its head, a rule, then its rows from the one the pick keeps
 /// in view, the pick a bar at the left edge. What lies over the board lies over it.
 fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
@@ -1641,6 +1671,12 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     try w.writeAll(App.plan_title);
     try pen.set(w, .{}, null);
     try w.writeAll("  ");
+    if (app.halfHome()) {
+        try pen.set(w, dim, null);
+        try w.writeAll(App.orch_link);
+        try pen.set(w, .{}, null);
+        try w.writeAll("  ");
+    }
     try pen.set(w, dim, null);
     try w.writeAll(App.board_link);
     const given = b.plan().?;
@@ -1660,14 +1696,16 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         .{ std.fmt.bufPrint(&today_buf, "✓ {d} today", .{given.landed_today.count}) catch "", dim },
         .{ std.fmt.bufPrint(&needs_buf, "▲ {d}", .{needs_n}) catch "", if (needs_n > 0) heading(app) else dim },
     };
+    // at half a screen the head keeps the way to the column and the board, and what needs the human
+    const kept = if (app.halfHome()) pieces[pieces.len - 1 ..] else pieces[0..];
     var right_w: usize = 0;
-    for (pieces) |piece| right_w += cellCount(piece[0]) + 3;
-    const left_w = cellCount(App.plan_title) + 2 + cellCount(App.board_link);
+    for (kept) |piece| right_w += cellCount(piece[0]) + 3;
+    const left_w = cellCount(App.plan_title) + 2 + cellCount(App.board_link) + if (app.halfHome()) cellCount(App.orch_link) + 2 else 0;
     const start = width -| right_w;
     try pen.set(w, .{}, null);
     if (start > left_w) {
         for (left_w..start) |_| try w.writeAll(" ");
-        for (pieces) |piece| {
+        for (kept) |piece| {
             try pen.set(w, piece[1], null);
             try w.writeAll(piece[0]);
             try pen.set(w, .{}, null);
@@ -1681,7 +1719,9 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
 
     const top = app.planTop(&sheet);
     var y: u16 = 2;
-    while (y < app.view_h) : (y += 1) {
+    const rows_end = app.view_h - @intFromBool(app.halfHome());
+    if (app.halfHome()) try planFoot(app, w, &sheet, view.plan_pick);
+    while (y < rows_end) : (y += 1) {
         try w.print("\x1b[{d};{d}H", .{ y + 1, ox + 1 });
         const at = top + (y - 2);
         try pen.set(w, .{}, null);
@@ -2543,7 +2583,7 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
         try overview(app, w, spot);
         try modeRow(app, w);
     } else if (app.board_view) |view| {
-        try boardView(app, w, view);
+        if (!app.columnAlone()) try boardView(app, w, view);
         try modeRow(app, w);
         // the orchestrator's window beside it, once arena is in its session
         if (app.sideShown()) {

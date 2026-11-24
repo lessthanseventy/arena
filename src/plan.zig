@@ -37,6 +37,8 @@ pub const Sheet = struct {
     rows: [max_rows]Row = undefined,
     n: usize = 0,
     picks: usize = 0,
+    /// Half a screen's plan: the pipeline folded to counts, next without its whys, goals without names.
+    narrow: bool = false,
     buf: [32 * 1024]u8 = undefined,
     used: usize = 0,
 
@@ -94,7 +96,8 @@ pub const Sheet = struct {
 
     /// The plan as rows `width` cells wide, `epoch` the time now, the stages in `unfolded` shown
     /// a row to a ticket.
-    pub fn build(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64, unfolded: u8) void {
+    pub fn build(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64, unfolded: u8, narrow: bool) void {
+        s.narrow = narrow;
         s.n = 0;
         s.picks = 0;
         s.used = 0;
@@ -147,7 +150,7 @@ pub const Sheet = struct {
         for (given.now) |item| count += @intFromBool(inStage(item, name));
         const fold = foldOf(name);
         const open = if (fold) |bit| unfolded & (@as(u8, 1) << bit) != 0 else true;
-        const first: usize = if (fold) |bit| (if (bit == queued_fold) 0 else unfolded_rows) else count;
+        const first: usize = if (fold) |bit| (if (bit == queued_fold or s.narrow) 0 else unfolded_rows) else count;
         var seen: usize = 0;
         for (given.now) |item| {
             if (!inStage(item, name)) continue;
@@ -211,7 +214,7 @@ pub const Sheet = struct {
             const left = s.print(" {d} #{d} {s: <8} {s}", .{ place_n, item.ticket, text_mod.clip(item.repo, 8), item.title });
             const both = s.spread(width, left, right);
             s.add(.{ .kind = .next, .pick = 0, .ticket = item.ticket, .text = both.text, .tail_at = both.tail_at });
-            if (item.why.len > 0) s.add(.{ .kind = .why, .style = .dim, .text = s.clipped(width, s.print("      {s}", .{item.why})) });
+            if (item.why.len > 0 and !s.narrow) s.add(.{ .kind = .why, .style = .dim, .text = s.clipped(width, s.print("      {s}", .{item.why})) });
         }
         if (given.next.len > next_shown) s.add(.{ .kind = .more, .style = .dim, .text = s.print("  +{d}", .{given.next.len - next_shown}) });
     }
@@ -235,7 +238,9 @@ pub const Sheet = struct {
         s.add(.{ .kind = .blank });
         s.headRow("goals", given.goals.len);
         var name_w: usize = 0;
-        for (given.goals) |goal| name_w = @max(name_w, @min(text_mod.cells(goal.title), 26));
+        if (!s.narrow) for (given.goals) |goal| {
+            name_w = @max(name_w, @min(text_mod.cells(goal.title), 26));
+        };
         for (given.goals) |goal| {
             var extra: [96]u8 = undefined;
             const after = s.print("  {d} of {d}  {s}", .{ goal.landed, goal.total, goalExtra(goal, &extra) });
@@ -386,7 +391,7 @@ test "the plan's rows: building first, a stage's first two tickets, the rest and
     defer b.deinit();
     var s: Sheet = undefined;
     const epoch = tickets.epochOf("2026-11-23T07:10:00Z").?;
-    s.build(b.plan().?, &b, 100, epoch, 0);
+    s.build(b.plan().?, &b, 100, epoch, 0, false);
     const eq = std.testing.expectEqualStrings;
     const ok = std.testing.expect;
     try eq("now 7", rowText(&s, .head, 0).?);
@@ -404,7 +409,7 @@ test "an unfolded stage is a row to a ticket" {
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 100, 0, 1 << queued_fold);
+    s.build(b.plan().?, &b, 100, 0, 1 << queued_fold, false);
     try std.testing.expect(rowText(&s, .folded, 1) == null);
     try std.testing.expect(std.mem.indexOf(u8, rowText(&s, .now, 5).?, "» #429") != null);
 }
@@ -413,7 +418,7 @@ test "next says what each waits on and why, goals their steps, and the picks run
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 100, 0, 0);
+    s.build(b.plan().?, &b, 100, 0, 0, false);
     const has = std.mem.indexOf;
     const ok = std.testing.expect;
     try ok(std.mem.endsWith(u8, rowText(&s, .next, 0).?, "← after #588 lands: one babylon"));
@@ -435,7 +440,7 @@ test "a row too wide is cut, its right side kept" {
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 40, 0, 0);
+    s.build(b.plan().?, &b, 40, 0, 0, false);
     for (s.rows[0..s.n]) |row| try std.testing.expect(text_mod.cells(row.text) <= 40);
     try std.testing.expect(std.mem.endsWith(u8, rowText(&s, .now, 0).?, "building · now"));
 }

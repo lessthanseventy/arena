@@ -370,6 +370,9 @@ pub const BoardView = struct {
     /// The plan's pick among its rows that can be picked, and the stages unfolded, a bit each.
     plan_pick: usize = 0,
     unfolded: u8 = 0,
+    /// At home with the room of half a screen: the orchestrator's column alone, else the plan
+    /// or the board alone.
+    alone: bool = true,
 
     /// Whether a box lies over the board, the keys its own.
     pub fn boxed(view: BoardView) bool {
@@ -1617,14 +1620,55 @@ pub const App = struct {
     /// The strip's width, or with the orchestrator beside the board, its window's.
     pub fn fit(app: *App) void {
         const full = app.fullW();
-        app.view_w = if (app.sided()) @min(side_w, full * 2 / 5) else full;
+        app.view_w = if (app.columnAlone()) full else if (app.sided()) @min(side_w, full * 2 / 5) else full;
+    }
+
+    /// The terminal width under which home cannot hold the column and the plan side by
+    /// side, and shows one at a time.
+    pub const half_below = 110;
+    pub const half_hint = " p plan  B board ";
+
+    /// Whether home has the room of half a screen.
+    pub fn halfHome(app: *const App) bool {
+        const view = app.board_view orelse return false;
+        return view.home and app.term_w < half_below and app.hasPlan();
+    }
+
+    /// Whether home shows the orchestrator's column alone, the plan or the board being one key away.
+    pub fn columnAlone(app: *const App) bool {
+        return app.halfHome() and app.board_view.?.alone and !app.side_folded;
     }
 
     /// Whether the orchestrator's column is beside the open board, unless folded: while the
-    /// orchestrator runs, with its window, and at home always, with what babylon says of it.
+    /// orchestrator runs, with its window, and at home always, with what babylon says of it. At
+    /// half a screen it is beside nothing: the plan or the board has the screen, or it has.
     pub fn sided(app: *const App) bool {
         const view = app.board_view orelse return false;
+        if (app.halfHome() and !view.alone) return false;
         return !app.side_folded and (view.home or app.orchestratorSession() != null);
+    }
+
+    /// At half a screen, home swaps to the column (`o`) or the plan (`p`), each having the whole
+    /// width, its keys its own.
+    fn swapHome(app: *App, column: bool) !void {
+        const view = &app.board_view.?;
+        view.alone = column;
+        view.plan = true;
+        view.focus = if (column) .orchestrator else .board;
+        view.help = false;
+        view.detail = null;
+        app.normal = false;
+        app.dirty = true;
+        app.reflow();
+        if (column) try app.toSide();
+    }
+
+    /// `p` on the column alone swaps to the plan, which keeps next's own `p` (pin) off a ticket
+    /// of next here; `J` `K` and `x` on the plan's next do the rest.
+    fn halfKey(app: *App, key: []const u8) !bool {
+        if (!app.columnAlone() or !anyKey(key, &.{"p"})) return false;
+        try app.swapHome(false);
+        return true;
     }
 
     /// Whether the column has the keys: its window's once arena is in its session, else its own.
@@ -3306,7 +3350,9 @@ pub const App = struct {
         app.side_folded = false;
         view.home = true;
         view.plan = app.hasPlan();
+        view.alone = true;
         view.focus = .orchestrator;
+        app.reflow();
         try app.toSide();
     }
 
@@ -3327,7 +3373,9 @@ pub const App = struct {
         view.giving = null;
         view.answering = false;
         view.plan = false;
+        view.alone = false;
         view.focus = .board;
+        app.reflow();
         try app.toSide();
     }
 
@@ -3347,7 +3395,7 @@ pub const App = struct {
     pub fn planSheet(app: *const App, sheet: *sheets.Sheet) bool {
         if (!app.planShown()) return false;
         const b = &app.board.?;
-        sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, app.board_view.?.unfolded);
+        sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, app.board_view.?.unfolded, app.halfHome());
         return true;
     }
 
@@ -3356,15 +3404,22 @@ pub const App = struct {
     pub fn planTop(app: *const App, sheet: *const sheets.Sheet) usize {
         const view = app.board_view orelse return 0;
         const at = sheet.rowOf(view.plan_pick) orelse return 0;
-        return (at + 3) -| (app.view_h -| 2);
+        return (at + 3) -| (app.view_h -| 2 -| @intFromBool(app.halfHome()));
     }
 
     pub const plan_title = " ◆ plan";
     pub const board_link = "B board";
+    pub const orch_link = "o orchestrator";
 
-    /// Where the head's `B board` is drawn and clicked.
+    /// Where the head's `B board` is drawn and clicked: after `o orchestrator` at half a screen.
     pub fn planLink(app: *const App) struct { x: u16, w: u16 } {
-        return .{ .x = app.boardX() + @as(u16, @intCast(cellCount(plan_title))) + 2, .w = @intCast(cellCount(board_link)) };
+        const swap: u16 = if (app.halfHome()) @intCast(cellCount(orch_link) + 2) else 0;
+        return .{ .x = app.boardX() + @as(u16, @intCast(cellCount(plan_title))) + 2 + swap, .w = @intCast(cellCount(board_link)) };
+    }
+
+    /// Where the head's `o orchestrator` is drawn and clicked, at half a screen.
+    pub fn orchLink(app: *const App) struct { x: u16, w: u16 } {
+        return .{ .x = app.boardX() + @as(u16, @intCast(cellCount(plan_title))) + 2, .w = @intCast(cellCount(orch_link)) };
     }
 
     /// A key on the plan, while it has the keys: `j` `k` pick through every row; Enter goes, and
@@ -3398,7 +3453,7 @@ pub const App = struct {
         if (is(key, &.{ "\x1b", "q" })) return app.closeBoard();
         if (is(key, &.{"`"})) return app.foldSide();
         if (is(key, &.{"g"})) return app.toGate();
-        if (is(key, &.{"o"})) return app.toOrchestrator();
+        if (is(key, &.{"o"})) return if (app.halfHome()) app.swapHome(true) else app.toOrchestrator();
         if (is(key, &.{"A"})) return app.toggleAuto();
         if (is(key, &.{"P"})) return app.jumpProposed();
         if (is(key, &.{ "]", "[" })) return app.toFeed(key, null);
@@ -3466,6 +3521,8 @@ pub const App = struct {
         if (m.y == 0) {
             const link = app.planLink();
             if (m.x >= link.x and m.x < link.x + link.w) try app.toBoard();
+            const orch = app.orchLink();
+            if (app.halfHome() and m.x >= orch.x and m.x < orch.x + orch.w) try app.swapHome(true);
             return;
         }
         var sheet: sheets.Sheet = undefined;
@@ -3517,6 +3574,7 @@ pub const App = struct {
         if (anyKey(key, &.{"\r"}) and app.orchestratorState() == .off) {
             return app.send(.ignore, "run-shell -b \"babylon orchestrator\"", .{});
         }
+        if (try app.halfKey(key)) return;
         _ = try app.feedKey(key);
     }
 
@@ -4375,6 +4433,11 @@ pub const App = struct {
         const view = &app.board_view.?;
         if (m.x >= app.boardX() + app.boardW() and app.sided() and !view.boxed()) {
             if (m.y >= app.view_h) return true;
+            if (app.columnAlone() and m.y == 0 and m.leftPress()) {
+                const hint = App.half_hint.len;
+                const at = app.term_w -| 2 -| hint;
+                if (m.x >= at and m.x < at + 8) try app.swapHome(false) else if (m.x >= at + 8 and m.x < at + hint) try app.toBoard();
+            }
             if (app.sideShown() and (app.sideFocused() or m.wheel())) return false;
             if (m.leftPress()) {
                 view.focus = .orchestrator;
@@ -5170,6 +5233,7 @@ pub const App = struct {
                     app.dirty = true;
                     continue;
                 }
+                if (app.sideFocused() and try app.halfKey(key)) continue;
                 if (app.sideFocused() and try app.feedKey(key)) continue;
                 if (try app.railKey(key)) continue;
                 if (std.mem.eql(u8, key, "i") or std.mem.eql(u8, key, "\x1b")) {

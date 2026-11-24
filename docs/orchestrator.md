@@ -184,9 +184,15 @@ and nothing else.
 
 ## Home, at half the screen (105 cells)
 
-The board and the column do not both fit, so home shows one of them at a time, opening on the
-orchestrator. `b` swaps to the board in [its half-width form](board-design.md#the-board-at-half-the-screen)
-and `o` swaps back. The tab is in the head row, so each always says that the other is there.
+The plan and the column do not both fit (a terminal under 110 cells), so home shows one of them at
+a time, opening on the orchestrator. `p` swaps to [the plan](plan-view.md), `o` swaps back, and `B`
+is the board from either. The way to the other is in each head row, so each always says that the
+other is there; a click on it does the same.
+
+`o` is one key for two things, told apart by where it is pressed: in the column it opens the picked
+look-at's doc (as above), and in the plan it swaps back to the column. `p` in the column is the swap
+at this width, so next's own `p` (pin it where it is) is not there; `J` `K` and `x` on the plan's
+next are.
 
 ```
 ╭─────╮ ◐ orchestrator · working 12s · ctx 34%                     ▲ 3   ◒ #305   ◐ 3/4   b board
@@ -345,7 +351,8 @@ arena:
 5. **Looks (#342, rescoped):** `o` and `y` on an ask that names a doc, in the feed.
 6. **Proposals (#343, rescoped):** `⏎ go` and `x no` in the feed, the same call as #494's card
    buttons.
-7. **Home at half width (#527):** one of the column and the board at a time, with `b` and `o`.
+7. **Home at half width (#527):** one of the column and the plan at a time, with `p` and `o`, and `B`
+   the board from either.
 8. **The narrow rail holds only what moves (#528, after #427 and #358):** working and waiting
    Claudes, the rest folded per session into one line, and the orchestrator left out.
 9. **The peek (#392)** covers feed items too. It is unchanged apart from that, and is not held.
