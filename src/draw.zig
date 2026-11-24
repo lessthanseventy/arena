@@ -1863,17 +1863,19 @@ fn benchState(app: *const App, card: *const tickets.Card, r: theme.Roles, buf: [
 /// its title on two rows at most, then its chips. The picked one is raised, with a row for its
 /// buttons and its shadow.
 fn benchTile(app: *const App, w: *Writer, r: theme.Roles, card: *const tickets.Card, part: usize, picked: bool, x: u16, y: u16, tw: usize, col_w: u16) !void {
-    const bg = if (picked) r.raised else r.tile;
+    const bg = r.card(picked);
     const text_w = App.tileTextW(col_w);
+    const edge = repoHue(r, card.repo).hue;
     var count: usize = 0;
     var counted = app_mod.TitleLines.init(card.title, text_w);
     while (counted.next()) |_| count += 1;
     const t: usize = @max(1, @min(count, App.tile_title_rows));
     if (picked and part >= 1 and part <= t + 2) try bench.say(w, x + tw, y, "▌", r.well, r.panel, false);
     if (part == 0) {
-        try bench.bevel(w, x, y, tw, if (picked) r.text.mix(bg, 0.5) else r.raised, bg);
+        try bench.bevel(w, x, y, tw, if (picked) r.text.mix(bg, 0.5) else r.card(true), bg);
     } else if (part <= t) {
         try bench.fill(w, x, y, tw, bg);
+        try bench.say(w, x, y, "▎", edge, bg, false);
         var lines = app_mod.TitleLines.init(card.title, text_w);
         var line: []const u8 = "";
         for (0..part) |_| line = lines.next() orelse "";
@@ -1888,7 +1890,8 @@ fn benchTile(app: *const App, w: *Writer, r: theme.Roles, card: *const tickets.C
         }
     } else if (part == t + 1) {
         try bench.fill(w, x, y, tw, bg);
-        try benchChips(app, w, r, card, x + 1, y, tw - 2, bg);
+        try bench.say(w, x, y, "▎", edge, bg, false);
+        try benchChips(app, w, r, card, x + 1, y, tw - 2);
     } else if (picked and part == t + 2) {
         try bench.fill(w, x, y, tw, bg);
     } else if (picked and part == t + 3) {
@@ -1901,19 +1904,21 @@ fn benchTile(app: *const App, w: *Writer, r: theme.Roles, card: *const tickets.C
 
 /// A tile's chip row in `room` cells from `x`: the repo's glyph and the number in its hue, where
 /// the card is, its model, and how long it has been filed or held.
-fn benchChips(app: *const App, w: *Writer, r: theme.Roles, card: *const tickets.Card, x: u16, y: u16, room: usize, bg: color.RGB) !void {
+fn benchChips(app: *const App, w: *Writer, r: theme.Roles, card: *const tickets.Card, x: u16, y: u16, room: usize) !void {
     var at = x;
     const end = x + room;
     var buf: [96]u8 = undefined;
     var state_buf: [96]u8 = undefined;
     const mark = repoHue(r, card.repo);
     const id = std.fmt.bufPrint(&buf, "{s} {d}", .{ mark.glyph, card.id }) catch "";
-    at += @as(u16, @intCast(try bench.chipInk(w, r, at, y, id, mark.hue, mark.hue, false)));
+    at += @as(u16, @intCast(try bench.chipOn(w, at, y, id, mark.hue, mark.hue, false, r.well)));
     if (benchState(app, card, r, &state_buf)) |state| if (at + cellCount(state.label) + 2 <= end) {
-        at += @as(u16, @intCast(try bench.chipInk(w, r, at, y, state.label, state.lead, state.words, state.filled)));
+        at += 1;
+        at += @as(u16, @intCast(try bench.chipOn(w, at, y, state.label, state.lead, state.words, state.filled, r.well)));
     };
     if (card.model) |model| if (at + cellCount(modelName(model)) + 3 <= end) {
-        at += @as(u16, @intCast(try bench.chip(w, r, at + 1, y, modelName(model), r.dim, false))) + 1;
+        at += 1;
+        at += @as(u16, @intCast(try bench.chipAt(w, r, at, y, modelName(model), r.dim, r.well)));
     };
     var age: [8]u8 = undefined;
     var said: [24]u8 = undefined;
@@ -1924,7 +1929,7 @@ fn benchChips(app: *const App, w: *Writer, r: theme.Roles, card: *const tickets.
     };
     if (since.len > 0) {
         const text = std.fmt.bufPrint(&said, "{s}{s}", .{ if (card.status == .todo) "filed " else "", since }) catch since;
-        if (at + 1 + cellCount(text) <= end) try bench.say(w, at + 1, y, text, r.dim, bg, false);
+        if (at + 1 + cellCount(text) + 2 <= end) _ = try bench.chipAt(w, r, at + 1, y, text, r.dim, r.well);
     }
 }
 
@@ -3321,11 +3326,11 @@ test "the board in Workbench's look: windows, the picked tile raised with its ch
     const tw = app.boardColW(0) - 3;
     const bevel = try bench.probe(drawn, 1, 4);
     try eq(@as(u21, '▔'), bevel.cp);
-    try eq(r.raised, bevel.bg);
+    try eq(r.card(true), bevel.bg);
     const title = try bench.probe(drawn, 2, 5);
     try eq(@as(u21, 'f'), title.cp);
     try std.testing.expect(title.bold);
-    try eq(r.raised, title.bg);
+    try eq(r.card(true), title.bg);
     const dot = try bench.probe(drawn, 1 + tw - 2, 5);
     try eq(@as(u21, '●'), dot.cp);
     try eq(r.failed, dot.fg);
@@ -3360,8 +3365,8 @@ test "the board in Workbench's look: windows, the picked tile raised with its ch
 
     // the card under it is a tile, not raised, and has no buttons
     const next = try bench.probe(drawn, 1, 9);
-    try eq(r.tile, next.bg);
-    try eq(r.tile, (try bench.probe(drawn, 2, 10)).bg);
+    try eq(r.card(false), next.bg);
+    try eq(r.card(false), (try bench.probe(drawn, 2, 10)).bg);
 
     // recent is a strip along the foot, its entry a mark and its number in the repo's hue
     const foot = app.listH();
@@ -3371,6 +3376,37 @@ test "the board in Workbench's look: windows, the picked tile raised with its ch
     const entry = try bench.probe(drawn, 1, foot + 2);
     try eq(@as(u21, '#'), entry.cp);
     try eq(r.repo[3], entry.fg);
+}
+
+test "unpicked cards are filled tiles a blank row apart, their chips pills on their own fill" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 24;
+    app.roles = bench.roles();
+    const r = app.roles.?;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"repo":"arena","title":"first","status":"todo"},
+        \\{"id":2,"repo":"arena","title":"second","status":"todo","model":"claude-opus-5-5"},
+        \\{"id":3,"repo":"arena","title":"third","status":"todo"}
+        \\]}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{};
+    var buf: [65536]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try boardView(&app, &out, app.board_view.?);
+    const drawn = out.buffered();
+    const eq = std.testing.expectEqual;
+
+    const last = app.boardColW(0) - 3;
+    for ([_]u16{ 9, 10, 11 }) |y| try eq(r.card(false), (try bench.probe(drawn, last, y)).bg);
+    try eq(r.panel, (try bench.probe(drawn, last, 12)).bg);
+    for ([_]u16{ 13, 14, 15 }) |y| try eq(r.card(false), (try bench.probe(drawn, last, y)).bg);
+    try std.testing.expect(color.contrast(r.card(false), r.panel) >= 1.15);
+    try eq(r.repo[0], (try bench.probe(drawn, 1, 10)).fg);
+    try eq(r.well, (try bench.probe(drawn, 4, 11)).bg);
 }
 
 test "the board's keys end on a card's edge and its marks, and a 24-row terminal has them whole" {

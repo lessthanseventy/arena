@@ -40,9 +40,19 @@ pub fn chip(w: *Writer, r: Roles, x: usize, y: usize, label: []const u8, lead: R
     return chipInk(w, r, x, y, label, lead, if (filled) r.on_accent else r.text, filled);
 }
 
+/// `chip`, unfilled, on a pill of `ground`.
+pub fn chipAt(w: *Writer, r: Roles, x: usize, y: usize, label: []const u8, lead: RGB, ground: RGB) !usize {
+    return chipOn(w, x, y, label, lead, r.text, false, ground);
+}
+
 /// A chip whose words are in `words`, as a repo's glyph and number are in its hue.
 pub fn chipInk(w: *Writer, r: Roles, x: usize, y: usize, label: []const u8, lead: RGB, words: RGB, filled: bool) !usize {
-    const face = if (filled) lead else r.raised;
+    return chipOn(w, x, y, label, lead, words, filled, r.raised);
+}
+
+/// `chipInk` on a pill of `ground` where it is not filled, for a chip that sits on raised.
+pub fn chipOn(w: *Writer, x: usize, y: usize, label: []const u8, lead: RGB, words: RGB, filled: bool, ground: RGB) !usize {
+    const face = if (filled) lead else ground;
     try moveTo(w, x, y);
     try paint(w, lead, face, false);
     try w.writeAll("▎");

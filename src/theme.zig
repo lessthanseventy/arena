@@ -67,12 +67,13 @@ pub const Roles = struct {
         const amber = Theme.find(text, "AMBER") orelse return null;
         const violet = Theme.find(text, "VIOLET") orelse return null;
         const cyan = Theme.find(text, "CYAN") orelse return null;
-        const dim = dimmed(grey, tile);
+        const raised = Theme.find(text, "SURFACE4") orelse return null;
+        const dim = dimmed(grey, raised.mix(grey, pick_lift));
         return .{
             .ground = Theme.find(text, "SURFACE0") orelse return null,
             .panel = Theme.find(text, "SURFACE2") orelse return null,
             .tile = tile,
-            .raised = Theme.find(text, "SURFACE4") orelse return null,
+            .raised = raised,
             .well = Theme.find(text, "BG") orelse return null,
             .text = grey,
             .dim = dim,
@@ -86,6 +87,14 @@ pub const Roles = struct {
             .failed = Theme.find(text, "RED") orelse return null,
             .landed = Theme.find(text, "MOSS") orelse return null,
         };
+    }
+
+    /// How far the picked card's face is lifted from `raised` toward the text.
+    pub const pick_lift = 0.15;
+
+    /// A card's face on the board: `raised`, a step above the column, and lifted for the pick.
+    pub fn card(r: Roles, picked: bool) RGB {
+        return if (picked) r.raised.mix(r.text, pick_lift) else r.raised;
     }
 
     /// `text` 40% toward `tile`, or less where that would fall under the contrast floor.
