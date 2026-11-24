@@ -5,6 +5,39 @@ A design for arena's board, decided as a TUI in arena (#320). The mockups use th
 
 What it is for, in one line: **a glance tells you what needs you, what is moving, and what is next.**
 
+## The look: Workbench
+
+Chosen by the human on 2026-11-24 ("Workbench, go ahead") from the three directions of #760, in
+[docs/redesign/](redesign/README.md). The style guide is [workbench.md](redesign/workbench.md), and
+the screenshots are `docs/redesign/workbench-{home,board,popup,orch}.png`, drawn by `arena-mock`
+from [board.json](redesign/board.json). The layout below (what goes where, the keys, the clicks)
+stands. Where its plain-text mockups show boxes and tags, the look is Workbench's:
+
+- **A desktop GUI from 1990 on the palette.** The ground is `SURFACE0`. Every area is a window on
+  `SURFACE2` with a one-row title bar, `◆ name`, a count badge and `▫`. A focused window's bar is
+  `SURFACE4` with `═══` stripes in half-strength amber. Windows, the pick, the focal goal and
+  buttons cast a hard one-cell shadow (`▌` right, `▀` under, in `BG`). Nothing else draws an outline.
+- **Three steps of depth:** panel, then tile (`SURFACE3`, a card), then raised (`SURFACE4`, the
+  pick, a button, a chip). A thing goes up one step when it is picked. Wells (the prompt, a bar's
+  track) sink to `BG`.
+- **A card** is its title, bold, on at most two rows, then a row of chips: the repo's glyph and
+  number in its hue, the state or what it waits on, the model and the age. Priority is a dot in
+  its corner. A chip is `▎label` on raised, its lead bar in its colour.
+- **Buttons show on the picked thing only**: ` key label ` on raised with the key in amber, and
+  one primary per area, filled amber. auto is a switch, `auto ▐ ●▌`. Tabs sit under the title bar,
+  and the current one joins the window below it.
+- **Colour has jobs.** Each repo has a hue (arena amber, babylon violet, ficciones cyan, menard
+  moss, tlon pink) and so does each state. Violet means "you": asks and `▲ N need you` use it, and
+  nothing else does.
+- **Home** has one focal point: the goal we are driving towards, a window with a real bar and its
+  steps in flight as a chain. Goals are cards with a bar, their next step and what blocks them.
+  Next is a numbered queue with chips. Landed today is a strip.
+- **The board**: epics are slim bars along its top, columns have count badges and repo groups,
+  and recent is a timeline strip of the last five.
+- **The orchestrator's column**: Your move on top, each item a tile with its buttons, then landing
+  and building as chips, then its Claude and the prompt's well.
+- The pointer draws nothing (#759), and the plan and the board stay split.
+
 ## Today, at the whole screen (210×52), as captured
 
 ```
@@ -343,5 +376,18 @@ arena:
 13. **Find** with `/`.
 14. **Drag** a card between columns.
 15. **README** and screenshots of the new board (takes in #321).
+
+arena, the Workbench look ([The look](#the-look-workbench)), #768–#773 on top of what has landed:
+1 then 2; 3 (then 4, the key bar #339 and the epic bars #756) and 5 and 6 each after 2. It replaces
+the visual parts of 5 (#338), 6 (#339), the epic ticket (#756) and the hover ticket (#759):
+
+1. **Workbench's parts:** its palette roles, and windows, shadows, chips, buttons, the switch and
+   bars as drawing calls, with tests on their cells.
+2. **The title bar:** tabs, `▲ N need you`, the gate and the auto switch.
+3. **The board:** columns as windows, cards as tiles with chips, the pick raised with its buttons,
+   recent as a strip. The epic bars (#756) and the key bar (#339) follow it.
+4. **The card's popup** as a window.
+5. **Home:** the focal goal, goal cards, the next queue, the landed strip.
+6. **The orchestrator's column:** Your move tiles, the chips, the prompt's well.
 
 ficciones: the bar's and the desktop's notices of asks say only `▲ N need you` and open arena's inbox.
