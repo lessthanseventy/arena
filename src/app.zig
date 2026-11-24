@@ -529,6 +529,8 @@ pub const App = struct {
         select: struct { pane: u32, x: u16, y: u16 },
         /// A click that focused a window: its program gets none of it, not even the let go.
         focus,
+        /// A board card by its ticket, to move to the column it is let go over.
+        card: u32,
     } = .none,
     /// The session the open menu asks about closing.
     doomed: u32 = 0,
@@ -3266,7 +3268,7 @@ pub const App = struct {
         return app.laneRepo(app.board_view.?.lane);
     }
 
-    fn boardBacklog(app: *const App) bool {
+    pub fn boardBacklog(app: *const App) bool {
         const view = app.board_view orelse return false;
         return view.backlog;
     }
@@ -4763,8 +4765,68 @@ pub const App = struct {
         const picked = app.boardCard(view.col, view.row);
         if (clicked != null and picked != null and clicked.?.id == picked.?.id) {
             _ = try app.openDetail(picked.?.id);
-        } else view.* = .{ .back = view.back, .col = at.col, .row = at.row, .lane = at.lane, .repo = view.repo, .backlog = view.backlog, .home = view.home };
+        } else {
+            view.* = .{ .back = view.back, .col = at.col, .row = at.row, .lane = at.lane, .repo = view.repo, .backlog = view.backlog, .home = view.home };
+            if (clicked) |card| app.drag = .{ .card = card.id };
+        }
         return true;
+    }
+
+    /// What a card let go in a column of `to` does: stays, takes that status through babylon, or is
+    /// refused for a reason. todo↔backlog, todo→done (closed) and done→todo (reopened) are the
+    /// moves; doing and review are a claim's and the pipeline's.
+    pub const CardDrop = union(enum) { stay, status: []const u8, refuse: []const u8 };
+
+    pub fn cardDrop(from: tickets.Status, to: tickets.Status) CardDrop {
+        if (from == to) return .stay;
+        return switch (to) {
+            .doing, .review => .{ .refuse = "doing and review are a claim's and the pipeline's, not a drop's" },
+            .todo => if (from == .backlog or from == .done) .{ .status = "todo" } else .{ .refuse = "a claimed card goes on through the pipeline, not back to todo" },
+            .done => if (from == .todo) .{ .status = "done" } else .{ .refuse = "only a todo card is closed by hand" },
+            .backlog => if (from == .todo) .{ .status = "backlog" } else .{ .refuse = "only a todo card goes to the backlog" },
+        };
+    }
+
+    /// The status a card let go at the pointer would take: the column under it, a repo's tab in
+    /// the backlog (back to todo), or the backlog's button (to the backlog). None over anything else.
+    pub fn cardTarget(app: *const App) ?tickets.Status {
+        const x = app.pointer.x;
+        const y = app.pointer.y;
+        var buttons: [48]Button = undefined;
+        for (app.boardButtons(&buttons)) |button| if (button.what != .card and button.hit(x, y)) return switch (button.what) {
+            .backlog => .backlog,
+            .repo => if (app.boardBacklog()) .todo else null,
+            else => null,
+        };
+        if (x < app.boardX() or x >= app.boardX() + app.boardW()) return null;
+        if (app.footRows() > 0 and y >= app.listH() and y < app.listH() + app.footRows()) return .done;
+        if (y < first_line or y + 1 >= app.listH()) return null;
+        for (0..app.boardCols()) |c| if (app.boardColW(c) > 0 and x < app.boardColX(c) + app.boardColW(c)) {
+            return if (app.boardBacklog()) .backlog else tickets.statuses[c];
+        };
+        return null;
+    }
+
+    /// Card `id` let go over `target`: moved where babylon allows, else the reason is said on the
+    /// bottom row and it stays.
+    fn dropCard(app: *App, id: u32, over: ?tickets.Status) !void {
+        const to = over orelse return;
+        const b = if (app.board) |*b| b else return;
+        const card = for (b.cards()) |*card| {
+            if (card.id == id) break card;
+        } else return;
+        switch (cardDrop(card.status, to)) {
+            .stay => {},
+            .status => |word| {
+                var buf: [96]u8 = undefined;
+                const cmd = std.fmt.bufPrint(&buf, "babylon update {d} --status {s}", .{ id, word }) catch return;
+                try app.send(.ignore, "run-shell -b \"out=\\$({s} 2>&1) || {{ command -v notify-send >/dev/null && notify-send -a arena -- \\\"\\$out\\\"; }}\"", .{cmd});
+            },
+            .refuse => |why| {
+                var buf: [160]u8 = undefined;
+                try app.reportAnswered(std.fmt.bufPrint(&buf, "no {s}", .{why}) catch "no");
+            },
+        }
     }
 
     /// A click on the `▲ proposed` that starts a card's last row, whose ticket has an item of Your
@@ -4927,11 +4989,13 @@ pub const App = struct {
         if (m.release or !m.motion() or m.hover()) {
             const held = app.drag;
             const drop = app.dropAt();
+            const over = if (held == .card) app.cardTarget() else null;
             app.drag = .none;
             app.dirty = true;
             switch (held) {
                 .select => |from| if (app.paneById(from.pane)) |pane| try app.copy(pane),
                 .title => |id| if (m.release) try app.dropWindow(s, id, drop),
+                .card => |id| if (m.release) try app.dropCard(id, over),
                 else => {},
             }
             return;
@@ -4939,6 +5003,7 @@ pub const App = struct {
         const ox: i32 = app.term_w - app.view_w;
         switch (app.drag) {
             .none, .thumb, .focus => {},
+            .card => app.dirty = true,
             // Past the pane's top or bottom the history scrolls under the pointer.
             .select => |from| {
                 const pane = app.paneById(from.pane) orelse return;
@@ -6427,6 +6492,35 @@ test "the column's head says the orchestrator's state: its Claude's, else restar
         \\{"tickets":[],"orchestrator":{"on":false,"running":false}}
     );
     try eq(.off, app.orchestratorState());
+}
+
+test "a dragged card moves todo↔backlog and todo↔done, and a drop babylon would refuse says why and stays" {
+    const eq = std.testing.expectEqual;
+    try eq(App.CardDrop.stay, App.cardDrop(.todo, .todo));
+    try std.testing.expectEqualStrings("backlog", App.cardDrop(.todo, .backlog).status);
+    try std.testing.expectEqualStrings("todo", App.cardDrop(.backlog, .todo).status);
+    try std.testing.expectEqualStrings("done", App.cardDrop(.todo, .done).status);
+    try std.testing.expectEqualStrings("todo", App.cardDrop(.done, .todo).status);
+    for ([_][2]tickets.Status{ .{ .doing, .done }, .{ .review, .todo }, .{ .todo, .doing }, .{ .done, .review }, .{ .backlog, .done }, .{ .done, .backlog } }) |pair| {
+        try std.testing.expect(App.cardDrop(pair[0], pair[1]) == .refuse);
+    }
+
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    defer app.deinit();
+    app.term_w = 100;
+    app.view_w = 100;
+    app.view_h = 30;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1,"repo":"arena","title":"a","status":"doing"},{"id":2,"repo":"arena","title":"b","status":"todo"}]}
+    );
+    app.board_view = .{};
+    try app.dropCard(1, .done);
+    try std.testing.expect(app.report_failed);
+    try std.testing.expect(std.mem.startsWith(u8, app.report_said.?, "only a todo card"));
+    app.pointer = .{ .x = app.boardColX(1) + 2, .y = App.first_line + 1 };
+    try eq(@as(?tickets.Status, .doing), app.cardTarget());
+    app.pointer = .{ .x = app.boardX(), .y = 0 };
+    try eq(@as(?tickets.Status, null), app.cardTarget());
 }
 
 test "a refused report says babylon's reason, a filed one its number, and both go with the next key" {

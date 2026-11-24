@@ -2285,12 +2285,26 @@ fn benchBoard(app: *App, w: *Writer, r: theme.Roles, view: app_mod.BoardView) !v
         if (cw < 8) continue;
         const x = app.boardColX(c);
         const total = if (lanes) app.boardCount(tickets.statuses[c]) else app.boardColumnAll(c);
-        const focused = c == view.col and !app.columnFocused();
-        try bench.window(w, r, x, App.first_line - 1, cw - 1, app.listH() - App.first_line, app.columnName(c), total, focused);
+        const lit = if (app.drag == .card) app.cardTarget() == (if (app.boardBacklog()) tickets.Status.backlog else tickets.statuses[c]) else c == view.col and !app.columnFocused();
+        try bench.window(w, r, x, App.first_line - 1, cw - 1, app.listH() - App.first_line, app.columnName(c), total, lit);
         if (total == 0) try bench.say(w, x + 2, App.first_line, "none", r.dim, r.panel, false);
         try benchLines(app, w, r, view, c, x, cw);
     }
     if (app.footRows() > 0) try benchRecent(app, w, r, view);
+    if (app.drag == .card) try benchHeld(app, w, r);
+}
+
+/// The card being dragged, under the pointer.
+fn benchHeld(app: *const App, w: *Writer, r: theme.Roles) !void {
+    const b = if (app.board) |*b| b else return;
+    const card = for (b.cards()) |*card| {
+        if (card.id == app.drag.card) break card;
+    } else return;
+    var buf: [160]u8 = undefined;
+    const text = std.fmt.bufPrint(&buf, " #{d} {s} ", .{ card.id, card.title }) catch return;
+    const x = app.pointer.x + 1;
+    const room = app.term_w -| x;
+    try bench.say(w, x, app.pointer.y, clip(text, @min(room, 32)), r.text, r.card(true), true);
 }
 
 fn benchLines(app: *const App, w: *Writer, r: theme.Roles, view: app_mod.BoardView, c: usize, x: u16, cw: u16) !void {
