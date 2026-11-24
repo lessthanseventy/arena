@@ -830,7 +830,8 @@ pub const App = struct {
 
     /// The rail's Claudes: those whose tickets have landed or closed are left out, and those only
     /// waiting in the pipeline are folded a row to a repo, in order of name, unless the repo is
-    /// open. The Claude in view stays, whatever its ticket. Returns how many Claudes and folds.
+    /// open. The Claude in view stays, whatever its ticket, and so does one whose repo finds no
+    /// fold left. Returns how many Claudes and folds.
     fn railList(app: *const App, out: []Agent, folds: []Fold) struct { usize, usize } {
         var all: [64]Agent = undefined;
         const total = app.agents(&all);
@@ -849,8 +850,10 @@ pub const App = struct {
                         nf += 1;
                         break :blk nf - 1;
                     } else null;
-                    if (at) |i| folds[i].count += 1;
-                    if (!(at != null and folds[at.?].open)) continue;
+                    if (at) |i| {
+                        folds[i].count += 1;
+                        if (!folds[i].open) continue;
+                    }
                 }
             }
             out[n] = a;
@@ -5276,6 +5279,40 @@ test "a session shows the review state that most wants looking at" {
     try std.testing.expectEqual(Review.queued, App.sessionReview(&s));
     a.review = .changes;
     try std.testing.expectEqual(Review.changes, App.sessionReview(&s));
+}
+
+test "a pipeline Claude whose repo finds no fold left is listed as itself" {
+    const gpa = std.testing.allocator;
+    const n = App.max_folds + 1;
+    var json: std.ArrayList(u8) = .empty;
+    defer json.deinit(gpa);
+    try json.appendSlice(gpa, "{\"tickets\":[");
+    for (0..n) |i| try json.print(gpa, "{s}{{\"id\":{d},\"repo\":\"r{d}\",\"title\":\"t\",\"status\":\"review\",\"stage\":\"queued\"}}", .{ if (i > 0) "," else "", i + 1, i });
+    try json.appendSlice(gpa, "]}");
+    var board = try tickets.Board.parse(gpa, json.items);
+    defer board.deinit();
+    var infos: [n][]u8 = undefined;
+    var wins: [n]Window = undefined;
+    var sessions: [n]Session = undefined;
+    var slots: [n]*Window = undefined;
+    var pointers: [n]*Session = undefined;
+    for (0..n) |i| {
+        infos[i] = try std.fmt.allocPrint(gpa, "\t\t\t\tt{d}-x", .{i + 1});
+        wins[i] = .{ .id = @intCast(i + 1), .claude = .working, .info = infos[i] };
+        slots[i] = &wins[i];
+        sessions[i] = .{ .id = @intCast(i + 1), .name = @constCast("s"), .wins = .fromOwnedSlice(slots[i .. i + 1]) };
+        pointers[i] = &sessions[i];
+    }
+    defer for (infos) |info| gpa.free(info);
+    var app: App = .{ .gpa = gpa, .io = undefined, .tmux_in = undefined, .board = board, .agent_sort = .ticket };
+    app.sessions = .fromOwnedSlice(&pointers);
+    app.board = board;
+
+    var found: [n]App.Agent = undefined;
+    var folds: [App.max_folds]App.Fold = undefined;
+    const count, const nf = app.railList(&found, &folds);
+    try std.testing.expectEqual(@as(usize, 1), count);
+    try std.testing.expectEqual(App.max_folds, nf);
 }
 
 test "the ticket order holds a Claude's place through its state, and the pipeline's and the landed's are folded away" {
