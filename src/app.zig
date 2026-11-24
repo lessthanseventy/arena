@@ -1180,6 +1180,7 @@ pub const App = struct {
                 const s = app.sessionById(id) orelse return null;
                 return (s.focused() orelse return null).activePane();
             },
+            .fold => return null,
         }
     }
 
@@ -1269,7 +1270,7 @@ pub const App = struct {
                 if (std.meta.eql(entry, pop.entry)) break i;
             } else return;
             const to = if (key[0] == 'l') @min(at + 1, n - 1) else at -| 1;
-            if (to != at) app.popupShow(list[to]);
+            if (to != at and list[to] != .fold) app.popupShow(list[to]);
         }
     }
 

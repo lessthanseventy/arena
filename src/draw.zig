@@ -1406,6 +1406,7 @@ fn popupBox(app: *App, w: *Writer, pop: App.Popup) !void {
     const win: ?*const Window, const session: ?*const Session = switch (pop.entry) {
         .agent => |id| if (app.agentById(id)) |a| .{ a.win, app.sessions.items[a.session] } else .{ null, null },
         .session => |id| .{ if (app.sessionById(id)) |s| s.focused() else null, app.sessionById(id) },
+        .fold => .{ null, null },
     };
     var title: Writer = .fixed(&buf);
     title.writeAll(" ") catch {};
