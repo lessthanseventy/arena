@@ -583,6 +583,11 @@ pub const App = struct {
     report_summary_len: usize = 0,
     /// Where reports are saved; none when there is no home to keep them in.
     reports_dir: ?[]const u8 = null,
+    /// The repos folded to their headings on the board, in every column; the file they are kept in.
+    folds: [max_repos][48]u8 = undefined,
+    fold_lens: [max_repos]u8 = @splat(0),
+    fold_n: usize = 0,
+    folds_path: ?[]const u8 = null,
     /// Bytes for the terminal arena runs in, written inside the next frame.
     out: std.ArrayList(u8) = .empty,
     /// A piece of a pane's output without what it passes to the terminal, between `Pass` and the pane.
@@ -3348,6 +3353,7 @@ pub const App = struct {
             };
             return n;
         }
+        if (app.boardLanes()) if (app.pickRepo()) |repo| if (app.folded(repo)) return 0;
         return app.shownIn(tickets.statuses[col], app.columnOf(tickets.statuses[col], app.pickRepo(), app.findText(), out));
     }
 
@@ -3379,7 +3385,8 @@ pub const App = struct {
         }
         const repo = app.laneRepo(lane) orelse return .{ .shown = 0, .total = 0 };
         const total = app.columnOf(tickets.statuses[col], repo, app.findText(), &.{});
-        return .{ .shown = app.shownIn(tickets.statuses[col], total), .total = total };
+        const shown = if (app.folded(repo)) 0 else app.shownIn(tickets.statuses[col], total);
+        return .{ .shown = shown, .total = total };
     }
 
     /// Whether the open board is the every view, a lane a repo, not one repo's columns.
@@ -3406,6 +3413,90 @@ pub const App = struct {
         if (i > n) return 0;
         const repo: ?[]const u8 = if (i == 0) null else repos[i - 1];
         return app.columnOf(.todo, repo, "", &.{}) + app.columnOf(.doing, repo, "", &.{}) + app.columnOf(.review, repo, "", &.{});
+    }
+
+    /// Whether `repo`'s group is folded to its heading.
+    pub fn folded(app: *const App, repo: []const u8) bool {
+        for (0..app.fold_n) |i| if (std.mem.eql(u8, app.folds[i][0..app.fold_lens[i]], repo)) return true;
+        return false;
+    }
+
+    fn setFold(app: *App, repo: []const u8, on: bool) void {
+        if (repo.len > app.folds[0].len) return;
+        for (0..app.fold_n) |i| if (std.mem.eql(u8, app.folds[i][0..app.fold_lens[i]], repo)) {
+            if (!on) {
+                app.folds[i] = app.folds[app.fold_n - 1];
+                app.fold_lens[i] = app.fold_lens[app.fold_n - 1];
+                app.fold_n -= 1;
+            }
+            return;
+        };
+        if (!on or app.fold_n == max_repos) return;
+        @memcpy(app.folds[app.fold_n][0..repo.len], repo);
+        app.fold_lens[app.fold_n] = @intCast(repo.len);
+        app.fold_n += 1;
+    }
+
+    /// The folds read from the file's lines, one repo each.
+    pub fn loadFolds(app: *App, text: []const u8) void {
+        var lines = std.mem.splitScalar(u8, text, '\n');
+        while (lines.next()) |line| if (line.len > 0) app.setFold(line, true);
+    }
+
+    fn saveFolds(app: *App) !void {
+        const path = app.folds_path orelse return;
+        var data: Writer.Allocating = .init(app.gpa);
+        defer data.deinit();
+        for (0..app.fold_n) |i| try data.writer.print("{s}\n", .{app.folds[i][0..app.fold_lens[i]]});
+        if (std.fs.path.dirname(path)) |dir| std.Io.Dir.cwd().createDirPath(app.io, dir) catch return;
+        std.Io.Dir.cwd().writeFile(app.io, .{ .sub_path = path, .data = data.written() }) catch {};
+    }
+
+    /// A repo's group folded, or unfolded, in every column; the pick moves off a folded group.
+    pub fn toggleRepoFold(app: *App, repo: []const u8) !void {
+        app.setFold(repo, !app.folded(repo));
+        app.dirty = true;
+        app.settleLane();
+        try app.saveFolds();
+    }
+
+    /// Every group but `keep`'s folded; with any folded, all unfolded instead.
+    fn focusFold(app: *App, keep: []const u8) !void {
+        if (app.fold_n > 0) {
+            app.fold_n = 0;
+        } else {
+            var repos: [max_repos + 1][]const u8 = undefined;
+            for (repos[0..app.laneRepos(&repos)]) |repo| if (!std.mem.eql(u8, repo, keep)) app.setFold(repo, true);
+        }
+        app.dirty = true;
+        app.settleLane();
+        try app.saveFolds();
+    }
+
+    /// Whether lane `lane`'s group holds a card the human must decide: an ask or a proposal.
+    pub fn laneNeeds(app: *const App, lane: usize) bool {
+        const repo = app.laneRepo(lane) orelse return false;
+        var out: [max_cards]*const tickets.Card = undefined;
+        for ([_]tickets.Status{ .todo, .doing, .review }) |status| {
+            const n = @min(app.columnOf(status, repo, "", &out), max_cards);
+            for (out[0..n]) |card| if (card.ask != null or card.proposal != null) return true;
+        }
+        return false;
+    }
+
+    /// The pick moved, when its group has no card shown in its column, to the first that has.
+    fn settleLane(app: *App) void {
+        const view = &(app.board_view orelse return);
+        if (!app.boardLanes()) return;
+        var repos: [max_repos + 1][]const u8 = undefined;
+        const lanes = app.laneRepos(&repos);
+        if (app.laneCounts(view.lane, view.col).shown > 0) return;
+        for (0..lanes) |k| {
+            if (app.laneCounts(k, view.col).shown == 0) continue;
+            view.lane = k;
+            view.row = 0;
+            break;
+        }
     }
 
     pub fn laneRepo(app: *const App, lane: usize) ?[]const u8 {
@@ -3473,7 +3564,8 @@ pub const App = struct {
                     }
                     return line;
                 }
-                const more = it.row == n.shown and n.total > n.shown;
+                const hidden = it.app.boardLanes() and it.app.folded(it.app.laneRepo(it.lane) orelse "");
+                const more = it.row == n.shown and n.total > n.shown and !hidden;
                 it.row += 1;
                 if (more) return .{ .lane = it.lane, .what = .more };
                 it.lane += 1;
@@ -3909,6 +4001,17 @@ pub const App = struct {
 
     pub const CardAt = struct { lane: usize, col: usize, row: usize };
 
+    /// The group whose heading is at cell (`x`, `y`), in the every view.
+    fn headingAt(app: *const App, x: u16, y: u16) ?usize {
+        if (!app.boardLanes() or x < app.boardColX(0) or y < app.colTop() or y + 1 >= app.listH()) return null;
+        const col = for (0..app.boardCols()) |c| {
+            if (x < app.boardColX(c) + app.boardColW(c)) break c;
+        } else return null;
+        if (app.boardColW(col) == 0 or app.footStrip(col)) return null;
+        const at = app.columnLineAt(col, y - app.colTop() + app.columnScroll(col)) orelse return null;
+        return if (at.what == .heading) at.lane else null;
+    }
+
     fn boardCardAt(app: *const App, x: u16, y: u16) ?CardAt {
         if (app.stripCardAt(x, y)) |at| return at;
         const left = app.boardColX(0);
@@ -4323,6 +4426,8 @@ pub const App = struct {
                 view.lane = k;
                 break;
             };
+            if (is(key, &.{"z"})) if (app.pickRepo()) |repo| return app.toggleRepoFold(repo);
+            if (is(key, &.{"Z"})) return app.focusFold(app.pickRepo() orelse "");
             if (up and view.row > 0) {
                 view.row -= 1;
             } else if (up) {
@@ -5481,6 +5586,10 @@ pub const App = struct {
             try app.pressButton(button, m.x);
             return true;
         };
+        if (app.headingAt(m.x, m.y)) |lane| {
+            try app.toggleRepoFold(app.laneRepo(lane) orelse "");
+            return true;
+        }
         const at = app.boardCardAt(m.x, m.y) orelse return true;
         if (try app.cardNeedsClick(at, m)) return true;
         view.answering = false;
@@ -8708,4 +8817,53 @@ test "a row of next dragged onto another takes its place, and a todo card let go
     len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'next' '7' '--at' '3'") != null);
     try eq(menu.Prompt.What.why, app.prompt.?.what);
+}
+
+test "j stays in its column, past the last todo card; a folded repo is its heading alone, skipped by the pick, its ask marked" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 140;
+    app.view_w = 140;
+    app.view_h = 30;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"repo":"arena","title":"a","status":"todo"},
+        \\{"id":2,"repo":"tlon","title":"b","status":"todo"},
+        \\{"id":3,"repo":"arena","title":"c","status":"doing"},
+        \\{"id":4,"repo":"tlon","title":"d","status":"review","ask":{"id":1,"question":"q?"}}
+        \\]}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{};
+    const eq = std.testing.expectEqual;
+    const picked = struct {
+        fn id(a: *const App) ?u32 {
+            const v = a.board_view.?;
+            return if (a.boardCard(v.col, v.row)) |c| c.id else null;
+        }
+    }.id;
+
+    try app.boardKey("j");
+    try app.boardKey("j");
+    try app.boardKey("j");
+    try eq(@as(?u32, 2), picked(&app));
+    try eq(@as(usize, 0), app.board_view.?.col);
+
+    try app.boardKey("z");
+    try std.testing.expect(app.folded("tlon"));
+    try eq(@as(?u32, 1), picked(&app));
+    try app.boardKey("j");
+    try eq(@as(?u32, 1), picked(&app));
+    try eq(@as(usize, 0), app.groupCounts(1, 0).shown);
+    try eq(@as(usize, 1), app.groupCounts(1, 0).total);
+    try std.testing.expect(app.laneNeeds(1));
+    try std.testing.expect(!app.laneNeeds(0));
+
+    try app.boardKey("Z");
+    try std.testing.expect(!app.folded("tlon"));
+    try app.boardKey("Z");
+    try std.testing.expect(app.folded("tlon") and !app.folded("arena"));
+
+    var fresh: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    fresh.loadFolds("tlon\n\narena\n");
+    try std.testing.expect(fresh.folded("tlon") and fresh.folded("arena") and !fresh.folded("menard"));
 }

@@ -1050,7 +1050,7 @@ check "a column a status, with its count" see '╭─ doing 1 ─'
 railed() { local l=$(inked $1); print -r -- "${${l#*│}%%│*}" }
 alone() { [[ $(railed 2) == *$'\e[1;7m'* && $(railed 3)$(railed 4)$(railed 5) != *$'\e[1;7m'* ]] }
 check "and the board's row is the one lit, not the session's" alone
-check "in each column, a heading for each repo with cards there, with its count" see '│ tlon ─+ 1│ *│ arena ─+ 1│'
+check "in each column, a heading for each repo with cards there, with its count" see '│ tlon ▾ ▲ ─+ 1│ *│ arena ▾ ─+ 1│'
 check "an empty column says none" see '│ none +│'
 check "and is no wider than its heading" see '╭─ recent 0 ╮'
 colw() { local l=$(screen | grep -m1 -- "╭─ $1 "); l=${l#*"╭─ $1 "}; print $(( ${#${l%%╮*}} )) }
@@ -1207,6 +1207,14 @@ key Enter
 check "its why puts the card at the bottom of next, through babylon" await last 'next 7 --why the lights'
 key W
 check "and W at its top" await last 'next 7 --at 1'
+key z
+check "z folds the picked card's repo to its heading, with its mark" see 'tlon ▸'
+check "and an ask in it still shows on the folded heading" see 'tlon ▸ ▲'
+check "and its cards are gone from the column" gone 'Lights'
+key Z
+check "Z unfolds every repo" see 'Lights'
+check "and the headings are open again" gone 'tlon ▸'
+
 inner set -p -t alpha:one @arena_claude_since $(date +%s)
 key G
 check "G shows the running Claudes the picked card can be given to" see '│ [1-9]  alpha · one '

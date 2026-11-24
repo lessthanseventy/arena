@@ -112,6 +112,13 @@ fn reportsPath(gpa: std.mem.Allocator, env: *const std.process.Environ.Map) !?[]
     return null;
 }
 
+/// Where the folded repos are kept, beside the reports.
+fn foldsPath(gpa: std.mem.Allocator, env: *const std.process.Environ.Map) !?[]u8 {
+    if (env.get("XDG_STATE_HOME")) |dir| return try std.fs.path.join(gpa, &.{ dir, "arena/folded" });
+    if (env.get("HOME")) |home| return try std.fs.path.join(gpa, &.{ home, ".local/state/arena/folded" });
+    return null;
+}
+
 const BoardFile = struct {
     path: ?[]u8,
     text: ?[]u8 = null,
@@ -487,6 +494,16 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
     const reports_dir = try reportsPath(gpa, init.environ_map);
     defer if (reports_dir) |dir| gpa.free(dir);
     app.reports_dir = reports_dir;
+    const folds_path = try foldsPath(gpa, init.environ_map);
+    defer if (folds_path) |path| gpa.free(path);
+    app.folds_path = folds_path;
+    if (folds_path) |path| {
+        const text = std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1 << 16)) catch null;
+        if (text) |t| {
+            defer gpa.free(t);
+            app.loadFolds(t);
+        }
+    }
     winch.store(true, .release);
     try tty.writeStreamingAll(io, color.Palette.query);
 

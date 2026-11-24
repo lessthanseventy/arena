@@ -2340,7 +2340,7 @@ fn benchLines(app: *const App, w: *Writer, r: theme.Roles, view: app_mod.BoardVi
     while (y + 1 < app.listH()) : (y += 1) {
         const at = lines.next() orelse break;
         switch (at.what) {
-            .heading => try benchHeading(w, r, app.laneRepo(at.lane).?, app.laneCounts(at.lane, c).total, at.lane == view.lane and c == view.col, x + 1, y, cw -| 3),
+            .heading => try benchHeading(w, r, app.laneRepo(at.lane).?, app.laneCounts(at.lane, c).total, at.lane == view.lane and c == view.col, foldMark(app, at.lane), x + 1, y, cw -| 3),
             .more => {
                 var buf: [24]u8 = undefined;
                 const n = app.groupCounts(at.lane, c);
@@ -2361,14 +2361,23 @@ fn benchLines(app: *const App, w: *Writer, r: theme.Roles, view: app_mod.BoardVi
 
 /// A repo's heading row in a column of `width` cells at `x`: its glyph and name in its hue, a dim
 /// dashes, and its count of cards there.
-fn benchHeading(w: *Writer, r: theme.Roles, repo: []const u8, count: usize, lit: bool, x: usize, y: usize, width: usize) !void {
+/// What a group's heading says after its name: whether it is folded, and whether a card in it
+/// waits on the human, which a fold must not hide.
+fn foldMark(app: *const App, lane: usize) []const u8 {
+    const folded = app.folded(app.laneRepo(lane) orelse "");
+    const needs = app.laneNeeds(lane);
+    return if (folded and needs) " ▸ ▲" else if (folded) " ▸" else if (needs) " ▾ ▲" else " ▾";
+}
+
+fn benchHeading(w: *Writer, r: theme.Roles, repo: []const u8, count: usize, lit: bool, fold: []const u8, x: usize, y: usize, width: usize) !void {
     var buf: [24]u8 = undefined;
     const num = std.fmt.bufPrint(&buf, "{d}", .{count}) catch "";
     const mark = repoHue(r, repo);
-    const name = clip(if (repo.len == 0) "no repo" else repo, width -| (cellCount(num) + 6));
+    const name = clip(if (repo.len == 0) "no repo" else repo, width -| (cellCount(num) + 6 + cellCount(fold)));
     try bench.say(w, x + 1, y, mark.glyph, mark.hue, r.panel, false);
     try bench.say(w, x + 3, y, name, mark.hue, r.panel, true);
-    const from = x + 4 + cellCount(name);
+    try bench.say(w, x + 3 + cellCount(name), y, fold, if (std.mem.endsWith(u8, fold, "▲")) r.you else r.dim, r.panel, false);
+    const from = x + 4 + cellCount(name) + cellCount(fold);
     const to = x + width -| (cellCount(num) + 1);
     var dashes: [128]u8 = undefined;
     var out: Writer = .fixed(&dashes);
@@ -3153,7 +3162,7 @@ const board_keys = [_][2][]const u8{
     .{ "> <", "close a ticket to do, reopen a done one" },
     .{ "J K", "move it down or up among its repo's cards" },
     .{ "+ n /", "file a ticket; the inbox; find cards by number, title or repo" },
-    .{ "r, a tab", "the next repo, the backlog, or the one clicked" },
+    .{ "r z Z", "next repo; fold the picked one, or a heading clicked; Z all but it" },
     .{ "t w W", "backlog card to todo; todo card to next, asking its why; W at top" },
     .{ "g", "the gate's modal on the run in progress, else its session" },
     .{ "o", "the orchestrator, started if it is not running" },
@@ -3375,7 +3384,7 @@ fn columnLines(app: *const App, w: *Writer, pen: *Pen, view: app_mod.BoardView, 
             continue;
         };
         switch (at.what) {
-            .heading => try groupHeading(app, w, pen, app.laneRepo(at.lane).?, app.laneCounts(at.lane, c).total, at.lane == view.lane and c == view.col, inner),
+            .heading => try groupHeading(app, w, pen, app.laneRepo(at.lane).?, app.laneCounts(at.lane, c).total, at.lane == view.lane and c == view.col, foldMark(app, at.lane), inner),
             .more => {
                 var buf: [24]u8 = undefined;
                 const n = app.groupCounts(at.lane, c);
@@ -3401,15 +3410,16 @@ fn columnLines(app: *const App, w: *Writer, pen: *Pen, view: app_mod.BoardView, 
 
 /// A repo's heading row in a column, `arena ──── 13`: its name, lit where the pick is, then a
 /// dim rule to its count of cards there.
-fn groupHeading(app: *const App, w: *Writer, pen: *Pen, repo: []const u8, count: usize, lit: bool, inner: u16) !void {
+fn groupHeading(app: *const App, w: *Writer, pen: *Pen, repo: []const u8, count: usize, lit: bool, fold: []const u8, inner: u16) !void {
     var buf: [24]u8 = undefined;
     const num = std.fmt.bufPrint(&buf, " {d}", .{count}) catch "";
-    const name = clip(if (repo.len == 0) "no repo" else repo, inner -| (cellCount(num) + 3));
+    const name = clip(if (repo.len == 0) "no repo" else repo, inner -| (cellCount(num) + 3 + cellCount(fold)));
     try pen.set(w, if (lit) heading(app) else .{}, null);
     try w.writeAll(" ");
     try w.writeAll(name);
     try pen.set(w, ink(app, "dim", 8), null);
-    const used = 2 + cellCount(name) + cellCount(num);
+    try w.writeAll(fold);
+    const used = 2 + cellCount(name) + cellCount(fold) + cellCount(num);
     if (used > inner) return fitted(w, "", inner -| (1 + cellCount(name)));
     try w.writeAll(" ");
     for (used..inner) |_| try w.writeAll("─");
