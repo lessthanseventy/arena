@@ -877,7 +877,7 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
     const was: []const u8 = switch (prompt.what) {
         .window => if (session) |s| (if (s.focused()) |win| win.name else "") else "",
         .session => if (session) |s| s.name else "",
-        .jump, .search, .report, .words, .why => "",
+        .jump, .search, .report, .words, .why, .find => "",
     };
 
     try b.edge("╭", "╮");
@@ -890,7 +890,7 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
             .jump => "  → Jump to window",
             .search => "  / Search history",
             .report => "  ! What's wrong?",
-            .words, .why => "",
+            .words, .why, .find => "",
         },
         dim,
         std.fmt.bufPrint(&buf, "{s}  ", .{clip(was, 12)}) catch "",
@@ -956,6 +956,32 @@ fn wordsLine(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
 }
 
 const Cursor = struct { x: i32, y: i32 };
+
+/// What the board is narrowed to, after its title in the header: while it is typed, with its
+/// cursor and what Enter and Escape do; once kept, with Escape's. Returns where the cursor goes.
+fn findLine(app: *const App, w: *Writer) !?Cursor {
+    const typing = if (app.prompt) |p| p.what == .find else false;
+    const text = app.findText();
+    if (!typing and text.len == 0) return null;
+    var pen: Pen = .{};
+    const x: usize = app.boardX() + cellCount(App.board_title) + 2;
+    const room = @as(usize, app.boardW()) -| cellCount(App.board_title) -| 3;
+    const hint = if (typing) "  ⏎ keep  esc clear" else "  esc clear";
+    var shown = text;
+    while (cellCount(shown) + 2 + cellCount(hint) > room and shown.len > 0) shown = shown[1..];
+    while (shown.len > 0 and shown[0] & 0xC0 == 0x80) shown = shown[1..];
+    try w.print("\x1b[1;{d}H", .{x + 1});
+    try pen.set(w, ink(app, "amber", 4), null);
+    try w.writeAll("/ ");
+    try pen.set(w, .{}, null);
+    try w.writeAll(shown);
+    const used = 2 + cellCount(shown);
+    try pen.set(w, ink(app, "dim", 8), null);
+    try w.writeAll(hint);
+    try pen.set(w, .{}, null);
+    for (used + cellCount(hint)..room) |_| try w.writeAll(" ");
+    return if (typing) .{ .x = @intCast(x + used), .y = 0 } else null;
+}
 
 /// One cell of a window's inside, at (`tx`, `ty`) from its top left: a pane's cell, the line
 /// between panes, or nothing where tmux has the window smaller than its column. `clip_lo` and
@@ -1727,6 +1753,7 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         try w.writeAll("╯");
     }
     try boardButtons(app, w, view);
+    _ = try findLine(app, w);
     if (view.answering) if (app.boardCard(view.col, view.row)) |card| if (card.ask) |ask| try askBox(app, w, card.id, ask);
     if (view.giving) |picked| if (app.boardCard(view.col, view.row)) |card| try giveBox(app, w, card.id, picked);
     if (view.detail) |id| try detailBox(app, w, id, view.detail_scroll);
@@ -1917,7 +1944,7 @@ const board_keys = [_][2][]const u8{
     .{ "p", "raise its priority, high back to low" },
     .{ "> <", "close a ticket to do, reopen a done one" },
     .{ "J K", "move it down or up among its repo's cards" },
-    .{ "n, +", "file a ticket" },
+    .{ "n + /", "file a ticket; find cards by number, title or repo" },
     .{ "r, a tab", "the next repo, the backlog, or the one clicked" },
     .{ "t w W", "backlog card to todo; todo card to next, asking its why; W at top" },
     .{ "g", "babylon's gate, while it runs one" },
@@ -2452,7 +2479,7 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
         cursor = null;
     }
     if (app.prompt) |*prompt| {
-        cursor = if (prompt.what == .words or prompt.what == .why) try wordsLine(app, w, prompt) else try promptBox(app, w, prompt);
+        cursor = if (prompt.what == .words or prompt.what == .why) try wordsLine(app, w, prompt) else if (prompt.what == .find) try findLine(app, w) else try promptBox(app, w, prompt);
     } else if (app.menu) |open| {
         try menuBox(app, w, open);
         cursor = null;

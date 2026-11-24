@@ -131,7 +131,7 @@ pub const Prompt = struct {
     /// The last search found nothing.
     missed: bool = false,
 
-    pub const What = enum { window, session, jump, search, report, words, why };
+    pub const What = enum { window, session, jump, search, report, words, why, find };
     pub const Result = enum { none, cancel, commit, up, down };
 
     /// Rows the box takes; the first of a jump prompt's windows is on row `list_row`.

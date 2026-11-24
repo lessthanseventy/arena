@@ -401,6 +401,9 @@ pub const App = struct {
     menu: ?menu.Menu = null,
     /// A name being typed, over everything else.
     prompt: ?menu.Prompt = null,
+    /// What the board is narrowed to by `/`, kept after Enter.
+    find: [64]u8 = undefined,
+    find_len: usize = 0,
     /// The window picked in the overview, while it is open in place of the strip.
     overview: ?Spot = null,
     /// babylon's board, as its file was last read; null while there is none.
@@ -1782,6 +1785,44 @@ pub const App = struct {
         _ = try app.runNeed(refusal, &.{ "babylon", "next", prompt.item(), "--why", prompt.text() });
     }
 
+    /// `/` on the board: a line in its header to type what the cards are narrowed to, what Enter
+    /// kept already in it.
+    fn openFind(app: *App) void {
+        var prompt: menu.Prompt = .{ .what = .find };
+        @memcpy(prompt.buf[0..app.find_len], app.find[0..app.find_len]);
+        prompt.len = app.find_len;
+        app.prompt = prompt;
+        app.normal = false;
+        app.dirty = true;
+    }
+
+    /// Enter on the find line: what is typed is kept, and the keys are the board's again.
+    fn keepFind(app: *App, prompt: menu.Prompt) void {
+        var keep = @min(prompt.len, app.find.len);
+        while (keep < prompt.len and keep > 0 and prompt.buf[keep] & 0xC0 == 0x80) keep -= 1;
+        @memcpy(app.find[0..keep], prompt.buf[0..keep]);
+        app.find_len = keep;
+        app.prompt = null;
+        app.normal = app.sideDue();
+        app.refind();
+    }
+
+    /// Escape: nothing is narrowed any more.
+    fn clearFind(app: *App) void {
+        app.find_len = 0;
+        app.prompt = null;
+        app.normal = app.sideDue();
+        app.refind();
+    }
+
+    /// The pick back on the first card the narrowing leaves, in the first lane that has one.
+    fn refind(app: *App) void {
+        app.dirty = true;
+        const view = if (app.board_view) |*open| open else return;
+        view.row = 0;
+        view.lane = app.firstLane();
+    }
+
     /// The words line gone, the feed having its keys back.
     fn endWords(app: *App) void {
         app.prompt = null;
@@ -2744,6 +2785,7 @@ pub const App = struct {
     fn closeBoard(app: *App) !void {
         const view = app.board_view orelse return;
         app.board_view = null;
+        app.find_len = 0;
         app.clearStartRefusal();
         app.dirty = true;
         app.reflow();
@@ -2808,19 +2850,27 @@ pub const App = struct {
     pub fn boardColumn(app: *const App, col: usize, out: []*const tickets.Card) usize {
         const b = if (app.board) |*b| b else return 0;
         if (app.boardBacklog()) {
-            for (b.backlog(), 0..) |*card, i| if (i < out.len) {
-                out[i] = card;
+            var n: usize = 0;
+            for (b.backlog()) |*card| if (card.finds(app.findText())) {
+                if (n < out.len) out[n] = card;
+                n += 1;
             };
-            return b.backlog().len;
+            return n;
         }
-        return shownOf(tickets.statuses[col], b.column(tickets.statuses[col], app.pickRepo(), out));
+        return shownOf(tickets.statuses[col], b.column(tickets.statuses[col], app.pickRepo(), app.findText(), out));
+    }
+
+    /// What the board's cards are narrowed to: what is being typed after `/`, else what Enter kept.
+    pub fn findText(app: *const App) []const u8 {
+        if (app.prompt) |*prompt| if (prompt.what == .find) return prompt.text();
+        return app.find[0..app.find_len];
     }
 
     /// The count of every card in the board's column `col` as it is narrowed, shown or not.
     pub fn boardColumnAll(app: *const App, col: usize) usize {
         const b = if (app.board) |*b| b else return 0;
-        if (app.boardBacklog()) return b.backlog().len;
-        return b.column(tickets.statuses[col], app.pickRepo(), &.{});
+        if (app.boardBacklog()) return app.boardColumn(col, &.{});
+        return b.column(tickets.statuses[col], app.pickRepo(), app.findText(), &.{});
     }
 
     /// Done shows its last few closed, the first in its column, and then how many more it has.
@@ -2835,7 +2885,7 @@ pub const App = struct {
     pub fn laneCounts(app: *const App, lane: usize, col: usize) struct { shown: usize, total: usize } {
         const b = if (app.board) |*b| b else return .{ .shown = 0, .total = 0 };
         const repo = app.laneRepo(lane) orelse return .{ .shown = 0, .total = 0 };
-        const total = b.column(tickets.statuses[col], repo, &.{});
+        const total = b.column(tickets.statuses[col], repo, app.findText(), &.{});
         return .{ .shown = shownOf(tickets.statuses[col], total), .total = total };
     }
 
@@ -2871,13 +2921,13 @@ pub const App = struct {
         const n = b.repos(&repos);
         if (i > n) return 0;
         const repo: ?[]const u8 = if (i == 0) null else repos[i - 1];
-        return b.column(.todo, repo, &.{}) + b.column(.doing, repo, &.{}) + b.column(.review, repo, &.{});
+        return b.column(.todo, repo, "", &.{}) + b.column(.doing, repo, "", &.{}) + b.column(.review, repo, "", &.{});
     }
 
     /// Whether `repo` has a card to do, doing or in review.
     pub fn live(app: *const App, repo: []const u8) bool {
         const b = if (app.board) |*b| b else return false;
-        return b.column(.todo, repo, &.{}) + b.column(.doing, repo, &.{}) + b.column(.review, repo, &.{}) > 0;
+        return b.column(.todo, repo, "", &.{}) + b.column(.doing, repo, "", &.{}) + b.column(.review, repo, "", &.{}) > 0;
     }
 
     pub fn laneRepo(app: *const App, lane: usize) ?[]const u8 {
@@ -2996,7 +3046,7 @@ pub const App = struct {
         const b = if (app.board) |*b| b else return null;
         const repo = app.laneRepo(lane) orelse return null;
         var out: [max_cards]*const tickets.Card = undefined;
-        const n = shownOf(tickets.statuses[col], b.column(tickets.statuses[col], repo, &out));
+        const n = shownOf(tickets.statuses[col], b.column(tickets.statuses[col], repo, app.findText(), &out));
         return if (row < @min(n, max_cards)) out[row] else null;
     }
 
@@ -3027,7 +3077,7 @@ pub const App = struct {
     /// The cards in `status` on the whole board, whatever it is narrowed to.
     pub fn boardCount(app: *const App, status: tickets.Status) usize {
         const b = if (app.board) |*b| b else return 0;
-        return b.column(status, null, &.{});
+        return b.column(status, null, app.findText(), &.{});
     }
 
     pub fn boardCard(app: *const App, col: usize, row: usize) ?*const tickets.Card {
@@ -3529,6 +3579,8 @@ pub const App = struct {
             view.lane = app.firstLane();
         }
         view.row = @min(view.row, app.boardColumn(view.col, &.{}) -| 1);
+        if (is(key, &.{"/"})) return app.openFind();
+        if (is(key, &.{"\x1b"}) and app.find_len > 0) return app.clearFind();
         if (is(key, &.{ "\x1b", "q" })) return app.closeBoard();
         if (is(key, &.{"`"})) return app.foldSide();
         if (is(key, &.{"g"})) return app.toGate();
@@ -4008,6 +4060,7 @@ pub const App = struct {
     /// words when the tabs would not all fit beside it, and tabs that still do not fit are
     /// left out with a `…` after the last.
     pub fn header(app: *const App, out: []Button) Header {
+        if (app.findText().len > 0 or (app.prompt != null and app.prompt.?.what == .find)) return .{ .n = 0, .more = null };
         var buf: [64]u8 = undefined;
         var repos: [max_repos][]const u8 = undefined;
         const count = if (app.board) |*b| b.repos(&repos) else 0;
@@ -5047,8 +5100,8 @@ pub const App = struct {
             } else if (app.prompt) |*prompt| {
                 app.dirty = true;
                 switch (prompt.press(key)) {
-                    .none => {},
-                    .cancel => if (prompt.what == .words or prompt.what == .why) app.endWords() else {
+                    .none => if (prompt.what == .find) app.refind(),
+                    .cancel => if (prompt.what == .find) app.clearFind() else if (prompt.what == .words or prompt.what == .why) app.endWords() else {
                         app.prompt = null;
                     },
                     .commit => try app.commit(),
@@ -5069,6 +5122,7 @@ pub const App = struct {
         if (prompt.what == .search) return app.searchNext();
         if (prompt.what == .words) return app.sendWords(prompt);
         if (prompt.what == .why) return app.sendWhy(prompt);
+        if (prompt.what == .find) return app.keepFind(prompt);
         app.prompt = null;
         if (prompt.what == .report) return app.fileReport(prompt.text());
         const s = app.cur() orelse return;
@@ -5081,7 +5135,7 @@ pub const App = struct {
                 if (prompt.selected < n) try app.jumpTo(hits[prompt.selected].session, hits[prompt.selected].index);
                 return;
             },
-            .search, .report, .words, .why => return,
+            .search, .report, .words, .why, .find => return,
             .window => try cmd.writer.print("rename-window -t @{d} -- '", .{(s.focused() orelse return).id}),
             .session => try cmd.writer.print("rename-session -t '${d}' -- '", .{s.id}),
         }

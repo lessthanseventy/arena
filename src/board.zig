@@ -56,6 +56,18 @@ pub const Card = struct {
         return card.claimed_by orelse card.handed_to;
     }
 
+    /// Whether its number, title or repo holds `query`, letter case aside; a leading `#` is the
+    /// number's. Everything holds an empty query.
+    pub fn finds(card: *const Card, query: []const u8) bool {
+        const q = if (query.len > 0 and query[0] == '#') query[1..] else query;
+        if (q.len == 0) return true;
+        var id: [12]u8 = undefined;
+        const number = std.fmt.bufPrint(&id, "{d}", .{card.id}) catch "";
+        return std.mem.indexOf(u8, number, q) != null or
+            std.ascii.findIgnoreCase(card.title, q) != null or
+            std.ascii.findIgnoreCase(card.repo orelse "", q) != null;
+    }
+
     /// The id of the pane holding it, if one does.
     pub fn holder(card: *const Card) ?u32 {
         const pane = card.heldBy() orelse return null;
@@ -380,13 +392,14 @@ pub const Board = struct {
         return n;
     }
 
-    /// The cards in `status`'s column, of `repo` alone when given, in board order with those
-    /// waiting on others last, as many as fit in `out`; the count of them all.
-    pub fn column(b: *const Board, status: Status, repo: ?[]const u8, out: []*const Card) usize {
+    /// The cards in `status`'s column, of `repo` alone when given and matching `find`, in board
+    /// order with those waiting on others last, as many as fit in `out`; the count of them all.
+    pub fn column(b: *const Board, status: Status, repo: ?[]const u8, find: []const u8, out: []*const Card) usize {
         var n: usize = 0;
         for ([_]bool{ false, true }) |waiting| for (b.cards()) |*card| {
             if (card.status != status or (card.blocked_by.len > 0) != waiting) continue;
             if (repo) |only| if (!std.mem.eql(u8, card.repo orelse "", only)) continue;
+            if (!card.finds(find)) continue;
             if (n < out.len) out[n] = card;
             n += 1;
         };
@@ -466,12 +479,25 @@ test "a column is narrowed to one repo, in board order, those waiting last" {
     var b = try Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var out: [8]*const Card = undefined;
-    try std.testing.expectEqual(@as(usize, 3), b.column(.todo, null, &out));
+    try std.testing.expectEqual(@as(usize, 3), b.column(.todo, null, "", &out));
     try std.testing.expectEqual(@as(u32, 3), out[0].id);
     try std.testing.expectEqual(@as(u32, 2), out[2].id);
-    try std.testing.expectEqual(@as(usize, 1), b.column(.todo, "arena", &out));
+    try std.testing.expectEqual(@as(usize, 1), b.column(.todo, "arena", "", &out));
     try std.testing.expectEqual(@as(u32, 2), out[0].id);
-    try std.testing.expectEqual(@as(usize, 0), b.column(.done, null, &out));
+    try std.testing.expectEqual(@as(usize, 0), b.column(.done, null, "", &out));
+}
+
+test "find keeps the cards whose number, title or repo hold it, letter case aside" {
+    var b = try Board.parse(std.testing.allocator, sample);
+    defer b.deinit();
+    var out: [8]*const Card = undefined;
+    try std.testing.expectEqual(@as(usize, 1), b.column(.todo, null, "hous", &out));
+    try std.testing.expectEqual(@as(u32, 3), out[0].id);
+    try std.testing.expectEqual(@as(usize, 1), b.column(.todo, null, "ARENA", &out));
+    try std.testing.expectEqual(@as(u32, 2), out[0].id);
+    try std.testing.expectEqual(@as(usize, 1), b.column(.todo, null, "#5", &out));
+    try std.testing.expectEqual(@as(u32, 5), out[0].id);
+    try std.testing.expectEqual(@as(usize, 0), b.column(.todo, null, "nothing", &out));
 }
 
 test "the backlog is its own list: the columns leave it out, and a file without one parses" {
@@ -483,7 +509,7 @@ test "the backlog is its own list: the columns leave it out, and a file without 
     try std.testing.expectEqual(@as(usize, 1), b.backlog().len);
     try std.testing.expectEqual(Status.backlog, b.backlog()[0].status);
     var out: [4]*const Card = undefined;
-    for (statuses) |status| try std.testing.expectEqual(@as(usize, if (status == .todo) 1 else 0), b.column(status, null, &out));
+    for (statuses) |status| try std.testing.expectEqual(@as(usize, if (status == .todo) 1 else 0), b.column(status, null, "", &out));
     var old = try Board.parse(gpa, sample);
     defer old.deinit();
     try std.testing.expectEqual(@as(usize, 0), old.backlog().len);

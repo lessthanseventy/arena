@@ -1158,6 +1158,18 @@ check "and the board" gone ' board  every'
 shows '^NORMAL' && key C-Space
 key M-b
 last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
+key /
+key -l zzz
+check "/ opens a find line in the header, the typing in it" see '/ zzz +⏎ keep  esc clear'
+check "and every column narrows to the cards that match" gone 'Lights'
+key BSpace BSpace BSpace
+key -l TLON
+check "case is ignored, and a repo matches" see 'Lights'
+key Enter
+check "Enter keeps the find and gives the board its keys" see '/ TLON +esc clear'
+key Escape
+check "Escape clears it" gone '/ TLON'
+check "and the card is back" see 'Lights'
 key p
 check "p raises the picked card's priority through babylon" await last 'update 7 --priority high'
 key w
