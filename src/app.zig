@@ -380,7 +380,6 @@ pub const BoardView = struct {
     /// The plan's pick among its rows that can be picked, and the stages unfolded, a bit each.
     plan_pick: usize = 0,
     unfolded: u8 = 0,
-
     /// At home with the room of half a screen: the orchestrator's column alone, else the plan
     /// or the board alone.
     alone: bool = true,
