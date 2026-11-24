@@ -5394,6 +5394,9 @@ test "a card is given only while it is free to claim, whatever its repo" {
     c.claimed_by = "%3";
     try std.testing.expect(!givable(&c));
     c = free;
+    c.handed_to = "%3";
+    try std.testing.expect(!givable(&c));
+    c = free;
     c.status = .backlog;
     try std.testing.expect(!givable(&c));
     c = free;

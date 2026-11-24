@@ -1154,6 +1154,8 @@ print -r -- '{"tickets":['\
 '"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[],"stage":"failed","ask":{"id":9,"question":"Which shape?"}}]}' >$tmp/run/babylon/board.json
 check "a held card asking says so where the pipeline has it" see '[▌│] held: asks +│'
 check "a sent back one asking has the question before it" see '[▌│] \? asks · ✗ sent back +│'
+print -r -- '{"tickets":[{"id":15,"repo":"tlon","title":"Handed over","kind":"ticket","status":"todo","priority":"med","handed_to":"'$one'","handed_from":4,"blocked_by":[]}]}' >$tmp/run/babylon/board.json
+check "a todo card handed to a pane is drawn held by it" see '[▌│] one +│'
 cp $tmp/board.noauto $tmp/run/babylon/board.json
 check "with the board back, #7 is there" see '#7 Lights'
 mouse 0 ${(z)$(spot '#7 Lights')} M
