@@ -1464,7 +1464,6 @@ pub const App = struct {
         return @min(rail_wide, @max(rail_narrow, app.term_w / 3));
     }
 
-    /// The rail's width as drawn, which a narrow one peeking is not.
     /// Where the rail's top row says how many need the human, right of `▤ board`.
     pub const rail_needs_x = 9;
 
@@ -1480,6 +1479,7 @@ pub const App = struct {
         return std.fmt.bufPrint(buf, " ▲ {d}", .{app.needsCount()}) catch "";
     }
 
+    /// The rail's width as drawn, which a narrow one peeking is not.
     pub fn railDrawnW(app: *const App) u16 {
         return if (app.peek and app.railW() > 0) app.railWideW() else app.railW();
     }
