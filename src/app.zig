@@ -4305,7 +4305,7 @@ pub const App = struct {
             else => return false,
         };
         const picked = app.cardPicked(at.lane, at.col, at.row);
-        if (part + 1 + @intFromBool(picked) != app.cardHeight(at.lane, at.col, at.row)) return false;
+        if (part + 1 + 3 * @as(usize, @intFromBool(picked)) != app.cardHeight(at.lane, at.col, at.row)) return false;
         const x = app.boardColX(at.col) + 2;
         if (m.x < x or m.x >= x + cellCount("▲ proposed")) return false;
         const b = if (app.board) |*b| b else return false;
@@ -6099,6 +6099,33 @@ test "the picked card's box ends its buttons with space open, a review card's wi
     app.board_view.?.col = 2;
     const open: App.Button = .{ .what = .{ .card = .open }, .x = 0, .y = 0, .w = 0 };
     try std.testing.expectEqualStrings("space log", std.mem.trim(u8, app.buttonLabel(open, &buf), " "));
+}
+
+test "a click on ▲ proposed finds the last row of a picked card's box as of an unpicked one" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 200;
+    app.view_w = 160;
+    app.view_h = 20;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"repo":"arena","title":"a","status":"todo"},
+        \\{"id":2,"repo":"arena","title":"b","status":"todo"}],
+        \\"proposals":[{"id":4,"action":"start","ticket_id":1,"what":"Start #1","why":"Next"},{"id":5,"action":"start","ticket_id":2,"what":"Start #2","why":"Next"}],
+        \\"needs_you":[{"id":"proposal:4","kind":"proposal","ticket":1,"repo":"arena","text":"P4","actions":[]},{"id":"proposal:5","kind":"proposal","ticket":2,"repo":"arena","text":"P5","actions":[]}]}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{};
+    const x = app.boardColX(0) + 2;
+    // each card's last row is a hit, whichever of them is picked
+    for (0..2) |_| {
+        var hits: usize = 0;
+        for (2..app.view_h - 1) |y| {
+            const at = app.boardCardAt(x, @intCast(y)) orelse continue;
+            if (try app.cardNeedsClick(at, .{ .code = 0, .x = x, .y = @intCast(y), .release = false })) hits += 1;
+        }
+        try std.testing.expectEqual(@as(usize, 2), hits);
+        app.board_view.?.row = 1;
+    }
 }
 
 test "a card moves along its column only with a repo, out of the backlog" {
