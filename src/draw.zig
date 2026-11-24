@@ -2279,6 +2279,7 @@ fn repoHue(r: theme.Roles, repo: ?[]const u8) struct { glyph: []const u8, hue: c
 fn benchBoard(app: *App, w: *Writer, r: theme.Roles, view: app_mod.BoardView) !void {
     const ox = app.boardX();
     for (App.first_line - 1..app.view_h) |y| try bench.tabRow(w, r, ox, @intCast(y), app.boardW());
+    try benchEpics(app, w, r);
     const lanes = app.boardLanes();
     for (0..app.boardCols()) |c| {
         const cw = app.boardColW(c);
@@ -2286,13 +2287,47 @@ fn benchBoard(app: *App, w: *Writer, r: theme.Roles, view: app_mod.BoardView) !v
         const x = app.boardColX(c);
         const total = if (lanes) app.boardCount(tickets.statuses[c]) else app.boardColumnAll(c);
         const lit = if (app.drag == .card) app.cardTarget() == (if (app.boardBacklog()) tickets.Status.backlog else tickets.statuses[c]) else c == view.col and !app.columnFocused();
-        try bench.window(w, r, x, App.first_line - 1, cw - 1, app.listH() - App.first_line, app.columnName(c), total, lit);
-        if (total == 0) try bench.say(w, x + 2, App.first_line, "none", r.dim, r.panel, false);
+        try bench.window(w, r, x, app.colTop() - 1, cw - 1, app.listH() - app.colTop(), app.columnName(c), total, lit);
+        if (total == 0) try bench.say(w, x + 2, app.colTop(), "none", r.dim, r.panel, false);
         try benchLines(app, w, r, view, c, x, cw);
     }
     if (app.footRows() > 0) try benchRecent(app, w, r, view);
     try benchBar(app, w, r);
     if (app.drag == .card) try benchHeld(app, w, r);
+}
+
+/// The epics along the board's top, side by side as slim bars: `◆ #N title` over a bar in its
+/// repo's hue, `landed/total`, and a chip when a child is being built. An epic is never a card.
+fn benchEpics(app: *const App, w: *Writer, r: theme.Roles) !void {
+    if (app.epicRows() == 0) return;
+    const b = if (app.board) |*b| b else return;
+    const goals = b.plan().?.goals;
+    const room = app.boardW() -| 2;
+    const gap = 2;
+    const n = @max(1, @min(goals.len, (room + gap) / (24 + gap)));
+    const slot = (room - gap * (n - 1)) / n;
+    const y = App.first_line - 1;
+    for (goals[0..n], 0..) |goal, i| {
+        const x = app.boardX() + 1 + i * (slot + gap);
+        const hue = goalHue(b, r, goal);
+        var building: usize = 0;
+        for (b.cards()) |card| building += @intFromBool(card.epic_id == goal.epic and card.status == .doing);
+        var head: [24]u8 = undefined;
+        const id = std.fmt.bufPrint(&head, "◆ #{d} ", .{goal.epic}) catch "";
+        try bench.say(w, x, y, id, hue, r.ground, true);
+        try bench.say(w, x + cellCount(id), y, clip(goal.title, slot -| cellCount(id)), r.text, r.ground, false);
+        var count: [24]u8 = undefined;
+        const label = std.fmt.bufPrint(&count, "{d}/{d}", .{ goal.landed, goal.total }) catch "";
+        var chip_buf: [24]u8 = undefined;
+        const chip_text = std.fmt.bufPrint(&chip_buf, "{d} building", .{building}) catch "";
+        const chip_w = cellCount(chip_text) + 5;
+        const with_chip = building > 0 and slot >= 24 + chip_w;
+        const tail = cellCount(label) + 1 + if (with_chip) chip_w + 1 else 0;
+        const bar_w = slot -| tail;
+        try bench.bar(w, r, x, y + 1, bar_w, goal.landed, goal.total, hue);
+        try bench.say(w, x + bar_w + 1, y + 1, label, r.text, r.ground, false);
+        if (with_chip) _ = try bench.chipInk(w, r, x + bar_w + 2 + cellCount(label), y + 1, chip_text, r.accent, r.text, false);
+    }
 }
 
 /// The board's last row: its keys, each a chip with the key in amber, in three groups with a rule
@@ -2330,7 +2365,7 @@ fn benchHeld(app: *const App, w: *Writer, r: theme.Roles) !void {
 fn benchLines(app: *const App, w: *Writer, r: theme.Roles, view: app_mod.BoardView, c: usize, x: u16, cw: u16) !void {
     var lines = App.ColumnLines.init(app, c);
     for (0..app.columnScroll(c)) |_| _ = lines.next();
-    var y: u16 = App.first_line;
+    var y: u16 = app.colTop();
     while (y + 1 < app.listH()) : (y += 1) {
         const at = lines.next() orelse break;
         switch (at.what) {
@@ -2537,7 +2572,7 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         const total = if (lanes) app.boardCount(tickets.statuses[c]) else app.boardColumnAll(c);
         const label = std.fmt.bufPrint(&buf, " {s} {d} ", .{ name, total }) catch "";
         try pen.set(w, edge, null);
-        try w.print("\x1b[{d};{d}H╭─", .{ App.first_line, x + 1 });
+        try w.print("\x1b[{d};{d}H╭─", .{ app.colTop(), x + 1 });
         try pen.set(w, dim, null);
         const shown = clip(label, inner -| 1);
         try w.writeAll(shown);
@@ -2547,7 +2582,7 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         try columnLines(app, w, &pen, view, c, x, inner);
         if (total == 0 and app.view_h > 3) {
             try pen.set(w, dim, null);
-            try w.print("\x1b[{d};{d}H", .{ App.first_line + 1, x + 2 });
+            try w.print("\x1b[{d};{d}H", .{ app.colTop() + 1, x + 2 });
             try fitted(w, " none", inner);
             try pen.set(w, edge, null);
         }
@@ -3234,7 +3269,7 @@ fn columnLines(app: *const App, w: *Writer, pen: *Pen, view: app_mod.BoardView, 
     const with_repo = app.cardRepoShown();
     var lines = App.ColumnLines.init(app, c);
     for (0..app.columnScroll(c)) |_| _ = lines.next();
-    var y: u16 = App.first_line;
+    var y: u16 = app.colTop();
     while (y + 1 < app.view_h) : (y += 1) {
         try w.print("\x1b[{d};{d}H", .{ y + 1, x + 1 });
         try pen.set(w, edge, null);
@@ -4319,6 +4354,43 @@ test "a frame of a board of five repos and 362 cards takes under 4ms" {
         // half of main's 8ms between frames, with room for a loaded machine
         try std.testing.expect(@divTrunc(ns, rounds) < 4 * std.time.ns_per_ms);
     }
+}
+
+test "an epic on the board in Workbench's look is a bar over the columns, counted from its children, and no card in doing" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 24;
+    app.roles = bench.roles();
+    const r = app.roles.?;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":326,"repo":"arena","kind":"epic","status":"doing","title":"The board, redesigned"},
+        \\{"id":10,"repo":"arena","title":"building one","status":"doing","epic_id":326,"claimed_by":"%3"}],
+        \\"plan":{"goals":[{"epic":326,"title":"The board, redesigned","landed":3,"total":7,"steps":[]}]}}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{};
+    var buf: [65536]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try boardView(&app, &out, app.board_view.?);
+    const drawn = out.buffered();
+    const eq = std.testing.expectEqual;
+    const hue = r.repo[0];
+
+    try eq(@as(u16, 3), app.epicRows());
+    const y = App.first_line - 1;
+    try eq(@as(u21, '◆'), (try bench.probe(drawn, 1, y)).cp);
+    try eq(hue, (try bench.probe(drawn, 1, y)).fg);
+    try eq(@as(u21, '#'), (try bench.probe(drawn, 3, y)).cp);
+    try eq(hue, (try bench.probe(drawn, 4, y + 1)).fg);
+
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "3/7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "1 building") != null);
+
+    // the columns start under the bars, and doing holds the step alone
+    try eq(@as(u16, 6), app.colTop());
+    try eq(@as(usize, 1), app.boardColumnAll(1));
 }
 
 test "Home in Workbench's look: the focal goal is the one with a step building, and a goal's card has its bar in its repo's hue" {

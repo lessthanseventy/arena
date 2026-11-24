@@ -52,6 +52,11 @@ pub const Card = struct {
     /// board is parsed, never read from a card's own fields.
     proposal: ?Proposal = null,
 
+    /// Whether it is an epic: a goal over other tickets, which no session ever holds.
+    pub fn isEpic(card: *const Card) bool {
+        return std.mem.eql(u8, card.kind, "epic");
+    }
+
     /// The pane holding it, as `%12`: the one that claimed it, else the one it was handed to.
     pub fn heldBy(card: *const Card) ?[]const u8 {
         return card.claimed_by orelse card.handed_to;
@@ -430,7 +435,7 @@ pub const Board = struct {
     pub fn column(b: *const Board, status: Status, repo: ?[]const u8, find: []const u8, out: []*const Card) usize {
         var n: usize = 0;
         for ([_]bool{ false, true }) |waiting| for (b.cards()) |*card| {
-            if (card.status != status or (card.blocked_by.len > 0) != waiting) continue;
+            if (card.status != status or (card.blocked_by.len > 0) != waiting or card.isEpic()) continue;
             if (repo) |only| if (!std.mem.eql(u8, card.repo orelse "", only)) continue;
             if (!card.finds(find)) continue;
             if (n < out.len) out[n] = card;
@@ -518,6 +523,16 @@ test "a column is narrowed to one repo, in board order, those waiting last" {
     try std.testing.expectEqual(@as(usize, 1), b.column(.todo, "arena", "", &out));
     try std.testing.expectEqual(@as(u32, 2), out[0].id);
     try std.testing.expectEqual(@as(usize, 0), b.column(.done, null, "", &out));
+}
+
+test "an epic is in no column, whatever its status" {
+    var b = try Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1,"kind":"epic","title":"goal","status":"doing"},{"id":2,"title":"step","status":"doing","epic_id":1}]}
+    );
+    defer b.deinit();
+    var out: [4]*const Card = undefined;
+    try std.testing.expectEqual(@as(usize, 1), b.column(.doing, null, "", &out));
+    try std.testing.expectEqual(@as(u32, 2), out[0].id);
 }
 
 test "find keeps the cards whose number, title or repo hold it, letter case aside" {

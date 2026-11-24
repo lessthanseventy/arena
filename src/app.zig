@@ -3241,7 +3241,7 @@ pub const App = struct {
         const lane = app.pickLane();
         const top = app.cardStart(col, lane, view.row) orelse return 0;
         const bottom = top + app.cardHeight(lane, col, view.row) -| 1;
-        const rows = @max(1, app.listH() -| (first_line + 1));
+        const rows = @max(1, app.listH() -| (app.colTop() + 1));
         return if (bottom >= rows) @min(top, bottom - rows + 1) else 0;
     }
 
@@ -3281,6 +3281,22 @@ pub const App = struct {
     /// The columns the open board shows: the four statuses, or the backlog alone.
     pub fn boardCols(app: *const App) usize {
         return if (app.boardBacklog()) 1 else tickets.statuses.len;
+    }
+
+    /// What the board's epic bars come to: none outside Workbench, in the backlog, with no goals or
+    /// with too little room, else a title row, a bar row and a blank one.
+    pub fn epicRows(app: *const App) u16 {
+        const b = if (app.board) |*b| b else return 0;
+        const plan = b.plan() orelse return 0;
+        if (plan.goals.len == 0 or !app.workbench() or app.boardBacklog() or app.view_h < first_line + epic_rows + foot_rows + 6) return 0;
+        return epic_rows;
+    }
+
+    pub const epic_rows: u16 = 3;
+
+    /// The row the board's columns start at: under the epic bars, when it has them.
+    pub fn colTop(app: *const App) u16 {
+        return first_line + app.epicRows();
     }
 
     /// The cards in `status` on the whole board, whatever repo it is narrowed to, that the find holds.
@@ -3380,7 +3396,7 @@ pub const App = struct {
 
     /// The rows the recent strip takes: none outside Workbench, in the backlog, or with no room.
     pub fn footRows(app: *const App) u16 {
-        if (!app.workbench() or app.boardBacklog() or app.view_h < first_line + foot_rows + 6) return 0;
+        if (!app.workbench() or app.boardBacklog() or app.view_h < app.colTop() + foot_rows + 6) return 0;
         return foot_rows;
     }
 
@@ -3589,12 +3605,12 @@ pub const App = struct {
     fn boardCardAt(app: *const App, x: u16, y: u16) ?CardAt {
         if (app.stripCardAt(x, y)) |at| return at;
         const left = app.boardColX(0);
-        if (x < left or y < first_line or y + 1 >= app.listH()) return null;
+        if (x < left or y < app.colTop() or y + 1 >= app.listH()) return null;
         const col = for (0..app.boardCols()) |c| {
             if (x < app.boardColX(c) + app.boardColW(c)) break c;
         } else return null;
         if (app.boardColW(col) == 0) return null;
-        const at = app.columnLineAt(col, y - first_line + app.columnScroll(col)) orelse return null;
+        const at = app.columnLineAt(col, y - app.colTop() + app.columnScroll(col)) orelse return null;
         return switch (at.what) {
             .card => |card| .{ .lane = at.lane, .col = col, .row = card.row },
             else => null,
@@ -4628,9 +4644,9 @@ pub const App = struct {
         const bench = app.workbench();
         if (cw >= @as(u16, if (bench) 26 else 12) and n < out.len) {
             out[n] = if (bench)
-                .{ .what = .new, .x = app.boardColX(0) + cw - 12, .y = first_line - 1, .w = 7 }
+                .{ .what = .new, .x = app.boardColX(0) + cw - 12, .y = app.colTop() - 1, .w = 7 }
             else
-                .{ .what = .new, .x = app.boardColX(0) + cw - 4, .y = first_line - 1, .w = 3 };
+                .{ .what = .new, .x = app.boardColX(0) + cw - 4, .y = app.colTop() - 1, .w = 3 };
             n += 1;
         }
         const card = app.boardCard(view.col, view.row) orelse return out[0..n];
@@ -4642,7 +4658,7 @@ pub const App = struct {
             const line = top + app.cardHeight(lane, view.col, view.row) - 2;
             const scroll = app.columnScroll(view.col);
             if (line < scroll) return out[0..n];
-            break :blk @intCast(@min(first_line + line - scroll, app.listH()));
+            break :blk @intCast(@min(app.colTop() + line - scroll, app.listH()));
         };
         if (!strip and y + 1 >= app.listH()) return out[0..n];
         var have: [12]CardAction = undefined;
@@ -4907,7 +4923,7 @@ pub const App = struct {
         };
         if (x < app.boardX() or x >= app.boardX() + app.boardW()) return null;
         if (app.footRows() > 0 and y >= app.listH() and y < app.listH() + app.footRows()) return .done;
-        if (y < first_line or y + 1 >= app.listH()) return null;
+        if (y < app.colTop() or y + 1 >= app.listH()) return null;
         for (0..app.boardCols()) |c| if (app.boardColW(c) > 0 and x < app.boardColX(c) + app.boardColW(c)) {
             return if (app.boardBacklog()) .backlog else tickets.statuses[c];
         };
@@ -4937,7 +4953,7 @@ pub const App = struct {
     fn cardNeedsClick(app: *App, at: CardAt, m: keys.Mouse) !bool {
         const card = app.groupCard(at.lane, at.col, at.row) orelse return false;
         if (card.proposal == null or app.boardStrip(at.col) or app.workbench()) return false;
-        const line = app.columnLineAt(at.col, m.y - first_line + app.columnScroll(at.col)) orelse return false;
+        const line = app.columnLineAt(at.col, m.y - app.colTop() + app.columnScroll(at.col)) orelse return false;
         const part = switch (line.what) {
             .card => |spot| spot.part,
             else => return false,
@@ -6634,7 +6650,7 @@ test "a dragged card moves todo↔backlog and todo↔done, and a drop babylon wo
     try app.dropCard(1, .done);
     try std.testing.expect(app.report_failed);
     try std.testing.expect(std.mem.startsWith(u8, app.report_said.?, "only a todo card"));
-    app.pointer = .{ .x = app.boardColX(1) + 2, .y = App.first_line + 1 };
+    app.pointer = .{ .x = app.boardColX(1) + 2, .y = app.colTop() + 1 };
     try eq(@as(?tickets.Status, .doing), app.cardTarget());
     app.pointer = .{ .x = app.boardX(), .y = 0 };
     try eq(@as(?tickets.Status, null), app.cardTarget());
@@ -6654,7 +6670,7 @@ test "a press on a card arms its drag, the picked one's included, with or withou
     const x = app.boardColX(0) + 2;
     var first: u16 = 0;
     var second: u16 = 0;
-    for (App.first_line..app.listH()) |y| if (app.boardCardAt(x, @intCast(y))) |at| {
+    for (app.colTop()..app.listH()) |y| if (app.boardCardAt(x, @intCast(y))) |at| {
         if (at.row == 0 and first == 0) first = @intCast(y);
         if (at.row == 1 and second == 0) second = @intCast(y);
     };
@@ -6666,7 +6682,7 @@ test "a press on a card arms its drag, the picked one's included, with or withou
     try std.testing.expect(app.drag.card.opens);
 
     // dragged over doing, no session in the app: a drag all the same, and the drop is refused with its why
-    app.pointer = .{ .x = app.boardColX(1) + 2, .y = App.first_line + 1 };
+    app.pointer = .{ .x = app.boardColX(1) + 2, .y = app.colTop() + 1 };
     try app.dragTo(.{ .code = 32, .x = app.pointer.x, .y = app.pointer.y, .release = false });
     try std.testing.expect(app.drag.card.moved);
     try app.dragTo(.{ .code = 0, .x = app.pointer.x, .y = app.pointer.y, .release = true });
@@ -6719,7 +6735,7 @@ test "in the backlog a card let go on a repo's tab is bound for todo" {
     );
     app.board_view = .{ .backlog = true };
     var seen: ?u16 = null;
-    for (App.first_line..app.listH()) |y| if (app.boardCardAt(app.boardColX(0) + 3, @intCast(y))) |_| {
+    for (app.colTop()..app.listH()) |y| if (app.boardCardAt(app.boardColX(0) + 3, @intCast(y))) |_| {
         seen = @intCast(y);
     };
     try std.testing.expectEqual(true, try app.boardMouse(.{ .code = 0, .x = app.boardColX(0) + 3, .y = seen.?, .release = false }));
@@ -6929,7 +6945,7 @@ test "the every view's done column is a strip: narrow, a card a row, its reopen 
     const view = app.board_view.?;
     try eq(@as(usize, 1), view.row);
     // under arena's heading
-    try eq(view.row, app.boardCardAt(app.boardColX(3) + 1, App.first_line + 2).?.row);
+    try eq(view.row, app.boardCardAt(app.boardColX(3) + 1, app.colTop() + 2).?.row);
     var buttons: [48]App.Button = undefined;
     const shown = app.boardButtons(&buttons);
     const last = shown[shown.len - 1];
