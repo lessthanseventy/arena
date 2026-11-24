@@ -4436,7 +4436,14 @@ pub const App = struct {
             if (app.columnAlone() and m.y == 0 and m.leftPress()) {
                 const hint = App.half_hint.len;
                 const at = app.term_w -| 2 -| hint;
-                if (m.x >= at and m.x < at + 8) try app.swapHome(false) else if (m.x >= at + 8 and m.x < at + hint) try app.toBoard();
+                if (m.x >= at and m.x < at + 8) {
+                    try app.swapHome(false);
+                    return true;
+                }
+                if (m.x >= at + 8 and m.x < at + hint) {
+                    try app.toBoard();
+                    return true;
+                }
             }
             if (app.sideShown() and (app.sideFocused() or m.wheel())) return false;
             if (m.leftPress()) {
