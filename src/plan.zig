@@ -57,6 +57,13 @@ pub fn inFlight(step: tickets.Step) bool {
     return !std.mem.eql(u8, mark, "✓") and !std.mem.eql(u8, mark, "○");
 }
 
+/// How many of a goal's steps have landed and wait on the human to try.
+pub fn goalTrying(goal: tickets.Goal) usize {
+    var n: usize = 0;
+    for (goal.steps) |step| n += @intFromBool(std.mem.eql(u8, step.state, "to_try"));
+    return n;
+}
+
 /// A goal's next step: the first being built, else landing, else next, else the first waiting.
 pub fn goalNext(goal: tickets.Goal) ?tickets.Step {
     for ([_][]const u8{ "◐", "◒", "●", "○" }) |want| for (goal.steps) |step| {
@@ -314,7 +321,11 @@ pub const Sheet = struct {
                 continue;
             }
             var extra: [96]u8 = undefined;
-            const after = s.print("  {d} of {d}  {s}", .{ goal.landed, goal.total, goalExtra(goal, &extra) });
+            const trying = goalTrying(goal);
+            const after = if (trying > 0)
+                s.print("  {d} of {d}  {s}{s}▲ {d} to try", .{ goal.landed, goal.total, goalExtra(goal, &extra), if (goalExtra(goal, &extra).len > 0) "  " else "", trying })
+            else
+                s.print("  {d} of {d}  {s}", .{ goal.landed, goal.total, goalExtra(goal, &extra) });
             const name = text_mod.clip(goal.title, name_w);
             const head = s.print(" {s}{s}  #{d}  ", .{ name, spaces(name_w -| text_mod.cells(name)), goal.epic });
             const room = width -| text_mod.cells(head) -| text_mod.cells(after);
@@ -343,6 +354,7 @@ pub const Sheet = struct {
             .{ "building", "◐" },
             .{ "landing", "◒" },
             .{ "next", "●" },
+            .{ "to_try", "▲" },
             .{ "failed", "✗" },
             .{ "sent_back", "✗" },
         };
@@ -357,7 +369,7 @@ pub const Sheet = struct {
         var moving: usize = 0;
         for (goal.steps) |step| {
             const mark = stepMark(step.state);
-            if (std.mem.eql(u8, mark, "✓") or std.mem.eql(u8, mark, "○") or std.mem.eql(u8, mark, "✗")) continue;
+            if (std.mem.eql(u8, mark, "✓") or std.mem.eql(u8, mark, "○") or std.mem.eql(u8, mark, "✗") or std.mem.eql(u8, mark, "▲")) continue;
             if (moving == 3) break;
             const out = std.fmt.bufPrint(buf[used..], "{s}{s} #{d}", .{ if (moving > 0) " " else "", mark, step.ticket }) catch break;
             used += out.len;
@@ -506,6 +518,19 @@ test "next says what each waits on and why, goals their steps, and the picks run
     // 2 building, 2 verifying rows, 2 folded, 3 next, 2 goals, landed, not planned
     try std.testing.expectEqual(@as(usize, 2 + 2 + 2 + 3 + 2 + 2), s.picks);
     try std.testing.expectEqual(s.picks - 1, s.rows[s.rowOf(s.picks - 1).?].pick.?);
+}
+
+test "a goal with a step to try reads ▲ N to try, and the step is neither next nor moving" {
+    var b = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"plan":{"now":[],"next":[],
+        \\"goals":[{"epic":9,"title":"g","total":2,"landed":1,"steps":[{"ticket":1,"state":"to_try"},{"ticket":2,"state":"waiting"}]}],
+        \\"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer b.deinit();
+    var s: Sheet = undefined;
+    s.build(b.plan().?, &b, 100, 0, 0, false, false);
+    try std.testing.expect(std.mem.indexOf(u8, rowText(&s, .goal, 0).?, "1 of 2  ○ #2  ▲ 1 to try") != null);
+    try std.testing.expectEqual(@as(u32, 2), goalNext(b.plan().?.goals[0]).?.ticket);
 }
 
 test "a row too wide is cut, its right side kept" {

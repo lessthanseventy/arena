@@ -2023,6 +2023,7 @@ fn stepHue(r: theme.Roles, state: []const u8) struct { word: []const u8, lead: c
     if (eql(u8, state, "reviewing") or eql(u8, state, "verifying")) return .{ .word = state, .lead = r.checking, .filled = false };
     if (eql(u8, state, "failed") or eql(u8, state, "sent_back")) return .{ .word = "sent back", .lead = r.failed, .filled = true };
     if (eql(u8, state, "next")) return .{ .word = "next", .lead = r.dim, .filled = false };
+    if (eql(u8, state, "to_try")) return .{ .word = "▲ to try", .lead = r.you, .filled = true };
     return .{ .word = "todo", .lead = r.dim, .filled = false };
 }
 
@@ -2196,9 +2197,13 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
                     var buf: [32]u8 = undefined;
                     const pct: u32 = if (goal.total == 0) 0 else goal.landed * 100 / goal.total;
                     const label = std.fmt.bufPrint(&buf, "{d}/{d}  {d}%", .{ goal.landed, goal.total, pct }) catch "";
-                    const bar_w = cw -| 4 -| cellCount(label);
+                    const trying = sheets.goalTrying(goal);
+                    var tb: [24]u8 = undefined;
+                    const words = if (trying > 0) std.fmt.bufPrint(&tb, "▲ {d} to try", .{trying}) catch "" else "";
+                    const bar_w = cw -| 4 -| cellCount(label) -| (if (words.len > 0) cellCount(words) + 2 else 0);
                     try bench.bar(w, r, cx + 2, y, bar_w, goal.landed, goal.total, goalHue(b, r, goal));
                     try bench.say(w, cx + 3 + bar_w, y, label, r.dim, face, false);
+                    if (words.len > 0) try bench.say(w, cx + 3 + bar_w + cellCount(label) + 2, y, words, r.you, face, false);
                 },
                 .goal_next => {
                     try bench.fill(w, cx, y, cw, face);
@@ -4609,6 +4614,51 @@ test "Home in Workbench's look: the focal goal is the one with a step building, 
     const empty = try bench.probe(f, x + bar_w - 1, y);
     try std.testing.expectEqual(@as(u21, ' '), empty.cp);
     try std.testing.expectEqual(r.well, empty.bg);
+}
+
+test "a goal with a step to try reads ▲ 1 to try after its bar in the you colour, and the step's chip reads ▲ to try" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":326,"repo":"arena","kind":"epic","status":"doing","title":"The board, redesigned"}],
+        \\"plan":{"now":[],"next":[],
+        \\"goals":[{"epic":326,"title":"The board, redesigned","landed":2,"total":3,"steps":[{"ticket":7,"state":"to_try"}]}],
+        \\"landed_today":{"count":0,"newest":[]},
+        \\"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer board.deinit();
+    var app = homeApp(&board);
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 23;
+    app.roles = bench.roles();
+    app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
+    const r = bench.roles();
+
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    var buf: [65536]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try planView(&app, &out, app.board_view.?);
+    const f = out.buffered();
+
+    var at: usize = 0;
+    for (sheet.rows[0..sheet.n], 0..) |row, i| {
+        if (row.kind == .goal_bar and row.item == 0) at = i;
+    }
+    const y = 2 + (at - app.planTop(&sheet));
+    const cw = app.boardW() - 3 - 2;
+    const label_x = app.boardX() + 1 + 1 + 3 + cw -| 4 -| "2/3  66%".len -| 10 -| 2;
+    const words_x = label_x + "2/3  66%".len + 2;
+    const mark = try bench.probe(f, words_x, y);
+    try std.testing.expectEqual(@as(u21, '▲'), mark.cp);
+    try std.testing.expectEqual(r.you, mark.fg);
+    const last = try bench.probe(f, words_x + 9, y);
+    try std.testing.expectEqual(@as(u21, 'y'), last.cp);
+
+    var chip_buf: [4096]u8 = undefined;
+    var chip_out: Writer = .fixed(&chip_buf);
+    _ = try stepChip(&chip_out, r, 4, 2, board.plan().?.goals[0].steps[0]);
+    try std.testing.expect(std.mem.indexOf(u8, chip_out.buffered(), "#7 ▲ to try") != null);
 }
 
 test "babylon's refusal, said while the plan is shown, is on screen" {
