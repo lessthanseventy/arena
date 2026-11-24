@@ -1763,6 +1763,7 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
 /// A ticket's whole detail over the board, as babylon gave it, its lines cut to the box's width
 /// and run on under one another, scrolled `scroll` rows down.
 fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
+    if (app.board_view.?.gate) return gateBox(app, w, id, scroll);
     const rect = app.modalRect() orelse return;
     const inner = app_mod.detailWidth(app.boardW()).inner;
     const x = rect.x;
@@ -1826,6 +1827,98 @@ fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
     var noted = app_mod.DetailLines.init(note, inner);
     while (y < bottom) : (y += 1) try boxLine(w, &pen, edge, dim, x, y, noted.next() orelse "", inner);
     try modalFrame(app, w, rect, title, " j k scroll ");
+}
+
+/// Seconds as a stage's time reads: `4s`, `1m 58s`.
+fn took(buf: []u8, secs: i64) []const u8 {
+    const s = @max(0, secs);
+    return (if (s < 60) std.fmt.bufPrint(buf, "{d}s", .{s}) else std.fmt.bufPrint(buf, "{d}m {d}s", .{ @divFloor(s, 60), @mod(s, 60) })) catch "";
+}
+
+/// The gate's modal: ticket `id`'s last run as a row a stage with its mark, its result and its
+/// time, then under a rule the output of the first stage that failed, else the review's verdict,
+/// and last what is queued behind it. `scroll` rows down the output.
+fn gateBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
+    const rect = app.modalRect() orelse return;
+    const inner = app_mod.detailWidth(app.boardW()).inner;
+    const bottom = rect.y + rect.h;
+    var title_buf: [32]u8 = undefined;
+    const title = std.fmt.bufPrint(&title_buf, " gate · #{d} ", .{id}) catch " gate ";
+    if (rect.w < cellCount(title) + 3) return;
+    const edge = ink(app, "amber", 4);
+    const dim = ink(app, "dim", 8);
+    var pen: Pen = .{};
+    const run = app_mod.gateLastRun(if (app.detail.items.len > 0) app.detail.items else "");
+    var y = rect.y + 2;
+    var output: []const u8 = "";
+    var failed = false;
+    for (app_mod.gate_stages) |name| {
+        var line_buf: [256]u8 = undefined;
+        var dur_buf: [16]u8 = undefined;
+        const stage = app_mod.gateStage(run, name);
+        const mark: []const u8, const style: vt.Style = if (stage) |s| blk: {
+            if (std.mem.eql(u8, s.result, "failed") or std.mem.eql(u8, s.result, "error")) {
+                if (!failed) output = s.body;
+                failed = true;
+                break :blk .{ "✗", ink(app, "emberdim", 1) };
+            }
+            if (s.end == null) break :blk .{ "◒", ink(app, "amber", 4) };
+            if (!failed and std.mem.eql(u8, name, "review")) output = s.body;
+            break :blk .{ "✓", .{} };
+        } else .{ "·", dim };
+        const dur = if (stage) |s| (if (tickets.epochOf(s.start)) |from| took(&dur_buf, (tickets.epochOf(s.end) orelse app.epoch) - from) else "") else "";
+        const result = if (stage) |s| s.result else "";
+        const head = std.fmt.bufPrint(&line_buf, "{s} {s: <8} {s}", .{ mark, name, result }) catch name;
+        const room = inner -| (cellCount(dur) + 1);
+        var row: [320]u8 = undefined;
+        var out: Writer = .fixed(&row);
+        const shown = clip(head, room);
+        out.writeAll(shown) catch {};
+        for (cellCount(shown)..inner -| cellCount(dur)) |_| out.writeAll(" ") catch {};
+        out.writeAll(dur) catch {};
+        try boxLine(w, &pen, edge, style, rect.x, y, out.buffered(), inner);
+        y += 1;
+    }
+    var bar: [1024]u8 = undefined;
+    var ruler: Writer = .fixed(&bar);
+    for (0..inner) |_| ruler.writeAll("─") catch {};
+    try boxLine(w, &pen, edge, dim, rect.x, y, ruler.buffered(), inner);
+    y += 1;
+
+    var queued: [256]u8 = undefined;
+    var q: Writer = .fixed(&queued);
+    var waiting: usize = 0;
+    if (app.board) |*b| for (b.cards()) |card| {
+        const stage = card.stage orelse continue;
+        if (card.id == id or !std.mem.eql(u8, stage, "queued")) continue;
+        q.print("{s}#{d} {s}", .{ if (waiting == 0) "queued behind it: " else ", ", card.id, card.repo orelse "" }) catch {};
+        waiting += 1;
+    };
+    const last = if (waiting > 0 and y + 1 < bottom) bottom - 1 else bottom;
+    if (run.len == 0) output = "…";
+    var row_at: usize = 0;
+    var lines = std.mem.splitScalar(u8, output, '\n');
+    while (lines.next()) |raw| {
+        const text = if (std.mem.startsWith(u8, raw, "    ")) raw[4..] else raw;
+        var wrapped = app_mod.DetailLines.init(text, inner);
+        var any = false;
+        while (wrapped.next()) |line| : (row_at += 1) {
+            any = true;
+            if (row_at < scroll or y >= last) continue;
+            try boxLine(w, &pen, edge, .{}, rect.x, y, line, inner);
+            y += 1;
+        }
+        if (!any) {
+            if (row_at >= scroll and y < last) {
+                try boxLine(w, &pen, edge, .{}, rect.x, y, "", inner);
+                y += 1;
+            }
+            row_at += 1;
+        }
+    }
+    while (y < last) : (y += 1) try boxLine(w, &pen, edge, .{}, rect.x, y, "", inner);
+    if (last < bottom) try boxLine(w, &pen, edge, dim, rect.x, last, q.buffered(), inner);
+    try modalFrame(app, w, rect, title, if (app.board_view.?.withdrawing) " W again to withdraw " else " j k scroll ");
 }
 
 /// The modal frame every thing opens in: the rounded box at `rect` with its head in the top edge
@@ -1947,7 +2040,7 @@ const board_keys = [_][2][]const u8{
     .{ "n + /", "file a ticket; find cards by number, title or repo" },
     .{ "r, a tab", "the next repo, the backlog, or the one clicked" },
     .{ "t w W", "backlog card to todo; todo card to next, asking its why; W at top" },
-    .{ "g", "babylon's gate, while it runs one" },
+    .{ "g", "the gate's modal on the run in progress, else its session" },
     .{ "o", "the orchestrator, started if it is not running" },
     .{ "A", "babylon's auto mode, on or off" },
     .{ "`", "fold the orchestrator's window beside it, or unfold" },

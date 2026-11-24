@@ -352,6 +352,10 @@ pub const BoardView = struct {
     /// The ticket whose whole detail is shown over the board, and how far down it is scrolled.
     detail: ?u32 = null,
     detail_scroll: usize = 0,
+    /// The open modal is that ticket's gate run, not its detail; and `W` has asked whether to
+    /// withdraw it.
+    gate: bool = false,
+    withdrawing: bool = false,
     /// The board's keys shown over it, until the next key.
     help: bool = false,
     /// Opened as home: the orchestrator's column beside it while the orchestrator is not running.
@@ -2735,6 +2739,23 @@ pub const App = struct {
     /// Ticket `id`'s whole detail asked of babylon and shown over the open board. False with
     /// nowhere for babylon to write it.
     fn openDetail(app: *App, id: u32) !bool {
+        return app.openText(id, "detail", false);
+    }
+
+    /// Ticket `id`'s gate run, the run in progress's when it has one, in the modal frame.
+    fn openGate(app: *App, id: u32) !void {
+        _ = try app.openText(id, "gate", true);
+    }
+
+    /// The gate's modal on the run in progress, or the gate's session while none shows one.
+    fn gateModal(app: *App) !void {
+        var runs: [1]*const tickets.Card = undefined;
+        const b = if (app.board) |*b| b else return;
+        if (b.running(&runs) > 0) return app.openGate(runs[0].id);
+        try app.toGate();
+    }
+
+    fn openText(app: *App, id: u32, comptime cmd: []const u8, gate: bool) !bool {
         var buf: [std.fs.max_path_bytes]u8 = undefined;
         const path = app.detailPath(id, &buf) orelse return false;
         const view = &app.board_view.?;
@@ -2744,8 +2765,10 @@ pub const App = struct {
         try app.detail_asked.append(app.gpa, id);
         view.detail = id;
         view.detail_scroll = 0;
+        view.gate = gate;
+        view.withdrawing = false;
         app.detail.clearRetainingCapacity();
-        try app.send(.ignore, "run-shell -b \"babylon detail {d} >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ id, path, path, path });
+        try app.send(.ignore, "run-shell -b \"babylon " ++ cmd ++ " {d} >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ id, path, path, path });
         return true;
     }
 
@@ -3583,7 +3606,7 @@ pub const App = struct {
         if (is(key, &.{"\x1b"}) and app.find_len > 0) return app.clearFind();
         if (is(key, &.{ "\x1b", "q" })) return app.closeBoard();
         if (is(key, &.{"`"})) return app.foldSide();
-        if (is(key, &.{"g"})) return app.toGate();
+        if (is(key, &.{"g"})) return app.gateModal();
         if (is(key, &.{"o"})) return app.toOrchestrator();
         if (is(key, &.{"A"})) return app.toggleAuto();
         if (is(key, &.{"P"})) return app.jumpProposed();
@@ -3795,7 +3818,7 @@ pub const App = struct {
     };
 
     /// What a modal button does when pressed.
-    pub const ModalAction = union(enum) { close, card: CardAction, option: u8, claude };
+    pub const ModalAction = union(enum) { close, card: CardAction, option: u8, claude, whole_log, ticket, bump, withdraw };
 
     /// A button of the modal frame, where it is drawn and clicked: 0-based. It reads ` key label `.
     pub const ModalButton = struct {
@@ -3913,6 +3936,24 @@ pub const App = struct {
         const right = rect.x + rect.w -| 2;
         var n: usize = 0;
         var x = rect.x + 2;
+        if (app.board_view.?.gate) {
+            const all = [_]ModalButton{
+                .{ .action = .whole_log, .key = "L", .label = "whole log", .x = 0, .y = foot },
+                .{ .action = .ticket, .key = "t", .label = "ticket", .x = 0, .y = foot },
+                .{ .action = .bump, .key = "u", .label = "bump", .x = 0, .y = foot },
+                .{ .action = .withdraw, .key = "W", .label = "withdraw", .x = 0, .y = foot },
+                .{ .action = .close, .key = "q", .label = "close", .x = 0, .y = foot },
+            };
+            for (all) |item| {
+                var button = item;
+                button.x = x;
+                if (x + button.width() > right or n == out.len) break;
+                out[n] = button;
+                n += 1;
+                x += button.width() + 1;
+            }
+            return out[0..n];
+        }
         if (app.modalCard()) |card| {
             var head: CardHead = undefined;
             cardHead(card, detailWidth(app.boardW()).inner, &head);
@@ -3978,6 +4019,15 @@ pub const App = struct {
                 try app.answerAsk(ask.id, choice);
                 view.detail = null;
             },
+            .whole_log => try app.ticketWindow("babylon gate {d} | less", .{view.detail orelse return}),
+            .ticket => _ = try app.openDetail(view.detail orelse return),
+            .bump => try app.send(.ignore, "run-shell -b \"babylon bump {d}\"", .{view.detail orelse return}),
+            .withdraw => if (view.withdrawing) {
+                try app.send(.ignore, "run-shell -b \"babylon withdraw {d}\"", .{view.detail orelse return});
+                view.detail = null;
+            } else {
+                view.withdrawing = true;
+            },
             .claude => {
                 const win = app.claudeOf(app.modalCard() orelse return) orelse return;
                 try app.closeBoard();
@@ -3991,9 +4041,22 @@ pub const App = struct {
     fn modalKey(app: *App, key: []const u8) !void {
         const view = &app.board_view.?;
         const is = anyKey;
+        const was_withdrawing = view.withdrawing;
+        view.withdrawing = false;
         if (is(key, &.{ "\x1b", "q", " " })) return app.pressModal(.close);
         if (is(key, &.{ "j", "\x1b[B", "\x1bOB" }) and view.detail_scroll + 1 < app.detailRows()) view.detail_scroll += 1;
         if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.detail_scroll -|= 1;
+        if (view.gate) {
+            if (is(key, &.{"L"})) return app.pressModal(.whole_log);
+            if (is(key, &.{"t"})) return app.pressModal(.ticket);
+            if (is(key, &.{"u"})) return app.pressModal(.bump);
+            if (is(key, &.{"W"})) {
+                view.withdrawing = was_withdrawing;
+                return app.pressModal(.withdraw);
+            }
+            return;
+        }
+        if (is(key, &.{"g"})) return app.openGate(view.detail orelse return);
         const card = app.modalCard() orelse return;
         if (key.len == 1 and key[0] >= '1' and key[0] <= '9') return app.pressModal(.{ .option = key[0] - '0' });
         const action: ModalAction = if (is(key, &.{"\r"})) .{ .card = .go } else if (is(key, &.{"G"})) .{ .card = .give } else if (is(key, &.{"e"})) .{ .card = .edit } else if (is(key, &.{"p"})) .{ .card = .priority } else if (is(key, &.{">"})) .{ .card = .close } else if (is(key, &.{"<"})) .{ .card = .reopen } else if (is(key, &.{"c"}) and app.claudeOf(card) != null) .claude else return;
@@ -4206,7 +4269,7 @@ pub const App = struct {
                 view.col = 0;
                 view.row = 0;
             },
-            .gate => try app.toGate(),
+            .gate => try app.gateModal(),
             .orch => try app.toOrchestrator(),
             .auto => try app.toggleAuto(),
             .needs => try app.toFeed("]", null),
@@ -5644,6 +5707,50 @@ test "a row of Claude Code's list of agents is a subagent's by its description" 
     try std.testing.expect(!rowNames("main", "main"));
 }
 
+/// The stages of a gate run, in the order babylon takes them.
+pub const gate_stages = [_][]const u8{ "rebase", "gate", "review", "land", "install" };
+
+/// One stage of a gate run as `babylon gate` writes it: its result word, when it started and
+/// ended, and the lines indented under it with their indent.
+pub const GateStage = struct { result: []const u8, start: ?[]const u8, end: ?[]const u8, body: []const u8 };
+
+/// The last run of `babylon gate`'s text: from its final `run` line to the end.
+pub fn gateLastRun(text: []const u8) []const u8 {
+    const at = std.mem.lastIndexOf(u8, text, "\nrun ") orelse return text;
+    return text[at + 1 ..];
+}
+
+/// Stage `name` in `run`, `  name: result (start to end)` and the lines under it.
+pub fn gateStage(run: []const u8, name: []const u8) ?GateStage {
+    var at: usize = 0;
+    while (at < run.len) {
+        const end = std.mem.indexOfScalarPos(u8, run, at, '\n') orelse run.len;
+        const line = run[at..end];
+        const next = @min(end + 1, run.len);
+        defer at = next;
+        if (line.len <= 3 + name.len or !std.mem.startsWith(u8, line, "  ") or line[2] == ' ') continue;
+        if (!std.mem.startsWith(u8, line[2..], name) or line[2 + name.len] != ':') continue;
+        const rest = std.mem.trim(u8, line[3 + name.len ..], " ");
+        const paren = std.mem.indexOfScalar(u8, rest, '(');
+        const result = std.mem.trim(u8, rest[0 .. paren orelse rest.len], " ");
+        var start: ?[]const u8 = null;
+        var stop: ?[]const u8 = null;
+        if (paren) |open| {
+            const inside = std.mem.trimEnd(u8, rest[open + 1 ..], ") ");
+            if (std.mem.indexOf(u8, inside, " to ")) |sep| {
+                start = inside[0..sep];
+                stop = std.mem.trim(u8, inside[sep + 4 ..], " ");
+            } else start = inside;
+        }
+        var body_end = next;
+        while (body_end < run.len and std.mem.startsWith(u8, run[body_end..], "    ")) {
+            body_end = @min((std.mem.indexOfScalarPos(u8, run, body_end, '\n') orelse run.len) + 1, run.len);
+        }
+        return .{ .result = result, .start = start, .end = if (stop != null and stop.?.len > 0) stop else null, .body = run[next..body_end] };
+    }
+    return null;
+}
+
 /// The detail box's width, and the text's within its border.
 pub fn detailWidth(view_w: u16) struct { box: u16, inner: u16 } {
     const box = @min(view_w -| 4, 100);
@@ -6180,6 +6287,35 @@ test "a click on ▲ proposed finds the last row of a picked card's box as of an
         try std.testing.expectEqual(@as(usize, 2), hits);
         app.board_view.?.row = 1;
     }
+}
+
+test "a gate run's last run is read into its stages, their results, times and output" {
+    const text =
+        \\#5 T
+        \\
+        \\run submitted 2026-11-24T04:00:00Z
+        \\  rebase: ok (2026-11-24T04:00:01Z to 2026-11-24T04:00:02Z)
+        \\run submitted 2026-11-24T05:00:00Z
+        \\  rebase: ok (2026-11-24T05:00:01Z to 2026-11-24T05:00:05Z)
+        \\  gate: failed (2026-11-24T05:00:05Z to 2026-11-24T05:02:03Z)
+        \\    test "a" failed
+        \\    expected 1
+        \\
+        \\  review: running (2026-11-24T05:02:03Z)
+        \\
+    ;
+    const run = gateLastRun(text);
+    try std.testing.expect(std.mem.startsWith(u8, run, "run submitted 2026-11-24T05:00:00Z"));
+    const rebase = gateStage(run, "rebase").?;
+    try std.testing.expectEqualStrings("ok", rebase.result);
+    try std.testing.expectEqualStrings("2026-11-24T05:00:05Z", rebase.end.?);
+    const gate = gateStage(run, "gate").?;
+    try std.testing.expectEqualStrings("failed", gate.result);
+    try std.testing.expectEqualStrings("    test \"a\" failed\n    expected 1\n", gate.body);
+    const review = gateStage(run, "review").?;
+    try std.testing.expectEqualStrings("running", review.result);
+    try std.testing.expect(review.end == null);
+    try std.testing.expect(gateStage(run, "land") == null);
 }
 
 test "a card moves along its column only with a repo, out of the backlog" {

@@ -22,7 +22,7 @@ chmod +x $tmp/bin/claude
 print -r -- $'#!/bin/sh\nprintf "%s|" "$@" >>'$tmp$'/notified\necho >>'$tmp$'/notified' >$tmp/bin/notify-send
 chmod +x $tmp/bin/notify-send
 # stands in for babylon's command line: it says what the board answered
-print -r -- $'#!/bin/sh\necho "$@" >>'$tmp$'/babylon\n[ "$1" = answer ] && [ -e '$tmp$'/refuse ] && { echo "babylon: no session to answer" >&2; exit 1; }\n[ "$1" = give ] && [ -e '$tmp$'/refuse ] && { echo "babylon: the Claude in $3 is mid-turn" >&2; exit 1; }\n[ "$1" = start ] && [ -e '$tmp$'/refuse-start ] && { echo "babylon: ticket #$2 is claimed by pane %1010" >&2; exit 1; }\n[ "$1" = next ] && [ -e '$tmp$'/refuse-next ] && { echo "babylon: ticket #$2 is claimed by pane %1010" >&2; exit 1; }\n[ "$1" = detail ] && printf \'#%s Lights\\n\\nthe whole of it\\n\' "$2"\nexit 0' >$tmp/bin/babylon
+print -r -- $'#!/bin/sh\necho "$@" >>'$tmp$'/babylon\n[ "$1" = answer ] && [ -e '$tmp$'/refuse ] && { echo "babylon: no session to answer" >&2; exit 1; }\n[ "$1" = give ] && [ -e '$tmp$'/refuse ] && { echo "babylon: the Claude in $3 is mid-turn" >&2; exit 1; }\n[ "$1" = start ] && [ -e '$tmp$'/refuse-start ] && { echo "babylon: ticket #$2 is claimed by pane %1010" >&2; exit 1; }\n[ "$1" = next ] && [ -e '$tmp$'/refuse-next ] && { echo "babylon: ticket #$2 is claimed by pane %1010" >&2; exit 1; }\n[ "$1" = detail ] && printf \'#%s Lights\\n\\nthe whole of it\\n\' "$2"\n[ "$1" = gate ] && printf \'run submitted 2026-11-24T05:00:00Z\\n  rebase: ok (2026-11-24T05:00:01Z to 2026-11-24T05:00:05Z)\\n  gate: failed (2026-11-24T05:00:05Z to 2026-11-24T05:02:03Z)\\n    expected 1, found 0\\n\'\nexit 0' >$tmp/bin/babylon
 chmod +x $tmp/bin/babylon
 export PATH=$tmp/bin:$PATH
 
@@ -1347,6 +1347,21 @@ check "and the rail does not list it" gone '│ babylon '
 key g
 check "g on the board shows the gate" see '╭─ 1 gate '
 cp $tmp/run/babylon/board.json $tmp/board.kept
+print -r -- '{"tickets":[{"id":21,"repo":"arena","title":"Running","kind":"ticket","status":"review","priority":"med","blocked_by":[],"stage":"reviewing"},{"id":22,"repo":"arena","title":"Waiting","kind":"ticket","status":"review","priority":"med","blocked_by":[],"stage":"queued"}]}' \
+  >$tmp/run/babylon/board.json
+key M-b
+see '#21 Running'
+key g
+check "g on the board with a run in progress opens the gate's modal on it" see '╭─ gate · #21 '
+check "its stages with their marks and times" see '✓ rebase +ok +4s'
+check "the failed one's result" see '✗ gate +failed +1m 58s'
+check "and its failing output under them" see '│ expected 1, found 0 +│'
+check "and what is queued behind it" see 'queued behind it: #22 arena'
+check "with its keys in the foot" see '╰─ L whole log ─ t ticket ─ u bump ─ W withdraw ─ q close'
+key u
+check "u bumps it through babylon" await last 'bump 21'
+key q
+key q
 print -r -- '{"tickets":[{"id":13,"repo":"babylon","title":"Gatekeeping","kind":"ticket","status":"todo","priority":"med","blocked_by":[]}]}' \
   >$tmp/run/babylon/board.json
 key M-b
