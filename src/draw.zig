@@ -2620,7 +2620,7 @@ fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
     };
     const card = app.modalCard();
     var head: App.CardHead = .{};
-    if (card) |it| App.cardHead(it, inner, app.epoch, &head);
+    if (card) |it| App.cardHead(it, inner, app.epoch, app.askWords(it) != null, &head);
     const win = if (card) |it| app.claudeOf(it) else null;
     const claude_rows: u16 = if (win != null and bottom - top - 2 > note_rows + head.n + 1) 1 else 0;
     const text_end = bottom - note_rows - claude_rows;
@@ -2779,7 +2779,7 @@ fn benchDetail(app: *const App, w: *Writer, r: theme.Roles, id: u32, rect: App.M
     try bench.say(w, rect.x + rect.w - 4, rect.y, "✕", r.text, r.raised, true);
 
     var head: App.CardHead = .{};
-    if (card) |it| App.cardHead(it, inner, app.epoch, &head);
+    if (card) |it| App.cardHead(it, inner, app.epoch, app.askWords(it) != null, &head);
     const note = doneNote(app, id);
     var note_rows: u16 = 0;
     var counted = app_mod.DetailLines.init(note, inner);
@@ -2809,8 +2809,9 @@ fn benchDetail(app: *const App, w: *Writer, r: theme.Roles, id: u32, rect: App.M
                 try benchFacts(app, w, r, card.?, x0, y, inner);
             },
             .warn => try bench.say(w, x0, y, clip(line, inner), r.you, bg, true),
-            .options => for (modal) |button| if (button.action == .option and button.y == y) {
-                _ = try bench.button(w, r, button.x, y, button.key, button.label, button.action.option == 1, r.tile);
+            .options => for (modal) |button| if ((button.action == .option or button.action == .words) and button.y == y) {
+                const lit = button.action == .option and button.action.option == app.board_view.?.ask_pick;
+                _ = try bench.button(w, r, button.x, y, button.key, button.label, lit, r.tile);
             },
         }
         y += 1;
@@ -2854,7 +2855,7 @@ fn benchDetail(app: *const App, w: *Writer, r: theme.Roles, id: u32, rect: App.M
     var end = x0;
     var primary = true;
     for (modal) |button| {
-        if (button.action == .option) continue;
+        if ((button.action == .option or button.action == .words) and button.y != foot) continue;
         _ = try bench.button(w, r, button.x, button.y, button.key, button.label, primary and button.action != .close, r.ground);
         if (button.action != .close) primary = false;
         end = button.x + button.width() + 1;
@@ -4635,7 +4636,7 @@ test "a card's popup in Workbench's look: a window with its ✕, the title whole
     var buttons: [16]App.ModalButton = undefined;
     var options: [2]App.ModalButton = undefined;
     var n: usize = 0;
-    for (app.modalButtons(&buttons)) |b| if (b.action == .option) {
+    for (app.modalButtons(&buttons)) |b| if (b.action == .option and b.y < rect.y + rect.h - 1) {
         options[n] = b;
         n += 1;
     };
@@ -4793,6 +4794,10 @@ fn lookBox(app: *App, w: *Writer, look: App.Look) !void {
             for (tail[0..got]) |line| p.add(.dim, "{s}", .{line});
         }
     } else p.add(.dim, "no Claude holds it", .{});
+    if (peek.card) |card| if (card.ask != null) {
+        p.add(.head, "⏎ answer   space open card   esc away", .{});
+        return peekBox(app, w, &p);
+    };
     p.add(.head, "⏎ go   space open card   esc away", .{});
     return peekBox(app, w, &p);
 }

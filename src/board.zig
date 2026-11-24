@@ -362,6 +362,14 @@ pub const Board = struct {
         return b.parsed.value.needs_you;
     }
 
+    /// The Your move item of ticket `id`'s open ask, when babylon gives one.
+    pub fn askNeed(b: *const Board, id: u32) ?*const Need {
+        for (b.needsYou()) |*need| {
+            if (std.mem.eql(u8, need.kind, "ask") and need.ticket == id) return need;
+        }
+        return null;
+    }
+
     /// What babylon says the plan is, when its file says one.
     pub fn plan(b: *const Board) ?*const Plan {
         return if (b.parsed.value.plan) |*p| p else null;

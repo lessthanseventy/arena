@@ -1077,7 +1077,8 @@ check "and a number answers it through babylon" await checked
 check "and puts it away" gone 'Which colour'
 : >$tmp/babylon
 key ' '
-check "space opens its modal, the question and its options as numbered buttons" see ' 1 red  +2 blue '
+check "space opens its modal, the question and its options as numbered buttons, a row each" see ' 1 red +│'
+check "and the second under it" see ' 2 blue +│'
 key 2
 check "a number answers it there through babylon" await checked
 check "and closes it" gone ' 1 red '
@@ -2178,6 +2179,38 @@ await shows "esc away"
 key Escape
 check "esc puts it away too" gone 'esc away'
 
+# three cards asking, each opened once: a number answers on the first, a click on the second, ⏎ on the third
+asking() { print -r -- '{"id":'$1',"repo":"arena","title":"'$2'","kind":"ticket","status":"todo","priority":"med","blocked_by":[],"ask":{"id":'$3',"question":"Which one?","options":["alpha","beta","gamma"]}}' }
+print -r -- '{"tickets":['"$(asking 920 'Peek me' 6)"','"$(asking 921 'Second' 7)"','"$(asking 922 'Third' 8)"'],'\
+'"needs_you":[{"id":"ask:6","kind":"ask","ticket":920,"repo":"arena","text":"#920 arena  asks: Which one?","actions":['\
+'{"key":"1","label":"alpha","argv":["babylon","answer","6","1"]},{"key":"2","label":"beta","argv":["babylon","answer","6","2"]},'\
+'{"key":"3","label":"gamma","argv":["babylon","answer","6","3"]},{"key":"c","label":"in words","argv":["babylon","answer","6","--words"],"needs":"words"}]}]}' >$tmp/run/babylon/board.json
+see '#922 Third'
+mouse 0 ${(z)$(spot '#920 Peek')} M
+mouse 35 80 24 M
+key ' '
+check "a card with an open ask: its modal lists every option, a row each" see '│ +3 +gamma'
+check "and its words, on a key that leaves its Claude another" see '│ +c +in words'
+check "and ⏎ in its foot is labelled for answering the lit option" see '⏎ answer 1'
+: >$tmp/babylon
+key 2
+check "a number answers that option through babylon" await last 'answer 6 2'
+check "and puts the modal away" gone '│ +3 +gamma'
+mouse 0 ${(z)$(spot '#921 Second')} M
+mouse 35 80 24 M
+key ' '
+await shows '│ +3 +gamma'
+: >$tmp/babylon
+gamma_row=$(screen | grep -n -m1 -E '│ +3 +gamma' | cut -d: -f1)
+mouse 0 $(( $(colof $gamma_row '3 gamma') + 1 )) $gamma_row M
+check "a click on an option answers it" await last 'answer 7 3'
+mouse 0 ${(z)$(spot '#922 Third')} M
+mouse 35 80 24 M
+key ' '
+await shows '│ +3 +gamma'
+: >$tmp/babylon
+key Enter
+check "and ⏎ answers the lit one, which its label said" await last 'answer 8 1'
 key M-b
 key M-q
 gone ' every [0-9]+ +[a-z]'

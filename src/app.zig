@@ -366,6 +366,8 @@ pub const BoardView = struct {
     /// The ticket whose whole detail is shown over the board, and how far down it is scrolled.
     detail: ?u32 = null,
     detail_scroll: usize = 0,
+    /// The option of the modal's open ask that ⏎ answers, from 1.
+    ask_pick: u8 = 1,
     /// The open modal is that ticket's gate run, not its detail; and `W` has asked whether to
     /// withdraw it.
     gate: bool = false,
@@ -399,6 +401,7 @@ pub const BoardView = struct {
 
 /// The cards a column of the board can hold, and the repos it can be narrowed to.
 pub const max_cards = 256;
+const max_ask_options = 9;
 /// The Claudes a card can be given to, each picked by its number.
 pub const give_rows = 9;
 const max_repos = 32;
@@ -1846,6 +1849,10 @@ pub const App = struct {
             if (look == .ticket and app.board_view != null) {
                 _ = app.pickCard(look.ticket);
                 app.board_view.?.focus = .board;
+                if (was.?.card) |card| if (card.ask != null) {
+                    _ = try app.openDetail(card.id);
+                    return true;
+                };
                 return false;
             }
             if (was.?.win) |win| if (win.agent_pane != 0) {
@@ -3223,6 +3230,7 @@ pub const App = struct {
         try app.detail_asked.append(app.gpa, id);
         view.detail = id;
         view.detail_scroll = 0;
+        view.ask_pick = 1;
         view.gate = gate;
         view.withdrawing = false;
         app.detail.clearRetainingCapacity();
@@ -4753,7 +4761,7 @@ pub const App = struct {
     };
 
     /// What a modal button does when pressed.
-    pub const ModalAction = union(enum) { close, card: CardAction, option: u8, claude, whole_log, ticket, bump, withdraw };
+    pub const ModalAction = union(enum) { close, card: CardAction, option: u8, words, claude, whole_log, ticket, bump, withdraw };
 
     /// A button of the modal frame, where it is drawn and clicked: 0-based. It reads ` key label `.
     pub const ModalButton = struct {
@@ -4803,7 +4811,7 @@ pub const App = struct {
         lines: [64][]const u8 = undefined,
         kinds: [64]Kind = undefined,
         n: usize = 0,
-        /// The line of the open ask's options, which are buttons.
+        /// The first of the lines of the open ask's options, a button each, and its words after.
         options: ?usize = null,
 
         fn add(head: *CardHead, kind: Kind, comptime fmt: []const u8, args: anytype) void {
@@ -4838,7 +4846,7 @@ pub const App = struct {
 
     /// Fills `head` with the card's title whole, its stage, holder, model and branch, what blocks
     /// it, the question it asks with its options, and what it was sent back for.
-    pub fn cardHead(card: *const tickets.Card, inner: usize, epoch: i64, head: *CardHead) void {
+    pub fn cardHead(card: *const tickets.Card, inner: usize, epoch: i64, words: bool, head: *CardHead) void {
         head.* = .{};
         head.wrap(.plain, card.title, inner, head.lines.len);
         var meta: [256]u8 = undefined;
@@ -4863,7 +4871,7 @@ pub const App = struct {
                 head.add(.dim, "waiting {s}", .{waited(&age, epoch - at)});
             }
             head.options = head.n;
-            head.add(.options, "", .{});
+            for (0..@min(ask.options.len, max_ask_options) + @intFromBool(words)) |_| head.add(.options, "", .{});
         }
     }
 
@@ -4896,19 +4904,36 @@ pub const App = struct {
         }
         if (app.modalCard()) |card| {
             var head: CardHead = undefined;
-            cardHead(card, detailWidth(app.boardW()).inner, app.epoch, &head);
-            if (head.options) |line| if (card.ask) |ask| for (ask.options, 1..) |option, number| {
-                if (number > 9 or n == out.len) break;
-                const key = "123456789"[number - 1 ..][0..1];
-                const button: ModalButton = .{ .action = .{ .option = @intCast(number) }, .key = key, .label = option, .x = x, .y = rect.y + 1 + @as(u16, @intCast(line)) };
-                if (x + button.width() > right) break;
+            const words = app.askWords(card);
+            cardHead(card, detailWidth(app.boardW()).inner, app.epoch, words != null, &head);
+            var shown: usize = 0;
+            if (head.options) |line| if (card.ask) |ask| {
+                shown = @min(ask.options.len, max_ask_options);
+                for (ask.options[0..shown], 1..) |option, number| {
+                    const y = rect.y + 1 + @as(u16, @intCast(line + number - 1));
+                    if (y >= foot or n == out.len) break;
+                    out[n] = .{ .action = .{ .option = @intCast(number) }, .key = "123456789"[number - 1 ..][0..1], .label = option, .x = x, .y = y };
+                    n += 1;
+                }
+                if (words) |w| {
+                    const y = rect.y + 1 + @as(u16, @intCast(line + shown));
+                    if (y < foot and n < out.len) {
+                        out[n] = .{ .action = .words, .key = w.action.key, .label = w.action.label, .x = x, .y = y };
+                        n += 1;
+                    }
+                }
+            };
+            x = rect.x + 2;
+            if (shown > 0 and n < out.len) {
+                const pick = @min(@max(app.board_view.?.ask_pick, 1), shown);
+                const button: ModalButton = .{ .action = .{ .option = pick }, .key = "⏎", .label = answers[pick - 1], .x = x, .y = foot };
                 out[n] = button;
                 n += 1;
                 x += button.width() + 1;
-            };
-            x = rect.x + 2;
+            }
             var have: [12]CardAction = undefined;
             for (cardActions(card, &have)) |action| {
+                if (action == .go and shown > 0) continue;
                 const key: []const u8 = switch (action) {
                     .go => "⏎",
                     .no => "x",
@@ -4926,7 +4951,7 @@ pub const App = struct {
                 x += button.width() + 1;
             }
             if (app.claudeOf(card) != null and n < out.len) {
-                const button: ModalButton = .{ .action = .claude, .key = "c", .label = "its Claude", .x = x, .y = foot };
+                const button: ModalButton = .{ .action = .claude, .key = app.claudeKey(card), .label = "its Claude", .x = x, .y = foot };
                 if (x + button.width() <= right) {
                     out[n] = button;
                     n += 1;
@@ -4942,10 +4967,30 @@ pub const App = struct {
         return out[0..n];
     }
 
+    /// The words action of `card`'s open ask, as babylon's Your move item gives it.
+    pub fn askWords(app: *const App, card: *const tickets.Card) ?struct { need: []const u8, action: tickets.Action } {
+        if (card.ask == null) return null;
+        const b = if (app.board) |*b| b else return null;
+        const need = b.askNeed(card.id) orelse return null;
+        for (need.actions) |action| {
+            const needs = action.needs orelse continue;
+            if (std.mem.eql(u8, needs, "words")) return .{ .need = need.id, .action = action };
+        }
+        return null;
+    }
+
+    const answers = [max_ask_options][]const u8{ "answer 1", "answer 2", "answer 3", "answer 4", "answer 5", "answer 6", "answer 7", "answer 8", "answer 9" };
+
     /// The window of the Claude holding `card`, when there is one.
     pub fn claudeOf(app: *const App, card: *const tickets.Card) ?*const Window {
         const at = app.paneWindow(card.holder() orelse return null) orelse return null;
         return at.session.wins.items[at.index];
+    }
+
+    /// The key of the modal's its Claude: `c`, unless the open ask's words action has it.
+    fn claudeKey(app: *const App, card: *const tickets.Card) []const u8 {
+        const w = app.askWords(card) orelse return "c";
+        return if (std.mem.eql(u8, w.action.key, "c")) "C" else "c";
     }
 
     /// What a press on a modal button does.
@@ -4959,6 +5004,11 @@ pub const App = struct {
                 if (choice > ask.options.len) return;
                 try app.answerAsk(ask.id, choice);
                 view.detail = null;
+            },
+            .words => {
+                const w = app.askWords(app.modalCard() orelse return) orelse return;
+                view.detail = null;
+                _ = app.openWords(w.need);
             },
             .whole_log => try app.ticketWindow("babylon gate {d} | less", .{view.detail orelse return}),
             .ticket => _ = try app.openDetail(view.detail orelse return),
@@ -5002,7 +5052,13 @@ pub const App = struct {
         if (is(key, &.{"x"}) and (app.modalCard() orelse return).proposal != null) return app.pressModal(.{ .card = .no });
         const card = app.modalCard() orelse return;
         if (key.len == 1 and key[0] >= '1' and key[0] <= '9') return app.pressModal(.{ .option = key[0] - '0' });
-        const action: ModalAction = if (is(key, &.{"\r"})) .{ .card = .go } else if (is(key, &.{"G"})) .{ .card = .give } else if (is(key, &.{"e"})) .{ .card = .edit } else if (is(key, &.{"p"})) .{ .card = .priority } else if (is(key, &.{">"})) .{ .card = .close } else if (is(key, &.{"<"})) .{ .card = .reopen } else if (is(key, &.{"c"}) and app.claudeOf(card) != null) .claude else return;
+        if (card.ask) |ask| if (ask.options.len > 0) {
+            if (is(key, &.{"\t"})) view.ask_pick = if (view.ask_pick < @min(ask.options.len, max_ask_options)) view.ask_pick + 1 else 1;
+            if (is(key, &.{"\r"})) return app.pressModal(.{ .option = @min(view.ask_pick, @as(u8, @intCast(@min(ask.options.len, max_ask_options)))) });
+        };
+        if (app.askWords(card)) |w| if (is(key, &.{w.action.key})) return app.pressModal(.words);
+        const claude_key = app.claudeKey(card);
+        const action: ModalAction = if (is(key, &.{"\r"})) .{ .card = .go } else if (is(key, &.{"G"})) .{ .card = .give } else if (is(key, &.{"e"})) .{ .card = .edit } else if (is(key, &.{"p"})) .{ .card = .priority } else if (is(key, &.{">"})) .{ .card = .close } else if (is(key, &.{"<"})) .{ .card = .reopen } else if (is(key, &.{claude_key}) and app.claudeOf(card) != null) .claude else return;
         try app.pressModal(action);
     }
 
@@ -8150,7 +8206,7 @@ test "a card's modal runs a long title on over as many lines as it takes, none o
         .status = .doing,
     };
     var head: App.CardHead = undefined;
-    App.cardHead(&card, 40, 0, &head);
+    App.cardHead(&card, 40, 0, false, &head);
     var rows: usize = 0;
     var last: []const u8 = "";
     for (head.lines[0..head.n], head.kinds[0..head.n]) |line, kind| if (kind == .plain) {
@@ -8405,6 +8461,55 @@ test "a find of a hundred bytes narrows the same before and after Enter, and the
     try std.testing.expectEqual(typing, app.boardCount(.todo));
     try std.testing.expectEqual(@as(usize, 1), app.boardCount(.todo));
     try std.testing.expectEqual(@as(usize, 2), app.railCount(.todo));
+}
+
+test "a card's modal lists every option of its ask and its words, and ⏎ answers the lit one" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 24;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":4,"repo":"tlon","title":"d","status":"doing","ask":{"id":9,"question":"Which?","options":["a long first option that takes the whole row of the modal and more besides it","y","z"]}}
+        \\],"needs_you":[{"id":"ask:9","kind":"ask","ticket":4,"repo":"tlon","text":"t",
+        \\"actions":[{"key":"1","label":"a"},{"key":"c","label":"in words","argv":["babylon","answer","9","--words"],"needs":"words"}]}]}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{ .col = 1, .detail = 4 };
+    var buttons: [16]App.ModalButton = undefined;
+    var rows: [4]u16 = undefined;
+    var seen: usize = 0;
+    var answer: []const u8 = "";
+    for (app.modalButtons(&buttons)) |b| switch (b.action) {
+        .option => {
+            if (b.y != buttons[buttons.len - 1].y and seen < 3) {
+                rows[seen] = b.y;
+                seen += 1;
+            }
+            if (b.key.len > 0 and std.mem.eql(u8, b.key, "⏎")) answer = b.label;
+        },
+        .words => {
+            rows[3] = b.y;
+            try std.testing.expectEqualStrings("c", b.key);
+        },
+        else => {},
+    };
+    try std.testing.expectEqualStrings("answer 1", answer);
+    try std.testing.expectEqual(@as(usize, 3), seen);
+    try std.testing.expect(rows[0] < rows[1] and rows[1] < rows[2] and rows[2] < rows[3]);
+
+    try app.modalKey("\t");
+    try app.modalKey("\r");
+    try std.testing.expectEqual(@as(?u32, null), app.board_view.?.detail);
+    var got: [512]u8 = undefined;
+    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon answer 9 2") != null);
 }
 
 test "in Workbench's look a click on a popup's option answers the ask and one on its ✕ closes it" {
