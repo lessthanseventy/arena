@@ -2359,8 +2359,6 @@ fn benchLines(app: *const App, w: *Writer, r: theme.Roles, view: app_mod.BoardVi
     }
 }
 
-/// A repo's heading row in a column of `width` cells at `x`: its glyph and name in its hue, a dim
-/// dashes, and its count of cards there.
 /// What a group's heading says after its name: whether it is folded, and whether a card in it
 /// waits on the human, which a fold must not hide.
 fn foldMark(app: *const App, lane: usize) []const u8 {
@@ -2369,6 +2367,8 @@ fn foldMark(app: *const App, lane: usize) []const u8 {
     return if (folded and needs) " ▸ ▲" else if (folded) " ▸" else if (needs) " ▾ ▲" else " ▾";
 }
 
+/// A repo's heading row in a column of `width` cells at `x`: its glyph and name in its hue, a dim
+/// dashes, and its count of cards there.
 fn benchHeading(w: *Writer, r: theme.Roles, repo: []const u8, count: usize, lit: bool, fold: []const u8, x: usize, y: usize, width: usize) !void {
     var buf: [24]u8 = undefined;
     const num = std.fmt.bufPrint(&buf, "{d}", .{count}) catch "";
@@ -3162,7 +3162,7 @@ const board_keys = [_][2][]const u8{
     .{ "> <", "close a ticket to do, reopen a done one" },
     .{ "J K", "move it down or up among its repo's cards" },
     .{ "+ n /", "file a ticket; the inbox; find cards by number, title or repo" },
-    .{ "r z Z", "next repo; fold the picked one, or a heading clicked; Z all but it" },
+    .{ "r z Z", "next repo, backlog, or a tab; fold a repo or a heading; Z all but it" },
     .{ "t w W", "backlog card to todo; todo card to next, asking its why; W at top" },
     .{ "g", "the gate's modal on the run in progress, else its session" },
     .{ "o", "the orchestrator, started if it is not running" },
