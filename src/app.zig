@@ -3650,7 +3650,7 @@ pub const App = struct {
     pub const foot_rows: u16 = 4;
 
     /// How many of the last closed the strip shows.
-    pub const strip_n = 5;
+    pub const strip_n = tickets.Board.recent_n;
 
     /// The rows the recent strip takes: none outside Workbench, in the backlog, or with no room.
     pub fn footRows(app: *const App) u16 {
@@ -7301,6 +7301,30 @@ test "the every view's done column is a strip: narrow, a card a row, its reopen 
     try std.testing.expect(!app.boardStrip(3));
 }
 
+test "in the every view a click on a recent entry whose repo has no open card picks it" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 100;
+    app.view_w = 100;
+    app.view_h = 30;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":4,"repo":"tlon","title":"d","status":"doing"},
+        \\{"id":6,"repo":"arena","title":"f","status":"done"}
+        \\]}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{ .col = 1 };
+    const eq = std.testing.expectEqual;
+
+    var recent: [App.strip_n]*const tickets.Card = undefined;
+    try eq(@as(usize, 1), app.stripCards(&recent));
+    const x = app.boardX() + 1;
+    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = app.listH() + 1, .release = false }));
+    try eq(@as(usize, 3), app.board_view.?.col);
+    try eq(@as(u32, 6), app.boardCard(3, app.board_view.?.row).?.id);
+}
+
 test "in Workbench's look a click on the picked tile's button does its action, and one on a recent entry picks it" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     app.term_w = 100;
@@ -7418,10 +7442,10 @@ test "the board opens on a ticket by its id: its lane, its repo's columns or the
     try eq(@as(?u32, 5), picked(&app));
     try std.testing.expect(!app.board_view.?.answering);
 
-    // menard has only a closed card, so no lane in the every view
+    // menard has only a closed card, among the recent ones: its lane is in the every view
     try app.showCard(6);
     try eq(@as(?u32, 6), picked(&app));
-    try std.testing.expectEqualStrings("menard", app.boardRepo().?);
+    try std.testing.expect(app.boardLanes());
 
     try app.showCard(8);
     try eq(@as(?u32, 8), picked(&app));

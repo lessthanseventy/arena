@@ -317,14 +317,22 @@ pub const Board = struct {
         return names.items;
     }
 
+    /// How many of the last closed the recent strip shows.
+    pub const recent_n = 5;
+
     fn findLanes(b: *const Board, arena: std.mem.Allocator) ![]const []const u8 {
         var found: std.ArrayList([]const u8) = .empty;
+        var recent: [recent_n]*const Card = undefined;
+        const shown = @min(b.column(.done, null, "", &recent), recent_n);
         for (b.names) |repo| {
             const live = for (b.cards()) |card| {
                 const open = card.status == .todo or card.status == .doing or card.status == .review;
                 if (open and std.mem.eql(u8, card.repo orelse "", repo)) break true;
             } else false;
-            if (live) try found.append(arena, repo);
+            const closed = for (recent[0..shown]) |card| {
+                if (std.mem.eql(u8, card.repo orelse "", repo)) break true;
+            } else false;
+            if (live or closed) try found.append(arena, repo);
         }
         for (b.cards()) |card| if (card.repo == null and card.status != .done) {
             try found.append(arena, "");
