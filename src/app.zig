@@ -4347,8 +4347,9 @@ pub const App = struct {
         return out[0..n];
     }
 
-    /// Whether `m` is on a button of the board's first row, not a card's.
+    /// Whether `m` is on a button of the board's first row, not a card's. The plan draws none.
     fn onHeaderButton(app: *App, m: keys.Mouse) bool {
+        if (app.planShown()) return false;
         var buttons: [48]Button = undefined;
         for (app.boardButtons(&buttons)) |button| if (button.what != .card and button.hit(m.x, m.y)) return true;
         return false;
