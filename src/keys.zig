@@ -61,7 +61,7 @@ pub const Part = struct {
 };
 
 /// The keys arena takes with Alt; `\r` is Enter.
-pub const chords = "hjklHLJKxmqzpowbnN/;'123456789\r!";
+pub const chords = "hklHLJKxqzbnN/;'123456789\r!";
 
 /// Splits input at the first thing arena reads itself: Ctrl+Space, an Alt chord (ESC then one of
 /// `chords`), an SGR mouse report, or the terminal's reply to a query.
@@ -129,18 +129,27 @@ fn mouse(after: []const u8) ?struct { mouse: Mouse, len: usize } {
 }
 
 test "a chord is found among other typing" {
-    const part = next("echo hi\r\x1bjmore");
+    const part = next("echo hi\r\x1bkmore");
     try std.testing.expectEqualStrings("echo hi\r", part.text);
-    try std.testing.expectEqual(@as(u8, 'j'), part.event.?.chord);
+    try std.testing.expectEqual(@as(u8, 'k'), part.event.?.chord);
     try std.testing.expectEqualStrings("more", part.rest);
 }
 
 test "Ctrl+Space is the mode event, found among typing and before a later chord" {
-    const part = next("ab\x00cd\x1bj");
+    const part = next("ab\x00cd\x1bk");
     try std.testing.expectEqualStrings("ab", part.text);
     try std.testing.expectEqual(Event.mode, part.event.?);
-    try std.testing.expectEqualStrings("cd\x1bj", part.rest);
+    try std.testing.expectEqualStrings("cd\x1bk", part.rest);
     try std.testing.expectEqual(Event.mode, next("\x00").event.?);
+}
+
+test "the chords Claude Code binds too are not arena's, so they reach it" {
+    for ("jmopw") |letter| {
+        const bytes = [_]u8{ 0x1b, letter };
+        const part = next(&bytes);
+        try std.testing.expectEqualStrings(&bytes, part.text);
+        try std.testing.expectEqual(@as(?Event, null), part.event);
+    }
 }
 
 test "Alt+Enter is a chord" {

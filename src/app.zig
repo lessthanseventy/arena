@@ -3744,7 +3744,8 @@ pub const App = struct {
         if (is(key, &.{"W"})) if (app.boardCard(view.col, view.row)) |card| {
             if (card.status == .todo) return app.toNext(card.id, true);
         };
-        if (is(key, &.{"n"})) return app.newTicket();
+        if (is(key, &.{"+"})) return app.newTicket();
+        if (is(key, &.{"n"})) return app.showInbox();
         const keyed = [_]struct { []const u8, CardAction }{
             .{ "\r", .go },    .{ "e", .edit },    .{ "p", .priority }, .{ ">", .close },
             .{ "<", .reopen }, .{ "J", .down },    .{ "K", .up },       .{ "t", .to_todo },
@@ -5285,6 +5286,31 @@ pub const App = struct {
         } else app.normal = true;
     }
 
+    /// The strip's keys in normal mode that are an Alt chord's too: `h` `l`, `1`…`9`, `H` `L` `J`
+    /// `K`, `;` `'`, `c` a new window, `x` `z` `o` `w` `m`, `/` to jump, `n` the inbox, `g` the
+    /// gate and `Q` to leave. `q` does nothing here.
+    fn stripKey(app: *App, key: []const u8) !void {
+        if (key.len != 1) return;
+        switch (key[0]) {
+            'h', 'l', 'H', 'L', 'J', 'K', ';', '\'', 'x', 'z', '1'...'9' => try app.onChord(key[0]),
+            'c' => try app.onChord('\r'),
+            'o' => app.openOverview(),
+            'w' => app.toggleRail(),
+            'm' => app.openMenu(&menu.main),
+            '/' => {
+                app.prompt = .{ .what = .jump };
+                app.dirty = true;
+            },
+            'n' => try app.showInbox(),
+            'g' => {
+                if (app.board_view == null) try app.toggleBoard();
+                if (app.board_view != null) try app.gateModal();
+            },
+            'Q' => app.quit = true,
+            else => {},
+        }
+    }
+
     /// An arrow is ESC, `[` or `O`, and one more byte; anything else, a bare Esc included, is a byte.
     fn keyLen(text: []const u8) usize {
         return if (text.len >= 3 and text[0] == 0x1b and (text[1] == '[' or text[1] == 'O')) 3 else 1;
@@ -5323,6 +5349,7 @@ pub const App = struct {
                 }
                 if (std.mem.eql(u8, key, "b")) try app.goHome();
                 if (std.mem.eql(u8, key, "B")) try app.toBoard();
+                if (app.board_view == null) try app.stripKey(key);
             } else if (app.overview != null and !asking) {
                 try app.overviewKey(key);
             } else if (app.board_view != null and !app.sideFocused() and !asking) {
@@ -5643,28 +5670,20 @@ pub const App = struct {
         switch (letter) {
             'h' => try app.focusBy(-1),
             'l' => try app.focusBy(1),
-            'j' => try app.sessionBy(1),
             'k' => try app.sessionBy(-1),
             'J' => try app.sessionSwapBy(1),
             'K' => try app.sessionSwapBy(-1),
             'H' => try app.swapBy(-1),
             'L' => try app.swapBy(1),
             'x' => app.openMenu(&menu.confirm),
-            'm' => app.openMenu(&menu.main),
             'q' => app.quit = true,
             'z' => app.toggleFull(),
             ';' => try app.widenBy(-share_step),
             '\'' => try app.widenBy(share_step),
-            'o' => app.openOverview(),
             'b' => try app.toggleBoard(),
-            'w' => app.toggleRail(),
             'n' => try app.stepAgent(1),
             'N' => try app.stepAgent(-1),
             '/' => app.openSearch(),
-            'p' => {
-                app.prompt = .{ .what = .jump };
-                app.dirty = true;
-            },
             '\r' => try app.newWindow(),
             else => if (app.sessionById(app.bound())) |s| {
                 if (letter - '1' < s.wins.items.len) try app.focusIn(s, letter - '1');

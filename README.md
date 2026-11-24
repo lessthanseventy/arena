@@ -20,7 +20,7 @@ always did; arena draws them and leaves them running when it quits.
   window's size, the rail's width and arena's commit. The screen as text (with the styles around
   the pointer) and the last input are saved beside it in `$XDG_STATE_HOME/arena/reports/`, so a
   bug arrives reproducible. What is typed into a pane is counted there, never kept.
-- **A rail of sessions** down the left, with each one's window count. `Alt+w` or a click on its
+- **A rail of sessions** down the left, with each one's window count. `w` in normal mode or a click on its
   top narrows it to two letters a session and a mark and time a Claude; resting the pointer on
   the narrow rail draws it wide over the strip until the pointer leaves.
 - **Marks on windows running Claude Code**: `◐` turning while it works, or while a subagent it
@@ -146,33 +146,43 @@ no arena running it starts one, so opened. It reaches arena through tmux, and on
 arena names its client in the server's `@arena_clients`, so another control-mode client there,
 as iTerm's, is told nothing. `-L` names the server there too.
 
-Everything is on Alt, so it stays out of the way of your shell and your window manager.
-
 There are two modes, and a single letter is never arena's in the first. In insert, the default,
-every key goes to the shown pane, apart from the Alt chords. `Ctrl+Space` makes it normal, where
-no key is typed into a pane, `NORMAL` shows at the bottom-left and the row under the strip says
-the keys; `i`, `Esc` or `Ctrl+Space` is insert again, and `b` goes home. A click on a pane is insert, and one on the
-rail is normal. With the board open, `Ctrl+Space` focuses the orchestrator's column, as `Alt+l`.
+every key goes to the shown pane, apart from a few Alt chords. `Ctrl+Space` makes it normal,
+where no key is typed into a pane, `NORMAL` shows at the bottom-left and the row under the strip
+says the keys; `i`, `Esc` or `Ctrl+Space` is insert again. A click on a pane is insert, and one
+on the rail is normal. With the board open, `Ctrl+Space` focuses the orchestrator's column, as
+`Alt+l`.
+
+Alt+j, Alt+m, Alt+o, Alt+p and Alt+w are not arena's, so they reach Claude Code: Alt+o toggles
+its fast mode and Alt+p opens its model picker. Their arena uses are the normal-mode keys below.
+
+In normal mode:
 
 | Key | Does |
 |---|---|
-| `Alt+h` `Alt+l` | the window to the left, to the right |
-| `Alt+j` `Alt+k` | the next session, the one before |
-| `Alt+1` … `Alt+9` | that window |
-| `Alt+H` `Alt+L` | move the window left, right |
-| `Alt+J` `Alt+K` | move the session down, up the rail |
-| `Alt+;` `Alt+'` | make the window narrower, wider; tmux keeps the width |
-| `Alt+Enter` | a new window |
-| `Alt+x` | close the window, after asking |
-| `Alt+z` | give the session's columns the whole width, and back |
-| `Alt+p` | jump to a window by name |
-| `Alt+o` | the overview |
-| `Alt+b` | the board |
-| `Alt+w` | the rail narrow, and wide again |
-| `Alt+n` `Alt+N` | the next Claude waiting or done, the one before; the one that most wants looking at first |
-| `Alt+/` | search the pane's history |
-| `Alt+m` | the menu |
-| `Alt+q` | leave; the sessions keep running |
+| `j` `k` | the pick down or up the rail; `⏎` goes to it, `space` opens it |
+| `]` `[` | the next or previous Claude that waits or is done |
+| `h` `l` | the window to the left, to the right |
+| `1` … `9` | that window |
+| `H` `L` | move the window left, right |
+| `J` `K` | move the session down, up the rail |
+| `;` `'` | make the window narrower, wider; tmux keeps the width |
+| `c` | a new window |
+| `x` | close the window, after asking |
+| `z` | give the session's columns the whole width, and back |
+| `/` | jump to a window by name |
+| `o` | the overview |
+| `b` | the board |
+| `n` | the needs-you inbox |
+| `g` | the gate's modal, for the run in progress |
+| `w` | the rail narrow, and wide again |
+| `m` | the menu |
+| `Q` | leave; the sessions keep running |
+
+The chords that stay on Alt, in every mode: `Alt+h` `Alt+l`, `Alt+k`, `Alt+1` … `Alt+9`,
+`Alt+H` `Alt+L` `Alt+J` `Alt+K`, `Alt+;` `Alt+'`, `Alt+Enter`, `Alt+x`, `Alt+z`, `Alt+b`,
+`Alt+n` `Alt+N` (the next Claude waiting or done, the one before), `Alt+/` (search the pane's
+history), `Alt+q` and `Alt+!`.
 
 With the mouse:
 

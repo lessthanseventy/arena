@@ -89,6 +89,7 @@ settled() {
 }
 hides() { ! settled | grep -qE -- "$1" }
 see() { await shows "$1" }
+normal() { shows "^NORMAL" || key C-Space; see "^NORMAL" }
 gone() { await hides "$1" }
 
 fail() {
@@ -169,9 +170,9 @@ key Enter
 check "in insert a sentence with j h k l q n b reaches the pane whole" await typed 'jhklqnb' 2
 key C-Space
 check "Ctrl+Space is normal mode, NORMAL in the corner and its key in the dots' row" await shows '^NORMAL .*i insert'
-key -l 'echo xjhklqnb'
+key -l 'ytdfuvr'
 zselect -t 50
-check "in normal none of it reaches the pane, and q does not quit" hides 'xjhklqnb'
+check "in normal none of it reaches the pane, and q does not quit" hides 'ytdfuvr'
 key -l i
 check "i is insert again" gone '^NORMAL'
 key -l 'echo back-in'
@@ -372,14 +373,14 @@ key M-l
 check "Alt+l focuses the next window, its neighbour peeking" see '─╮ ╭─ 2 two ─'
 key 'echo e2e-$((6*7))' Enter
 check "typing reaches the focused pane" see 'e2e-42'
-key M-j
-check "Alt+j goes to the next session" see '╭─ 1 solo '
+normal; key j Enter
+check "normal j then Enter goes to the next session" see '╭─ 1 solo '
 key M-k
 check "Alt+k comes back, to the window left" see '╭─ 2 two '
 inner new-window -d -t beta: -n second sh
 server=$(inner display -p '#{pid}')
 kill -STOP $server
-key M-j M-2
+normal; key j Enter M-2
 zselect -t 50
 kill -CONT $server
 beta_at() { [[ $(inner display -p -t beta: '#{window_name}') == $1 ]] }
@@ -406,7 +407,7 @@ key M-l
 see '╭─ 2 two '
 
 inner send-keys -t beta:solo "clear; printf '%%end 1 1 1\\n%%begin 1 1 1\\n'" Enter
-key M-j
+normal; key j Enter
 see '╭─ 1 solo '
 check "a pane showing lines like tmux's own replies is drawn whole" see '│%begin 1 1 1 '
 key M-k
@@ -433,13 +434,13 @@ check "and closes it" await sessions 2
 key M-k
 see '╭─ 2 two '
 
-key M-m
-check "Alt+m opens the menu" see 'New window +n'
+normal; key m
+check "normal m opens the menu" see 'New window +n'
 key Escape
 check "Escape closes it" gone 'New window +n'
 
 panes() { [[ $(inner list-panes -t alpha:two | wc -l) -eq $1 ]] }
-key M-m
+normal; key m
 key v
 check "the menu splits the pane" await panes 2
 check "and the split is drawn" see 'echo e2e.* │sh-[0-9.]+\$ +│'
@@ -452,17 +453,23 @@ mouse 32 72 5 M
 mouse 0 72 5 m
 check "dragging the line resizes the panes" await first 25
 
-key M-m
+normal; key m
 key r
 key 'renamed' Enter
 check "the menu renames the window" see '╭─ 2 renamed '
 
+key 'cat -v' Enter
 key M-p
+key Enter
+check "in insert, Alt+p reaches the pane: Claude Code's model picker is its own" see '\^\[p'
+key C-c
+normal; key /
+check "in normal mode, / opens the jump prompt" see 'Jump to window'
 key 'solo' Enter
-check "Alt+p jumps to a window of another session" see '╭─ 1 solo '
+check "normal / jumps to a window of another session" see '╭─ 1 solo '
 
-key M-o
-check "Alt+o shows every session's windows" see '╭─ 1 one ─+╮ ╭─ 2 renamed '
+normal; key o
+check "normal o shows every session's windows" see '╭─ 1 one ─+╮ ╭─ 2 renamed '
 mouse 0 101 4 M
 mouse 32 41 4 M
 mouse 0 41 4 m
@@ -774,9 +781,9 @@ check "another click orders them by ticket" see '├─ agents · ticket '
 mouse 0 5 6 M
 mouse 0 5 6 m
 see '├─ agents · urgency '
-key M-w
+normal; key w i
 inner set -p -t beta:solo @arena_claude_branch t324-lights
-check "Alt+w narrows the rail to a session's short name, its mark and its windows" see '^│ alpha.3│ '
+check "normal w narrows the rail to a session's short name, its mark and its windows" see '^│ alpha.3│ '
 check "a Claude by its mark and its ticket's number" see '^│[ ▌]. 324 +│ '
 check "or its window's place when it has no ticket" see '^│ . w3 +│ '
 check "a session over its Claudes is a rule with its name" see '^│─alpha──│ '
@@ -788,8 +795,8 @@ check "the pointer resting on it draws it wide over the strip" see '├─ agent
 check "with a Claude's age at the right of its row" see '^│[ ▌]. .* [0-9]+[smhd] │'
 mouse 35 72 3 M
 check "and leaving it, narrow again" gone '├─ agents · urgency '
-key M-w
-check "Alt+w again widens it" see '^╭─ sessions ─+╮ '
+normal; key w i
+check "w again widens it" see '^╭─ sessions ─+╮ '
 
 # the popup: a Claude's pane in another session, read-only, over the strip
 inner send-keys -t alpha:three 'echo three-pane-line' Enter
@@ -953,7 +960,7 @@ zselect -t 100
 own_replies() { ! screen | grep -qE '│[01] [01] [01] [01] [01] [01] ' }
 check "and going to one leaves every pane its own reply" own_replies
 for w in $(inner list-windows -t alpha -F "#{window_index}"); claude alpha:$w end
-key M-j
+normal; key j Enter
 see '╭─ 1 solo '
 
 mouse 0 3 4 M
@@ -979,7 +986,7 @@ key 'brave' Enter
 check "Alt+/ finds text in the history" await highlit
 key Escape
 
-key M-m
+normal; key m
 key b
 check "the menu opens the browser in a window of its own, in view" see '╭─ [0-9] browser ─'
 check "running terminal-browser on its start page, for new tabs too" see '│browser-stub 1 terminal-browser://start'
@@ -1276,7 +1283,7 @@ check "> closes a ticket still to do" await last 'update 7 --status done'
 key e
 check "e edits it in a window of its own" await last 'edit 7'
 key M-b
-key n
+key +
 check "n files one, from every repo with the repo asked" await last 'new'
 key M-b
 key r

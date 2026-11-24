@@ -2082,7 +2082,7 @@ const board_keys = [_][2][]const u8{
     .{ "p", "raise its priority, high back to low" },
     .{ "> <", "close a ticket to do, reopen a done one" },
     .{ "J K", "move it down or up among its repo's cards" },
-    .{ "n + /", "file a ticket; find cards by number, title or repo" },
+    .{ "+ n /", "file a ticket; the inbox; find cards by number, title or repo" },
     .{ "r, a tab", "the next repo, the backlog, or the one clicked" },
     .{ "t w W", "backlog card to todo; todo card to next, asking its why; W at top" },
     .{ "g", "the gate's modal on the run in progress, else its session" },
