@@ -24,6 +24,9 @@ const rail_wide = 36;
 const rail_narrow = 10;
 /// How long the pointer rests on the narrow rail before it is drawn wide over the strip.
 const dwell_ms = 300;
+/// How long the pointer or the pick rests on a ticket or a Claude before a peek opens, and how often an open one is drawn again.
+const look_ms = 400;
+const look_live_ms = 500;
 const quiet_s = 600;
 const stir_s = 60;
 /// A tmux `run-shell -b` of `cmd` whose output tmux never shows: it would open view mode on a pane,
@@ -460,6 +463,18 @@ pub const App = struct {
     pipeline_open: [8]u64 = @splat(0),
     /// When the pointer came to rest on the narrow rail; 0 while it is elsewhere.
     hover_at: i64 = 0,
+    /// The peek open, what the pointer rests on and since when, what Esc put away, where the
+    /// pointer was as it opened (none: it follows the pick), when it was last drawn and when a
+    /// key was last typed.
+    look: ?Look = null,
+    look_rest: ?Look = null,
+    look_at: i64 = 0,
+    look_off: ?Look = null,
+    look_here: ?struct { x: u16, y: u16 } = null,
+    look_drawn: i64 = 0,
+    key_at: i64 = 0,
+    /// The last input was a key that moves the pick: only then does a peek follow the pick.
+    key_typed: bool = false,
     /// Set when the session's current window changed in tmux, so focus goes to it when listed.
     follow_active: bool = false,
     palette: color.Palette = .{},
@@ -626,7 +641,7 @@ pub const App = struct {
         return null;
     }
 
-    fn paneById(app: *App, id: u32) ?*Pane {
+    pub fn paneById(app: *const App, id: u32) ?*Pane {
         for (app.sessions.items) |s| for (s.wins.items) |win| for (win.panes.items) |pane| {
             if (pane.id == id) return pane;
         };
@@ -1612,6 +1627,156 @@ pub const App = struct {
         app.dirty = true;
     }
 
+    /// The peek's target is the ticket's card or the Claude's window.
+    pub const Look = union(enum) { ticket: u32, window: u32 };
+
+    /// What a peek holds: the ticket and the Claude, either of which may be missing.
+    pub const Peek = struct { card: ?*const tickets.Card, win: ?*const Window };
+
+    /// What the pointer rests on, as of `look_at`.
+    fn lookUnder(app: *const App, x: u16, y: u16) ?Look {
+        if (app.menu != null or app.prompt != null or app.overview != null) return null;
+        if (app.board_view) |view| if (view.boxed()) return null;
+        if (x < app.railDrawnW()) {
+            const line = app.railAgentAt(y) orelse return null;
+            return switch (line) {
+                .agent, .detail, .meta, .background => |a| .{ .window = a.win.id },
+                else => null,
+            };
+        }
+        if (app.board_view == null or app.planShown()) return null;
+        const at = app.boardCardAt(x, y) orelse return null;
+        const card = if (app.boardLanes()) app.laneCard(at.lane, at.col, at.row) else app.boardCard(at.col, at.row);
+        return if (card) |c| .{ .ticket = c.id } else null;
+    }
+
+    /// The pointer moved with no button held: what it rests on starts its pause, and leaving
+    /// what a peek is of closes it.
+    fn hoverLook(app: *App, m: keys.Mouse) void {
+        app.key_typed = false;
+        const over = app.lookUnder(m.x, m.y);
+        if (std.meta.eql(over, app.look_rest)) return;
+        app.look_rest = over;
+        app.look_at = app.now;
+        if (app.look != null and !std.meta.eql(over, app.look)) {
+            app.look = null;
+            app.dirty = true;
+        }
+    }
+
+    /// Puts the peek away, and keeps what it was of from coming back until the pointer or the
+    /// pick has been elsewhere.
+    fn lookAway(app: *App) void {
+        if (app.look) |was| {
+            app.look_off = was;
+            app.look = null;
+            app.dirty = true;
+        } else if (app.look_rest) |rest| app.look_off = rest;
+    }
+
+    /// The ticket the board's pick is on, which a peek follows after a pause with no key.
+    fn focusLook(app: *const App) ?Look {
+        const view = app.board_view orelse return null;
+        if (!app.key_typed or view.boxed() or view.focus != .board or app.planShown() or app.menu != null or app.prompt != null) return null;
+        const card = app.boardCard(view.col, view.row) orelse return null;
+        return .{ .ticket = card.id };
+    }
+
+    /// Opens the peek once the pointer or the pick has rested on something for `look_ms`, and
+    /// redraws it while it is open, for its pane's lines. Returns how long until the next.
+    pub fn lookStep(app: *App) i64 {
+        const never = std.math.maxInt(i64);
+        if (app.menu != null or app.prompt != null or app.overview != null) {
+            app.look = null;
+            return never;
+        }
+        if (app.look != null) {
+            const left = look_live_ms - (app.now - app.look_drawn);
+            if (left > 0) return left;
+            app.look_drawn = app.now;
+            app.dirty = true;
+            return look_live_ms;
+        }
+        const want: Look, const since: i64 = if (app.look_rest) |rest| .{ rest, app.look_at } else if (app.focusLook()) |pick| .{ pick, app.key_at } else return never;
+        if (app.look_off) |off| {
+            if (std.meta.eql(off, want)) return never;
+            app.look_off = null;
+        }
+        const left = since + look_ms - app.now;
+        if (left > 0) return left;
+        app.look = want;
+        app.look_drawn = app.now;
+        app.look_here = if (app.look_rest != null) .{ .x = app.pointer.x, .y = app.pointer.y } else null;
+        app.dirty = true;
+        return look_live_ms;
+    }
+
+    /// What `look` is of now.
+    pub fn peekOf(app: *const App, look: Look) ?Peek {
+        switch (look) {
+            .ticket => |id| {
+                const card = app.ticketCard(id) orelse return null;
+                return .{ .card = card, .win = app.claudeOf(card) };
+            },
+            .window => |id| {
+                const a = app.agentById(id) orelse return null;
+                const card = if (std.fmt.parseInt(u32, branchTicket(a.win.text(.branch)) orelse "", 10)) |n| app.ticketCard(n) else |_| null;
+                return .{ .card = card, .win = a.win };
+            },
+        }
+    }
+
+    /// The last non-blank rows of `pane`'s screen, top to bottom, as many as `out` holds, each
+    /// copied into `buf`'s next `row_len` bytes. Returns how many.
+    pub fn paneTail(pane: *Pane, buf: []u8, row_len: usize, out: [][]const u8) usize {
+        const screen = pane.term.screens.active;
+        var n: usize = 0;
+        var y: i32 = pane.term.rows;
+        while (y > 0 and n < out.len and (n + 1) * row_len <= buf.len) {
+            y -= 1;
+            const start = screen.pages.pin(.{ .active = .{ .x = 0, .y = @intCast(y) } }) orelse break;
+            var end = start;
+            end.x = pane.term.cols - 1;
+            var row: Writer = .fixed(buf[n * row_len ..][0..row_len]);
+            screen.dumpString(&row, .{ .tl = start, .br = end, .unwrap = false }) catch {};
+            const text = std.mem.trim(u8, row.buffered(), " \n");
+            if (text.len == 0) continue;
+            out[n] = text;
+            n += 1;
+        }
+        std.mem.reverse([]const u8, out[0..n]);
+        return n;
+    }
+
+    /// A key while a peek is open: Esc puts it away, as does any other, which then goes on to do
+    /// what it does. ⏎ goes to what the peek is of and space opens its card, for a peek not
+    /// of the pick. Returns whether the key was the peek's.
+    fn lookKey(app: *App, text: []const u8) !bool {
+        app.key_at = app.now;
+        app.key_typed = for ([_][]const u8{ "j", "k", "h", "l", "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D", "\x1bOA", "\x1bOB", "\x1bOC", "\x1bOD" }) |move| {
+            if (std.mem.eql(u8, text, move)) break true;
+        } else false;
+        const look = app.look orelse {
+            app.look_rest = null;
+            return false;
+        };
+        const was = app.peekOf(look);
+        app.lookAway();
+        app.look_rest = null;
+        if (std.mem.eql(u8, text, "\x1b") and !app.typing()) return true;
+        if (app.typing() or was == null) return false;
+        if (std.mem.eql(u8, text, "\r")) {
+            if (was.?.win) |win| if (win.agent_pane != 0) {
+                try app.showPane(win.agent_pane);
+                return true;
+            };
+        } else if (std.mem.eql(u8, text, " ")) if (was.?.card) |card| if (app.board_view != null) {
+            _ = try app.openDetail(card.id);
+            return true;
+        };
+        return false;
+    }
+
     /// The pointer moved with no button held: resting on the narrow rail draws it wide over the
     /// strip, after `dwell`, and leaving it draws it narrow again.
     fn hoverRail(app: *App, x: u16) void {
@@ -1630,6 +1795,10 @@ pub const App = struct {
     /// Draws the narrow rail wide once the pointer has rested on it long enough. Returns how
     /// long until it would.
     pub fn dwell(app: *App) i64 {
+        return @min(app.railDwell(), app.lookStep());
+    }
+
+    fn railDwell(app: *App) i64 {
         if (app.hover_at == 0 or app.overlay()) return std.math.maxInt(i64);
         const left = app.hover_at + dwell_ms - app.now;
         if (left > 0) return left;
@@ -5409,7 +5578,13 @@ pub const App = struct {
             app.dirty = true;
         }
         try app.pointAs(m);
-        if (m.hover()) app.hoverRail(m.x);
+        if (m.hover()) {
+            app.hoverRail(m.x);
+            app.hoverLook(m);
+        } else if (m.leftPress() or m.rightPress()) {
+            app.lookAway();
+            app.key_typed = false;
+        }
         const over_dots = m.y == app.view_h and m.x >= app.term_w - app.view_w;
         if (over_dots != app.over_dots) {
             app.over_dots = over_dots;
@@ -6147,8 +6322,15 @@ pub const App = struct {
             rest = part.rest;
             app.trailText(part.text);
             app.clearReportSaid();
-            if (app.typing()) try app.forward(part.text) else try app.menuKeys(part.text);
+            const taken = part.text.len > 0 and try app.lookKey(part.text);
+            if (!taken) {
+                if (app.typing()) try app.forward(part.text) else try app.menuKeys(part.text);
+            }
             defer app.settleMode();
+            if (part.event) |event| switch (event) {
+                .chord, .mode => _ = try app.lookKey(""),
+                else => {},
+            };
             switch (part.event orelse return part.held.len) {
                 .mouse => |m| {
                     app.trail.push(app.now, .{ .mouse = m });
@@ -6179,6 +6361,7 @@ pub const App = struct {
     /// Held input that turned out to be all there was, typed as it is.
     pub fn typedAlone(app: *App, bytes: []const u8) !void {
         app.trailText(bytes);
+        if (try app.lookKey(bytes)) return;
         if (app.typing()) try app.forward(bytes) else try app.menuKeys(bytes);
         app.settleMode();
     }

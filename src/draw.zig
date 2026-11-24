@@ -3627,6 +3627,7 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
     }
     // a narrow rail drawn wide lies over the strip
     if (app.peek) try rail(app, w);
+    if (app.look) |look| try lookBox(app, w, look);
     if (app.strip_help and app.overlay() == false) try stripHelp(app, w);
     if (app.popup) |pop| {
         try popupBox(app, w, pop);
@@ -4633,4 +4634,105 @@ test "the orchestrator's column in Workbench: Your move's three items are tiles 
     // the foot is a well
     const foot = try bench.probe(frame_out, 5, app.view_h - 1);
     try std.testing.expectEqual(r.well, foot.bg);
+}
+
+const peek_w = 60;
+const peek_rows = 7;
+const PeekInk = enum { head, plain, dim };
+const PeekRow = struct { text: []const u8, ink: PeekInk };
+const PeekRows = struct {
+    store: [20][200]u8 = undefined,
+    rows: [20]PeekRow = undefined,
+    n: usize = 0,
+
+    fn add(p: *PeekRows, ink_: PeekInk, comptime fmt: []const u8, args: anytype) void {
+        if (p.n >= p.rows.len) return;
+        const text = std.fmt.bufPrint(&p.store[p.n], fmt, args) catch &p.store[p.n];
+        p.rows[p.n] = .{ .text = text, .ink = ink_ };
+        p.n += 1;
+    }
+};
+
+/// The peek of a ticket or a Claude, boxed over what is under it: the ticket, where it stands,
+/// what its Claude is doing, and the last lines of its pane, with the keys at its foot.
+fn lookBox(app: *App, w: *Writer, look: App.Look) !void {
+    const peek = app.peekOf(look) orelse return;
+    var p: PeekRows = .{};
+    var age_buf: [8]u8 = undefined;
+    if (peek.card) |card| {
+        p.add(.head, "#{d} {s}", .{ card.id, card.title });
+        p.add(.dim, "{s} · {s} · {s}", .{ card.repo orelse "no repo", card.priority, card.model orelse "default model" });
+        var rel: [120]u8 = undefined;
+        var rw: Writer = .fixed(&rel);
+        if (card.blocked_by.len > 0) {
+            rw.writeAll("blocked by") catch {};
+            for (card.blocked_by) |id| rw.print(" #{d}", .{id}) catch {};
+        }
+        var blocks = false;
+        if (app.board) |*b| for (b.cards()) |*other| {
+            if (std.mem.indexOfScalar(u32, other.blocked_by, card.id) == null) continue;
+            if (!blocks) rw.writeAll(if (rw.end > 0) " · blocks" else "blocks") catch {};
+            rw.print(" #{d}", .{other.id}) catch {};
+            blocks = true;
+        };
+        if (rw.end > 0) p.add(.dim, "{s}", .{rw.buffered()});
+        const since: u32 = if (tickets.epochOf(card.stage_at orelse card.claimed_at)) |e| @intCast(@max(0, e)) else 0;
+        const age = ago(&age_buf, app.epoch, since);
+        const gap: []const u8 = if (age.len > 0) " · " else "";
+        if (card.status == .doing and card.stage_note.len > 0) {
+            p.add(.plain, "sent back · {s}{s}{s}", .{ std.mem.sliceTo(card.stage_note, '\n'), gap, age });
+        } else {
+            const stage = card.stage orelse "";
+            p.add(.plain, "{s}{s}{s}{s}{s}", .{ @tagName(card.status), if (stage.len > 0) " · " else "", stage, gap, age });
+        }
+    } else if (peek.win) |win| p.add(.head, "{s}", .{win.label()});
+    if (peek.win) |win| {
+        var extra: [80]u8 = undefined;
+        var ew: Writer = .fixed(&extra);
+        if (win.ctx > 0) ew.print(" · {d}% context", .{@min(win.ctx, 999)}) catch {};
+        if (win.text(.background).len > 0) ew.print(" · {s}", .{win.text(.background)}) catch {};
+        if (win.subs() > 0) ew.print(" · {d} agent{s}", .{ win.subs(), if (win.subs() == 1) "" else "s" }) catch {};
+        p.add(.plain, "{u} {s}{s}", .{ agentGlyph(app, win), @tagName(win.claude), ew.buffered() });
+        const doing = win.text(.doing);
+        const said = std.mem.sliceTo(win.text(.said), '\n');
+        if (doing.len > 0) p.add(.plain, "doing: {s}", .{doing});
+        if (said.len > 0) p.add(.dim, "said: {s}", .{said});
+        if (app.paneById(win.agent_pane)) |pane| {
+            var buf: [peek_rows * 200]u8 = undefined;
+            var tail: [peek_rows][]const u8 = undefined;
+            const got = App.paneTail(pane, &buf, 200, &tail);
+            for (tail[0..got]) |line| p.add(.dim, "{s}", .{line});
+        }
+    } else p.add(.dim, "no Claude holds it", .{});
+    p.add(.head, "⏎ go   space open card   esc away", .{});
+
+    const n = p.n;
+    const bw: u16 = @min(peek_w, app.term_w -| 2);
+    if (bw < 20 or app.view_h < n + 2) return;
+    const inner: u16 = bw - 4;
+    const h: u16 = @intCast(n + 2);
+    var x: u16 = (app.term_w - bw) / 2;
+    var y: u16 = @min(3, app.view_h + 1 - h);
+    if (app.look_here) |at| {
+        x = @min(at.x + 2, app.term_w - bw);
+        y = @min(at.y + 2, app.view_h + 1 - h);
+    }
+    const edge = ink(app, "amber", 4);
+    var pen: Pen = .{};
+    try pen.set(w, edge, null);
+    try w.print("\x1b[{d};{d}H╭", .{ y + 1, x + 1 });
+    for (0..bw - 2) |_| try w.writeAll("─");
+    try w.writeAll("╮");
+    for (p.rows[0..n], 0..) |row, i| {
+        const style: vt.Style = switch (row.ink) {
+            .head => heading(app),
+            .plain => .{},
+            .dim => ink(app, "dim", 8),
+        };
+        try boxLine(w, &pen, edge, style, x, y + 2 + @as(u16, @intCast(i)), row.text, inner);
+    }
+    try pen.set(w, edge, null);
+    try w.print("\x1b[{d};{d}H╰", .{ y + 2 + n, x + 1 });
+    for (0..bw - 2) |_| try w.writeAll("─");
+    try w.writeAll("╯");
 }

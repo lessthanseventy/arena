@@ -1060,8 +1060,10 @@ check "and a doing one its holder's window under them, and how long it has held 
 check "one in review its stage in the holder's place, and its place in line" see '▌ » queued · 1st +│'
 check "the picked card's priority on a row of its own" see '│ med +│'
 claude alpha:one prompt
+mouse 35 80 24 M
 check "with its Claude's mark while it works" see '▌ [◐◓◑◒] one · [0-9]+[sm]'
 claude alpha:one end
+mouse 35 80 24 M
 check "sent back and asking in its footer" see '│ \? asks · ✗ sent'
 cardrow() { local l; for l in "${(@f)$(outer capture-pane -ep -t o)}"; [[ $l == *$1* ]] && print -r -- $l }
 picked_lit() { [[ $(cardrow '#7 Lights') == *$'\e[1m\e[38;5;4m│\e[0m #7 Lights'* ]] }
@@ -1272,6 +1274,8 @@ key Enter
 check "go on it answers the proposal through babylon, not a Claude started" await last 'go 4'
 key x
 check "and x says no to it" await last 'no 4'
+# the pick rests, so a peek of it opens; the pointer moving puts it away
+mouse 35 80 24 M
 cp $tmp/board.noauto $tmp/run/babylon/board.json
 check "with it settled, the card and the header say nothing of it" gone '▲ [1-9]'
 print -r -- '{"tickets":['\
@@ -2057,6 +2061,28 @@ for n in {8..18}; do
 done
 check "a list longer than the rail says how many Claudes are scrolled above" see '^│ ↑[1-9][0-9]* *│'
 check "and the one in view is still in it" see '^│▌◐ 918 *│'
+
+# resting on a card shows a peek of its ticket and its Claude, over the board; leaving takes it
+# away and the board is as it was
+g6=$(inner display -p -t gamma:g6 '#{pane_id}')
+inner send-keys -t gamma:g6 'echo peek-pane-line' Enter
+claude gamma:g6 tool '{"tool_name": "Read", "tool_input": {"file_path": "/a/peekme.zig"}}'
+print -r -- '{"tickets":[{"id":920,"repo":"arena","title":"Peek me","kind":"ticket","status":"doing","priority":"med","claimed_by":"'$g6'",'\
+'"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[]}]}' >$tmp/run/babylon/board.json
+key M-b
+see ' every [0-9]+ +arena'
+see '#920 Peek me'
+mouse 35 80 24 M
+zselect -t 100
+base=$(settled)
+mouse 35 ${(z)$(spot '#920 Peek')} M
+check "a pointer resting on a card opens a peek with its ticket, its Claude's doing and a line of its pane" await eval 'shows "esc away" && shows "doing: Read" && shows "peek-pane-line" && [[ $(screen | grep -c "#920 Peek me") -ge 2 ]]'
+mouse 35 80 24 M
+check "and leaving it takes the peek away, the board as it was" await eval '[[ $(settled) == $base ]]'
+mouse 35 ${(z)$(spot '#920 Peek')} M
+await shows "esc away"
+key Escape
+check "esc puts it away too" gone 'esc away'
 
 key M-b
 key M-q
