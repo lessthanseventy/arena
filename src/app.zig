@@ -1208,6 +1208,7 @@ pub const App = struct {
         return switch (entry) {
             .agent => |id| (app.agentById(id) orelse return null).win,
             .session => |id| (app.sessionById(id) orelse return null).focused(),
+            .fold => null,
         };
     }
 
@@ -1378,14 +1379,10 @@ pub const App = struct {
                 if (std.meta.eql(entry, pop.entry)) break i;
             } else return;
             const to = if (key[0] == 'l') @min(at + 1, n - 1) else at -| 1;
-<<<<<<< HEAD
-            if (to != at and list[to] != .fold) app.popupShow(list[to]);
-=======
-            if (to != at) {
+            if (to != at and list[to] != .fold) {
                 pop.mode = .view;
                 app.popupShow(list[to]);
             }
->>>>>>> 18402e0 (The popup answers a Claude's ask and replies to it: a puts the question's numbered options at the foot, a digit answers through babylon or types into Claude Code's own question, and r types a line into the pane)
         }
     }
 
