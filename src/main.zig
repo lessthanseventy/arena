@@ -216,6 +216,31 @@ fn showTarget(target: []const u8) bool {
     return target.len > 1 and (target[0] == '%' or target[0] == '#') and ticketId(target[1..]) != null;
 }
 
+/// Whether `arg` is one of arena's verbs, which are reserved: never a session's name.
+fn isVerb(arg: []const u8) bool {
+    return std.mem.eql(u8, arg, "board") or std.mem.eql(u8, arg, "show") or std.mem.eql(u8, arg, "inbox");
+}
+
+/// Whether `verb` is given what it takes as its next argument, `next` (null at the end).
+fn verbArgOk(verb: []const u8, next: ?[]const u8) bool {
+    if (std.mem.eql(u8, verb, "inbox")) return next == null;
+    const arg = next orelse return false;
+    if (std.mem.eql(u8, verb, "board")) return ticketId(arg) != null;
+    return showTarget(arg);
+}
+
+test verbArgOk {
+    try std.testing.expect(verbArgOk("inbox", null));
+    try std.testing.expect(!verbArgOk("inbox", "foo"));
+    try std.testing.expect(verbArgOk("board", "12"));
+    try std.testing.expect(!verbArgOk("board", "foo"));
+    try std.testing.expect(!verbArgOk("board", null));
+    try std.testing.expect(verbArgOk("show", "#12"));
+    try std.testing.expect(verbArgOk("show", "%290"));
+    try std.testing.expect(!verbArgOk("show", "foo"));
+    try std.testing.expect(!verbArgOk("show", null));
+}
+
 /// Has every arena on the server take `message`, and says whether one was told.
 fn tell(init: std.process.Init, tmux: []const []const u8, message: []const u8) !bool {
     const gpa = init.gpa;
@@ -264,18 +289,19 @@ fn run(init: std.process.Init) !bool {
         } else if (std.mem.eql(u8, args[i], "-L") and i + 1 < args.len) {
             try argv.appendSlice(gpa, &.{ "-L", args[i + 1] });
             i += 1;
-        } else if (std.mem.eql(u8, args[i], "board") and i + 1 < args.len and ticketId(args[i + 1]) != null) {
-            card = ticketId(args[i + 1]);
-            i += 1;
-        } else if (std.mem.eql(u8, args[i], "show")) {
-            if (i + 1 >= args.len or !showTarget(args[i + 1])) {
+        } else if (isVerb(args[i])) {
+            const next: ?[]const u8 = if (i + 1 < args.len) args[i + 1] else null;
+            if (!verbArgOk(args[i], next)) {
                 try std.Io.File.stderr().writeStreamingAll(io, usage);
                 std.process.exit(2);
             }
-            door = try std.fmt.allocPrint(init.arena.allocator(), control.show_message ++ "{s}", .{args[i + 1]});
-            i += 1;
-        } else if (std.mem.eql(u8, args[i], "inbox")) {
-            door = control.inbox_message;
+            if (std.mem.eql(u8, args[i], "board")) {
+                card = ticketId(next.?);
+                i += 1;
+            } else if (std.mem.eql(u8, args[i], "show")) {
+                door = try std.fmt.allocPrint(init.arena.allocator(), control.show_message ++ "{s}", .{next.?});
+                i += 1;
+            } else door = control.inbox_message;
         } else session = args[i];
     }
     if (door) |message| {
