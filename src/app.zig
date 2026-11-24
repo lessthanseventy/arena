@@ -530,7 +530,12 @@ pub const App = struct {
         /// A click that focused a window: its program gets none of it, not even the let go.
         focus,
         /// A board card by its ticket, to move to the column it is let go over.
-        card: u32,
+        card: struct {
+            id: u32,
+            /// The press was on the picked card, which a let go without a move opens.
+            opens: bool,
+            moved: bool = false,
+        },
     } = .none,
     /// The session the open menu asks about closing.
     doomed: u32 = 0,
@@ -4685,6 +4690,8 @@ pub const App = struct {
     /// orchestrator's column beside it a click focuses the column, as one on any window out of
     /// focus, and the wheel, or anything once it is focused, is the column's.
     fn boardMouse(app: *App, m: keys.Mouse) !bool {
+        // a card's let go that never came: a new press ends that drag unseen
+        if (app.drag == .card and m.leftPress()) app.drag = .none;
         if (app.drag != .none) return false;
         if (m.x < app.boardX()) {
             if (m.leftPress() and m.y != 1) try app.closeBoard();
@@ -4763,13 +4770,18 @@ pub const App = struct {
         view.answering = false;
         const clicked = if (app.boardLanes()) app.laneCard(at.lane, at.col, at.row) else app.boardCard(at.col, at.row);
         const picked = app.boardCard(view.col, view.row);
-        if (clicked != null and picked != null and clicked.?.id == picked.?.id) {
-            _ = try app.openDetail(picked.?.id);
-        } else {
-            view.* = .{ .back = view.back, .col = at.col, .row = at.row, .lane = at.lane, .repo = view.repo, .backlog = view.backlog, .home = view.home };
-            if (clicked) |card| app.drag = .{ .card = card.id };
-        }
+        const again = clicked != null and picked != null and clicked.?.id == picked.?.id;
+        if (!again) view.* = .{ .back = view.back, .col = at.col, .row = at.row, .lane = at.lane, .repo = view.repo, .backlog = view.backlog, .home = view.home };
+        if (clicked) |card| app.drag = .{ .card = .{ .id = card.id, .opens = again } };
         return true;
+    }
+
+    /// The card with ticket `id`, on the board or in the backlog.
+    pub fn cardById(app: *const App, id: u32) ?*const tickets.Card {
+        const b = if (app.board) |*b| b else return null;
+        for (b.cards()) |*card| if (card.id == id) return card;
+        for (b.backlog()) |*card| if (card.id == id) return card;
+        return null;
     }
 
     /// What a card let go in a column of `to` does: stays, takes that status through babylon, or is
@@ -4811,16 +4823,12 @@ pub const App = struct {
     /// bottom row and it stays.
     fn dropCard(app: *App, id: u32, over: ?tickets.Status) !void {
         const to = over orelse return;
-        const b = if (app.board) |*b| b else return;
-        const card = for (b.cards()) |*card| {
-            if (card.id == id) break card;
-        } else return;
+        const card = app.cardById(id) orelse return;
         switch (cardDrop(card.status, to)) {
             .stay => {},
             .status => |word| {
-                var buf: [96]u8 = undefined;
-                const cmd = std.fmt.bufPrint(&buf, "babylon update {d} --status {s}", .{ id, word }) catch return;
-                try app.send(.ignore, "run-shell -b \"out=\\$({s} 2>&1) || {{ command -v notify-send >/dev/null && notify-send -a arena -- \\\"\\$out\\\"; }}\"", .{cmd});
+                var id_buf: [12]u8 = undefined;
+                _ = try app.runWith("move", &.{ "babylon", "update", std.fmt.bufPrint(&id_buf, "{d}", .{id}) catch return, "--status", word }, false);
             },
             .refuse => |why| {
                 var buf: [160]u8 = undefined;
@@ -4982,6 +4990,7 @@ pub const App = struct {
 
     /// The held button moved to `m`, or let go, wherever the pointer is by then.
     fn dragTo(app: *App, m: keys.Mouse) !void {
+        if (app.drag == .card) return app.dragCard(m);
         const s = app.cur() orelse {
             app.drag = .none;
             return;
@@ -4989,13 +4998,12 @@ pub const App = struct {
         if (m.release or !m.motion() or m.hover()) {
             const held = app.drag;
             const drop = app.dropAt();
-            const over = if (held == .card) app.cardTarget() else null;
             app.drag = .none;
             app.dirty = true;
             switch (held) {
                 .select => |from| if (app.paneById(from.pane)) |pane| try app.copy(pane),
                 .title => |id| if (m.release) try app.dropWindow(s, id, drop),
-                .card => |id| if (m.release) try app.dropCard(id, over),
+
                 else => {},
             }
             return;
@@ -5003,7 +5011,7 @@ pub const App = struct {
         const ox: i32 = app.term_w - app.view_w;
         switch (app.drag) {
             .none, .thumb, .focus => {},
-            .card => app.dirty = true,
+            .card => {},
             // Past the pane's top or bottom the history scrolls under the pointer.
             .select => |from| {
                 const pane = app.paneById(from.pane) orelse return;
@@ -5040,6 +5048,21 @@ pub const App = struct {
             .title => app.dirty = true,
             .session => |id| try app.dragSession(id, m),
         }
+    }
+
+    /// The held button moved to `m`, or let go, with a board card in it: no session is needed.
+    fn dragCard(app: *App, m: keys.Mouse) !void {
+        const held = &app.drag.card;
+        app.dirty = true;
+        if (!m.release and m.motion() and !m.hover()) {
+            held.moved = true;
+            return;
+        }
+        const card = held.*;
+        const over = app.cardTarget();
+        app.drag = .none;
+        if (!m.release) return;
+        if (card.opens and !card.moved) _ = try app.openDetail(card.id) else try app.dropCard(card.id, over);
     }
 
     /// Where a window held by its title would go, let go now: the place of the column under
@@ -6521,6 +6544,75 @@ test "a dragged card moves todo↔backlog and todo↔done, and a drop babylon wo
     try eq(@as(?tickets.Status, .doing), app.cardTarget());
     app.pointer = .{ .x = app.boardX(), .y = 0 };
     try eq(@as(?tickets.Status, null), app.cardTarget());
+}
+
+test "a press on a card arms its drag, the picked one's included, with or without a session, and a drop babylon refuses says why" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    defer app.deinit();
+    app.term_w = 100;
+    app.view_w = 100;
+    app.view_h = 30;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1,"repo":"arena","title":"a","status":"todo"},{"id":2,"repo":"arena","title":"b","status":"todo"}]}
+    );
+    app.board_view = .{};
+    const eq = std.testing.expectEqual;
+    const x = app.boardColX(0) + 2;
+    var first: u16 = 0;
+    var second: u16 = 0;
+    for (App.first_line..app.listH()) |y| if (app.boardCardAt(x, @intCast(y))) |at| {
+        if (at.row == 0 and first == 0) first = @intCast(y);
+        if (at.row == 1 and second == 0) second = @intCast(y);
+    };
+    try std.testing.expect(first > 0 and second > 0);
+
+    // the picked card: armed to open on a let go without a move
+    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = first, .release = false }));
+    try eq(@as(u32, 1), app.drag.card.id);
+    try std.testing.expect(app.drag.card.opens);
+
+    // dragged over doing, no session in the app: a drag all the same, and the drop is refused with its why
+    app.pointer = .{ .x = app.boardColX(1) + 2, .y = App.first_line + 1 };
+    try app.dragTo(.{ .code = 32, .x = app.pointer.x, .y = app.pointer.y, .release = false });
+    try std.testing.expect(app.drag.card.moved);
+    try app.dragTo(.{ .code = 0, .x = app.pointer.x, .y = app.pointer.y, .release = true });
+    try eq(@as(@TypeOf(app.drag), .none), app.drag);
+    try std.testing.expect(app.report_failed);
+    try std.testing.expect(std.mem.startsWith(u8, app.report_said.?, "doing and review"));
+
+    // another card: picked by the press, which is not armed to open
+    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = second, .release = false }));
+    try eq(@as(u32, 2), app.drag.card.id);
+    try std.testing.expect(!app.drag.card.opens);
+    try eq(@as(usize, 1), app.board_view.?.row);
+}
+
+test "in the backlog a card let go on a repo's tab is bound for todo" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    defer app.deinit();
+    app.term_w = 100;
+    app.view_w = 100;
+    app.view_h = 30;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":2,"repo":"tlon","title":"b","status":"todo"}],"backlog":[{"id":1,"repo":"arena","title":"a","status":"backlog"}]}
+    );
+    app.board_view = .{ .backlog = true };
+    var seen: ?u16 = null;
+    for (App.first_line..app.listH()) |y| if (app.boardCardAt(app.boardColX(0) + 3, @intCast(y))) |_| {
+        seen = @intCast(y);
+    };
+    try std.testing.expectEqual(true, try app.boardMouse(.{ .code = 0, .x = app.boardColX(0) + 3, .y = seen.?, .release = false }));
+    try std.testing.expectEqual(@as(u32, 1), app.drag.card.id);
+    try app.dragTo(.{ .code = 32, .x = 5, .y = 2, .release = false });
+    try std.testing.expectEqual(true, app.drag.card.moved);
+    var buttons: [48]App.Button = undefined;
+    for (app.boardButtons(&buttons)) |b| if (b.what == .repo) {
+        app.pointer = .{ .x = b.x + 1, .y = b.y };
+        try std.testing.expectEqual(@as(?tickets.Status, .todo), app.cardTarget());
+        return;
+    };
+    return error.NoRepoTab;
 }
 
 test "a refused report says babylon's reason, a filed one its number, and both go with the next key" {

@@ -182,6 +182,7 @@ fn checkRefusals(app: *App) !void {
         try takeRefusal(app, std.fmt.bufPrint(&id, "next:{d}", .{item.ticket}) catch continue);
     }
     try takeRefusal(app, "start");
+    try takeRefusal(app, "move");
 }
 
 fn takeRefusal(app: *App, id: []const u8) !void {
@@ -192,6 +193,10 @@ fn takeRefusal(app: *App, id: []const u8) !void {
     std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
     if (std.mem.eql(u8, id, "start")) return app.startAnswered(text);
     if (std.mem.eql(u8, id, "report")) return app.reportAnswered(text);
+    if (std.mem.eql(u8, id, "move")) {
+        var said: [256]u8 = undefined;
+        return app.reportAnswered(std.fmt.bufPrint(&said, "no {s}", .{text}) catch "no babylon refused the move");
+    }
     try app.refuse(id, text);
 }
 

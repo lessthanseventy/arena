@@ -1331,6 +1331,12 @@ check "r from the last repo goes to the backlog tab, lit" await tablit backlog
 check "which shows its cards in place of the columns" see '#12 Someday'
 check "and not the four columns" gone '╭─ doing '
 told() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == 'update 12 --status todo' ]] }
+mouse 0 ${(z)$(spot '#12 Someday')} M
+mouse 32 $(tabcol tlon) $(tabrow) M
+mouse 0 $(tabcol tlon) $(tabrow) m
+check "a press on the picked card, dragged onto a repo's tab, moves it to todo through babylon" await told
+check "and does not open its modal" gone '╭─ #12 '
+: >$tmp/babylon
 key t
 check "t moves a backlog card to todo through babylon" await told
 key r
@@ -1355,6 +1361,7 @@ key Escape
 check "Escape puts it away" gone '│ its Claude: '
 zselect -t 10
 mouse 0 ${(z)$(spot '#8 Board')} M
+mouse 0 ${(z)$(spot '#8 Board')} m
 check "a click on the picked card opens its modal and does not go" see '│ the whole of it '
 key Enter
 check "and Enter in it goes to the Claude holding it" see '╭─ 1 one '

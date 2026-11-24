@@ -2296,10 +2296,7 @@ fn benchBoard(app: *App, w: *Writer, r: theme.Roles, view: app_mod.BoardView) !v
 
 /// The card being dragged, under the pointer.
 fn benchHeld(app: *const App, w: *Writer, r: theme.Roles) !void {
-    const b = if (app.board) |*b| b else return;
-    const card = for (b.cards()) |*card| {
-        if (card.id == app.drag.card) break card;
-    } else return;
+    const card = app.cardById(app.drag.card.id) orelse return;
     var buf: [160]u8 = undefined;
     const text = std.fmt.bufPrint(&buf, " #{d} {s} ", .{ card.id, card.title }) catch return;
     const x = app.pointer.x + 1;
