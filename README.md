@@ -83,9 +83,9 @@ always did; arena draws them and leaves them running when it quits.
 
   ![The board: columns of todo, doing, review and a strip of what is done](docs/screenshots/board.png)
 
-  - **Columns** are todo, doing, review and done, and in each the cards are grouped by repo, a
-    heading to a repo. Done is a narrow `recent` strip, the last few closed a row each, with
-    `reopen` on its foot. An epic is not a card but a slim bar along the top, its progress counted
+  - **Columns** are todo, doing and review, and in each the cards are grouped by repo, a
+    heading to a repo. Done is the `recent` strip along the foot, a timeline of the last few
+    closed with how long ago each, and the picked one has `reopen`. An epic is not a card but a slim bar along the top, its progress counted
     from its children. The row of tabs atop narrows the board to one repo (`r` goes to the next);
     the gate is a button beside them while babylon runs one.
   - **A card** has its number and title, as tall as its text, and its repo, the Claude holding it
