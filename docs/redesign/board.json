@@ -1,0 +1,86 @@
+{
+  "auto": {"on": true, "cap": 4, "working": 3, "tools": {"working": 1, "cap": 3}, "repo_caps": {"arena": 2, "babylon": 1, "tlon": 1, "menard": 0}},
+  "hold": false,
+  "orchestrator": {"on": true, "running": true},
+  "proposals": [
+    {"id": 41, "ticket_id": 612, "why": "start #612 next: tlon's money figure is high, two days old, and nothing blocks it"}
+  ],
+  "needs_you": [
+    {"id": "ask-52", "kind": "ask", "ticket": 760, "repo": "arena", "text": "Which visual direction should the board and Home take?", "doc": "docs/redesign/README.md",
+     "actions": [{"key": "1", "label": "Phosphor"}, {"key": "2", "label": "Workbench"}, {"key": "3", "label": "Neon tiles"}, {"key": "c", "label": "in words", "needs": "words"}]},
+    {"id": "back-338", "kind": "sent_back", "ticket": 338, "repo": "arena", "text": "sent back, free: the review asked for the action row to keep its place on a narrow card",
+     "actions": [{"key": "G", "label": "give"}, {"key": "⏎", "label": "start"}, {"key": "x", "label": "close"}]},
+    {"id": "prop-41", "kind": "proposal", "ticket": 612, "repo": "tlon", "text": "start #612 next: high, two days old, nothing blocks it",
+     "actions": [{"key": "⏎", "label": "go"}, {"key": "x", "label": "no"}]}
+  ],
+  "plan": {
+    "now": [
+      {"ticket": 760, "repo": "arena", "title": "Visual redesign: a GUI in the TUI, retro", "state": "building", "since": "2026-11-24T04:38:21Z", "pane": "%1280"},
+      {"ticket": 757, "repo": "arena", "title": "A click on the board turned auto off and locked the orchestrator's column", "state": "building", "since": "2026-11-24T04:26:46Z", "pane": "%1234"},
+      {"ticket": 588, "repo": "babylon", "title": "babylon start N: the seams' verb every start goes through", "state": "building", "since": "2026-11-24T04:12:00Z", "pane": "%1190", "stalled": "idle 9m"},
+      {"ticket": 587, "repo": "arena", "title": "The seams: one session-state hook", "state": "verifying", "stage": "verifying", "since": "2026-11-24T04:42:00Z"},
+      {"ticket": 591, "repo": "menard", "title": "zig test runs through menard's run test", "state": "reviewing", "stage": "reviewing", "since": "2026-11-24T04:51:00Z"},
+      {"ticket": 501, "repo": "tlon", "title": "_got bumps done_week when the id is not waiting", "state": "queued", "stage": "queued", "since": "2026-11-24T04:55:00Z"}
+    ],
+    "next": [
+      {"ticket": 761, "repo": "arena", "title": "arena crashes with integer overflow in feedRun", "why": "the crash leaves your shell full of mouse codes", "set_by": "human", "waits_on": [{"lane": "arena", "until": 757}]},
+      {"ticket": 612, "repo": "tlon", "title": "Money: a safe-to-spend-per-day figure", "why": "high, two days old, nothing blocks it", "set_by": "orchestrator"},
+      {"ticket": 346, "repo": "arena", "title": "Board 13: / finds cards by number, title or repo", "why": "the last of the board's keys", "set_by": "orchestrator", "waits_on": [{"ticket": 760}]},
+      {"ticket": 590, "repo": "babylon", "title": "Restarts become a Your move item", "why": "the orchestrator stops restarting by hand", "set_by": "orchestrator", "waits_on": [{"ticket": 588}]},
+      {"ticket": 433, "repo": "ficciones", "title": "The bar says ▲ N and opens arena's inbox", "why": "one count of what needs you, everywhere", "set_by": "orchestrator"}
+    ],
+    "goals": [
+      {"epic": 326, "title": "The board, redesigned: an app, not a terminal dump", "doc": "docs/board-design.md", "landed": 13, "total": 18,
+       "steps": [{"ticket": 760, "state": "building"}, {"ticket": 338, "state": "sent_back"}, {"ticket": 346, "state": "waiting", "waits_on": [{"ticket": 760}]}]},
+      {"epic": 500, "title": "The orchestrator is the front door", "doc": "docs/orchestrator.md", "landed": 9, "total": 12,
+       "steps": [{"ticket": 757, "state": "building"}, {"ticket": 590, "state": "waiting", "waits_on": [{"ticket": 588}]}]},
+      {"epic": 14, "title": "The house is for personal life, not a software factory", "landed": 39, "total": 40,
+       "steps": [{"ticket": 612, "state": "todo"}]},
+      {"epic": 410, "title": "menard runs zig too", "landed": 2, "total": 7,
+       "steps": [{"ticket": 591, "state": "reviewing"}, {"ticket": 592, "state": "todo"}]}
+    ],
+    "landed_today": {"count": 23, "newest": [632, 754, 457, 748, 744]},
+    "not_planned": {"count": 21, "follow_ups": 9, "by_repo": {"arena": 11, "babylon": 3, "ficciones": 1, "menard": 2, "tlon": 4}}
+  },
+  "backlog": [],
+  "tickets": [
+    {"id": 326, "repo": "arena", "kind": "epic", "status": "doing", "priority": "high", "title": "The board, redesigned: an app, not a terminal dump", "inserted_at": "2026-11-22T03:00:00Z"},
+    {"id": 500, "repo": "arena", "kind": "epic", "status": "doing", "priority": "high", "title": "The orchestrator is the front door", "inserted_at": "2026-11-22T20:00:00Z"},
+    {"id": 14, "repo": "tlon", "kind": "epic", "status": "doing", "priority": "high", "title": "The house is for personal life, not a software factory", "inserted_at": "2026-11-20T22:15:53Z"},
+    {"id": 410, "repo": "menard", "kind": "epic", "status": "doing", "priority": "med", "title": "menard runs zig too", "inserted_at": "2026-11-23T01:00:00Z"},
+
+    {"id": 760, "repo": "arena", "status": "doing", "priority": "high", "epic_id": 326, "model": "claude-opus-5-5", "title": "Visual redesign: a GUI in the TUI, retro. Two or three rendered mockups and a style guide for the human to pick from", "claimed_by": "%1280", "claimed_at": "2026-11-24T04:38:21Z", "inserted_at": "2026-11-24T04:35:40Z", "branch": "t760-visual-redesign",
+     "ask": {"id": 52, "question": "Which visual direction should the board and Home take?", "options": ["Phosphor", "Workbench", "Neon tiles"]}},
+    {"id": 757, "repo": "arena", "status": "doing", "priority": "high", "epic_id": 500, "model": "claude-sonnet-5-5", "title": "A click on the board turned auto off and left the orchestrator's column unable to take typing", "claimed_by": "%1234", "claimed_at": "2026-11-24T04:26:46Z", "inserted_at": "2026-11-24T04:20:00Z", "branch": "t757-click-auto-off"},
+    {"id": 338, "repo": "arena", "status": "doing", "priority": "high", "epic_id": 326, "model": "claude-sonnet-5-5", "title": "Board 5: the picked card is a box with its detail and action buttons", "stage": "failed", "stage_note": "the review asked for the action row to keep its place on a narrow card", "inserted_at": "2026-11-22T04:00:00Z", "stage_at": "2026-11-24T04:39:27Z"},
+    {"id": 588, "repo": "babylon", "status": "doing", "priority": "high", "model": "claude-opus-5-5", "title": "babylon start N: the seams' verb every start goes through", "claimed_by": "%1190", "claimed_at": "2026-11-24T04:12:00Z", "inserted_at": "2026-11-23T08:00:00Z", "branch": "t588-start-n"},
+    {"id": 512, "repo": "tlon", "status": "doing", "priority": "med", "epic_id": 14, "model": "claude-sonnet-5-5", "title": "Asterion's orchestrator copies arena's words: needs you, ask, proposal", "claimed_by": "%1201", "claimed_at": "2026-11-24T03:58:00Z", "inserted_at": "2026-11-23T09:00:00Z", "branch": "t512-words"},
+
+    {"id": 587, "repo": "arena", "status": "review", "priority": "high", "epic_id": 500, "title": "The seams: one session-state hook every surface reads", "stage": "verifying", "stage_at": "2026-11-24T04:42:00Z", "submitted_at": "2026-11-24T04:41:00Z", "inserted_at": "2026-11-23T07:00:00Z"},
+    {"id": 591, "repo": "menard", "status": "review", "priority": "med", "epic_id": 410, "title": "zig test runs through menard's run test", "stage": "reviewing", "stage_at": "2026-11-24T04:51:00Z", "submitted_at": "2026-11-24T04:44:00Z", "inserted_at": "2026-11-23T07:30:00Z"},
+    {"id": 501, "repo": "tlon", "status": "review", "priority": "med", "title": "_got bumps done_week when the id is not waiting", "stage": "queued", "stage_at": "2026-11-24T04:55:00Z", "submitted_at": "2026-11-24T04:55:00Z", "inserted_at": "2026-11-23T05:00:00Z"},
+
+    {"id": 761, "repo": "arena", "status": "todo", "priority": "high", "title": "arena crashes with integer overflow in draw.feedRun, and a crash leaves mouse reporting on in the shell", "inserted_at": "2026-11-24T04:30:00Z"},
+    {"id": 346, "repo": "arena", "status": "todo", "priority": "med", "epic_id": 326, "title": "Board 13: / finds cards by number, title or repo, live", "blocked_by": [760], "inserted_at": "2026-11-22T04:00:00Z"},
+    {"id": 759, "repo": "arena", "status": "todo", "priority": "low", "epic_id": 326, "title": "Hover underlines a whole card, not only its title", "blocked_by": [760], "inserted_at": "2026-11-24T03:00:00Z"},
+    {"id": 702, "repo": "arena", "status": "todo", "priority": "med", "model": "claude-haiku-5-5", "title": "The ? keys box lists Alt+w twice", "inserted_at": "2026-11-23T12:00:00Z"},
+    {"id": 688, "repo": "arena", "status": "todo", "priority": "low", "title": "README's screenshots still show the lanes", "inserted_at": "2026-11-23T10:00:00Z"},
+    {"id": 590, "repo": "babylon", "status": "todo", "priority": "high", "epic_id": 500, "title": "Restarts become a Your move item", "blocked_by": [588], "inserted_at": "2026-11-23T08:10:00Z"},
+    {"id": 603, "repo": "babylon", "status": "todo", "priority": "med", "title": "babylon reads its own history: a nightly retro that turns repeated send-backs into root-cause tickets", "inserted_at": "2026-11-22T08:00:00Z"},
+    {"id": 604, "repo": "babylon", "status": "todo", "priority": "low", "title": "Test the one-off migration of ask docs", "inserted_at": "2026-11-22T09:00:00Z"},
+    {"id": 433, "repo": "ficciones", "status": "todo", "priority": "med", "epic_id": 500, "title": "The bar says ▲ N and opens arena's inbox", "inserted_at": "2026-11-22T22:00:00Z"},
+    {"id": 437, "repo": "ficciones", "status": "todo", "priority": "low", "title": "The palette's surfaces get names the shell and arena share", "inserted_at": "2026-11-23T02:00:00Z"},
+    {"id": 592, "repo": "menard", "status": "todo", "priority": "med", "epic_id": 410, "model": "claude-sonnet-5-5", "title": "zig build's errors answer as menard's one JSON line", "inserted_at": "2026-11-23T07:40:00Z"},
+    {"id": 612, "repo": "tlon", "status": "todo", "priority": "high", "epic_id": 14, "title": "Money: a safe-to-spend-per-day figure on Today", "inserted_at": "2026-11-22T05:00:00Z"},
+    {"id": 614, "repo": "tlon", "status": "todo", "priority": "med", "title": "The house on Telegram: one Today card a day, edited in place", "inserted_at": "2026-11-22T06:00:00Z"},
+    {"id": 615, "repo": "tlon", "status": "todo", "priority": "low", "title": "Retag live seats on a planner reload", "inserted_at": "2026-11-23T06:00:00Z"},
+
+    {"id": 632, "repo": "arena", "status": "done", "priority": "med", "stage": "landed", "title": "arena's test gaps: the orch button, the … marker and ? keys", "closed_at": "2026-11-24T04:31:00Z"},
+    {"id": 754, "repo": "babylon", "status": "done", "priority": "med", "stage": "landed", "title": "A sent-back chip's repo word no longer overflows", "closed_at": "2026-11-24T04:10:00Z"},
+    {"id": 457, "repo": "tlon", "status": "done", "priority": "low", "stage": "landed", "title": "Server.Home.Morning keeps yesterday's weather", "closed_at": "2026-11-24T03:52:00Z"},
+    {"id": 748, "repo": "menard", "status": "done", "priority": "med", "stage": "landed", "title": "clause move keeps the @doc above it", "closed_at": "2026-11-24T03:20:00Z"},
+    {"id": 744, "repo": "ficciones", "status": "done", "priority": "med", "stage": "landed", "title": "Ghostty's minimum-contrast set to 4.5", "closed_at": "2026-11-24T02:48:00Z"},
+    {"id": 740, "repo": "arena", "status": "done", "priority": "low", "title": "Closed: the rail's wide peek is #324's", "closed_at": "2026-11-24T01:30:00Z"},
+    {"id": 733, "repo": "arena", "status": "done", "priority": "med", "stage": "landed", "title": "The done strip's picked card dims like its neighbours", "closed_at": "2026-11-23T23:10:00Z"}
+  ]
+}

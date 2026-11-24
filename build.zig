@@ -30,5 +30,14 @@ pub fn build(b: *std.Build) void {
     b.step("run", "Run arena").dependOn(&run_cmd.step);
 
     const tests = b.addTest(.{ .root_module = exe_mod });
-    b.step("test", "Run unit tests").dependOn(&b.addRunArtifact(tests).step);
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&b.addRunArtifact(tests).step);
+
+    const mock_mod = b.createModule(.{
+        .root_source_file = b.path("src/mock.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    b.installArtifact(b.addExecutable(.{ .name = "arena-mock", .root_module = mock_mod }));
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = mock_mod })).step);
 }
