@@ -8,7 +8,8 @@
 # the background, @arena_claude_background, what its shells there are doing, and
 # @arena_claude_branch, the git branch it works on. The same state, as idle |
 # working | done | waiting, goes to the session's record at $XDG_RUNTIME_DIR/sessions/<id>.json,
-# which the desktop shell, `session` and babylon's meter read. $1 is the
+# which the desktop shell, `session` and babylon's meter read; its `prompts` counts the lines the
+# human typed (not babylon's, a peer's, nor a task's notification). $1 is the
 # event (start | prompt | tool | stop | stopfailure | waiting |
 # end), the hook's JSON is on stdin. A hook must never fail a turn: every miss is silent and the
 # exit is 0. Without jq the text is left out.
@@ -43,6 +44,7 @@ record() {
 			def said: gsub("\\s+"; " ") | capture("^ ?<cross-session-message(?<attrs>[^>]*)>(?<text>.*?)(</cross-session-message>|$)") as $m
 				| ($m.attrs | capture("from-name=\"(?<n>[^\"]+)\"").n // "another session") + ": " + ($m.text | sub(" $"; ""))
 				| short;
+			def typed: $event == "prompt" and (.prompt // "" | test("^\\s*(<(task-notification|agent-message|cross-session-message)|babylon:|Another Claude session)") | not);
 			def doing: (.tool_input // {}) as $t | .tool_name as $tool
 				| if $t.description then $t.description
 					elif $t.file_path then "\($tool) \($t.file_path | sub(".*/"; ""))"
@@ -53,6 +55,7 @@ record() {
 			  at: $now, cwd: $in.cwd, repo: $repo, socket: $socket, pane: $pane,
 			  said: (if $event == "prompt" then ($in.prompt // "" | said // short) else $prev.said end),
 			  doing: (if $event == "tool" then ($in | doing) elif $event == "prompt" then null else $prev.doing end),
+			  prompts: (($prev.prompts // 0) + (if ($in | typed) then 1 else 0 end)),
 			  goal: $prev.goal, next: $prev.next }
 			' >"$tmp" 2>/dev/null; then
 			mv -f "$tmp" "$sessions/$sid.json"

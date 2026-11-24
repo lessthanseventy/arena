@@ -25,6 +25,7 @@ claim() {
 send start '{source: "startup"}'
 is .state idle "a new session sits idle"
 is .said null "having been asked nothing"
+is .prompts 0 "and typed nothing"
 
 send prompt '{prompt: "make   the bar\nknow about my sessions"}'
 is .state working "a prompt starts work"
@@ -74,6 +75,12 @@ send prompt '{prompt: "<cross-session-message from=\"u\" from-name=\"a\">one</cr
 is .said "a: one" "text after the closing tag"
 send prompt '{prompt: "why <cross-session-message from-name=\"x\">y</cross-session-message> raw?"}'
 is .said "why <cross-session-message from-name=\"x\">y</cross-session-message> raw?" "a tag quoted mid-sentence stays as typed"
+is .prompts 3 "only the lines typed count: two before, this one, no message from another session"
+send prompt '{prompt: "babylon: #859 landed"}'
+send prompt '{prompt: "<task-notification><task-id>t1</task-id></task-notification>"}'
+is .prompts 3 "a babylon line and a task notification leave it"
+send prompt '{prompt: "and another"}'
+is .prompts 4 "a typed line raises it by one"
 
 print '{"session_id": "../x"}' | sh $root/hooks/claude-state.sh tool
 claim "a session id cannot leave the dir" test ! -e $work/run/x.json
