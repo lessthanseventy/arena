@@ -165,8 +165,8 @@ still goes home from anywhere, and home now shows the plan. `B` is the board, fr
 normal mode, and `b` from the board comes home to the plan. A click on the head's `◆ plan` and
 `B board` does the same.
 
-On the board, a picked todo card's key bar gains `n next`: it adds the card to the bottom of next
-and asks for its why in a line at the foot. Dragging a card onto the board's `▤ board` title, the
+On the board, a picked todo card's key bar gains `w next`: it adds the card to the bottom of next
+and asks for its why in a line at the foot; `W` adds it at the top, with no why asked. Dragging a card onto the board's `▤ board` title, the
 way back to the plan, is the same. Dragging a next row onto another on the plan takes that place.
 
 ## Who sets next, and where its why lives
@@ -180,7 +180,7 @@ board.
   hours, at most about seven, each with a why the human can read in one line. It uses the
   `plan_next` MCP tool, or `babylon next 589 --why "…" [--at 1]` and `babylon next 589 --drop`.
 - **The human** moves items with `J` `K` or by dragging, takes one out with `x`, edits a why with
-  `e`, and adds one with `n` on the board. Each of these runs the same `babylon next …` line
+  `e`, and adds one with `w` or `W` on the board. Each of these runs the same `babylon next …` line
   ([principle 7](principles.md)). An item the human placed is marked `human`, and the
   orchestrator's prompt says not to reorder past it without a proposal.
 - **auto takes from the top of next.** While auto is on and has room, it starts the first item in
