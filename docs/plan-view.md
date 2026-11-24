@@ -166,8 +166,8 @@ normal mode, and `b` from the board comes home to the plan. A click on the head'
 `B board` does the same.
 
 On the board, a picked todo card's key bar gains `n next`: it adds the card to the bottom of next
-and asks for its why in a line at the foot. Dragging a card onto the plan's next is the same, at
-the place it is dropped.
+and asks for its why in a line at the foot. Dragging a card onto the board's `▤ board` title, the
+way back to the plan, is the same. Dragging a next row onto another on the plan takes that place.
 
 ## Who sets next, and where its why lives
 

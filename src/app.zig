@@ -551,6 +551,13 @@ pub const App = struct {
             opens: bool,
             moved: bool = false,
         },
+        /// A row of the plan's next by its place (from 0), to move to the row it is let go on.
+        next_row: struct {
+            from: usize,
+            /// The press was on the picked row, which a let go without a move goes to.
+            opens: bool,
+            moved: bool = false,
+        },
     } = .none,
     /// The session the open menu asks about closing.
     doomed: u32 = 0,
@@ -4108,7 +4115,50 @@ pub const App = struct {
         if (at >= sheet.n) return;
         const row = sheet.rows[at];
         const pick = row.pick orelse return;
-        if (view.plan_pick == pick) try app.planAct(&row, "\r") else view.plan_pick = pick;
+        const picked = view.plan_pick == pick;
+        view.plan_pick = pick;
+        if (row.kind == .next) app.drag = .{ .next_row = .{ .from = nextPlace(&sheet, at), .opens = picked } } else if (picked) try app.planAct(&row, "\r");
+    }
+
+    /// The place (from 0) in next of the next row at `at` of the sheet.
+    fn nextPlace(sheet: *const sheets.Sheet, at: usize) usize {
+        var place: usize = 0;
+        for (sheet.rows[0..at]) |row| place += @intFromBool(row.kind == .next);
+        return place;
+    }
+
+    /// The held button moved to `m`, or let go, with a row of next in it: let go on another row
+    /// of next it takes that place, through babylon as the human; let go where it was pressed it
+    /// goes, as a click on the picked row does.
+    fn dragNextRow(app: *App, m: keys.Mouse) !void {
+        const held = &app.drag.next_row;
+        app.dirty = true;
+        if (!m.release and m.motion() and !m.hover()) {
+            held.moved = true;
+            return;
+        }
+        const row = held.*;
+        app.drag = .none;
+        if (!m.release) return;
+        var sheet: sheets.Sheet = undefined;
+        if (m.y < 2 or !app.planSheet(&sheet)) return;
+        const at = app.planTop(&sheet) + (m.y - 2);
+        if (at >= sheet.n or sheet.rows[at].kind != .next) return;
+        const to = nextPlace(&sheet, at);
+        if (to == row.from) {
+            if (row.opens and !row.moved) try app.planAct(&sheet.rows[at], "\r");
+            return;
+        }
+        const view = &app.board_view.?;
+        view.plan_pick = sheet.rows[at].pick orelse return;
+        var id: [12]u8 = undefined;
+        var place: [12]u8 = undefined;
+        var said: [24]u8 = undefined;
+        const moved = app.board.?.next()[row.from].ticket;
+        const number = std.fmt.bufPrint(&id, "{d}", .{moved}) catch return;
+        const here = std.fmt.bufPrint(&place, "{d}", .{to + 1}) catch return;
+        const refusal = std.fmt.bufPrint(&said, "next:{d}", .{moved}) catch return;
+        _ = try app.runNeed(refusal, &.{ "babylon", "next", number, "--at", here });
     }
 
     /// The needs-you inbox: home, the feed atop its column.
@@ -5044,7 +5094,7 @@ pub const App = struct {
     /// focus, and the wheel, or anything once it is focused, is the column's.
     fn boardMouse(app: *App, m: keys.Mouse) !bool {
         // a card's let go that never came: a new press ends that drag unseen
-        if (app.drag == .card and m.leftPress()) app.drag = .none;
+        if ((app.drag == .card or app.drag == .next_row) and m.leftPress()) app.drag = .none;
         if (app.drag != .none) return false;
         if (m.x < app.boardX()) {
             if (m.leftPress() and m.y != 1) try app.closeBoard();
@@ -5352,6 +5402,7 @@ pub const App = struct {
     /// The held button moved to `m`, or let go, wherever the pointer is by then.
     fn dragTo(app: *App, m: keys.Mouse) !void {
         if (app.drag == .card) return app.dragCard(m);
+        if (app.drag == .next_row) return app.dragNextRow(m);
         const s = app.cur() orelse {
             app.drag = .none;
             return;
@@ -5371,7 +5422,7 @@ pub const App = struct {
         const ox: i32 = app.term_w - app.view_w;
         switch (app.drag) {
             .none, .thumb, .focus => {},
-            .card => {},
+            .card, .next_row => {},
             // Past the pane's top or bottom the history scrolls under the pointer.
             .select => |from| {
                 const pane = app.paneById(from.pane) orelse return;
@@ -5420,9 +5471,36 @@ pub const App = struct {
         }
         const card = held.*;
         const over = app.cardTarget();
+        const on_plan = app.onPlanLink();
         app.drag = .none;
         if (!m.release) return;
-        if (card.opens and !card.moved) _ = try app.openDetail(card.id) else try app.dropCard(card.id, over);
+        if (card.opens and !card.moved) _ = try app.openDetail(card.id) else if (on_plan) try app.dropOnNext(card.id) else try app.dropCard(card.id, over);
+    }
+
+    /// Whether the pointer is on the board's title, `▤ board`, which is the way back to the plan.
+    fn onPlanLink(app: *const App) bool {
+        return app.hasPlan() and app.pointer.y == 0 and app.pointer.x >= app.boardX() and app.pointer.x < app.boardX() + cellCount(board_title);
+    }
+
+    /// Card `id` let go on the way back to the plan: a todo card joins next at its bottom, and
+    /// its why is asked at the foot, as `n` does; one already there is moved to the bottom.
+    fn dropOnNext(app: *App, id: u32) !void {
+        const card = app.cardById(id) orelse return;
+        if (card.status != .todo) return app.reportAnswered("no only a todo card goes in next");
+        const queue = app.board.?.next();
+        var at = queue.len + 1;
+        for (queue) |item| if (item.ticket == id) {
+            at = queue.len;
+            break;
+        };
+        var number: [12]u8 = undefined;
+        var place: [12]u8 = undefined;
+        var said: [24]u8 = undefined;
+        const ticket = std.fmt.bufPrint(&number, "{d}", .{id}) catch return;
+        const here = std.fmt.bufPrint(&place, "{d}", .{at}) catch return;
+        const refusal = std.fmt.bufPrint(&said, "next:{d}", .{id}) catch return;
+        _ = try app.runNeed(refusal, &.{ "babylon", "next", ticket, "--at", here });
+        if (at > queue.len) _ = app.openWhy(id, "");
     }
 
     /// Where a window held by its title would go, let go now: the place of the column under
@@ -7979,4 +8057,58 @@ test "the plan's pick lights its ticket's Your move item dim in the feed, and th
     view.pick = 0;
     try std.testing.expect(try app.feedKey("j"));
     try eq(@as(usize, 1), view.plan_pick);
+}
+
+test "a row of next dragged onto another takes its place, and a todo card let go on the way back to the plan joins next at its bottom" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.clearReportSaid();
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 30;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":7,"repo":"arena","title":"c","status":"todo"},{"id":8,"repo":"arena","title":"d","status":"doing"}],
+        \\"plan":{"next":[
+        \\{"ticket":11,"repo":"arena","title":"a","why":"x"},
+        \\{"ticket":12,"repo":"arena","title":"b","why":"y"}]}}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    const eq = std.testing.expectEqual;
+
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    var ys: [2]u16 = undefined;
+    var n: usize = 0;
+    for (sheet.rows[0..sheet.n], 0..) |row, at| if (row.kind == .next) {
+        ys[n] = @intCast(2 + at - app.planTop(&sheet));
+        n += 1;
+    };
+    try eq(@as(usize, 2), n);
+    const x = app.boardX() + 3;
+    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = ys[1], .release = false }));
+    try eq(@as(usize, 1), app.drag.next_row.from);
+    try app.dragTo(.{ .code = 32, .x = x, .y = ys[0], .release = false });
+    try app.dragTo(.{ .code = 0, .x = x, .y = ys[0], .release = true });
+    try eq(@as(@TypeOf(app.drag), .none), app.drag);
+    var got: [512]u8 = undefined;
+    var len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'next' '12' '--at' '1'") != null);
+
+    app.board_view = .{};
+    app.drag = .{ .card = .{ .id = 8, .opens = false, .moved = true } };
+    app.pointer = .{ .x = app.boardX() + 2, .y = 0 };
+    try app.dragTo(.{ .code = 0, .x = app.pointer.x, .y = 0, .release = true });
+    try std.testing.expect(app.report_failed);
+    try std.testing.expect(app.prompt == null);
+
+    app.drag = .{ .card = .{ .id = 7, .opens = false, .moved = true } };
+    try app.dragTo(.{ .code = 0, .x = app.pointer.x, .y = 0, .release = true });
+    len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'next' '7' '--at' '3'") != null);
+    try eq(menu.Prompt.What.why, app.prompt.?.what);
 }
