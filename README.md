@@ -49,46 +49,62 @@ always did; arena draws them and leaves them running when it quits.
   `reviewed` or `landed`; a session shows the one that most wants looking at.
 - **Panes**, drawn where tmux has them. Click one to select it, drag the line between two to resize.
 - **An overview** of every session's windows at once.
-- **The board**: the tickets every Claude on the machine shares, from [babylon](https://github.com/lessthanseventy/babylon),
-  in place of the strip, a column for each of todo, doing, review and done. With every repo shown, done is a narrow strip headed `recent`, each lane's last few closed a dim `✓` row, and its `reopen` on the strip's foot for the picked one. A card has its number and title, whole on two lines, and under them its repo, the window of the Claude
-  holding it with that Claude's mark and how long it has held it (in review, the pipeline's stage in its place), what it waits on, where it is on babylon's way to main (queued, or `held` while queued behind a question of its own, verifying, reviewing,
-  landing, `✗ sent back`, `◆ landed`) and `? asks` when its Claude waits on a decision from you:
-  `a` shows the question and its options, and an option's number answers it, typed into that
-  Claude by babylon. `G` on a free todo card lists the running Claudes, and one's number, or
-  `j`, `k` and Enter, gives it the card: babylon types the claim into that Claude as your word,
-  and says why when it will not (that Claude is mid-turn, or waits on you). One that waits is dimmed, at the foot of its column. Its first row has the repos as tabs, the one shown lit: a click on one narrows the board to it,
-  and `r` goes to the next, then every one again; the gate is a button beside them while babylon
-  runs one, and `?` shows every key. `o` goes to the orchestrator, started first when it is not
-  running; the board's row atop the rail says after its name whether it runs, and `orch off`
-  while babylon does not keep it running. `A`, or the `auto` button beside the tabs, turns babylon's
-  auto mode on and off: while it is on, babylon starts a Claude on each free todo card, up to its
-  cap of Claudes working, and the button, the board's header and its row atop the rail say `auto 1/2`, one
-  working of a cap of two. A `+` on the to-do column files a ticket, and the picked card
-  shows what can be done to it as chips under it, each run by a click. Enter, or a second click,
-  on a card goes to the Claude holding it. `n` files a ticket and `e` edits the picked one, its
-  title, repo and body in `$EDITOR` in a window of their own; `p` raises its priority, from high
-  back to low; `>` closes a ticket still to do and `<` opens a closed one again; `J` and `K` move it
-  down or up its column among its repo's cards; one with no repo, or a repo whose name is not
-  plain, stays where it is. Space shows the picked card's whole ticket over the board: its body, links,
-  stage and the note on it, and the last of its gate's log. The board's row atop the rail counts what is to do and being
-  done, and a click there goes home; it is there while babylon keeps its file.
-- **Home**: the board with the orchestrator's column pinned on its right (60 cells, less on a
-  narrow screen), the column with the keys. `arena` with no session named opens it, and `b` in
-  normal mode, a click on the board's row atop the rail and `arena inbox` go there. The column's
-  head on its top edge says the orchestrator's state (`working 12s`, `▲ waits on you`, `idle`,
-  `◌ restarting`, `off`) and its context's share; while it is off the column says
-  `orchestrator off · ⏎ start it`, and Enter there runs `babylon orchestrator`. When the
-  orchestrator's session ends, as babylon restarts it, home stays open in the session you were
-  in, and the column comes back on the new one with the keys where you left them. While the
-  orchestrator runs, its window shows beside the board, arena in its session to have it live:
-  a column like any other, with the board the one before it. Alt+l, or a click on it, focuses it,
-  and it is lit: what is typed, the wheel and the mouse are then its own. Alt+h, or a click on the
-  board, goes back to the board. `` ` `` folds it away, and the
-  board opens so until it is unfolded. Closing the board goes back to the session you were in.
-  Atop the column, above the orchestrator's pane, is the feed: what is your move as babylon's
-  `needs_you` words it, each with its actions, then what is landing in queue order, what is
-  being built, and how many landed today. It is read from babylon's file, so it stays while the
-  orchestrator is off or restarting.
+- **Home is the plan**, from [babylon](https://github.com/lessthanseventy/babylon)'s tickets, which every
+  Claude on the machine shares: what is running, what comes next and why, how far each goal has
+  got, and what landed. `arena` with no session named opens it, and `b` in normal mode, a click on
+  the board's row atop the rail and `arena inbox` go there. The orchestrator's column is pinned on
+  its right (60 cells, less on a narrow screen), and at half a screen home shows one of the two,
+  `p` for the plan and `o` for the column.
+
+  ![Home: the plan beside the orchestrator's column](docs/screenshots/plan.png)
+
+  - **now** is each Claude at work, how long, and `stalled` when it has gone quiet; the pipeline
+    (verifying, reviewing, landing) is under it. **next** is a short numbered list, each ticket with
+    a why in a line and what it waits on (`free now`, `needs #589`); auto starts from its top. **goals**
+    are the epics, a bar and a count each, the focal one atop. **landed** is today's, and
+    **not planned** the todo cards that are in no next.
+  - `j` `k` pick through the rows, `⏎` goes (to a Claude, or starts a ticket of next now), `space`
+    opens the ticket and `t` its modal. On a row of next, `J` `K` move it, `x` takes it out, `e` edits
+    its why, and dragging a row onto another takes that place. Every one runs `babylon next …`.
+  - The column's head says the orchestrator's state (`working 12s`, `▲ waits on you`, `idle`,
+    `◌ restarting`, `off`) and its context's share; while it is off it says
+    `orchestrator off · ⏎ start it`, and Enter there runs `babylon orchestrator`. When the
+    orchestrator's session ends, as babylon restarts it, home stays open in the session you were
+    in, and the column comes back on the new one with the keys where you left them. Alt+l, or a click
+    on it, focuses it, and what is typed, the wheel and the mouse are then its own. Alt+h, or a click
+    on the plan, goes back. `` ` `` folds it away.
+  - Atop the column is the feed: what is your move as babylon's `needs_you` words it, each with its
+    actions, then what is landing in queue order, what is being built, and how many landed today. It
+    is read from babylon's file, so it stays while the orchestrator is off or restarting. The plan's
+    pick and the feed's light each other's ticket, dim.
+- **The board** is the drill-down, `B` from anywhere in normal mode or a click on the head's
+  `B board`, for finding a ticket, reading it whole, editing it and moving it; `b` comes home.
+  The goals row of the plan opens it on one epic. Closing it goes back to the session you were in.
+
+  ![The board: columns of todo, doing, review and a strip of what is done](docs/screenshots/board.png)
+
+  - **Columns** are todo, doing, review and done, and in each the cards are grouped by repo, a
+    heading to a repo. Done is a narrow `recent` strip, the last few closed a row each, with
+    `reopen` on its foot. An epic is not a card but a slim bar along the top, its progress counted
+    from its children. The row of tabs atop narrows the board to one repo (`r` goes to the next);
+    the gate is a button beside them while babylon runs one.
+  - **A card** has its number and title, as tall as its text, and its repo, the Claude holding it
+    with that Claude's mark and how long, what it waits on, where it is on the way to main (queued,
+    `held`, verifying, reviewing, landing, `✗ sent back`, `◆ landed`) and `? asks` when its Claude
+    waits on you. The one picked shows what can be done to it as buttons, each run by a click, and
+    the key bar at the foot says the keys: `?` shows every one.
+  - **Moving** a card: `⏎`, or a second click, goes to the Claude holding it. `a` shows a question and
+    its options, and an option's number answers it, typed into that Claude by babylon. `G` on a free
+    todo card lists the running Claudes and gives it to one. `e` edits it in `$EDITOR`, `p` raises its
+    priority, `>` closes a ticket still to do and `<` opens it again, `J` `K` move it in its column
+    among its repo's cards, and `+` files a ticket. `w` puts the card at the bottom of next and asks
+    its why, `W` at the top. Dragging a card to another column moves it where babylon allows
+    (todo to backlog or done, and back); onto the `▤ board` title it joins next, as `w`. `/` finds
+    cards by number or title. `space` shows the whole ticket over the board: its body, links,
+    stage and the note on it, and the last of its gate's log.
+  - `o` goes to the orchestrator, started first when it is not running; `A`, or the `auto` button,
+    turns babylon's auto mode on and off: while it is on, babylon starts a Claude on each free
+    ticket, from the top of next, up to its cap of Claudes working, and the header says `auto 1/2`.
 - **Jump** to any window in any session by typing part of its name.
 - **A menu** for everything, for when you would rather click.
 - **Mouse throughout**: click, wheel, drag to select and copy (shift-drag over a program that takes
@@ -124,7 +140,7 @@ by every Claude on the machine, over MCP.
 ## Use
 
 ```sh
-arena             # home: the board and the orchestrator's column; with no board, the most recent session
+arena             # home: the plan and the orchestrator's column; with no board, the most recent session
 arena work        # the session called work, made if it is not there
 arena -L socket   # a tmux server other than the default one
 arena board 240   # the board on ticket 240, in the arena that is running
@@ -172,7 +188,8 @@ In normal mode:
 | `z` | give the session's columns the whole width, and back |
 | `/` | find: a window by name, a Claude by its branch, a ticket by its number or title; `⏎` goes |
 | `o` | the overview |
-| `b` | the board |
+| `b` | home, the plan |
+| `B` | the board |
 | `n` | the needs-you inbox |
 | `g` | the gate's modal, for the run in progress |
 | `w` | the rail narrow, and wide again |
