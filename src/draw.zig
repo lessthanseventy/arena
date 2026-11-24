@@ -2644,6 +2644,51 @@ test "a card not picked: its priority bar, its whole title wrapped to four rows,
     try std.testing.expect(std.mem.indexOf(u8, first, "waits #4 · opus") != null);
 }
 
+test "the board's first row ends on its keys' hint, the short one with less room, and a … stands after the last tab left in" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"repo":"arena","title":"a","status":"todo"},
+        \\{"id":2,"repo":"menard","title":"b","status":"todo"},
+        \\{"id":3,"repo":"tlon","title":"c","status":"todo"}
+        \\],"auto":{"on":true,"cap":3,"working":2},"orchestrator":{"on":true,"running":true}}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{};
+    app.view_h = 20;
+    var buf: [8192]u8 = undefined;
+    const has = struct {
+        fn in(drawn: []const u8, text: []const u8) bool {
+            return std.mem.indexOf(u8, drawn, text) != null;
+        }
+    }.in;
+
+    app.view_w = 140;
+    app.term_w = 140;
+    var wide: Writer = .fixed(&buf);
+    try boardButtons(&app, &wide, app.board_view.?);
+    try std.testing.expect(has(wide.buffered(), "? keys · esc close"));
+    try std.testing.expect(!has(wide.buffered(), "…"));
+
+    app.view_w = 90;
+    app.term_w = 90;
+    var short: Writer = .fixed(&buf);
+    try boardButtons(&app, &short, app.board_view.?);
+    try std.testing.expect(has(short.buffered(), "? keys"));
+    try std.testing.expect(!has(short.buffered(), "esc close"));
+    try std.testing.expect(!has(short.buffered(), "…"));
+
+    app.view_w = 60;
+    app.term_w = 60;
+    var heads: [48]App.Button = undefined;
+    const more = app.header(&heads).more.?;
+    var narrow: Writer = .fixed(&buf);
+    try boardButtons(&app, &narrow, app.board_view.?);
+    var at: [24]u8 = undefined;
+    try std.testing.expect(has(narrow.buffered(), try std.fmt.bufPrint(&at, "\x1b[1;{d}H…", .{more + 1})));
+    try std.testing.expect(!has(narrow.buffered(), "? keys"));
+}
+
 test "the board's keys end on a card's edge and its marks, and a 24-row terminal has them whole" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     app.view_w = 80;
