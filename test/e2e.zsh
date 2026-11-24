@@ -1129,6 +1129,9 @@ $bin -L $in inbox
 check "arena inbox opens home" see '╭─ ○ orchestrator · off '
 $bin -L $in show $two
 check "and a show with the board open puts it away for the pane" await dots '○ ● ○'
+$bin -L $in show "#7"
+zselect -t 10
+check "a show of a ticket nobody holds changes nothing" dots '○ ● ○'
 shows '^NORMAL' || key C-Space
 see '^NORMAL'
 key -l '#'

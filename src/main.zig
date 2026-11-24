@@ -231,6 +231,24 @@ fn verbArgOk(verb: []const u8, next: ?[]const u8) bool {
     return showTarget(arg);
 }
 
+test showTarget {
+    try std.testing.expect(showTarget("%290"));
+    try std.testing.expect(showTarget("#324"));
+    try std.testing.expect(!showTarget("#"));
+    try std.testing.expect(!showTarget("%"));
+    try std.testing.expect(!showTarget("324"));
+    try std.testing.expect(!showTarget("#x"));
+    try std.testing.expect(!showTarget("#-1"));
+}
+
+test isVerb {
+    try std.testing.expect(isVerb("board"));
+    try std.testing.expect(isVerb("show"));
+    try std.testing.expect(isVerb("inbox"));
+    try std.testing.expect(!isVerb("-h"));
+    try std.testing.expect(!isVerb("work"));
+}
+
 test verbArgOk {
     try std.testing.expect(verbArgOk("inbox", null));
     try std.testing.expect(!verbArgOk("inbox", "foo"));
