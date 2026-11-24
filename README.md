@@ -170,13 +170,14 @@ In normal mode:
 | `c` | a new window |
 | `x` | close the window, after asking |
 | `z` | give the session's columns the whole width, and back |
-| `/` | jump to a window by name |
+| `/` | find: a window by name, a Claude by its branch, a ticket by its number or title; `⏎` goes |
 | `o` | the overview |
 | `b` | the board |
 | `n` | the needs-you inbox |
 | `g` | the gate's modal, for the run in progress |
 | `w` | the rail narrow, and wide again |
 | `m` | the menu |
+| `?` | these keys |
 | `Q` | leave; the sessions keep running |
 
 The chords that stay on Alt, in every mode: `Alt+h` `Alt+l`, `Alt+k`, `Alt+1` … `Alt+9`,

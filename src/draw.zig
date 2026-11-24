@@ -918,9 +918,15 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
                 try b.blank();
                 continue;
             }
-            const s = hits[i].session;
-            const win = s.wins.items[hits[i].index];
             const style: vt.Style = if (i == prompt.selected) chip(app) else .{};
+            const s, const win = switch (hits[i]) {
+                .window => |found| .{ found.session, found.session.wins.items[found.index] },
+                .ticket => |card| {
+                    const row = std.fmt.bufPrint(&buf, "  #{d} › {s}", .{ card.id, clip(card.title, 28) }) catch "";
+                    try b.line(style, row, style, "");
+                    continue;
+                },
+            };
             const left = std.fmt.bufPrint(&buf, "  {s} › {s}", .{ clip(s.name, 12), clip(win.name, 14) }) catch "";
             var mark: [8]u8 = undefined;
             const mark_len = std.unicode.utf8Encode(glyph(app, app.mark(s, win)), &mark) catch 0;
@@ -2113,9 +2119,33 @@ const plan_keys = [_][2][]const u8{
 fn helpBox(app: *App, w: *Writer) !void {
     const list: []const [2][]const u8 = if (app.planShown()) &plan_keys else &board_keys;
     const title = if (app.planShown()) " the plan's keys " else " the board's keys ";
-    const bw: u16 = @min(app.boardW() -| 4, 60);
+    return keysBox(app, w, list, title, app.boardX(), app.boardW());
+}
+
+const strip_keys = [_][2][]const u8{
+    .{ "j k", "the pick down or up the rail; ⏎ goes, space opens" },
+    .{ "] [", "the next or previous Claude that waits or is done" },
+    .{ "h l  1…9", "the window left or right; that window" },
+    .{ "H L  J K", "move the window; move the session" },
+    .{ "; '", "the window narrower, wider" },
+    .{ "c  x  z", "a new window; close it; the whole width" },
+    .{ "/", "jump: windows, Claudes and tickets" },
+    .{ "b n g", "the board; the inbox; the gate's modal" },
+    .{ "o w m", "the overview; the rail narrow; the menu" },
+    .{ "i Esc", "insert again" },
+    .{ "Q", "leave; the sessions keep running" },
+};
+
+/// The strip's normal-mode keys, boxed over the strip.
+fn stripHelp(app: *App, w: *Writer) !void {
+    return keysBox(app, w, &strip_keys, " the keys ", app.term_w - app.view_w, app.view_w);
+}
+
+/// `list`'s keys boxed over the middle of the `width` columns from `left`, with `title`.
+fn keysBox(app: *App, w: *Writer, list: []const [2][]const u8, title: []const u8, left: u16, width: u16) !void {
+    const bw: u16 = @min(width -| 4, 60);
     const inner = bw -| 4;
-    const x = app.boardX() + (app.boardW() -| bw) / 2;
+    const x = left + (width -| bw) / 2;
     const edge = ink(app, "amber", 4);
     var pen: Pen = .{};
     var y: u16 = @min(3, app.view_h -| (list.len + 3));
@@ -2612,6 +2642,7 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
     }
     // a narrow rail drawn wide lies over the strip
     if (app.peek) try rail(app, w);
+    if (app.strip_help and app.overlay() == false) try stripHelp(app, w);
     if (app.popup) |pop| {
         try popupBox(app, w, pop);
         cursor = null;

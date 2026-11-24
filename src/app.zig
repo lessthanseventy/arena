@@ -492,6 +492,8 @@ pub const App = struct {
     listed: bool = false,
     dirty: bool = true,
     quit: bool = false,
+    /// The strip's normal-mode keys shown over it, until the next key.
+    strip_help: bool = false,
     /// tmux ended the client, as it does when the session it was on ends.
     ended: bool = false,
     /// Milliseconds on a clock that only goes forward, set each turn of the loop.
@@ -4668,22 +4670,48 @@ pub const App = struct {
         };
     }
 
-    pub const Hit = struct { session: *Session, index: usize };
+    pub const Hit = union(enum) { window: struct { session: *Session, index: usize }, ticket: *const tickets.Card };
 
-    /// The windows of every session whose "session window" answers `query`, the closest first,
-    /// into `out`. Returns how many.
+    /// What the jump prompt finds for `query`, the closest first, into `out`: the windows of
+    /// every session by "session window" and a Claude's branch, then the board's tickets by
+    /// `#number title repo`. Returns how many.
     pub fn jumpHits(app: *const App, query: []const u8, out: []Hit) usize {
         var n: usize = 0;
-        for ([_]u1{ 0, 1 }) |rank| for (app.sessions.items) |s| for (s.wins.items, 0..) |win, i| {
-            if (n == out.len) return n;
-            var buf: [160]u8 = undefined;
-            const text = std.fmt.bufPrint(&buf, "{s} {s}", .{ s.name, win.name }) catch continue;
-            if (menu.fuzzy(query, text) == rank) {
-                out[n] = .{ .session = s, .index = i };
-                n += 1;
+        for ([_]u1{ 0, 1 }) |rank| {
+            for (app.sessions.items) |s| for (s.wins.items, 0..) |win, i| {
+                if (n == out.len) return n;
+                var buf: [160]u8 = undefined;
+                const text = std.fmt.bufPrint(&buf, "{s} {s} {s}", .{ s.name, win.name, win.text(.branch) }) catch continue;
+                if (menu.fuzzy(query, text) == rank) {
+                    out[n] = .{ .window = .{ .session = s, .index = i } };
+                    n += 1;
+                }
+            };
+            const b = if (app.board) |*b| b else continue;
+            for (b.cards()) |*card| {
+                if (n == out.len) return n;
+                var buf: [256]u8 = undefined;
+                const text = std.fmt.bufPrint(&buf, "#{d} {s} {s}", .{ card.id, card.title, card.repo orelse "" }) catch continue;
+                if (menu.fuzzy(query, text) == rank) {
+                    out[n] = .{ .ticket = card };
+                    n += 1;
+                }
             }
-        };
+        }
         return n;
+    }
+
+    /// Goes where a jump hit is: a window of any session, or a ticket's card, its modal open.
+    fn jumpHit(app: *App, hit: Hit) !void {
+        switch (hit) {
+            .window => |at| try app.jumpTo(at.session, at.index),
+            .ticket => |card| {
+                app.normal = false;
+                try app.showCard(card.id);
+                if (app.board_view) |*view| view.answering = false;
+                if (app.board_view != null) _ = try app.openDetail(card.id);
+            },
+        }
     }
 
     /// Goes to a window of any session.
@@ -5302,6 +5330,10 @@ pub const App = struct {
                 app.dirty = true;
             },
             'n' => try app.showInbox(),
+            '?' => {
+                app.strip_help = true;
+                app.dirty = true;
+            },
             'g' => {
                 if (app.board_view == null) try app.toggleBoard();
                 if (app.board_view != null) try app.gateModal();
@@ -5327,6 +5359,11 @@ pub const App = struct {
             // a prompt opened over any of them, as the report's is, has the keys first
             const asking = app.prompt != null;
             if (app.normal and !asking) {
+                if (app.strip_help) {
+                    app.strip_help = false;
+                    app.dirty = true;
+                    continue;
+                }
                 if (app.popup != null) {
                     try app.popupKey(key);
                     continue;
@@ -5349,7 +5386,11 @@ pub const App = struct {
                 }
                 if (std.mem.eql(u8, key, "b")) try app.goHome();
                 if (std.mem.eql(u8, key, "B")) try app.toBoard();
-                if (app.board_view == null) try app.stripKey(key);
+                if (app.board_view == null) {
+                    try app.stripKey(key);
+                    // a key that opened a menu, prompt or overview leaves the rest of the read to it
+                    if (app.overlay()) app.normal = false;
+                }
             } else if (app.overview != null and !asking) {
                 try app.overviewKey(key);
             } else if (app.board_view != null and !app.sideFocused() and !asking) {
@@ -5389,7 +5430,7 @@ pub const App = struct {
             .jump => {
                 var hits: [menu.jump_rows]Hit = undefined;
                 const n = app.jumpHits(prompt.text(), &hits);
-                if (prompt.selected < n) try app.jumpTo(hits[prompt.selected].session, hits[prompt.selected].index);
+                if (prompt.selected < n) try app.jumpHit(hits[prompt.selected]);
                 return;
             },
             .search, .report, .words, .why, .find => return,
@@ -5691,12 +5732,11 @@ pub const App = struct {
         }
     }
 
-    /// With Alt: h and l move along the strip, j and k between sessions, 1 to 9 go to a window,
+    /// With Alt: h and l move along the strip, k to the session before, 1 to 9 go to a window,
     /// J and K move the session down and up the rail,
     /// H and L move the window, ; and ' make it narrower and wider, Enter opens one, x closes
-    /// it, z gives it the whole width, p asks
-    /// for a window to jump to, o shows every session's windows at once, b babylon's board, /
-    /// searches the pane's history, m opens the menu and q leaves.
+    /// it, z gives it the whole width, b babylon's board, n and N step the Claudes, /
+    /// searches the pane's history and q leaves. The rest is normal mode's.
     /// Everything else is the focused pane's, or the menu's while it is open. Alt is ESC and the
     /// letter together, which a typed Escape then a letter rarely is.
     ///
@@ -6538,6 +6578,41 @@ test "a gate run's last run is read into its stages, their results, times and ou
     try std.testing.expectEqualStrings("running", review.result);
     try std.testing.expect(review.end == null);
     try std.testing.expect(gateStage(run, "land") == null);
+}
+
+test "the strip's normal keys: q does nothing, Q leaves, ? shows the keys, / opens the jump prompt" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.normal = true;
+    try app.stripKey("q");
+    try std.testing.expect(!app.quit and !app.strip_help and app.prompt == null and app.menu == null);
+    try app.stripKey("?");
+    try std.testing.expect(app.strip_help);
+    try app.stripKey("/");
+    try std.testing.expectEqual(menu.Prompt.What.jump, app.prompt.?.what);
+    app.prompt = null;
+    try app.stripKey("Q");
+    try std.testing.expect(app.quit);
+}
+
+test "a key after the one that opened the menu, in the same read, is the menu's" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.normal = true;
+    try app.menuKeys("mj");
+    try std.testing.expect(!app.normal);
+    try std.testing.expectEqual(@as(usize, 1), app.menu.?.selected);
+}
+
+test "the jump prompt finds a ticket by its number or its title as well as a window" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":317,"repo":"arena","title":"Rail sorting","status":"todo"},{"id":8,"repo":"tlon","title":"Lights","status":"todo"}]}
+    );
+    defer app.board.?.deinit();
+    var hits: [8]App.Hit = undefined;
+    try std.testing.expectEqual(@as(usize, 1), app.jumpHits("#317", &hits));
+    try std.testing.expectEqual(@as(u32, 317), hits[0].ticket.id);
+    try std.testing.expectEqual(@as(usize, 1), app.jumpHits("lights", &hits));
+    try std.testing.expectEqual(@as(u32, 8), hits[0].ticket.id);
 }
 
 test "a gate modal's scroll stops at the last line of the output it scrolls" {

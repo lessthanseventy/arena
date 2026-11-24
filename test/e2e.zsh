@@ -465,7 +465,9 @@ check "in insert, Alt+p reaches the pane: Claude Code's model picker is its own"
 key C-c
 normal; key /
 check "in normal mode, / opens the jump prompt" see 'Jump to window'
-key 'solo' Enter
+key 'sol'
+check "and finds a Claude's window by its name" see '› solo'
+key 'o' Enter
 check "normal / jumps to a window of another session" see '╭─ 1 solo '
 
 normal; key o
@@ -1282,7 +1284,18 @@ key '>'
 check "> closes a ticket still to do" await last 'update 7 --status done'
 key e
 check "e edits it in a window of its own" await last 'edit 7'
+normal
+key /
+key '#7'
+check "normal / finds a ticket by its number" see '#7 › Lights'
+key Enter
+check "and Enter opens its card's modal" see '╭─ #7 '
+key q
+gone '╭─ #7 '
+key q
+gone ' board  every'
 key M-b
+see ' board  every'
 key +
 check "n files one, from every repo with the repo asked" await last 'new'
 key M-b
