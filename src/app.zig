@@ -1645,6 +1645,8 @@ pub const App = struct {
             };
         }
         if (app.board_view == null or app.planShown()) return null;
+        var buttons: [48]Button = undefined;
+        for (app.boardButtons(&buttons)) |button| if (button.hit(x, y)) return null;
         const at = app.boardCardAt(x, y) orelse return null;
         const card = if (app.boardLanes()) app.laneCard(at.lane, at.col, at.row) else app.boardCard(at.col, at.row);
         return if (card) |c| .{ .ticket = c.id } else null;
