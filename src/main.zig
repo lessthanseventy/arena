@@ -516,6 +516,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
     defer app.deinit();
     try app.send(.ignore, "set-option -saF " ++ clients_option ++ " ' #{{client_name}} '", .{});
     app.motion = init.environ_map.get("ARENA_REDUCED_MOTION") == null;
+    if (init.environ_map.get("ARENA_LOOK_MS")) |ms| app.look_after = try std.fmt.parseInt(i64, ms, 10);
     app.utc_offset = utcOffset(init);
     var theme_file: ThemeFile = .{
         .path = if (init.environ_map.get("HOME")) |home| try std.fs.path.join(gpa, &.{ home, ".config/ficciones/theme/palette.sh" }) else null,

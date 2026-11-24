@@ -478,6 +478,8 @@ pub const App = struct {
     look: ?Look = null,
     look_rest: ?Look = null,
     look_at: i64 = 0,
+    /// How long a rest takes to open a peek; the e2e lengthens it past what its captures take.
+    look_after: i64 = look_ms,
     look_off: ?Look = null,
     look_here: ?struct { x: u16, y: u16 } = null,
     look_drawn: i64 = 0,
@@ -1790,7 +1792,7 @@ pub const App = struct {
             if (std.meta.eql(off, want)) return never;
             app.look_off = null;
         }
-        const left = since + look_ms - app.now;
+        const left = since + app.look_after - app.now;
         if (left > 0) return left;
         app.look = want;
         app.look_drawn = app.now;

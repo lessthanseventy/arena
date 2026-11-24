@@ -118,7 +118,7 @@ inner select-window -t alpha:one
 
 # An empty HOME: no machine palette, so colours are the fallback ones. No motion: no slides to wait out.
 outer new-session -d -s o -x 121 -y 24 \
-  "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 $bin -L $in alpha 2>$tmp/err; echo EXIT \$?; cat"
+  "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 ARENA_LOOK_MS=2000 $bin -L $in alpha 2>$tmp/err; echo EXIT \$?; cat"
 outer set -s set-clipboard on
 # what arena writes, for what a picture of the screen does not show
 outer pipe-pane -t o "cat >$tmp/raw"
