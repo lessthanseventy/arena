@@ -75,7 +75,19 @@ await() {
   return 1
 }
 shows() { screen | grep -qE -- "$1" }
-hides() { ! shows "$1" }
+# A capture can land mid-frame, with a row not yet drawn: what is gone is judged once two captures
+# a tenth of a second apart agree.
+settled() {
+  local was now=$(screen) i
+  for i in {1..30}; do
+    was=$now
+    zselect -t 10
+    now=$(screen)
+    [[ $now == "$was" ]] && break
+  done
+  print -r -- "$now"
+}
+hides() { ! settled | grep -qE -- "$1" }
 see() { await shows "$1" }
 gone() { await hides "$1" }
 
@@ -91,7 +103,7 @@ check() {
   checking=1
   "$@" && passed=1
   checking=0
-  if ((passed)); then print "ok    $name"; else fail $name; fi
+  if ((passed)); then print "ok    $name"; else fail "$name"; fi
 }
 
 # the checks read sh's own prompt, not one handed down
@@ -186,12 +198,12 @@ see '^NORMAL'
 before=$(strip)
 key -l j
 check "in normal mode j puts the pick on the next session, and the keys are written under the strip" await shows '^│▌beta '
-check "and the key bar replaces the dots" shows '^NORMAL .*j k pick'
+check "and the key bar replaces the dots" await shows '^NORMAL .*j k pick'
 key -l k
 check "k moves it back" await shows '^│▌alpha '
 key -l j
 see '^│▌beta '
-check "the strip's text is unchanged" eval '[[ $(strip) == $before ]]'
+check "the strip's text is unchanged" eval '[[ $(strip) == "$before" ]]'
 key Enter
 check "Enter goes to the pick, in insert" await shows '^│ beta'
 check "and into insert" gone '^NORMAL'
@@ -774,21 +786,23 @@ shows '^NORMAL' || key C-Space
 see '^NORMAL'
 key -l ']'
 see '^│▌.* three'
-before=$(screen)
+# the rail's ages tick on their own, popup or not
+unaged() { screen | sed -E 's/ [0-9]+[smhd] │/ │/g' }
+before=$(unaged)
 beside() { screen | sed -n '1,2p;24p'; screen | cut -c1-30 }
 beside_before=$(beside)
 key -l ' '
 check "space opens the popup, its head naming the Claude and its window" await shows '^.*╭─ ▲ three .*alpha'
 check "and the pane's own line is in it, from the session arena is not in" await shows '│ ?three-pane-line'
-check "with live while it follows the pane" shows ' live'
-check "and its keys in the foot" shows '╰─ j k scroll .*a ask  r reply'
-check "no cell outside it has changed its text" eval '[[ $(beside) == $beside_before ]]'
+check "with live while it follows the pane" await shows ' live'
+check "and its keys in the foot" await shows '╰─ j k scroll .*a ask  r reply'
+check "no cell outside it has changed its text" eval '[[ $(beside) == "$beside_before" ]]'
 key -l 'x'
 key -l 'jkgG'
 check "a key of its own is not typed into the pane" eval '! screen | grep -q "three-pane-linex"'
 key -l q
 check "q closes it" await hides '╰─ j k scroll'
-check "and the screen is as it was" eval '[[ $(screen) == $before ]]'
+check "and the screen is as it was" await eval '[[ $(unaged) == "$before" ]]'
 key -l ' '
 see '╰─ j k scroll'
 key Escape
@@ -1204,7 +1218,7 @@ check "Enter on a card goes to the Claude holding it" see '╭─ 1 one '
 mouse 0 3 2 M
 check "a click on its row in the rail goes home: the board, and the orchestrator's column beside it" see '╭─ ○ orchestrator · off '
 check "which says how to start an orchestrator that is off" see 'orchestrator off · ⏎ start it'
-check "with the board there" shows ' board  every'
+check "with the board there" await shows ' board  every'
 key Enter
 check "and Enter there starts it" await last orchestrator
 : >$tmp/babylon
@@ -1237,7 +1251,7 @@ cp $tmp/run/babylon/board.json $tmp/board.kept
 print -r -- '{"tickets":[{"id":13,"repo":"babylon","title":"Gatekeeping","kind":"ticket","status":"todo","priority":"med","blocked_by":[]}]}' \
   >$tmp/run/babylon/board.json
 key M-b
-see '│ Gatekeeping '
+see 'Gatekeeping'
 key Enter
 check "Enter on a babylon card starts it through babylon too" await last 'start 13'
 check "and closes the board" gone ' board  every'
@@ -1393,7 +1407,7 @@ check "in insert" hides '^NORMAL'
 await in_session orchestrator
 inner kill-session -t '=orchestrator'
 check "its session ending leaves home open, its head saying it restarts" see '╭─ ◌ orchestrator · restarting '
-check "the board still there" shows ' board  every'
+check "the board still there" await shows ' board  every'
 check "and arena in the session the human was in" await in_session alpha
 inner new-session -d -s orchestrator -n orch sh
 check "the column comes back on the new orchestrator" see '╭─ ○ orchestrator · idle '
