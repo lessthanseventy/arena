@@ -22,16 +22,13 @@ const Pen = struct {
     fresh: bool = true,
     /// A style every cell is drawn in while set: the selected agent's rows.
     over: ?vt.Style = null,
-    /// Every cell drawn while set is underlined: the rail's row under the pointer.
-    under: bool = false,
 
     /// `dim` is the palette to dim against, for an unfocused window's cells. The terminal's own
     /// faint is not used for that: one keeping a minimum contrast repaints faint colours white.
     fn set(pen: *Pen, w: *Writer, drawn: vt.Style, dim: ?*const color.Palette) !void {
-        var given = pen.over orelse drawn;
-        if (pen.under) given.flags.underline = .single;
+        const given = pen.over orelse drawn;
         if (!pen.fresh and pen.dimmed == (dim != null) and @as(u128, @bitCast(pen.style)) == @as(u128, @bitCast(given))) return;
-        pen.* = .{ .style = given, .dimmed = dim != null, .fresh = false, .over = pen.over, .under = pen.under };
+        pen.* = .{ .style = given, .dimmed = dim != null, .fresh = false, .over = pen.over };
         var style = given;
         if (dim) |palette| {
             var fg = resolve(palette, style.fg_color) orelse palette.fg;
@@ -307,7 +304,6 @@ fn rail(app: *const App, w: *Writer) !void {
         .recent => " agents · recent ",
         .ticket => " agents · ticket ",
     };
-    const hovered = app.hovered();
     var pen: Pen = .{};
     var y: u16 = 0;
     while (y < h) : (y += 1) {
@@ -322,8 +318,7 @@ fn rail(app: *const App, w: *Writer) !void {
         while (x < width) : (x += 1) {
             if (!top and !bottom and !ruled and x == 1) {
                 const at = y -| (agents_row + 1);
-                pen.under = hovered == .rail and hovered.rail == y;
-                defer pen.under = false;
+
                 if (y > agents_row and at < agents) {
                     try agentRow(app, w, &pen, lines[at], inner, wide);
                 } else try railRow(app, w, &pen, y, inner, wide);
@@ -1620,9 +1615,7 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     try w.writeAll(App.plan_title);
     try pen.set(w, .{}, null);
     try w.writeAll("  ");
-    var link = dim;
-    if (app.hovered() == .none and app.pointer.y == 0 and app.pointer.x >= app.planLink().x and app.pointer.x < app.planLink().x + app.planLink().w) link.flags.underline = .single;
-    try pen.set(w, link, null);
+    try pen.set(w, dim, null);
     try w.writeAll(App.board_link);
     const given = b.plan().?;
     var landing: usize = 0;
@@ -1809,7 +1802,7 @@ fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
 }
 
 /// The modal frame every thing opens in: the rounded box at `rect` with its head in the top edge
-/// and, in the bottom edge, the open modal's buttons, the pointer's underlined, then `hint`.
+/// and, in the bottom edge, the open modal's buttons, then `hint`.
 fn modalFrame(app: *const App, w: *Writer, rect: App.ModalRect, head: []const u8, hint: []const u8) !void {
     const edge = ink(app, "amber", 4);
     var pen: Pen = .{};
@@ -1828,12 +1821,11 @@ fn modalFrame(app: *const App, w: *Writer, rect: App.ModalRect, head: []const u8
     try w.writeAll("╯");
 
     var buttons: [16]App.ModalButton = undefined;
-    const hovered = app.hovered();
     var end = rect.x + 2;
-    for (app.modalButtons(&buttons), 0..) |button, i| {
+    for (app.modalButtons(&buttons)) |button| {
         var style = ink(app, "amber", 4);
         style.flags.inverse = true;
-        if (hovered == .modal and hovered.modal == i) style.flags.underline = .single;
+
         try pen.set(w, style, null);
         try w.print("\x1b[{d};{d}H {s} {s} ", .{ button.y + 1, button.x + 1, button.key, button.label });
         if (button.y == foot - 1) end = button.x + button.width();
@@ -1860,18 +1852,17 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     var buf: [64]u8 = undefined;
     var buttons: [48]App.Button = undefined;
     const shown = app.boardButtons(&buttons);
-    const hovered = app.hovered();
     var end: u16 = 0;
     var right = app.boardX() + app.boardW();
     var refusal_at: ?App.Button = null;
     const said: ?[]const u8 = if (app.start_refused) |text| text else if (app.report_said != null and !app.feedFocused()) app.report_said else null;
     const said_ink = if (app.start_refused != null) ink(app, "emberdim", 1) else reportInk(app);
-    for (shown, 0..) |button, index| {
+    for (shown) |button| {
         if (said != null and button.what == .card) {
             if (refusal_at == null) refusal_at = button;
             continue;
         }
-        var style: vt.Style = switch (button.what) {
+        const style: vt.Style = switch (button.what) {
             .repo => |i| if (i == view.repo and !view.backlog) chip(app) else if (app.tabCount(i) > 0) .{} else ink(app, "dim", 8),
             .backlog => if (view.backlog) chip(app) else if (app.board.?.backlog().len > 0) .{} else ink(app, "dim", 8),
             .gate => ink(app, "violet", 5),
@@ -1885,7 +1876,7 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
                 break :blk lit;
             },
         };
-        if (hovered == .button and hovered.button == index) style.flags.underline = .single;
+
         try pen.set(w, style, null);
         try w.print("\x1b[{d};{d}H{s}", .{ button.y + 1, button.x + 1, app.buttonLabel(button, &buf) });
         if (button.y != 0) continue;
@@ -2135,16 +2126,13 @@ fn columnLines(app: *const App, w: *Writer, pen: *Pen, view: app_mod.BoardView, 
             .card => |spot| {
                 const it = app.groupCard(at.lane, c, spot.row).?;
                 const picked = app.cardPicked(at.lane, c, spot.row);
-                const hovered = hovers(app, at.lane, c, spot.row);
                 if (app.boardStrip(c)) {
                     var buf: [160]u8 = undefined;
-                    var style = if (picked and !app.columnFocused()) heading(app) else ink(app, "dim", 8);
+                    const style = if (picked and !app.columnFocused()) heading(app) else ink(app, "dim", 8);
                     try pen.set(w, style, null);
                     try w.writeAll(" ");
-                    if (hovered) style.flags.underline = .single;
-                    try pen.set(w, style, null);
                     try fitted(w, std.fmt.bufPrint(&buf, "✓ #{d} {s}", .{ it.id, it.title }) catch it.title, inner -| 1);
-                } else try cardLine(app, w, pen, it, spot.part, picked, hovered, with_repo, inner);
+                } else try cardLine(app, w, pen, it, spot.part, picked, with_repo, inner);
             },
         }
         try pen.set(w, edge, null);
@@ -2169,19 +2157,12 @@ fn groupHeading(app: *const App, w: *Writer, pen: *Pen, repo: []const u8, count:
     try w.writeAll(num);
 }
 
-/// Whether the pointer is on the card at `lane`, `col` and `row`.
-fn hovers(app: *const App, lane: usize, col: usize, row: usize) bool {
-    const at = app.hovered();
-    return at == .card and std.meta.eql(at.card, .{ .lane = lane, .col = col, .row = row });
-}
-
 /// Row `part` of a card in `inner` cells. One not picked has a bar down its left, amber for high
 /// and dim for low, its number and title wrapped to the column, the last of `title_rows` cut with
 /// `…`, and a last row when it has something to say. The picked one is boxed in its place, lit
 /// (dim while the orchestrator's column has the keys), its title whole, its priority and how long
-/// since it was filed on its top edge. A card waiting on another is dim, and its title is
-/// underlined under the pointer.
-fn cardLine(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, part: usize, picked: bool, hovered: bool, with_repo: bool, inner: u16) !void {
+/// since it was filed on its top edge. A card waiting on another is dim.
+fn cardLine(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, part: usize, picked: bool, with_repo: bool, inner: u16) !void {
     if (inner < 4) return fitted(w, "", inner);
     var buf: [160]u8 = undefined;
     const dim = ink(app, "dim", 8);
@@ -2215,11 +2196,9 @@ fn cardLine(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, p
         var lines = app_mod.TitleLines.init(title, width);
         var line: []const u8 = "";
         for (0..row + 1) |_| line = lines.next() orelse "";
-        var style: vt.Style = if (card.blocked_by.len > 0) dim else .{};
+        const style: vt.Style = if (card.blocked_by.len > 0) dim else .{};
         try pen.set(w, style, null);
         try w.writeAll(" ");
-        if (hovered) style.flags.underline = .single;
-        try pen.set(w, style, null);
         if (!picked and row + 1 == App.title_rows and count > App.title_rows) {
             const shown = clip(line, width -| 1);
             try w.writeAll(shown);
@@ -2729,7 +2708,7 @@ test "a card not picked: its priority bar, its whole title wrapped to four rows,
         fn row(a: *App, out: []u8, card: *const tickets.Card, part: usize, inner: u16) ![]const u8 {
             var w: Writer = .fixed(out);
             var pen: Pen = .{};
-            try cardLine(a, &w, &pen, card, part, false, false, false, inner);
+            try cardLine(a, &w, &pen, card, part, false, false, inner);
             return w.buffered();
         }
     };

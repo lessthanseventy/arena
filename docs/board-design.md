@@ -272,14 +272,14 @@ everywhere, across the header, the cards, the inbox, the rail and the orchestrat
 
 | state | what it is | its look |
 | --- | --- | --- |
-| hover | the thing under the pointer that a click would act on | underlined, nothing else |
+| hover | the thing under the pointer | no look at all; a click still acts on it |
 | focus | the area keys go to: board, inbox, rail or the orchestrator's column | its frame in the turning gradient, as a focused column's is today |
 | pick | the one item in an area the keys act on | the accent box, or #324's whole-entry mark in the rail |
 
 The rules that make them hold together:
 
-- **Hover changes attributes, never cells.** No text, width or position changes under the
-  pointer, and nothing beside it moves. The one thing hover opens is the narrow rail's wide peek,
+- **Hover changes nothing.** No cell, text or attribute changes under the pointer, and nothing
+  beside it moves. The one thing hover opens is the narrow rail's wide peek,
   drawn over the board and taken back cell for cell.
 - **One layout, read by drawing and clicking alike.** Every button, tab, card and action has its
   rectangle from one pass; the frame draws from those rectangles and a click or hover is tested
@@ -291,8 +291,7 @@ The rules that make them hold together:
 
 An e2e holds it: it hovers one of each kind of element (a tab, a status button, a card, a card's
 action, a key in the foot's bar, an inbox option, a rail session and Claude, the orchestrator
-column's edges and the dividers) and checks that the screen's text is the same as before
-everywhere, and that its attributes changed only inside that element.
+column's edges and the dividers) and checks that no cell changed.
 
 ## What babylon needs to give
 

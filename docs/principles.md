@@ -33,7 +33,7 @@ A review of a design or a UI change checks it against them.
    is shown whole with its actions. *Going* (`⏎`) goes there for real.
 5. **Looking never moves anything.** Peeks, modals and hover draw over the screen. No cell outside
    them changes, and the view behind them is as it was when they close.
-6. **One way to mark a selection.** Hover is underlined, focus is the turning gradient, and the
+6. **One way to mark a selection.** Hover is not marked, focus is the turning gradient, and the
    pick is the accent box. They look the same everywhere
    ([board design](board-design.md#hover-focus-and-pick-one-system)).
 7. **Anything clickable is also a command.** `arena show`, `arena board`, `arena gate`,

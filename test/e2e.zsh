@@ -1734,31 +1734,21 @@ colof() { local l=$(screen | sed -n $1p); [[ $l == *"$2"* ]] || return 1; local 
 # the column of the first │ at or after column $2 of row $1
 barof() { local l=$(screen | sed -n $1p); local p=${${l[$2,-1]}%%│*}; print $(( $2 + ${#p} )) }
 park() { mouse 35 $rest_x $rest_y M }
-# The pointer from where nothing is under it to column $1, row $2: the screen's text is as it
-# was, and only cells in rows $3 to $4 and columns $5 to $6 changed, each now underlined; with no
-# rows given, nothing changed. Then away again, and it is all as it was.
+# The pointer from where nothing is under it to column $1, row $2: no cell changed, text or
+# attribute. Then away again, and it is all as it was.
 hovered() {
-  local text before after cell
-  local -a cells f
+  local text before after
+  local -a cells
   park
   zselect -t 30
   before=$(pic) text=$(screen)
   mouse 35 $1 $2 M
-  if [[ -n $3 ]]; then await eval '[[ $(pic) != "$before" ]]' || { print "      nothing changed"; return 1 }; fi
   zselect -t 30
   after=$(pic)
   [[ $(screen) == "$text" ]] || { print "      text changed"; diff <(print -r -- "$text") <(screen) | sed 's/^/      /'; return 1 }
   cells=("${(@f)$(changed "$before" "$after")}")
   cells=("${(@)cells:#}")
-  if [[ -z $3 ]]; then
-    (( $#cells == 0 )) || { print -l -- "      changed:" "${cells[@]}"; return 1 }
-  else
-    for cell in "${cells[@]}"; do
-      f=(${=cell})
-      (( f[1] >= $3 && f[1] <= $4 && f[2] >= $5 && f[2] <= $6 )) || { print "      outside: $cell"; return 1 }
-      [[ ,${f[3]##*/}, == *,4,* ]] || { print "      not underlined: $cell"; return 1 }
-    done
-  fi
+  (( $#cells == 0 )) || { print -l -- "      changed:" "${cells[@]}"; return 1 }
   park
   await eval '[[ $(pic) == "$before" ]]' || { print "      not as it was after"; return 1 }
 }
@@ -1777,20 +1767,20 @@ see '╭─ doing 1 '
 check "the rail lists a Claude for the pointer to rest on" see '│ . one +2h'
 rest_x=$(( $(colof 2 '╭─ doing') + 3 )) rest_y=18
 r=1 c=$(colof 1 ' menard ')
-check "the pointer on a tab underlines it and changes nothing else" hovered $((c + 2)) $r $r $r $c $((c + 9))
+check "the pointer on a tab changes no cell" hovered $((c + 2)) $r
 c=$(colof 2 ' + ')
-check "and on the + that files a ticket" hovered $((c + 1)) 2 2 2 $c $((c + 2))
+check "and on the + that files a ticket" hovered $((c + 1)) 2
 r=$(rowof '#40 Hover')
 c=$(colof $r '#40')
-check "on a card it underlines its title" hovered $((c + 3)) $r $r $((r + 1)) $((c - 1)) $(barof $r $c)
+check "on a card" hovered $((c + 3)) $r
 r=$(rowof '╰ go ')
 c=$(colof $r ' give ')
-check "and on one of the picked card's actions, that action" hovered $((c + 2)) $r $r $r $c $((c + 5))
+check "and on one of the picked card's actions" hovered $((c + 2)) $r
 rail_w=$(colof 1 '╮')
 r=$(rowof '│ alpha ')
-check "on the rail, a session's row" hovered 4 $r $r $r 2 $((rail_w - 1))
+check "on the rail, a session's row" hovered 4 $r
 r=$(rowof ' one ')
-check "and a Claude's" hovered 4 $r $r $r 2 $((rail_w - 1))
+check "and a Claude's" hovered 4 $r
 ox=$(colof 1 '╭─ ○ orchestrator')
 divide=$(barof 3 $((ox + 1)))
 for x y what in $ox 10 'its left edge' 160 10 'its right edge' $((ox + 12)) 1 'its top edge' \

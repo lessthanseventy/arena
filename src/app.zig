@@ -3716,10 +3716,6 @@ pub const App = struct {
         }
     };
 
-    /// What a click at the pointer would act on, underlined while the pointer is on it: a board
-    /// button by its place in `boardButtons`, a card, or a row of the rail.
-    pub const Hovered = union(enum) { none, button: usize, card: CardAt, rail: u16, modal: usize };
-
     /// What a modal button does when pressed.
     pub const ModalAction = union(enum) { close, card: CardAction, option: u8, claude };
 
@@ -3924,27 +3920,6 @@ pub const App = struct {
         if (key.len == 1 and key[0] >= '1' and key[0] <= '9') return app.pressModal(.{ .option = key[0] - '0' });
         const action: ModalAction = if (is(key, &.{"\r"})) .{ .card = .go } else if (is(key, &.{"G"})) .{ .card = .give } else if (is(key, &.{"e"})) .{ .card = .edit } else if (is(key, &.{"p"})) .{ .card = .priority } else if (is(key, &.{">"})) .{ .card = .close } else if (is(key, &.{"<"})) .{ .card = .reopen } else if (is(key, &.{"c"}) and app.claudeOf(card) != null) .claude else return;
         try app.pressModal(action);
-    }
-
-    pub fn hovered(app: *const App) Hovered {
-        const p = app.pointer;
-        if (app.menu != null or app.prompt != null or app.overview != null or app.drag != .none) return .none;
-        if (p.x >= app.railDrawnW()) {
-            var modal: [16]ModalButton = undefined;
-            for (app.modalButtons(&modal), 0..) |button, i| if (button.hit(p.x, p.y)) return .{ .modal = i };
-        }
-        const rail_w = app.railDrawnW();
-        if (p.x < rail_w) return if (p.x > 0 and p.x + 1 < rail_w and app.railActs(p.y)) .{ .rail = p.y } else .none;
-        const view = app.board_view orelse return .none;
-        if (view.boxed() or p.x >= app.boardX() + app.boardW()) return .none;
-        var buttons: [48]Button = undefined;
-        for (app.boardButtons(&buttons), 0..) |button, i| if (button.hit(p.x, p.y)) return .{ .button = i };
-        return if (app.boardCardAt(p.x, p.y)) |at| .{ .card = at } else .none;
-    }
-
-    fn railActs(app: *const App, y: u16) bool {
-        return (y == 1 and app.board != null) or app.railSession(y) != null or y == app.railNewRow() or
-            y == app.railMenuRow() or app.railAgentAt(y) != null;
     }
 
     pub fn buttonLabel(app: *const App, button: Button, buf: []u8) []const u8 {
@@ -4668,9 +4643,7 @@ pub const App = struct {
     /// A right click nothing else took opens the menu; with the menu open, a click picks from it
     /// or, outside it, closes it.
     fn onMouse(app: *App, m: keys.Mouse) !void {
-        const was = app.hovered();
         app.pointer = .{ .x = m.x, .y = m.y };
-        if (!std.meta.eql(was, app.hovered())) app.dirty = true;
         if (m.leftPress() and app.menu == null and app.prompt == null and app.overview == null) {
             // with the board open, where a click puts the keys is the board's to say: a click on
             // its chrome must not leave the focused column in normal mode, drawn as insert
