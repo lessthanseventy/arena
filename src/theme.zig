@@ -97,7 +97,7 @@ pub const Roles = struct {
         return if (picked) r.raised.mix(r.text, pick_lift) else r.raised;
     }
 
-    /// `text` 40% toward `tile`, or less where that would fall under the contrast floor.
+    /// `grey` 40% toward `tile` (the picked card's face), or less where that would fall under the contrast floor.
     fn dimmed(grey: RGB, tile: RGB) RGB {
         var t: f32 = 0.4;
         while (t > 0) : (t -= 0.05) {

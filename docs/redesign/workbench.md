@@ -10,11 +10,11 @@ Screens: [Home](workbench-home.png) · [board](workbench-board.png) · [popup](w
 | --- | --- | --- |
 | ground | `SURFACE0` | the desktop behind every window |
 | panel | `SURFACE2` | a window's face: a column, the orchestrator's column, a popup |
-| tile | `SURFACE3` | a card, an unfocused window's title bar, an inactive tab |
-| raised | `SURFACE4` | the pick, a focused title bar, a button, a chip |
+| tile | `SURFACE3` | an unfocused window's title bar, an inactive tab |
+| raised | `SURFACE4` | a card on the board (the pick 15% toward text), a focused title bar, a button, a chip |
 | well | `BG` | sunken: the prompt, a progress bar's track |
 | text | `GREY` | words |
-| dim | `GREY` 40% toward `SURFACE3` | meta, ages, labels (kept ≥ 4.5:1) |
+| dim | `GREY` 40% toward the pick's face | meta, ages, labels (kept ≥ 4.5:1) |
 | accent | `AMBER` | focus, the primary button, keys in the foot bar, the auto switch |
 | you | `VIOLET` | asks and `▲ N need you`, and nothing else |
 | per repo | arena `AMBER`, babylon `VIOLET`, ficciones `CYAN`, menard `MOSS`, tlon `PINK` | a repo's glyph, number, chip lead and goal bar |
