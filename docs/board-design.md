@@ -323,8 +323,8 @@ babylon:
 
 arena:
 
-1. **Hover, focus and pick:** one layout of rectangles for drawing and clicks, hover as attributes
-   only, escapes inside the frame, and the hover e2e.
+1. **Hover, focus and pick:** one layout of rectangles for drawing and clicks, hover drawing
+   nothing, escapes inside the frame, and the hover e2e.
 2. **Header:** one row in three groups, each thing said once, each a button.
 3. **Columns, no lanes:** the every view's columns grouped by repo, empty columns narrow, width by
    card count.
