@@ -3352,7 +3352,7 @@ pub const App = struct {
     /// The cards in column `col` of lane `lane`: those shown, and all of them.
     pub fn laneCounts(app: *const App, lane: usize, col: usize) struct { shown: usize, total: usize } {
         if (app.footStrip(col)) {
-            const n = app.stripPicks(&.{});
+            const n = if (lane == app.pickLane()) app.stripPicks(&.{}) else 0;
             return .{ .shown = n, .total = n };
         }
         const repo = app.laneRepo(lane) orelse return .{ .shown = 0, .total = 0 };
@@ -7382,6 +7382,98 @@ test "in the every view a find leaves a recent entry outside the last five close
     try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = app.listH() + 1, .release = false }));
     try eq(@as(usize, 3), app.board_view.?.col);
     try eq(@as(u32, 15), app.boardCard(3, app.board_view.?.row).?.id);
+}
+
+test "in the every view a find leaves a recent entry no lane has, and the keys pick it and stay on it" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 100;
+    app.view_w = 100;
+    app.view_h = 30;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":4,"repo":"a","title":"d","status":"doing"},
+        \\{"id":10,"repo":"a","title":"x","status":"done"},
+        \\{"id":11,"repo":"a","title":"x","status":"done"},
+        \\{"id":12,"repo":"a","title":"x","status":"done"},
+        \\{"id":13,"repo":"a","title":"x","status":"done"},
+        \\{"id":14,"repo":"a","title":"x","status":"done"},
+        \\{"id":15,"repo":"b","title":"zeta","status":"done"}
+        \\]}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{ .col = 3 };
+    @memcpy(app.find[0..4], "zeta");
+    app.find_len = 4;
+    const eq = std.testing.expectEqual;
+
+    for (0..3) |_| try app.boardKey("j");
+    try eq(@as(u32, 15), app.boardCard(3, app.board_view.?.row).?.id);
+    try app.boardKey("k");
+    try eq(@as(u32, 15), app.boardCard(3, app.board_view.?.row).?.id);
+}
+
+test "in the every view with epic bars shown, each drawn recent entry is picked by key and by click, the barred epic not among them" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 100;
+    app.view_w = 100;
+    app.view_h = 30;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":4,"repo":"a","title":"d","status":"doing"},
+        \\{"id":326,"repo":"e","title":"Epic","kind":"epic","status":"done"},
+        \\{"id":10,"repo":"a","title":"x","status":"done"},
+        \\{"id":11,"repo":"b","title":"x","status":"done"}
+        \\],
+        \\"plan":{"goals":[{"epic":326,"title":"E","landed":0,"total":1,"steps":[]}]}}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{ .col = 3 };
+    const eq = std.testing.expectEqual;
+
+    try std.testing.expect(app.epicBars().len > 0);
+    var recent: [App.strip_n]*const tickets.Card = undefined;
+    const n = app.stripCards(&recent);
+    try eq(@as(usize, 2), n);
+    for (0..n) |k| {
+        const x = app.boardX() + 1 + @as(u16, @intCast(k)) * app.stripCell();
+        try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = app.listH() + 1, .release = false }));
+        try eq(recent[k].id, app.boardCard(3, app.board_view.?.row).?.id);
+    }
+    app.board_view.?.row = 0;
+    for (0..n) |k| {
+        try eq(recent[k].id, app.boardCard(3, app.board_view.?.row).?.id);
+        try app.boardKey("j");
+    }
+    try eq(recent[n - 1].id, app.boardCard(3, app.board_view.?.row).?.id);
+}
+
+test "in the every view the keys step through the foot strip and stop at its ends, whatever its lanes" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 100;
+    app.view_w = 100;
+    app.view_h = 30;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":4,"repo":"a","title":"d","status":"doing"},
+        \\{"id":5,"repo":"b","title":"d","status":"doing"},
+        \\{"id":10,"repo":"a","title":"x","status":"done"},
+        \\{"id":11,"repo":"b","title":"x","status":"done"},
+        \\{"id":12,"repo":"a","title":"x","status":"done"}
+        \\]}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{ .col = 3 };
+    const eq = std.testing.expectEqual;
+
+    for (0..6) |_| try app.boardKey("j");
+    try eq(@as(usize, 2), app.board_view.?.row);
+    try eq(@as(u32, 12), app.boardCard(3, app.board_view.?.row).?.id);
+    for (0..6) |_| try app.boardKey("k");
+    try eq(@as(usize, 0), app.board_view.?.row);
+    try eq(@as(u32, 10), app.boardCard(3, app.board_view.?.row).?.id);
 }
 
 test "in Workbench's look a click on the picked tile's button does its action, and one on a recent entry picks it" {
