@@ -376,6 +376,16 @@ key M-j
 check "Alt+j goes to the next session" see '╭─ 1 solo '
 key M-k
 check "Alt+k comes back, to the window left" see '╭─ 2 two '
+inner new-window -d -t beta: -n second sh
+server=$(inner display -p '#{pid}')
+kill -STOP $server
+key M-j M-2
+zselect -t 50
+kill -CONT $server
+beta_at() { [[ $(inner display -p -t beta: '#{window_name}') == $1 ]] }
+check "Alt+2 typed before tmux has switched sessions selects the window of the session asked for" await beta_at second
+key M-k
+inner kill-window -t beta:second
 # wheel 64 and 65 are up and down, 66 and 67 left and right
 mouse 65 81 10 M
 mouse 67 81 10 M
@@ -1185,13 +1195,20 @@ check "off, the state is gone" gone 'auto [0-9]'
 autocol() { local l=$(screen | grep -m1 ' board  every'); local p=${l%% ◐ *}; print $(( ${#p} + 2 )) }
 mouse 0 $(autocol) $(screen | grep -n -m1 ' board  every' | cut -d: -f1) M
 check "a click on the switch turns it on as A does" await last 'auto on'
-check "the board has no orchestrator's button: its column is home's" hides ' orch '
+check "with nothing of the orchestrator in babylon's file, the board's header has no button for it" hides ' ● orch '
+print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":4,"working":4,"tools":{"working":1,"cap":1}}}' >$tmp/run/babylon/board.json
+outer resize-window -t o -x 160
+check "with room, the header's auto switch says the tools slots when babylon's file gives them" see ' ◐ auto 4/4 · tools 1/1( |$)'
+outer resize-window -t o -x 121
+check "and with less room, only the slots in use" see ' ◐ 4/4( |$)'
+cp $tmp/board.noauto $tmp/run/babylon/board.json
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"orchestrator":{"on":true,"running":false}}' >$tmp/run/babylon/board.json
 check "the board's row atop the rail says an orchestrator is not running" see '^│ ▤ board orch  '
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"orchestrator":{"on":false,"running":false}}' >$tmp/run/babylon/board.json
 check "and that babylon keeps it off" see '^│ ▤ board orch off '
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"orchestrator":{"on":true,"running":true}}' >$tmp/run/babylon/board.json
 check "and names it running" see '^│ ▤ board orch  '
+check "the board's header has a ● orch button" see ' ● orch '
 cp $tmp/board.noauto $tmp/run/babylon/board.json
 check "with nothing of it in babylon's file again, the row says nothing" gone '^│ ▤ board orch'
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"proposals":[{"id":4,"action":"start","ticket_id":7,"what":"Start #7","why":"Next in line"}],"needs_you":[{"id":"proposal:4","kind":"proposal","ticket":7,"repo":"tlon","text":"P4 Start #7: Next in line","actions":[]}]}' >$tmp/run/babylon/board.json
@@ -1364,6 +1381,21 @@ check "arena in its session to have it live" await in_session orchestrator
 orch_lit() { [[ $(outer capture-pane -ep -t o) =~ $'((\e\\[[0-9;]*m)+) ○ orchestrator ' && $match[1] =~ '[[;]7[;m]' ]] }
 shown_cursor() { [[ $(outer display -p -t o '#{cursor_flag}') == $1 ]] }
 check "the board keeps the keys: its column is unlit, the cursor in no pane" eval '! orch_lit && shown_cursor 0'
+cp $tmp/run/babylon/board.json $tmp/board.two
+print -r -- "${$(<$tmp/board.two)%\}}"',"orchestrator":{"on":true,"running":true}}' >$tmp/run/babylon/board.json
+in_orch() { in_session orchestrator }
+orchspot() { local l=$(screen | grep -m1 ' board  every'); local p=${l%%●*}; print $(( ${#p} + 1 )) $(screen | grep -n -m1 ' board  every' | cut -d: -f1) }
+check "the board's header has an orchestrator button once babylon's file has an orchestrator" see ' ● +◐'
+mouse 0 ${(z)$(orchspot)} M
+check "and a click on it closes the board, in the orchestrator's session" hides ' board  every'
+check "which it stays in" in_orch
+cp $tmp/board.two $tmp/run/babylon/board.json
+mouse 0 5 3 M
+mouse 0 5 3 m
+await in_session alpha
+key M-b
+check "the board opens beside it again" see ' board  every'
+await in_session orchestrator
 : >$tmp/babylon
 key M-l
 check "Alt+l from the board focuses it, lit as the focused column" await orch_lit
@@ -1458,6 +1490,7 @@ key M-h
 zselect -t 50
 kill -CONT $server
 check "and Alt+h back" await orch_at orch
+
 inner kill-window -t orchestrator:two
 key M-b
 await in_session alpha
