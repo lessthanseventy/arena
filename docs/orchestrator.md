@@ -166,6 +166,10 @@ in the feed, with the reason in place of its buttons.
 | a proposal | `P14 <what>: <why>` | `⏎ go`, `x no` |
 | a free send-back | `✗ #290 arena  sent back, free: <the reason's first line>` | `G give`, `⏎ start`, `x close` |
 | something only the human can do | `↻ restart arena: #452's change is installed` | `⏎ done` |
+| the day's digest | `<its first line> ¶` | `o open`, `⏎ seen` |
+
+A key an item's action names is babylon's even when the item has a doc: `⏎` on the digest says it
+is seen, and `o` opens it.
 
 - An ask is open until it is answered. Its box takes as many rows as its options need, so the
   options are never cut.

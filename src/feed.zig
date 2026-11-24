@@ -385,6 +385,22 @@ fn age(buf: []u8, epoch: i64, since: ?i64) []const u8 {
         std.fmt.bufPrint(buf, "{d}d", .{@min(99, @divFloor(s, 86400))})) catch "";
 }
 
+/// The key of the chip of a buttons line drawn under cell `col` of the row's cells after its
+/// margin: as draw.zig lays them, as raised buttons of `key label` and five cells more with
+/// `raised`, else as the text after a six-cell lead.
+pub fn chipKeyAt(text: []const u8, col: usize, raised: bool) ?[]const u8 {
+    var cells: usize = if (raised) 2 else 6;
+    var parts = std.mem.splitSequence(u8, text, "   ");
+    while (parts.next()) |chip| {
+        const space = std.mem.indexOfScalar(u8, chip, ' ') orelse chip.len;
+        const key = chip[0..space];
+        const w = if (raised) cellCount(key) + cellCount(std.mem.trimStart(u8, chip[space..], " ")) + 5 else cellCount(chip);
+        if (col >= cells and col < cells + w) return key;
+        cells += w + if (raised) 0 else @as(usize, 3);
+    }
+    return null;
+}
+
 fn cellCount(text: []const u8) usize {
     return std.unicode.utf8CountCodepoints(text) catch text.len;
 }

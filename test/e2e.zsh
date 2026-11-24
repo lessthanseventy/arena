@@ -2081,6 +2081,23 @@ key ']'
 key o
 check "o opens its doc in a window of its own" await doc_window
 check "which says so when the file is not in the ticket's repo" await eval 'inner capture-pane -p -t "$(inner list-windows -a -F "#{window_id} #{window_name}" | awk "\$2==\"doc\"{print \$1}")" | grep -q "no such file: .*projects/tlon/docs/none-jkdufltb.md"'
+# an item of any kind runs its action: a digest has no ticket and no repo, and ⏎ is its seen
+print -r -- '{"tickets":[],"needs_you":[{"id":"digest:1795536000","kind":"digest","ticket":null,"repo":"","text":"digest: 3 landed","doc":"/tmp/none-jkdufltb.md","actions":[{"key":"⏎","label":"seen","argv":["babylon","digest","ok"]}]}]}' >$tmp/run/babylon/board.json
+key M-b
+see 'o open   ⏎ seen'
+: >$tmp/babylon
+key ']'
+key Enter
+check "⏎ on a digest runs its seen through babylon, though it names a doc" await last 'digest ok'
+: >$tmp/babylon
+see 'o open   ⏎ seen'
+digest_row=$(screen | grep -n '⏎ seen' | head -1 | cut -d: -f1)
+digest_line=$(screen | grep '⏎ seen' | head -1)
+digest_prefix=${digest_line%%⏎ seen*}
+mouse 0 $((${#digest_prefix} + 2)) $digest_row M
+mouse 0 $((${#digest_prefix} + 2)) $digest_row m
+check "and a click on its seen does the same" await last 'digest ok'
+key M-b
 cp $tmp/board.nolook $tmp/run/babylon/board.json
 
 # the narrow rail at home holds only what moves: a working and a waiting Claude, the rest of a

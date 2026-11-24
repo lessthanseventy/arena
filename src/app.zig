@@ -2152,10 +2152,12 @@ pub const App = struct {
             return true;
         };
         const need = b.needsYou()[at];
-        if (need.doc != null and anyKey(key, &.{ "o", "\r" })) return app.openDoc(need);
-        const action = for (need.actions) |action| {
+        const found = for (need.actions) |action| {
             if (std.mem.eql(u8, action.key, named)) break action;
-        } else return false;
+        } else null;
+        // an action on a key is babylon's: opening the doc only has the keys it leaves
+        if (need.doc != null and found == null and anyKey(key, &.{ "o", "\r" })) return app.openDoc(need);
+        const action = found orelse return false;
         if (action.needs) |needs| if (std.mem.eql(u8, needs, "words")) return app.openWords(need.id);
         if (action.argv) |argv| return app.runNeed(need.id, argv);
         const ticket = need.ticket orelse return true;
@@ -2168,6 +2170,39 @@ pub const App = struct {
             app.board_view.?.giving = 0;
             app.dirty = true;
         }
+        return true;
+    }
+
+    /// A click on the feed's Your move: its item is the pick, and on a button, what the button's
+    /// key does. Whether the click was on one of its items.
+    fn feedClick(app: *App, m: keys.Mouse) !bool {
+        if (!app.sided() or m.y < 1) return false;
+        const left = app.term_w - app.view_w;
+        if (m.x < left + 2 or m.x + 2 > app.term_w) return false;
+        var f: feed.Feed = undefined;
+        if (!app.feedOf(&f)) return false;
+        const row = m.y - 1;
+        if (row >= f.shown) return false;
+        var at: ?usize = null;
+        for (0..f.items_shown) |i| {
+            if (f.item(i).?.line <= row) at = i;
+        }
+        const i = at orelse return false;
+        const view = &app.board_view.?;
+        view.focus = .orchestrator;
+        if (app.sideDue()) app.normal = true;
+        view.pick = i;
+        app.dirty = true;
+        const item = f.item(i).?;
+        if (item.ticket) |id| {
+            _ = app.pickCard(id);
+            app.pickPlan(id);
+        }
+        const line = f.line(row);
+        if (line.kind != .buttons) return true;
+        const chip = feed.chipKeyAt(line.text, m.x - (left + 2), app.roles != null) orelse return true;
+        const key: []const u8 = if (std.mem.eql(u8, chip, "⏎")) "\r" else if (std.mem.eql(u8, chip, "space")) " " else chip;
+        _ = try app.feedAct(item, key);
         return true;
     }
 
@@ -5317,6 +5352,7 @@ pub const App = struct {
                     return true;
                 }
             }
+            if (m.leftPress() and try app.feedClick(m)) return true;
             if (app.sideShown() and (app.sideFocused() or m.wheel())) return false;
             if (m.leftPress()) {
                 view.focus = .orchestrator;
@@ -8464,6 +8500,41 @@ test "the plan's pick lights its ticket's Your move item dim in the feed, and th
     view.pick = 0;
     try std.testing.expect(try app.feedKey("j"));
     try eq(@as(usize, 1), view.plan_pick);
+}
+
+test "an item of any kind runs its action's argv: ⏎ on a digest with no ticket and no repo" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 40;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"needs_you":[
+        \\{"id":"digest:1795536000","kind":"digest","ticket":null,"repo":"","text":"digest","doc":"/home/a/.cache/babylon/digests/2026-11-24.md","actions":[{"label":"seen","key":"⏎","argv":["babylon","digest","ok"]}]}]}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{ .home = true, .plan = true, .focus = .orchestrator };
+    try std.testing.expect(try app.feedKey("\r"));
+    var got: [512]u8 = undefined;
+    var len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'digest' 'ok'") != null);
+
+    // a click on its seen button runs it too
+    const before = len;
+    var f: feed.Feed = undefined;
+    try std.testing.expect(app.feedOf(&f));
+    var row: u16 = 0;
+    while (f.line(row).kind != .buttons) row += 1;
+    // `o open   ⏎ seen`, after the lead of six: seen starts nine cells in
+    const x: u16 = app.term_w - app.view_w + 2 + 6 + 10;
+    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = row + 1, .release = false }));
+    len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(len > before);
+    try std.testing.expect(std.mem.indexOf(u8, got[before..len], "'babylon' 'digest' 'ok'") != null);
 }
 
 test "a row of next dragged onto another takes its place, and a todo card let go on the way back to the plan joins next at its bottom" {
