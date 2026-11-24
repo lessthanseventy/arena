@@ -27,6 +27,23 @@ fn onWinch(_: posix.SIG) callconv(.c) void {
     winch.store(true, .release);
 }
 
+const tty_restore = "\x1b[>0s\x1b[?2004l\x1b[?1006l\x1b[?1003l\x1b]22;default\x1b\\\x1b[0m\x1b[?25h\x1b[?1049l";
+
+/// The terminal as it was, set once arena has taken it over: what a panic gives back, as a clean
+/// quit does, so a crash leaves no mouse reports typed into the shell.
+var saved_tty: ?posix.termios = null;
+
+pub const panic = std.debug.FullPanic(panicRestoring);
+
+fn panicRestoring(msg: []const u8, first_trace_addr: ?usize) noreturn {
+    if (saved_tty) |saved| {
+        saved_tty = null;
+        _ = posix.system.write(posix.STDOUT_FILENO, tty_restore, tty_restore.len);
+        posix.tcsetattr(posix.STDIN_FILENO, .FLUSH, saved) catch {};
+    }
+    std.debug.defaultPanic(msg, first_trace_addr);
+}
+
 fn winsize() ?posix.winsize {
     var ws: posix.winsize = undefined;
     if (posix.system.ioctl(posix.STDOUT_FILENO, posix.T.IOCGWINSZ, @intFromPtr(&ws)) != 0) return null;
@@ -358,11 +375,13 @@ fn run(init: std.process.Init) !bool {
     raw.cc[@backingInt(posix.V.TIME)] = 0;
     try posix.tcsetattr(posix.STDIN_FILENO, .FLUSH, raw);
     defer posix.tcsetattr(posix.STDIN_FILENO, .FLUSH, saved) catch {};
+    saved_tty = saved;
     // 1003: presses, releases and every move of the pointer, for its shape over what it can
     // take hold of; 1006: the SGR report format, which has no column limit; >1s: shift clicks
     // come here, not to the terminal's own selection
     try tty.writeStreamingAll(io, "\x1b[?1049h\x1b[?1003h\x1b[?1006h\x1b[>1s");
-    defer tty.writeStreamingAll(io, "\x1b[>0s\x1b[?1006l\x1b[?1003l\x1b]22;default\x1b\\\x1b[0m\x1b[?25h\x1b[?1049l") catch {};
+    defer tty.writeStreamingAll(io, tty_restore) catch {};
+    if (init.environ_map.get("ARENA_TEST_PANIC") != null) @panic("ARENA_TEST_PANIC");
 
     posix.sigaction(.WINCH, &.{ .handler = .{ .handler = onWinch }, .mask = posix.sigemptyset(), .flags = 0 }, null);
 
