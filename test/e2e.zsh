@@ -774,7 +774,7 @@ key -l ' '
 check "space opens the popup, its head naming the Claude and its window" await shows '^.*╭─ ▲ three .*alpha'
 check "and the pane's own line is in it, from the session arena is not in" await shows '│ ?three-pane-line'
 check "with live while it follows the pane" shows ' live'
-check "and its keys in the foot" shows '╰─ j k scroll .*q close'
+check "and its keys in the foot" shows '╰─ j k scroll .*a ask  r reply'
 check "no cell outside it has changed its text" eval '[[ $(beside) == $beside_before ]]'
 key -l 'x'
 key -l 'jkgG'
@@ -786,6 +786,43 @@ key -l ' '
 see '╰─ j k scroll'
 key Escape
 check "Esc closes it too" gone '╰─ j k scroll'
+
+# answering and replying from the popup, without going there
+mkdir -p $tmp/run/babylon
+print -r -- '{"tickets":[{"id":324,"repo":"arena","title":"Lights","kind":"ticket","status":"doing","priority":"med","claimed_by":"%99",'\
+'"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[],"ask":{"id":7,"question":"Keep it?","options":["yes","no"]}}]}' >$tmp/run/babylon/board.json
+see '^│ ▤ board'
+key -l j
+see '^│▌.* solo'
+key -l ' '
+see '╭─ .*solo'
+key -l a
+check "a puts babylon's question at the foot with its options numbered" await shows 'answer: Keep it\?'
+check "and the options" shows ' 1 yes +2 no'
+key -l 2
+check "a digit answers it through babylon" await grep -q '^answer 7 2' $tmp/babylon
+check "and the popup stays open" shows '╭─ .* solo'
+key -l r
+key -l 'hello there'
+check "r opens a reply line at the foot" shows 'reply: hello there'
+key Enter
+check "and Enter types it into the pane" await eval 'inner capture-pane -p -t beta:solo | grep -q "hello there"'
+check "the popup stays open" shows '╭─ .* solo'
+key -l q
+rm -f $tmp/run/babylon/board.json
+gone '^│ ▤ board'
+# Claude Code's own question, on the screen
+inner send-keys -t alpha:three "printf 'Do you want to proceed?\n❯ 1. Yes\n  2. No\n'" Enter
+key -l k
+see '^│▌.* three'
+key -l ' '
+see '╭─ ▲ three'
+key -l a
+check "its own question is read from the screen, with its options" await shows 'answer: Do you want to proceed\?'
+check "and the options" shows ' 1 Yes +2 No'
+key -l 2
+check "a digit is typed into the pane" await eval 'inner capture-pane -p -t alpha:three | grep -q "sh-5.3\$ 2"'
+key -l q
 claude alpha:three end
 claude beta:solo end
 
@@ -990,7 +1027,7 @@ key a
 check "a shows the picked card's question" see '│ Which colour\? +│'
 check "with its options by number" see '│ 2  blue +│'
 key 2
-checked() { [[ -f $tmp/babylon && $(<$tmp/babylon) == 'answer 5 2' ]] }
+checked() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == 'answer 5 2' ]] }
 check "and a number answers it through babylon" await checked
 check "and puts it away" gone 'Which colour'
 touch $tmp/refuse

@@ -1188,7 +1188,86 @@ pub const App = struct {
         /// text are not shown, and this stays while it is scrolled.
         anchor: usize = 0,
         saved: ?struct { pane: u32, offset: usize, bottom: bool } = null,
+        /// What the foot has: the keys, the open question's options, or a reply being typed.
+        mode: enum { view, answer, reply } = .view,
+        reply: [240]u8 = undefined,
+        reply_len: usize = 0,
     };
+
+    /// The question a Claude waits on: babylon's, answered through it, or Claude Code's own on the
+    /// pane's screen, answered by typing the option's number into the pane.
+    pub const Asked = struct {
+        babylon: ?u32 = null,
+        question: []const u8 = "",
+        options: [9][]const u8 = undefined,
+        n: usize = 0,
+        text: [6144]u8 = undefined,
+    };
+
+    fn entryWindow(app: *const App, entry: RailPick) ?*Window {
+        return switch (entry) {
+            .agent => |id| (app.agentById(id) orelse return null).win,
+            .session => |id| (app.sessionById(id) orelse return null).focused(),
+        };
+    }
+
+    /// The question the popup's Claude waits on, if it waits on one.
+    pub fn popupAsk(app: *const App, pane: *const Pane, out: *Asked) bool {
+        const win = app.entryWindow((app.popup orelse return false).entry) orelse return false;
+        if (std.fmt.parseInt(u32, branchTicket(win.text(.branch)) orelse "", 10)) |id| {
+            if (app.ticketCard(id)) |card| if (card.ask) |ask| {
+                out.babylon = ask.id;
+                out.question = ask.question;
+                out.n = @min(ask.options.len, out.options.len);
+                for (ask.options[0..out.n], 0..) |option, i| out.options[i] = option;
+                return out.n > 0;
+            };
+        } else |_| {}
+        return win.claude == .waiting and screenAsk(pane, out);
+    }
+
+    /// Answers babylon's ask `id` with option `choice`; its refusal is said.
+    fn answerAsk(app: *App, id: u32, choice: u8) !void {
+        try app.send(.ignore, "run-shell -b \"out=\\$(babylon answer {d} {d} 2>&1) || " ++
+            "{{ command -v notify-send >/dev/null && notify-send -a arena -- \\\"\\$out\\\"; }}\"", .{ id, choice });
+    }
+
+    /// A key while the popup's foot has the question's options: a digit answers, `r` replies
+    /// instead and Esc goes back.
+    fn answerPopupKey(app: *App, pane: *Pane, key: []const u8) !void {
+        const pop = &app.popup.?;
+        if (anyKey(key, &.{"\x1b"})) {
+            pop.mode = .view;
+        } else if (anyKey(key, &.{"r"})) {
+            pop.mode = .reply;
+        } else if (key.len == 1 and key[0] >= '1' and key[0] <= '9') {
+            var asked: Asked = .{};
+            if (!app.popupAsk(pane, &asked) or key[0] - '0' > asked.n) return;
+            if (asked.babylon) |id| try app.answerAsk(id, key[0] - '0') else try app.sendKeys(pane, key);
+            pop.mode = .view;
+        }
+    }
+
+    /// A key while the popup's foot has a reply being typed: Enter types it into the pane with an
+    /// Enter, Esc goes back.
+    fn replyPopupKey(app: *App, pane: *Pane, key: []const u8) !void {
+        const pop = &app.popup.?;
+        if (anyKey(key, &.{"\x1b"})) {
+            pop.mode = .view;
+        } else if (anyKey(key, &.{"\r"})) {
+            if (pop.reply_len > 0) try app.sendKeys(pane, pop.reply[0..pop.reply_len]);
+            try app.sendKeys(pane, "\r");
+            pop.mode = .view;
+        } else if (anyKey(key, &.{ "\x7f", "\x08" })) {
+            while (pop.reply_len > 0) {
+                pop.reply_len -= 1;
+                if (pop.reply[pop.reply_len] & 0xc0 != 0x80) break;
+            }
+        } else if (key.len == 1 and key[0] >= ' ' and pop.reply_len < pop.reply.len) {
+            pop.reply[pop.reply_len] = key[0];
+            pop.reply_len += 1;
+        }
+    }
 
     /// The pane an entry of the rail stands for: a Claude's, or a session's focused window's active one.
     fn entryPane(app: *App, entry: RailPick) ?*Pane {
@@ -1263,6 +1342,8 @@ pub const App = struct {
         const pane = app.entryPane(pop.entry) orelse return app.closePopup();
         app.dirty = true;
         const page: isize = @max(1, pane.term.rows / 2);
+        if (pop.mode == .answer) return app.answerPopupKey(pane, key);
+        if (pop.mode == .reply) return app.replyPopupKey(pane, key);
         if (anyKey(key, &.{ "q", "\x1b" })) {
             app.closePopup();
         } else if (anyKey(key, &.{"\r"})) {
@@ -1284,6 +1365,12 @@ pub const App = struct {
             pane.term.scrollViewport(.bottom);
         } else if (anyKey(key, &.{"/"})) {
             app.openSearch();
+        } else if (anyKey(key, &.{"a"})) {
+            var asked: Asked = .{};
+            if (app.popupAsk(pane, &asked)) pop.mode = .answer;
+        } else if (anyKey(key, &.{"r"})) {
+            pop.mode = .reply;
+            pop.reply_len = 0;
         } else if (anyKey(key, &.{ "h", "l" })) {
             var list: [96]RailPick = undefined;
             const n = app.railPicks(&list);
@@ -1291,7 +1378,14 @@ pub const App = struct {
                 if (std.meta.eql(entry, pop.entry)) break i;
             } else return;
             const to = if (key[0] == 'l') @min(at + 1, n - 1) else at -| 1;
+<<<<<<< HEAD
             if (to != at and list[to] != .fold) app.popupShow(list[to]);
+=======
+            if (to != at) {
+                pop.mode = .view;
+                app.popupShow(list[to]);
+            }
+>>>>>>> 18402e0 (The popup answers a Claude's ask and replies to it: a puts the question's numbered options at the foot, a digit answers through babylon or types into Claude Code's own question, and r types a line into the pane)
         }
     }
 
@@ -3732,8 +3826,7 @@ pub const App = struct {
         const choice = key[0] - '0';
         if (choice > ask.options.len) return;
         // babylon's refusal (the session that asked is gone) is said, or the ask stays with no word why
-        try app.send(.ignore, "run-shell -b \"out=\\$(babylon answer {d} {d} 2>&1) || " ++
-            "{{ command -v notify-send >/dev/null && notify-send -a arena -- \\\"\\$out\\\"; }}\"", .{ ask.id, choice });
+        try app.answerAsk(ask.id, choice);
         view.answering = false;
     }
 
@@ -4992,6 +5085,66 @@ pub const App = struct {
         try app.send(.ignore, "{s}", .{cmd.written()});
     }
 };
+
+/// The numbered options of Claude Code's own question on `pane`'s screen, `1. Yes` and the like
+/// under a marker or not, the last such list, with the line over them as the question.
+fn screenAsk(pane: *const Pane, out: *App.Asked) bool {
+    const rows = pane.render.row_data.items(.cells)[pane.render.viewportStart()..];
+    const Span = struct { at: usize, len: usize };
+    var spans: [64]Span = undefined;
+    var n: usize = 0;
+    var used: usize = 0;
+    for (rows[rows.len -| spans.len..]) |row| {
+        const start = used;
+        for (row.items(.raw)) |raw| {
+            if (raw.wide == .spacer_tail) continue;
+            const cp: u21 = if (raw.hasText() and raw.content.codepoint.data != 0) raw.content.codepoint.data else ' ';
+            const room = out.text.len - used;
+            const len = std.unicode.utf8CodepointSequenceLength(cp) catch 1;
+            if (len > room or used - start >= 160) break;
+            used += std.unicode.utf8Encode(cp, out.text[used..]) catch 0;
+        }
+        const line = std.mem.trim(u8, out.text[start..used], " ");
+        spans[n] = .{ .at = @intFromPtr(line.ptr) - @intFromPtr(&out.text), .len = line.len };
+        n += 1;
+    }
+    var found = false;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const first = optionText(out.text[spans[i].at..][0..spans[i].len], 1) orelse continue;
+        var count: usize = 1;
+        var options: [9][]const u8 = undefined;
+        options[0] = first;
+        while (i + count < n and count < 9) : (count += 1) {
+            options[count] = optionText(out.text[spans[i + count].at..][0..spans[i + count].len], count + 1) orelse break;
+        }
+        if (count < 2) continue;
+        found = true;
+        out.n = count;
+        out.options = options;
+        var q = i;
+        out.question = "";
+        while (q > 0) {
+            q -= 1;
+            if (spans[q].len > 0) {
+                out.question = out.text[spans[q].at..][0..spans[q].len];
+                break;
+            }
+        }
+        i += count - 1;
+    }
+    return found;
+}
+
+/// The text of option `number` of a list on a line: `2. No`, or `❯ 2. No` with the pointer.
+fn optionText(line: []const u8, number: usize) ?[]const u8 {
+    var rest = line;
+    for ([_][]const u8{ "❯ ", "› ", "> " }) |pointer| {
+        if (std.mem.startsWith(u8, rest, pointer)) rest = rest[pointer.len..];
+    }
+    if (rest.len < 3 or rest[0] != '0' + @as(u8, @intCast(number)) or rest[1] != '.' or rest[2] != ' ') return null;
+    return std.mem.trim(u8, rest[3..], " ");
+}
 
 /// Where the list of agents Claude Code draws at the foot of its screen has a subagent: whether
 /// it is the one shown, and how many rows under the list's pointer it is, null while the list has

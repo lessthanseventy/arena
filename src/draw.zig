@@ -1433,7 +1433,8 @@ fn rowHasText(row: anytype) bool {
     return false;
 }
 
-const popup_keys = " j k scroll  g G ends  / search  h l next  ⏎ go  q close ";
+const popup_keys = " j k scroll  / find  h l next  a ask  r reply  ⏎ go  q ";
+const popup_reply_keys = " ⏎ send  esc back ";
 
 /// The popup, about three quarters of the strip each way and centred on it: its head, what the
 /// Claude is doing and its context, then the pane's own screen from its bottom, `live` while it
@@ -1482,7 +1483,17 @@ fn popupBox(app: *App, w: *Writer, pop: App.Popup) !void {
     }
 
     const live = App.following(pane);
-    const prows = ph - 5;
+    // the open question or reply takes three rows off the pane's foot: a rule and two lines
+    const lower: u16 = if (pop.mode == .view) 0 else 3;
+    var asked: App.Asked = .{};
+    const has_ask = pop.mode == .answer and app.popupAsk(pane, &asked);
+    var keys_buf: [48]u8 = undefined;
+    const foot: []const u8 = switch (pop.mode) {
+        .view => popup_keys,
+        .answer => std.fmt.bufPrint(&keys_buf, " 1…{d} answer  r reply instead  esc back ", .{asked.n}) catch "",
+        .reply => popup_reply_keys,
+    };
+    const prows = ph - 5 - lower;
     const rows = pane.render.row_data.items(.cells)[pane.render.viewportStart()..];
     if (live) {
         var used = rows.len;
@@ -1494,14 +1505,14 @@ fn popupBox(app: *App, w: *Writer, pop: App.Popup) !void {
         try w.print("\x1b[{d};{d}H", .{ y0 + r + 1, x0 + 1 });
         const top = r == 0;
         const bottom = r == ph - 1;
-        const ruled = r == 3;
+        const ruled = r == 3 or (lower > 0 and r == ph - 4);
         try pen.set(w, edge, null);
         if (top or bottom or ruled) {
             try w.writeAll(if (top) "╭─" else if (bottom) "╰─" else "├─");
             var used: usize = 2;
             if (top or bottom) {
                 try pen.set(w, if (top) heading(app) else dim, null);
-                const text = clip(if (top) title.buffered() else popup_keys, inner - 3);
+                const text = clip(if (top) title.buffered() else foot, inner - 3);
                 try w.writeAll(text);
                 used += cellCount(text);
                 try pen.set(w, edge, null);
@@ -1516,9 +1527,34 @@ fn popupBox(app: *App, w: *Writer, pop: App.Popup) !void {
             const text = if (r == 1) (if (win) |it| it.detail() else "") else meta.buffered();
             try w.writeAll(" ");
             try fitted(w, text, inner - 1);
+        } else if (lower > 0 and r > ph - 4) {
+            try pen.set(w, .{}, null);
+            if (r == ph - 3) {
+                var line: [320]u8 = undefined;
+                var out: Writer = .fixed(&line);
+                if (pop.mode == .reply) {
+                    out.print(" reply: {s}▏", .{pop.reply[0..pop.reply_len]}) catch {};
+                } else out.print(" answer: {s}", .{if (has_ask) asked.question else "no question open"}) catch {};
+                try fitted(w, out.buffered(), inner);
+            } else if (has_ask) {
+                var used: usize = 1;
+                try w.writeAll(" ");
+                for (asked.options[0..asked.n], 1..) |option, n| {
+                    const room = inner -| used;
+                    if (room < 6) break;
+                    try pen.set(w, heading(app), null);
+                    try w.print(" {d} ", .{n});
+                    try pen.set(w, .{}, null);
+                    const text = clip(option, @min(room - 4, 26));
+                    try w.writeAll(text);
+                    try w.writeAll("  ");
+                    used += 3 + cellCount(text) + 2;
+                }
+                try fitted(w, "", inner -| used);
+            } else try fitted(w, "", inner);
         } else {
             const py = first + (r - 4);
-            const tail: usize = if (live and r == ph - 2) 5 else 0;
+            const tail: usize = if (live and r == ph - 2 - lower) 5 else 0;
             for (0..inner - tail) |tx| try paneCell(app, &pen, w, pane, tx, py, null, false, tx + 1 == inner - tail);
             if (tail > 0) {
                 try pen.set(w, dim, null);
