@@ -25,7 +25,7 @@ opt() { tmux set -p -t "$pane" "$1" "$2" 2>/dev/null; }
 sessions="${XDG_RUNTIME_DIR:-/tmp}/sessions"
 sid=$(printf '%s' "$json" | jq -r '.session_id // empty' 2>/dev/null)
 case $sid in "" | */* | .*) sid= ;; esac
-# The session's record, in state $1 (idle | working | done | waiting). `session set` writes goal
+# The session's record, in state $1 (idle | working | done | waiting | stalled). `session set` writes goal
 # and next into the same file, so it is read and written under the lock or they are lost.
 record() {
 	[ -n "$sid" ] || return 0
@@ -212,13 +212,21 @@ waiting)
 	;;
 # Quotes inside the JSON's strings are escaped, so only a field of its own matches. A task not
 # yet finished is still there whatever else it is doing: pending, paused, waiting on its own.
-stop | stopfailure)
+stopfailure)
+	mark=stalled
+	opt @arena_claude_doing ''
+	began=$(tmux show -pqv -t "$pane" @arena_claude_began 2>/dev/null)
+	[ -n "$began" ] && opt @arena_claude_took "$((now - began))"
+	opt @arena_claude_said "$(text '[.error_details // .last_assistant_message // .error // "" | tostring | splits("\n") | gsub("^[#>*\\s-]+|[*`]"; "") | select(test("\\S"))][0] // ""')"
+	branch
+	;;
+stop)
 	if printf '%s' "$json" | grep -Eo '"status" *: *"[a-z_]*"' | grep -Evq '"(completed|failed|killed|done)"$'; then mark=background; else mark='done'; fi
 	opt @arena_claude_doing ''
 	began=$(tmux show -pqv -t "$pane" @arena_claude_began 2>/dev/null)
 	[ -n "$began" ] && opt @arena_claude_took "$((now - began))"
 	t=$(title) && [ -n "$t" ] && opt @arena_claude_title "$t"
-	opt @arena_claude_said "$(text '[.last_assistant_message // .error_details // .error // "" | tostring | splits("\n") | gsub("^[#>*\\s-]+|[*`]"; "") | select(test("\\S"))][0] // ""')"
+	opt @arena_claude_said "$(text '[.last_assistant_message // "" | tostring | splits("\n") | gsub("^[#>*\\s-]+|[*`]"; "") | select(test("\\S"))][0] // ""')"
 	l=$(change '[.background_tasks[]? | select(.status | IN("completed", "failed", "killed", "done") | not) |
 		{id, type, description: (.description // .command // "" | split("\n")[0])}]') && {
 		keep "$l"

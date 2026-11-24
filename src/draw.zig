@@ -679,6 +679,7 @@ fn glyph(app: *const App, mark: app_mod.Mark) u21 {
         .working => if (app.motion) spinner[@intCast(@mod(@divFloor(app.now, spinner_step_ms), spinner.len))] else spinner[0],
         .done => '◉',
         .waiting => '▲',
+        .stalled => '✖',
     };
 }
 
@@ -1944,6 +1945,7 @@ fn giveBox(app: *App, w: *Writer, id: u32, picked: usize) !void {
         const why = switch (agent.win.claude) {
             .working => " · mid-turn",
             .waiting => " · waits on you",
+            .stalled => " · stalled",
             .none, .background, .done => "",
         };
         var line: [256]u8 = undefined;

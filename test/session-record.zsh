@@ -56,10 +56,11 @@ is .said "make the bar know about my sessions" "the ask outlives the turn"
 is .goal "a bar that knows" "so does the goal"
 is .next "wire the inotify" "and the next step"
 send prompt '{prompt: "again"}'
-send stopfailure '{error: "rate_limit"}'
-is .state done "a turn that ends on an API error is done"
+send stopfailure '{error: "rate_limit", error_details: "You are out of usage credits.\nRun /usage-credits", last_assistant_message: "API Error: x"}'
+is .state stalled "a turn that ends on an API error is stalled"
+
 send start '{source: "resume"}'
-is .state done "a resumed session keeps its record"
+is .state stalled "a resumed session keeps its record"
 
 send prompt '{prompt: "<cross-session-message from=\"uds:/run/x.sock\" from-name=\"orchestrator\" from-mode=\"auto\">Orchestrator here,\nfor #427</cross-session-message>"}'
 is .said "orchestrator: Orchestrator here, for #427" "a message from another session says who, not the tag"

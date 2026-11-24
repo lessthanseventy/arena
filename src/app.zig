@@ -44,7 +44,8 @@ const double_click_ms = 400;
 const session_format = "#{{session_id}} #{{?@arena_order,#{{@arena_order}},-}} #{{session_name}}";
 /// A pane's @arena_claude, set by Claude Code's hooks, comes as its `Mark`'s number.
 const claude_state = "#{{?#{{==:#{{@arena_claude}},background}},1,#{{?#{{==:#{{@arena_claude}},working}},2," ++
-    "#{{?#{{==:#{{@arena_claude}},done}},3,#{{?#{{==:#{{@arena_claude}},waiting}},4,0}}}}}}}}";
+    "#{{?#{{==:#{{@arena_claude}},done}},3,#{{?#{{==:#{{@arena_claude}},waiting}},4," ++
+    "#{{?#{{==:#{{@arena_claude}},stalled}},5,0}}}}}}}}}}";
 /// A pane's @arena_review, set from its branch's code review, comes as its `Review`'s number.
 const review_state = "#{{?#{{==:#{{@arena_review}},landed}},1,#{{?#{{==:#{{@arena_review}},reviewed}},2," ++
     "#{{?#{{==:#{{@arena_review}},queued}},3,#{{?#{{==:#{{@arena_review}},changes}},4,0}}}}}}}}";
@@ -65,9 +66,9 @@ const max_share = 100;
 const share_step = 10;
 
 /// What the Claude in a window not being looked at is doing: between turns with work of its own
-/// running in the background, working, done and not yet looked at, or waiting on an answer. In
-/// rising order of how much it wants looking at.
-pub const Mark = enum { none, background, working, done, waiting };
+/// running in the background, working, done and not yet looked at, waiting on an answer, or
+/// stalled: its turn ended on an API error. In rising order of how much it wants looking at.
+pub const Mark = enum { none, background, working, done, waiting, stalled };
 /// What tmux saw in a window out of view: output, where `monitor-activity` is on, or a bell.
 pub const Alert = enum { none, activity, bell };
 /// Where the branch a window's panes are on stands in code review: landed, approved, in the
@@ -239,7 +240,7 @@ pub const Window = struct {
     pub fn detail(win: *const Window) []const u8 {
         const now = switch (win.claude) {
             .working, .waiting => win.text(.doing),
-            .background, .done, .none => win.text(.said),
+            .background, .done, .stalled, .none => win.text(.said),
         };
         return if (now.len > 0) now else win.text(.prompt);
     }
@@ -1112,7 +1113,7 @@ pub const App = struct {
     fn needy(app: *const App, out: []Agent) usize {
         var n: usize = 0;
         for (app.sessions.items, 0..) |s, si| for (s.wins.items) |win| {
-            if ((win.claude != .waiting and win.claude != .done) or n == out.len) continue;
+            if ((win.claude != .waiting and win.claude != .done and win.claude != .stalled) or n == out.len) continue;
             out[n] = .{ .session = si, .win = win };
             n += 1;
         };
@@ -2068,7 +2069,7 @@ pub const App = struct {
                 } else try Pane.create(app, n[2], @intCast(n[7]), @intCast(n[8]));
                 pane.x = @intCast(n[5]);
                 pane.y = @intCast(n[6]);
-                const said: Mark = @fromBackingInt(@intCast(@min(n[11], @backingInt(Mark.waiting))));
+                const said: Mark = @fromBackingInt(@intCast(@min(n[11], @backingInt(Mark.stalled))));
                 // between turns with a subagent of its at work is working: only a shell left running is not
                 const stirring = n[21] != 0 and app.epoch - n[21] < stir_s;
                 if (stirring) win.stirring = true;
@@ -2117,7 +2118,7 @@ pub const App = struct {
     fn notify(app: *App) !void {
         for (app.sessions.items) |s| for (s.wins.items) |win| {
             const was = win.was orelse continue;
-            if (win.claude == was or (win.claude != .waiting and win.claude != .done)) continue;
+            if (win.claude == was or (win.claude != .waiting and win.claude != .done and win.claude != .stalled)) continue;
             if (s.id == app.current and s.focused() == win) continue;
             try app.send(.ignore, "run-shell -b -t %{d} \"command -v notify-send >/dev/null && notify-send -a arena -- " ++
                 "#{{?@arena_claude_title,#{{q:@arena_claude_title}},#{{q:window_name}}}} {s}\"", .{
@@ -4882,6 +4883,17 @@ test "home: the board with the orchestrator's column focused, its own keys while
     try expect(app.board_view == null);
     try app.restore(was);
     try expect(app.board_view.?.home and app.columnFocused());
+}
+
+test "a stalled Claude outranks one waiting, says its error, and draws its own glyph" {
+    var stalled: Window = .{ .id = 1, .name = @constCast("a"), .claude = .stalled, .info = @constCast("\t\t\tYou are out of usage credits.") };
+    var waiting: Window = .{ .id = 2, .name = @constCast("b"), .claude = .waiting };
+    var wins = [_]*Window{ &waiting, &stalled };
+    var s: Session = .{ .id = 1, .name = @constCast("s") };
+    s.wins = .fromOwnedSlice(&wins);
+    try std.testing.expectEqual(Mark.stalled, App.sessionMark(&s));
+    try std.testing.expectEqual(@as(usize, 1), App.sessionCount(&s));
+    try std.testing.expectEqualStrings("You are out of usage credits.", stalled.detail());
 }
 
 test "the column's head says the orchestrator's state: its Claude's, else restarting while babylon keeps it on, else off" {
