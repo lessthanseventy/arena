@@ -8488,11 +8488,12 @@ test "a card's modal lists every option of its ask and its words, and ⏎ answer
     var answer: []const u8 = "";
     for (app.modalButtons(&buttons)) |b| switch (b.action) {
         .option => {
-            if (b.y != buttons[buttons.len - 1].y and seen < 3) {
+            if (std.mem.eql(u8, b.key, "⏎")) {
+                answer = b.label;
+            } else {
                 rows[seen] = b.y;
                 seen += 1;
             }
-            if (b.key.len > 0 and std.mem.eql(u8, b.key, "⏎")) answer = b.label;
         },
         .words => {
             rows[3] = b.y;
