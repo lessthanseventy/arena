@@ -27,6 +27,13 @@ const quiet_s = 600;
 const stir_s = 60;
 /// How long arena keeps trying to have a Claude show a subagent, how long it leaves a key to be
 /// drawn before it reads the screen again, and how many Downs it sends to reach the list.
+/// A tmux `run-shell -b` of `cmd` whose output tmux never shows: it would open view mode on a pane,
+/// which swallows every key typed to it. What it prints, a refusal, goes to a notification.
+fn captured(comptime cmd: []const u8) []const u8 {
+    return "run-shell -b \"out=\\$(" ++ cmd ++ " 2>&1) || " ++
+        "{{ command -v notify-send >/dev/null && notify-send -a arena -- \\\"\\$out\\\"; }}\"";
+}
+
 const pick_ms = 3000;
 /// How long the auto switch, asked "turn off?", waits for the second click.
 const auto_confirm_ms = 3000;
@@ -2022,7 +2029,7 @@ pub const App = struct {
             '\\', '"', '$' => try line.writer.print("\\{c}", .{c}),
             else => try line.writer.writeByte(c),
         };
-        try app.send(.ignore, "run-shell -b \"{s}\"", .{line.written()});
+        try app.send(.ignore, captured("{s}"), .{line.written()});
         app.dirty = true;
         return true;
     }
@@ -3490,10 +3497,10 @@ pub const App = struct {
                 } else return;
                 const pane = if (item.holder()) |held| (if (app.paneWindow(held) != null) held else null) else null;
                 if (pane) |held| return app.showPane(held);
-                if (item.stalled != null) return app.send(.ignore, "run-shell -b \"babylon start {d}\"", .{id});
+                if (item.stalled != null) return app.send(.ignore, captured("babylon start {d}"), .{id});
                 if (!std.mem.eql(u8, item.state, "building")) try app.toGate();
             },
-            .next => if (row.ticket) |id| try app.send(.ignore, "run-shell -b \"babylon start {d}\"", .{id}),
+            .next => if (row.ticket) |id| try app.send(.ignore, captured("babylon start {d}"), .{id}),
             .goal => {
                 try app.toBoard();
                 for (given.goals) |goal| {
@@ -3576,7 +3583,7 @@ pub const App = struct {
         if (anyKey(key, &.{"h"}) or (!on_auto and anyKey(key, &.{ "\x1b[D", "\x1bOD" }))) view.focus = .board;
         if (anyKey(key, &.{"B"})) return app.toBoard();
         if (anyKey(key, &.{"\r"}) and app.orchestratorState() == .off) {
-            return app.send(.ignore, "run-shell -b \"babylon orchestrator\"", .{});
+            return app.send(.ignore, captured("babylon orchestrator"), .{});
         }
         if (try app.halfKey(key)) return;
         _ = try app.feedKey(key);
@@ -3731,7 +3738,7 @@ pub const App = struct {
         }
         try app.closeBoard();
         app.orchestrating = true;
-        try app.send(.ignore, "run-shell -b \"babylon orchestrator\"", .{});
+        try app.send(.ignore, captured("babylon orchestrator"), .{});
     }
 
     /// What babylon's file says of its orchestrator, when it does.
@@ -3745,7 +3752,7 @@ pub const App = struct {
     }
 
     fn toggleAuto(app: *App) !void {
-        try app.send(.ignore, "run-shell -b \"babylon auto {s}\"", .{if (app.auto() == null) "on" else "off"});
+        try app.send(.ignore, captured("babylon auto {s}"), .{if (app.auto() == null) "on" else "off"});
     }
 
     /// The todo card picked put in next at its top, or at its bottom once its why is typed.
@@ -3754,7 +3761,7 @@ pub const App = struct {
             _ = app.openWhy(id, "");
             return;
         }
-        try app.send(.ignore, "run-shell -b \"babylon next {d} --at 1\"", .{id});
+        try app.send(.ignore, captured("babylon next {d} --at 1"), .{id});
     }
 
     fn newTicket(app: *App) !void {
@@ -3863,17 +3870,17 @@ pub const App = struct {
             .priority => {
                 const eql = std.mem.eql;
                 const next = if (eql(u8, card.priority, "low")) "med" else if (eql(u8, card.priority, "med")) "high" else "low";
-                try app.send(.ignore, "run-shell -b \"babylon update {d} --priority {s}\"", .{ card.id, next });
+                try app.send(.ignore, captured("babylon update {d} --priority {s}"), .{ card.id, next });
             },
-            .close => try app.send(.ignore, "run-shell -b \"babylon update {d} --status done\"", .{card.id}),
+            .close => try app.send(.ignore, captured("babylon update {d} --status done"), .{card.id}),
             .to_next => try app.toNext(card.id, false),
-            .reopen, .to_todo => try app.send(.ignore, "run-shell -b \"babylon update {d} --status todo\"", .{card.id}),
+            .reopen, .to_todo => try app.send(.ignore, captured("babylon update {d} --status todo"), .{card.id}),
             .open => unreachable,
             .up, .down => {
                 // a move babylon could not be narrowed to the repo shown would order every repo's cards
                 if (app.pickRepo() != null and narrowed.len == 0) return;
                 const down = action == .down;
-                try app.send(.ignore, "run-shell -b \"babylon move {d} {s}{s}\"", .{ card.id, if (down) "down" else "up", narrowed });
+                try app.send(.ignore, captured("babylon move {d} {s}{s}"), .{ card.id, if (down) "down" else "up", narrowed });
                 view.row = if (down) @min(view.row + 1, app.boardColumn(view.col, &.{}) -| 1) else view.row -| 1;
             },
         }
@@ -4103,9 +4110,9 @@ pub const App = struct {
             },
             .whole_log => try app.ticketWindow("babylon gate {d} | less", .{view.detail orelse return}),
             .ticket => _ = try app.openDetail(view.detail orelse return),
-            .bump => try app.send(.ignore, "run-shell -b \"babylon bump {d}\"", .{view.detail orelse return}),
+            .bump => try app.send(.ignore, captured("babylon bump {d}"), .{view.detail orelse return}),
             .withdraw => if (view.withdrawing) {
-                try app.send(.ignore, "run-shell -b \"babylon withdraw {d}\"", .{view.detail orelse return});
+                try app.send(.ignore, captured("babylon withdraw {d}"), .{view.detail orelse return});
                 view.detail = null;
             } else {
                 view.withdrawing = true;
@@ -5099,7 +5106,7 @@ pub const App = struct {
             const px: u16 = @intCast(cx - 1 - pane.x);
             const py: u16 = @intCast(m.y - top - pane.y);
             if (m.code & (3 | 32 | 64) == 1) {
-                if (!m.release) try app.send(.ignore, "run-shell -b \"wl-paste -p -n | tmux load-buffer -b arena-primary - && tmux paste-buffer -p -d -b arena-primary -t %{d}\"", .{pane.id});
+                if (!m.release) try app.send(.ignore, "run-shell -b \"(wl-paste -p -n | tmux load-buffer -b arena-primary - && tmux paste-buffer -p -d -b arena-primary -t %{d}) >/dev/null 2>&1\"", .{pane.id});
                 return true;
             }
             const shift = m.code & 4 != 0 and !m.wheel();
@@ -5699,6 +5706,8 @@ pub const App = struct {
     fn sendKeys(app: *App, pane: *const Pane, bytes: []const u8) !void {
         var cmd: Writer.Allocating = .init(app.gpa);
         defer cmd.deinit();
+        // a pane left in a mode, by tmux's own output or the human's, takes the keys itself
+        try app.send(.ignore, "if-shell -F -t %{d} \"#{{pane_in_mode}}\" \"send-keys -t %{d} -X cancel\"", .{ pane.id, pane.id });
         try cmd.writer.print("send-keys -H -t %{d}", .{pane.id});
         for (bytes) |b| try cmd.writer.print(" {x:0>2}", .{b});
         try app.send(.ignore, "{s}", .{cmd.written()});

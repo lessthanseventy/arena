@@ -22,7 +22,7 @@ chmod +x $tmp/bin/claude
 print -r -- $'#!/bin/sh\nprintf "%s|" "$@" >>'$tmp$'/notified\necho >>'$tmp$'/notified' >$tmp/bin/notify-send
 chmod +x $tmp/bin/notify-send
 # stands in for babylon's command line: it says what the board answered
-print -r -- $'#!/bin/sh\necho "$@" >>'$tmp$'/babylon\n[ "$1" = answer ] && [ -e '$tmp$'/refuse ] && { echo "babylon: no session to answer" >&2; exit 1; }\n[ "$1" = give ] && [ -e '$tmp$'/refuse ] && { echo "babylon: the Claude in $3 is mid-turn" >&2; exit 1; }\n[ "$1" = start ] && [ -e '$tmp$'/refuse-start ] && { echo "babylon: ticket #$2 is claimed by pane %1010" >&2; exit 1; }\n[ "$1" = next ] && [ -e '$tmp$'/refuse-next ] && { echo "babylon: ticket #$2 is claimed by pane %1010" >&2; exit 1; }\n[ "$1" = detail ] && printf \'#%s Lights\\n\\nthe whole of it\\n\' "$2"\n[ "$1" = gate ] && printf \'run submitted 2026-11-24T05:00:00Z\\n  rebase: ok (2026-11-24T05:00:01Z to 2026-11-24T05:00:05Z)\\n  gate: failed (2026-11-24T05:00:05Z to 2026-11-24T05:02:03Z)\\n    expected 1, found 0\\n\'\nexit 0' >$tmp/bin/babylon
+print -r -- $'#!/bin/sh\necho "$@" >>'$tmp$'/babylon\n[ "$1" = answer ] && [ -e '$tmp$'/refuse ] && { echo "babylon: no session to answer" >&2; exit 1; }\n[ "$1" = give ] && [ -e '$tmp$'/refuse ] && { echo "babylon: the Claude in $3 is mid-turn" >&2; exit 1; }\n[ "$1" = start ] && [ -e '$tmp$'/refuse-start ] && { echo "babylon: ticket #$2 is claimed by pane %1010" >&2; exit 1; }\n[ "$1" = next ] && [ -e '$tmp$'/refuse-next ] && { echo "babylon: ticket #$2 is claimed by pane %1010" >&2; exit 1; }\n[ "$1" = detail ] && printf \'#%s Lights\\n\\nthe whole of it\\n\' "$2"\n[ "$1" = gate ] && printf \'run submitted 2026-11-24T05:00:00Z\\n  rebase: ok (2026-11-24T05:00:01Z to 2026-11-24T05:00:05Z)\\n  gate: failed (2026-11-24T05:00:05Z to 2026-11-24T05:02:03Z)\\n    expected 1, found 0\\n\'\n[ "$1" = auto ] && [ -e '$tmp$'/chatty ] && { echo "babylon: auto chatter"; echo "babylon: auto chatter on stderr" >&2; }\nexit 0' >$tmp/bin/babylon
 chmod +x $tmp/bin/babylon
 export PATH=$tmp/bin:$PATH
 
@@ -1458,6 +1458,29 @@ for control in ' every' ' arena'; do
   key Enter
   check "a click on the header's$control leaves the column the keys: a sentence reaches its pane whole" await eval "inner capture-pane -p -t orchestrator:orch | grep -qx after${control// /}-jkdufltb"
 done
+# what babylon prints to a run-shell must not open tmux's view mode on the pane, which swallows keys
+in_mode() { [[ -n $(inner display -p -t orchestrator:orch '#{pane_mode}') ]] }
+cp $tmp/run/babylon/board.json $tmp/board.chatty
+print -r -- "${$(<$tmp/board.chatty)%\}}"',"auto":{"on":true,"cap":2,"working":1}}' >$tmp/run/babylon/board.json
+see ' ◐ 1/2( |$)'
+touch $tmp/chatty
+offs=$(grep -cx 'auto off' $tmp/babylon)
+mouse 0 $(autocol) $(screen | grep -n -m1 ' board  every' | cut -d: -f1) M
+mouse 0 $(autocol) $(screen | grep -n -m1 ' board  every' | cut -d: -f1) M
+await eval '(( $(grep -cx "auto off" $tmp/babylon) > offs ))'
+zselect -t 50
+check "a babylon command that prints leaves the orchestrator's pane out of any mode" eval '! in_mode'
+key -l 'echo after-chatter-jkdufltb'
+key Enter
+check "and a sentence typed then reaches it whole" await eval 'inner capture-pane -p -t orchestrator:orch | grep -qx after-chatter-jkdufltb'
+rm $tmp/chatty
+cp $tmp/board.chatty $tmp/run/babylon/board.json
+inner copy-mode -t orchestrator:orch
+check "the pane put in a mode" eval 'in_mode'
+key -l 'echo after-mode-jkdufltb'
+key Enter
+check "a sentence typed to a pane in a mode takes it out and reaches the pane whole" await eval 'inner capture-pane -p -t orchestrator:orch | grep -qx after-mode-jkdufltb && ! in_mode'
+: >$tmp/babylon
 check "and none of it the board, which stays open" eval '[[ ! -s $tmp/babylon ]] && shows " board  every"'
 inner send-keys -t orchestrator:orch "stty -echo -icanon; cat $tmp/clicks; timeout 2 cat -v; printf '\\033[?1006l\\033[?1000l'; stty sane" Enter
 await mousing orchestrator:orch
@@ -1933,7 +1956,6 @@ mouse 0 100 24 m
 key -l 'echo restarted-jkdufltb'
 key Enter
 check "a click on the row under the column leaves it the keys, in insert: a sentence reaches its pane whole" await said orchestrator:orch restarted-jkdufltb
-
 key M-b
 gone ' board  every'
 key -l 'echo worker-jkdufltb'
