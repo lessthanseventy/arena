@@ -4097,8 +4097,8 @@ pub const App = struct {
     }
 
     /// The board's buttons: the tabs and what babylon is doing on its first row, a + on
-    /// the to-do column's top edge, and the picked card's actions on its bottom edge, each kept
-    /// to the room it has. A row of the strip has no edge: the strip's own foot has its reopen.
+    /// the to-do column's top edge, and the picked card's actions on the row above its bottom
+    /// edge, each kept to the room it has. A row of the strip has no edge: the strip's own foot has its reopen.
     pub fn boardButtons(app: *const App, out: []Button) []Button {
         const view = app.board_view orelse return out[0..0];
         const cw = app.boardColW(0);
