@@ -819,7 +819,7 @@ key -l ' '
 see '╭─ .*solo'
 key -l a
 check "a puts babylon's question at the foot with its options numbered" await shows 'answer: Keep it\?'
-check "and the options" shows ' 1 yes +2 no'
+check "and the options" await shows ' 1 yes +2 no'
 key -l 2
 check "a digit answers it through babylon" await grep -q '^answer 7 2' $tmp/babylon
 check "and the popup stays open" shows '╭─ .* solo'
@@ -838,9 +838,10 @@ key -l k
 see '^│▌.* three'
 key -l ' '
 see '╭─ ▲ three'
+see 'Do you want to proceed'
 key -l a
 check "its own question is read from the screen, with its options" await shows 'answer: Do you want to proceed\?'
-check "and the options" shows ' 1 Yes +2 No'
+check "and the options" await shows ' 1 Yes +2 No'
 key -l 2
 check "a digit is typed into the pane" await eval 'inner capture-pane -p -t alpha:three | grep -q "sh-5.3\$ 2"'
 key -l q
@@ -1058,15 +1059,30 @@ key 1
 refused() { [[ -f $tmp/notified && $(<$tmp/notified) == *'babylon: no session to answer'* ]] }
 check "and refused by babylon, it says why" await refused
 rm $tmp/refuse
-settled() { screen | awk '{ s = $0; out = ""; while (match(s, / [0-9]+[smhd]/)) { tok = substr(s, RSTART, RLENGTH); gsub(/[0-9]/, "N", tok); out = out substr(s, 1, RSTART - 1) tok; s = substr(s, RSTART + RLENGTH) } print out s }' }
-foot_at() { local l=$(screen | grep -m1 "╰─ q close"); print $(( ${l[(i)╰]} - 1 )) }
-outside() { settled | sed -n '1,2p;$p'; screen | cut -c1-12 }
+settled() { screen | awk '{ s = $0; out = ""; while (match(s, / [0-9]+[smhd]/)) { tok = substr(s, RSTART, RLENGTH); gsub(/[0-9]/, "N", tok); out = out substr(s, 1, RSTART - 1) tok; s = substr(s, RSTART + RLENGTH) } print out s }' | sed 's/[◓◑◒]/◐/g' }
+close_at() { local l=$(screen | grep -m1 "╰─ .*q close"); print ${l[(i)q close]} }
+foot_at() { local l=$(screen | grep -m1 "╰─ .*q close"); print $(( ${l[(i)╰]} - 1 )) }
+# every cell but the box's: its rows from the third, and its columns from the left edge to the right
+mask() {
+  local n=0 line
+  while IFS= read -r line; do
+    ((n++))
+    if ((n >= 3 && n <= box_f)); then print -r -- "${line[1,box_l]}${line[box_r+1,-1]}"; else print -r -- $line; fi
+  done
+}
+outside() { settled | mask }
 board_before=$(settled)
-outside_before=$(outside)
 key ' '
 check "Space shows the picked card's whole ticket, as babylon tells it" see '│ the whole of it '
-check "in a frame with its close button in the foot" see '╰─ q close '
+check "in a frame with its close button in the foot" see '╰─ .*q close '
+box_l=$(foot_at)
+box_f=$(screen | grep -n -m1 '╰─ .*q close' | cut -d: -f1)
+foot=$(screen | grep -m1 '╰─ .*q close')
+box_r=$(( box_l + ${${foot[box_l+1,-1]}[(i)╯]} ))
+outside_before=$(print -r -- "$board_before" | mask)
 check "no cell outside it has changed" eval '[[ $(outside) == "$outside_before" ]]'
+check "it says the card whole: its title, stage and the ask's options as buttons" see '│ #7 Lights'
+check "and its actions in the foot, the ones that apply" see '╰─ .*e edit'
 key j j j j j
 check "and j scrolls it no further than its last line" see '│ the whole of it '
 key Escape
@@ -1074,7 +1090,7 @@ check "and Escape puts it away" gone 'the whole of it'
 check "leaving the screen as it was" await eval '[[ $(settled) == "$board_before" ]]'
 key ' '
 see 'the whole of it'
-mouse 0 $(( $(foot_at) + 3 )) $(screen | grep -n -m1 "╰─ q close" | cut -d: -f1) M
+mouse 0 $(close_at) $(screen | grep -n -m1 "╰─ .*q close" | cut -d: -f1) M
 check "a click on its close button puts it away" gone 'the whole of it'
 key ' '
 see 'the whole of it'
@@ -1111,6 +1127,20 @@ $bin -L $in inbox
 check "arena inbox opens home" see '╭─ ○ orchestrator · off '
 $bin -L $in show $two
 check "and a show with the board open puts it away for the pane" await dots '○ ● ○'
+shows '^NORMAL' || key C-Space
+see '^NORMAL'
+key -l '#'
+check "# in normal mode starts a ticket's number, shown in the bar" see 'open #▏'
+key -l 7
+check "its digits go in it" see 'open #7▏'
+key Enter
+check "and Enter opens that ticket's modal" see '│ the whole of it '
+key Escape
+check "Esc puts the modal away" gone '│ the whole of it '
+zselect -t 10
+key Escape
+check "and the board" gone ' board  every'
+shows '^NORMAL' && key C-Space
 key M-b
 last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
 key p
@@ -1234,8 +1264,16 @@ check "and the board opens again on every repo" await tablit every
 key r
 check "and r again narrows it to the first repo" await tablit arena
 key l
+key ' '
+check "Space on a doing card shows its body" see '│ the whole of it '
+check "and its holder's state" see '│ its Claude: '
+key Escape
+check "Escape puts it away" gone '│ its Claude: '
+zselect -t 10
+mouse 0 ${(z)$(spot '#8 Board')} M
+check "a click on the picked card opens its modal and does not go" see '│ the whole of it '
 key Enter
-check "Enter on a card goes to the Claude holding it" see '╭─ 1 one '
+check "and Enter in it goes to the Claude holding it" see '╭─ 1 one '
 mouse 0 3 2 M
 check "a click on its row in the rail goes home: the board, and the orchestrator's column beside it" see '╭─ ○ orchestrator · off '
 check "which says how to start an orchestrator that is off" see 'orchestrator off · ⏎ start it'

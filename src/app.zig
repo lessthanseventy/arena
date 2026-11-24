@@ -429,6 +429,9 @@ pub const App = struct {
     rail_pick: ?RailPick = null,
     /// The popup over the strip in normal mode, which holds the keys while it is open.
     popup: ?Popup = null,
+    /// The digits typed after `#` in normal mode, a ticket's number to open, while one is being typed.
+    hash: [8]u8 = undefined,
+    hash_len: ?u8 = null,
     agent_sort: AgentSort = .urgency,
     /// The rail's list of Claudes was scrolled to start at the `n`th, beside the window `at` that
     /// was in view then; going to another puts it back to following the Claude in view.
@@ -1393,6 +1396,30 @@ pub const App = struct {
             if (win.id == id) return .{ .session = si, .win = win };
         };
         return null;
+    }
+
+    /// A key while a ticket's number is typed after `#`: a digit adds to it, backspace takes one
+    /// off, Esc drops it and Enter opens that ticket's modal on the board.
+    fn hashKey(app: *App, key: []const u8) !void {
+        const len = app.hash_len.?;
+        app.dirty = true;
+        if (anyKey(key, &.{"\x1b"})) {
+            app.hash_len = null;
+        } else if (anyKey(key, &.{ "\x7f", "\x08" })) {
+            app.hash_len = if (len == 0) null else len - 1;
+        } else if (key.len == 1 and std.ascii.isDigit(key[0])) {
+            if (len < app.hash.len) {
+                app.hash[len] = key[0];
+                app.hash_len = len + 1;
+            }
+        } else if (anyKey(key, &.{"\r"})) {
+            app.hash_len = null;
+            const id = std.fmt.parseInt(u32, app.hash[0..len], 10) catch return;
+            app.normal = false;
+            try app.showCard(id);
+            if (app.board_view) |*view| view.answering = false;
+            if (app.board_view != null) _ = try app.openDetail(id);
+        }
     }
 
     /// A key on the rail's pick, in normal mode over the strip: `j` `k` step it through the rail,
@@ -3397,12 +3424,7 @@ pub const App = struct {
             view.help = false;
             return;
         }
-        if (view.detail != null) {
-            if (is(key, &.{ "\x1b", "q", " " })) view.detail = null;
-            if (is(key, &.{ "j", "\x1b[B", "\x1bOB" }) and view.detail_scroll + 1 < app.detailRows()) view.detail_scroll += 1;
-            if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.detail_scroll -|= 1;
-            return;
-        }
+        if (view.detail != null) return app.modalKey(key);
         if (app.columnFocused()) return app.columnKey(key);
         if (app.planShown()) return app.planKey(key);
         if (is(key, &.{"b"}) and app.hasPlan()) return app.goHome();
@@ -3654,17 +3676,18 @@ pub const App = struct {
     pub const Hovered = union(enum) { none, button: usize, card: CardAt, rail: u16, modal: usize };
 
     /// What a modal button does when pressed.
-    pub const ModalAction = enum { close };
+    pub const ModalAction = union(enum) { close, card: CardAction, option: u8, claude };
 
-    /// A button in the foot of the modal frame, where it is drawn and clicked: 0-based.
+    /// A button of the modal frame, where it is drawn and clicked: 0-based. It reads ` key label `.
     pub const ModalButton = struct {
         action: ModalAction,
+        key: []const u8,
         label: []const u8,
         x: u16,
         y: u16,
 
         pub fn width(button: ModalButton) u16 {
-            return @intCast(cellCount(button.label));
+            return @intCast(cellCount(button.key) + cellCount(button.label) + 3);
         }
 
         pub fn hit(button: ModalButton, x: u16, y: u16) bool {
@@ -3695,24 +3718,163 @@ pub const App = struct {
         return .{ .x = app.boardX() + (app.boardW() -| width.box) / 2, .y = top, .w = width.box, .h = bottom - top + 1 };
     }
 
-    /// The buttons in the open modal's foot, in the order they are drawn.
-    pub fn modalButtons(app: *const App, out: []ModalButton) []ModalButton {
-        const rect = app.modalRect() orelse return out[0..0];
-        out[0] = .{ .action = .close, .label = " q close ", .x = rect.x + 2, .y = rect.y + rect.h - 1 };
-        return out[0..1];
+    /// What a card's modal says of it above its body, a line each.
+    pub const CardHead = struct {
+        pub const Kind = enum { plain, dim, warn, options };
+        buf: [1024]u8 = undefined,
+        used: usize = 0,
+        lines: [8][]const u8 = undefined,
+        kinds: [8]Kind = undefined,
+        n: usize = 0,
+        /// The line of the open ask's options, which are buttons.
+        options: ?usize = null,
+
+        fn add(head: *CardHead, kind: Kind, comptime fmt: []const u8, args: anytype) void {
+            if (head.n == head.lines.len) return;
+            const text = std.fmt.bufPrint(head.buf[head.used..], fmt, args) catch return;
+            head.used += text.len;
+            head.lines[head.n] = text;
+            head.kinds[head.n] = kind;
+            head.n += 1;
+        }
+    };
+
+    /// The card the open modal shows, when the board's pick is on it: the one its buttons act on.
+    pub fn modalCard(app: *const App) ?*const tickets.Card {
+        const view = app.board_view orelse return null;
+        const id = view.detail orelse return null;
+        const card = app.boardCard(view.col, view.row) orelse return null;
+        return if (card.id == id) card else null;
     }
 
-    fn pressModal(app: *App, action: ModalAction) void {
-        switch (action) {
-            .close => app.board_view.?.detail = null,
+    /// Fills `head` with the card's title whole, its stage, holder, model and branch, what blocks
+    /// it, the question it asks with its options, and what it was sent back for.
+    pub fn cardHead(card: *const tickets.Card, inner: usize, head: *CardHead) void {
+        head.* = .{};
+        for (titleLines(card.title, inner)) |line| if (line.len > 0) head.add(.plain, "{s}", .{line});
+        var meta: [256]u8 = undefined;
+        var wr: Writer = .fixed(&meta);
+        wr.print("{s}", .{@tagName(card.status)}) catch {};
+        if (card.stage) |stage| wr.print(" · {s}", .{stage}) catch {};
+        if (card.heldBy()) |pane| wr.print(" · held by {s}", .{pane}) catch {};
+        if (card.model) |model| wr.print(" · {s}", .{model}) catch {};
+        if (card.branch) |branch| wr.print(" · {s}", .{branch}) catch {};
+        head.add(.dim, "{s}", .{wr.buffered()});
+        if (card.blocked_by.len > 0) {
+            wr = .fixed(&meta);
+            wr.writeAll("blocked by") catch {};
+            for (card.blocked_by) |id| wr.print(" #{d}", .{id}) catch {};
+            head.add(.dim, "{s}", .{wr.buffered()});
         }
+        if (card.ask) |ask| {
+            head.add(.warn, "▲ asks: {s}", .{ask.question});
+            head.options = head.n;
+            head.add(.options, "", .{});
+        }
+        if (card.stage_note.len > 0) head.add(.dim, "{s}", .{card.stage_note});
+    }
+
+    /// The buttons of the open modal, in the order they are drawn: the open ask's options, then
+    /// in its foot the card's actions that apply, its Claude's popup and close. Only close for
+    /// a ticket the board's pick is not on.
+    pub fn modalButtons(app: *const App, out: []ModalButton) []ModalButton {
+        const rect = app.modalRect() orelse return out[0..0];
+        const foot = rect.y + rect.h - 1;
+        const right = rect.x + rect.w -| 2;
+        var n: usize = 0;
+        var x = rect.x + 2;
+        if (app.modalCard()) |card| {
+            var head: CardHead = undefined;
+            cardHead(card, detailWidth(app.boardW()).inner, &head);
+            if (head.options) |line| if (card.ask) |ask| for (ask.options, 1..) |option, number| {
+                if (number > 9 or n == out.len) break;
+                const key = "123456789"[number - 1 ..][0..1];
+                const button: ModalButton = .{ .action = .{ .option = @intCast(number) }, .key = key, .label = option, .x = x, .y = rect.y + 1 + @as(u16, @intCast(line)) };
+                if (x + button.width() > right) break;
+                out[n] = button;
+                n += 1;
+                x += button.width() + 1;
+            };
+            x = rect.x + 2;
+            var have: [12]CardAction = undefined;
+            for (cardActions(card, &have)) |action| {
+                const key: []const u8 = switch (action) {
+                    .go => "⏎",
+                    .give => "G",
+                    .edit => "e",
+                    .priority => "p",
+                    .close => ">",
+                    .reopen => "<",
+                    else => continue,
+                };
+                const button: ModalButton = .{ .action = .{ .card = action }, .key = key, .label = action.label(), .x = x, .y = foot };
+                if (x + button.width() > right or n == out.len) break;
+                out[n] = button;
+                n += 1;
+                x += button.width() + 1;
+            }
+            if (app.claudeOf(card) != null and n < out.len) {
+                const button: ModalButton = .{ .action = .claude, .key = "c", .label = "its Claude", .x = x, .y = foot };
+                if (x + button.width() <= right) {
+                    out[n] = button;
+                    n += 1;
+                    x += button.width() + 1;
+                }
+            }
+        }
+        const close: ModalButton = .{ .action = .close, .key = "q", .label = "close", .x = x, .y = foot };
+        if (n < out.len and x + close.width() <= right) {
+            out[n] = close;
+            n += 1;
+        }
+        return out[0..n];
+    }
+
+    /// The window of the Claude holding `card`, when there is one.
+    pub fn claudeOf(app: *const App, card: *const tickets.Card) ?*const Window {
+        const at = app.paneWindow(card.holder() orelse return null) orelse return null;
+        return at.session.wins.items[at.index];
+    }
+
+    /// What a press on a modal button does.
+    fn pressModal(app: *App, action: ModalAction) !void {
+        const view = &app.board_view.?;
+        switch (action) {
+            .close => view.detail = null,
+            .card => |card| try app.act(card),
+            .option => |choice| {
+                const ask = (app.modalCard() orelse return).ask orelse return;
+                if (choice > ask.options.len) return;
+                try app.answerAsk(ask.id, choice);
+                view.detail = null;
+            },
+            .claude => {
+                const win = app.claudeOf(app.modalCard() orelse return) orelse return;
+                try app.closeBoard();
+                app.normal = true;
+                app.openPopup(.{ .agent = win.id });
+            },
+        }
+    }
+
+    /// A key in the open modal: the keys of its buttons, `j` `k` to scroll and `q` to close.
+    fn modalKey(app: *App, key: []const u8) !void {
+        const view = &app.board_view.?;
+        const is = anyKey;
+        if (is(key, &.{ "\x1b", "q", " " })) return app.pressModal(.close);
+        if (is(key, &.{ "j", "\x1b[B", "\x1bOB" }) and view.detail_scroll + 1 < app.detailRows()) view.detail_scroll += 1;
+        if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.detail_scroll -|= 1;
+        const card = app.modalCard() orelse return;
+        if (key.len == 1 and key[0] >= '1' and key[0] <= '9') return app.pressModal(.{ .option = key[0] - '0' });
+        const action: ModalAction = if (is(key, &.{"\r"})) .{ .card = .go } else if (is(key, &.{"G"})) .{ .card = .give } else if (is(key, &.{"e"})) .{ .card = .edit } else if (is(key, &.{"p"})) .{ .card = .priority } else if (is(key, &.{">"})) .{ .card = .close } else if (is(key, &.{"<"})) .{ .card = .reopen } else if (is(key, &.{"c"}) and app.claudeOf(card) != null) .claude else return;
+        try app.pressModal(action);
     }
 
     pub fn hovered(app: *const App) Hovered {
         const p = app.pointer;
         if (app.menu != null or app.prompt != null or app.overview != null or app.drag != .none) return .none;
         if (p.x >= app.railDrawnW()) {
-            var modal: [4]ModalButton = undefined;
+            var modal: [16]ModalButton = undefined;
             for (app.modalButtons(&modal), 0..) |button, i| if (button.hit(p.x, p.y)) return .{ .modal = i };
         }
         const rail_w = app.railDrawnW();
@@ -4017,9 +4179,9 @@ pub const App = struct {
         // a box over the board takes the click, as a key would, so nothing hidden under it is pressed
         if (open.boxed()) {
             if (app.modalRect()) |rect| {
-                var modal: [4]ModalButton = undefined;
+                var modal: [16]ModalButton = undefined;
                 for (app.modalButtons(&modal)) |button| if (button.hit(m.x, m.y)) {
-                    app.pressModal(button.action);
+                    try app.pressModal(button.action);
                     return true;
                 };
                 if (rect.contains(m.x, m.y)) return true;
@@ -4047,8 +4209,10 @@ pub const App = struct {
         const at = app.boardCardAt(m.x, m.y) orelse return true;
         if (try app.cardNeedsClick(at, m)) return true;
         view.answering = false;
-        if (view.col == at.col and view.row == at.row and view.lane == at.lane) {
-            try app.goCard();
+        const clicked = if (app.boardLanes()) app.laneCard(at.lane, at.col, at.row) else app.boardCard(at.col, at.row);
+        const picked = app.boardCard(view.col, view.row);
+        if (clicked != null and picked != null and clicked.?.id == picked.?.id) {
+            _ = try app.openDetail(picked.?.id);
         } else view.* = .{ .back = view.back, .col = at.col, .row = at.row, .lane = at.lane, .repo = view.repo, .backlog = view.backlog, .home = view.home };
         return true;
     }
@@ -4739,6 +4903,7 @@ pub const App = struct {
     fn settleMode(app: *App) void {
         if (app.normal and app.overlay() and !app.sideFocused() and app.popup == null) app.normal = false;
         if (!app.normal) {
+            app.hash_len = null;
             app.closePopup();
             app.rail_pick = null;
         }
@@ -4781,6 +4946,15 @@ pub const App = struct {
             if (app.normal and !asking) {
                 if (app.popup != null) {
                     try app.popupKey(key);
+                    continue;
+                }
+                if (app.hash_len != null) {
+                    try app.hashKey(key);
+                    continue;
+                }
+                if (app.board_view == null and anyKey(key, &.{"#"})) {
+                    app.hash_len = 0;
+                    app.dirty = true;
                     continue;
                 }
                 if (app.sideFocused() and try app.feedKey(key)) continue;

@@ -198,7 +198,9 @@ fn modeCorner(app: *const App, w: *Writer, pen: *Pen) !void {
 
 /// In normal mode the row of dots is the keys that can be pressed, written out.
 fn normalKeys(app: *const App, w: *Writer, pen: *Pen) !void {
-    try keysLine(app, w, pen, normal_keys);
+    var buf: [48]u8 = undefined;
+    const typed = if (app.hash_len) |len| std.fmt.bufPrint(&buf, "open #{s}▏  ⏎ open  esc cancel", .{app.hash[0..len]}) catch normal_keys else normal_keys;
+    try keysLine(app, w, pen, typed);
 }
 
 fn keysLine(app: *const App, w: *Writer, pen: *Pen, text: []const u8) !void {
@@ -1758,10 +1760,25 @@ fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
     if (note.len > 0) while (counted.next()) |_| {
         if (note_rows < bottom - top - 2) note_rows += 1;
     };
-    const text_end = bottom - note_rows;
+    const card = app.modalCard();
+    var head: App.CardHead = .{};
+    if (card) |it| App.cardHead(it, inner, &head);
+    const win = if (card) |it| app.claudeOf(it) else null;
+    const claude_rows: u16 = if (win != null and bottom - top - 2 > note_rows + head.n + 1) 1 else 0;
+    const text_end = bottom - note_rows - claude_rows;
 
-    const text = if (app.detail.items.len > 0) app.detail.items else "…";
     var y = top + 1;
+    for (head.lines[0..head.n], head.kinds[0..head.n]) |line, kind| {
+        if (y >= text_end) break;
+        const style: vt.Style = switch (kind) {
+            .plain, .options => .{},
+            .dim => dim,
+            .warn => ink(app, "amber", 4),
+        };
+        try boxLine(w, &pen, edge, style, x, y, line, inner);
+        y += 1;
+    }
+    const text = if (app.detail.items.len > 0) app.detail.items else "…";
     var row: usize = 0;
     var lines = app_mod.DetailLines.init(text, inner);
     while (lines.next()) |line| : (row += 1) {
@@ -1770,6 +1787,14 @@ fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
         y += 1;
     }
     while (y < text_end) : (y += 1) try boxLine(w, &pen, edge, .{}, x, y, "", inner);
+    if (claude_rows > 0) if (win) |it| {
+        var ago_buf: [8]u8 = undefined;
+        var said: [320]u8 = undefined;
+        const state = if (it.claude == .none) "" else @tagName(it.claude);
+        const line = std.fmt.bufPrint(&said, "its Claude: {s} {s} · {s}", .{ state, ago(&ago_buf, app.epoch, it.since), it.detail() }) catch "its Claude";
+        try boxLine(w, &pen, edge, dim, x, y, line, inner);
+        y += 1;
+    };
     var noted = app_mod.DetailLines.init(note, inner);
     while (y < bottom) : (y += 1) try boxLine(w, &pen, edge, dim, x, y, noted.next() orelse "", inner);
     try modalFrame(app, w, rect, title, " j k scroll ");
@@ -1794,7 +1819,7 @@ fn modalFrame(app: *const App, w: *Writer, rect: App.ModalRect, head: []const u8
     for (3..rect.w) |_| try w.writeAll("─");
     try w.writeAll("╯");
 
-    var buttons: [4]App.ModalButton = undefined;
+    var buttons: [16]App.ModalButton = undefined;
     const hovered = app.hovered();
     var end = rect.x + 2;
     for (app.modalButtons(&buttons), 0..) |button, i| {
@@ -1802,8 +1827,8 @@ fn modalFrame(app: *const App, w: *Writer, rect: App.ModalRect, head: []const u8
         style.flags.inverse = true;
         if (hovered == .modal and hovered.modal == i) style.flags.underline = .single;
         try pen.set(w, style, null);
-        try w.print("\x1b[{d};{d}H{s}", .{ button.y + 1, button.x + 1, button.label });
-        end = button.x + button.width();
+        try w.print("\x1b[{d};{d}H {s} {s} ", .{ button.y + 1, button.x + 1, button.key, button.label });
+        if (button.y == foot - 1) end = button.x + button.width();
     }
     if (end + cellCount(hint) < right) {
         try pen.set(w, ink(app, "dim", 8), null);

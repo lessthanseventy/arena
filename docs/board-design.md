@@ -132,7 +132,7 @@ foot.
 
 ### Mouse
 
-- A click on a card picks it; a click on the picked one does its `⏎`.
+- A click on a card picks it; a click on the picked one opens its modal, as `space` does, and `⏎` in it goes.
 - A click on a header button, a picked card's action, an inbox item's option, or a key in the
   foot's bar does what it says.
 - The wheel scrolls the column under the pointer.

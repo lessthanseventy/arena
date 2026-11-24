@@ -45,6 +45,8 @@ pub const Card = struct {
     /// Why babylon left its Claude running once it landed, empty when there is nothing to say:
     /// one line, safe to draw.
     session_note: []const u8 = "",
+    /// Why babylon sent it back, or what its pipeline last said of it.
+    stage_note: []const u8 = "",
     /// The orchestrator's open proposal about it, the oldest when there are several; set as the
     /// board is parsed, never read from a card's own fields.
     proposal: ?Proposal = null,
