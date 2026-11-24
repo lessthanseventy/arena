@@ -1740,7 +1740,7 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     var y: u16 = 2;
     const rows_end = app.view_h - @intFromBool(app.halfHome());
     if (app.halfHome()) try planFoot(app, w, &sheet, view.plan_pick);
-    while (y < rows_end) : (y += 1) {
+    if (app.roles) |r| try benchPlan(app, w, r, &sheet, view, rows_end) else while (y < rows_end) : (y += 1) {
         try w.print("\x1b[{d};{d}H", .{ y + 1, ox + 1 });
         const at = top + (y - 2);
         try pen.set(w, .{}, null);
@@ -1765,6 +1765,273 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     }
     if (view.detail) |id| try detailBox(app, w, id, view.detail_scroll);
     if (view.help) try helpBox(app, w);
+}
+
+fn repeat(w: *Writer, x: usize, y: usize, cell_glyph: []const u8, n: usize, fg: color.RGB, bg: color.RGB) !void {
+    var buf: [1024]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    for (0..n) |_| out.writeAll(cell_glyph) catch break;
+    try bench.say(w, x, y, out.buffered(), fg, bg, false);
+}
+
+/// The plan's rows in Workbench's look, from `rows_end` up: each section a window on the ground,
+/// the focal goal's first, a goal a card with its bar, and what landed a strip along the foot.
+fn benchPlan(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, view: app_mod.BoardView, rows_end: u16) !void {
+    const top = app.planTop(sheet);
+    var y: u16 = 2;
+    while (y < rows_end) : (y += 1) {
+        try bench.fill(w, app.boardX(), y, app.boardW(), r.ground);
+        const at = top + (y - 2);
+        if (at < sheet.n) try benchPlanRow(app, w, r, sheet, view, at, y);
+    }
+}
+
+/// Whether the pick is in the section the row at `at` heads: its rows to the next gap.
+fn sectionPicked(sheet: *const sheets.Sheet, at: usize, pick: usize) bool {
+    for (sheet.rows[at + 1 .. sheet.n]) |row| {
+        if (row.kind == .blank) return false;
+        if (row.pick == pick) return true;
+    }
+    return false;
+}
+
+fn stepHue(r: theme.Roles, state: []const u8) struct { word: []const u8, lead: color.RGB, filled: bool } {
+    const eql = std.mem.eql;
+    if (eql(u8, state, "building")) return .{ .word = "building", .lead = r.building, .filled = false };
+    if (eql(u8, state, "landing")) return .{ .word = "landing", .lead = r.checking, .filled = false };
+    if (eql(u8, state, "reviewing") or eql(u8, state, "verifying")) return .{ .word = state, .lead = r.checking, .filled = false };
+    if (eql(u8, state, "failed") or eql(u8, state, "sent_back")) return .{ .word = "sent back", .lead = r.failed, .filled = true };
+    if (eql(u8, state, "next")) return .{ .word = "next", .lead = r.dim, .filled = false };
+    return .{ .word = "todo", .lead = r.dim, .filled = false };
+}
+
+fn goalHue(b: *const tickets.Board, r: theme.Roles, goal: tickets.Goal) color.RGB {
+    for (b.cards()) |card| if (card.id == goal.epic) return repoHue(r, card.repo).hue;
+    for (goal.steps) |step| for (b.cards()) |card| if (card.id == step.ticket) return repoHue(r, card.repo).hue;
+    return r.dim;
+}
+
+/// A step as a chip at (`x`, `y`): its number and where it is.
+fn stepChip(w: *Writer, r: theme.Roles, x: usize, y: usize, step: tickets.Step) !usize {
+    const look = stepHue(r, step.state);
+    var buf: [48]u8 = undefined;
+    const label = std.fmt.bufPrint(&buf, "#{d} {s}", .{ step.ticket, look.word }) catch "";
+    return bench.chipInk(w, r, x, y, label, look.lead, if (look.filled) r.on_accent else r.text, look.filled);
+}
+
+/// The row at `at` of the plan, drawn on row `y`, in a window one cell in from the board's left
+/// edge and short of its right by the shadow.
+fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, view: app_mod.BoardView, at: usize, y: u16) !void {
+    const b = &app.board.?;
+    const given = b.plan().?;
+    const row = sheet.rows[at];
+    const x0: usize = app.boardX() + 1;
+    const ww: usize = app.boardW() -| 3;
+    if (ww < 16) return;
+    const picked = if (row.pick) |p| p == view.plan_pick else false;
+    const mark = if (app.columnFocused()) r.dim else r.accent;
+    const bg = if (picked) r.raised else r.panel;
+    const room = ww - 4;
+    switch (row.kind) {
+        .blank => if (at > 0 and sheet.rows[at - 1].kind != .blank) try repeat(w, x0 + 1, y, "▀", ww, r.well, r.ground),
+        .head => {
+            const focused = sectionPicked(sheet, at, view.plan_pick) and !app.columnFocused();
+            try bench.titleBar(w, r, x0, y, ww, row.text, focused);
+            var nbuf: [16]u8 = undefined;
+            _ = try bench.chip(w, r, x0 + 4 + cellCount(row.text), y, std.fmt.bufPrint(&nbuf, "{d}", .{row.count}) catch "", r.dim, false);
+            try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
+        },
+        .focal => {
+            const goal = given.goals[row.item];
+            const hue = goalHue(b, r, goal);
+            if (row.part == 0) {
+                try bench.titleBar(w, r, x0, y, ww, "driving towards", true);
+                var buf: [160]u8 = undefined;
+                const text = std.fmt.bufPrint(&buf, "epic #{d}{s}{s}", .{ goal.epic, if (goal.doc != null) " · " else "", goal.doc orelse "" }) catch "";
+                try bench.say(w, x0 + 20, y, clip(text, ww -| 22), r.dim, r.raised, false);
+            } else {
+                try bench.fill(w, x0, y, ww, bg);
+                if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
+                switch (row.part) {
+                    1 => try bench.say(w, x0 + 2, y, clip(goal.title, room), r.text, bg, true),
+                    2 => {
+                        var buf: [32]u8 = undefined;
+                        const label = std.fmt.bufPrint(&buf, "{d}/{d} landed", .{ goal.landed, goal.total }) catch "";
+                        const bar_w = ww -| 5 -| cellCount(label);
+                        try bench.bar(w, r, x0 + 2, y, bar_w, goal.landed, goal.total, hue);
+                        try bench.say(w, x0 + 3 + bar_w, y, label, r.text, bg, false);
+                    },
+                    else => {
+                        try bench.say(w, x0 + 2, y, "now", r.dim, bg, false);
+                        var x = x0 + 6;
+                        var flying: usize = 0;
+                        for (goal.steps) |step| flying += @intFromBool(sheets.inFlight(step));
+                        var shown: usize = 0;
+                        for (goal.steps) |step| {
+                            if (!sheets.inFlight(step)) continue;
+                            if (x + 20 > x0 + ww) break;
+                            if (shown > 0) {
+                                try bench.say(w, x, y, "─▶ ", r.dim, bg, false);
+                                x += 3;
+                            }
+                            x += try stepChip(w, r, x, y, step);
+                            shown += 1;
+                        }
+                        if (shown < flying) {
+                            var buf: [16]u8 = undefined;
+                            try bench.say(w, x + 1, y, std.fmt.bufPrint(&buf, "+{d} more", .{flying - shown}) catch "", r.dim, bg, false);
+                        }
+                    },
+                }
+            }
+            try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
+        },
+        .now => {
+            const item = given.now[row.item];
+            try bench.fill(w, x0, y, ww, bg);
+            if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
+            const repo = repoHue(r, item.repo);
+            var idb: [16]u8 = undefined;
+            const id = std.fmt.bufPrint(&idb, "#{d}", .{item.ticket}) catch "";
+            try bench.say(w, x0 + 2, y, repo.glyph, repo.hue, bg, false);
+            try bench.say(w, x0 + 4, y, id, repo.hue, bg, true);
+            var age: [16]u8 = undefined;
+            var lbuf: [64]u8 = undefined;
+            const how = sheets.ago(&age, item.since, app.epoch);
+            const state = item.stage orelse item.state;
+            const label = if (item.stalled) |why|
+                std.fmt.bufPrint(&lbuf, "stalled · {s}", .{why}) catch "stalled"
+            else if (how.len > 0) std.fmt.bufPrint(&lbuf, "{s} · {s}", .{ state, how }) catch state else state;
+            const lead = if (item.stalled != null) r.failed else stepHue(r, state).lead;
+            const chip_w = cellCount(label) + 2;
+            const chip_x = x0 + ww -| (chip_w + 1);
+            const title_x = x0 + 5 + cellCount(id);
+            if (chip_x > title_x + 4) {
+                _ = try bench.chipInk(w, r, chip_x, y, label, lead, if (item.stalled != null) r.on_accent else r.text, item.stalled != null);
+                try bench.say(w, title_x, y, clip(item.title, chip_x - title_x - 1), r.text, bg, false);
+            } else try bench.say(w, title_x, y, clip(item.title, x0 + ww -| title_x -| 1), r.text, bg, false);
+        },
+        .folded => {
+            try bench.fill(w, x0, y, ww, bg);
+            if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
+            try bench.say(w, x0 + 2, y, clip(std.mem.trimStart(u8, row.text, " "), room), r.dim, bg, false);
+        },
+        .next => {
+            const item = given.next[row.item];
+            try bench.fill(w, x0, y, ww, bg);
+            if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
+            var nb: [16]u8 = undefined;
+            try bench.say(w, x0 + 2, y, std.fmt.bufPrint(&nb, "{d}", .{row.item + 1}) catch "", r.dim, bg, false);
+            const repo = repoHue(r, item.repo);
+            var idb: [16]u8 = undefined;
+            const id = std.fmt.bufPrint(&idb, "#{d}", .{item.ticket}) catch "";
+            try bench.say(w, x0 + 4, y, repo.glyph, repo.hue, bg, false);
+            try bench.say(w, x0 + 6, y, id, repo.hue, bg, true);
+            var lbuf: [48]u8 = undefined;
+            const label = if (item.waits_on.len == 0) "ready" else if (item.waits_on[0].ticket) |t|
+                std.fmt.bufPrint(&lbuf, "\u{f0c1} waits #{d}", .{t}) catch "waits"
+            else
+                std.fmt.bufPrint(&lbuf, "\u{f0c1} after #{d}", .{item.waits_on[0].until orelse 0}) catch "waits";
+            const chip_x = x0 + ww -| (cellCount(label) + 3);
+            const title_x = x0 + 7 + cellCount(id);
+            const pin_w: usize = if (item.pinned()) 2 else 0;
+            _ = try bench.chipInk(w, r, chip_x, y, label, if (item.waits_on.len == 0) r.landed else r.dim, if (item.waits_on.len == 0) r.text else r.dim, false);
+            if (item.pinned()) try bench.say(w, chip_x -| 2, y, "\u{f08d}", r.accent, bg, false);
+            try bench.say(w, title_x, y, clip(item.title, chip_x -| title_x -| 1 -| pin_w), r.text, bg, false);
+            try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
+        },
+        .why, .more => {
+            try bench.fill(w, x0, y, ww, r.panel);
+            try bench.say(w, x0 + 7, y, clip(std.mem.trim(u8, row.text, " "), room -| 5), r.dim, r.panel, false);
+        },
+        .card_top, .goal, .goal_bar, .goal_next, .goal_block => {
+            const goal = given.goals[row.item];
+            const base = at - @as(usize, switch (row.kind) {
+                .card_top => @as(usize, 0),
+                .goal => 1,
+                .goal_bar => 2,
+                .goal_next => 3,
+                else => 4,
+            });
+            const card_picked = sheet.rows[base + 1].pick == view.plan_pick;
+            const face = if (card_picked) r.raised else r.tile;
+            try bench.fill(w, x0, y, ww, r.panel);
+            const cx = x0 + 1;
+            const cw = ww - 2;
+            try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
+            switch (row.kind) {
+                .card_top => try bench.bevel(w, cx, y, cw, if (card_picked) r.text.mix(face, 0.5) else r.raised, face),
+                .goal => {
+                    try bench.fill(w, cx, y, cw, face);
+                    if (card_picked) try bench.say(w, cx, y, "▌", mark, face, true);
+                    var idb: [16]u8 = undefined;
+                    const id = std.fmt.bufPrint(&idb, "#{d} ", .{goal.epic}) catch "";
+                    const hue = goalHue(b, r, goal);
+                    try bench.say(w, cx + 2, y, id, hue, face, true);
+                    try bench.say(w, cx + 2 + cellCount(id), y, clip(goal.title, cw -| 4 -| cellCount(id)), r.text, face, true);
+                },
+                .goal_bar => {
+                    try bench.fill(w, cx, y, cw, face);
+                    var buf: [32]u8 = undefined;
+                    const pct: u32 = if (goal.total == 0) 0 else goal.landed * 100 / goal.total;
+                    const label = std.fmt.bufPrint(&buf, "{d}/{d}  {d}%", .{ goal.landed, goal.total, pct }) catch "";
+                    const bar_w = cw -| 4 -| cellCount(label);
+                    try bench.bar(w, r, cx + 2, y, bar_w, goal.landed, goal.total, goalHue(b, r, goal));
+                    try bench.say(w, cx + 3 + bar_w, y, label, r.dim, face, false);
+                },
+                .goal_next => {
+                    try bench.fill(w, cx, y, cw, face);
+                    try bench.say(w, cx + 2, y, "next", r.dim, face, false);
+                    if (sheets.goalNext(goal)) |step| _ = try stepChip(w, r, cx + 10, y, step) else try bench.say(w, cx + 10, y, "nothing", r.dim, face, false);
+                },
+                else => {
+                    try bench.fill(w, cx, y, cw, face);
+                    try bench.say(w, cx + 2, y, "blocked", r.dim, face, false);
+                    if (sheets.goalBlock(goal)) |block| {
+                        var buf: [40]u8 = undefined;
+                        _ = try bench.chipInk(w, r, cx + 10, y, std.fmt.bufPrint(&buf, "\u{f0c1} #{d} waits on #{d}", .{ block.step, block.on }) catch "", r.dim, r.dim, false);
+                    } else try bench.say(w, cx + 10, y, "nothing", r.dim, face, false);
+                },
+            }
+        },
+        .unplanned => {
+            const not = given.not_planned;
+            try bench.fill(w, x0, y, ww, bg);
+            if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
+            var x = x0 + 2;
+            for (not.by_repo.map.keys(), not.by_repo.map.values()) |name, n| {
+                var buf: [64]u8 = undefined;
+                const look = repoHue(r, name);
+                const label = std.fmt.bufPrint(&buf, "{s} {s} {d}", .{ look.glyph, name, n }) catch "";
+                if (x + cellCount(label) + 2 > x0 + ww) break;
+                x += try bench.chipInk(w, r, x, y, label, look.hue, r.text, false) + 1;
+            }
+            var buf: [32]u8 = undefined;
+            const follow = std.fmt.bufPrint(&buf, "· {d} follow-ups", .{not.follow_ups}) catch "";
+            if (x + cellCount(follow) < x0 + ww) try bench.say(w, x, y, follow, r.dim, bg, false);
+            try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
+        },
+        .landed => {
+            const today = given.landed_today;
+            const face = r.ground;
+            if (picked) try bench.say(w, x0, y, "▌", mark, face, true);
+            var buf: [48]u8 = undefined;
+            const head = std.fmt.bufPrint(&buf, "✓ landed today {d}", .{today.count}) catch "";
+            try bench.say(w, x0 + 2, y, head, r.landed, face, true);
+            var x = x0 + 3 + cellCount(head);
+            for (today.newest[0..@min(today.newest.len, 5)]) |id| {
+                var idb: [16]u8 = undefined;
+                const text = std.fmt.bufPrint(&idb, "#{d}", .{id}) catch "";
+                if (x + cellCount(text) + 4 > x0 + ww) break;
+                try bench.say(w, x, y, "──", r.dim, face, false);
+                const hue = for (b.cards()) |card| {
+                    if (card.id == id) break repoHue(r, card.repo).hue;
+                } else r.dim;
+                try bench.say(w, x + 3, y, text, hue, face, true);
+                x += cellCount(text) + 4;
+            }
+        },
+    }
 }
 
 /// Nerd Font glyphs, one a repo, in `Roles.repo_names`' order.
@@ -3595,4 +3862,54 @@ test "a frame of a board of five repos and 362 cards takes under 4ms" {
         // half of main's 8ms between frames, with room for a loaded machine
         try std.testing.expect(@divTrunc(ns, rounds) < 4 * std.time.ns_per_ms);
     }
+}
+
+test "Home in Workbench's look: the focal goal is the one with a step building, and a goal's card has its bar in its repo's hue" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":326,"repo":"arena","kind":"epic","status":"doing","title":"The board, redesigned"},
+        \\{"id":410,"repo":"menard","kind":"epic","status":"doing","title":"menard runs zig too"},
+        \\{"id":760,"repo":"arena","status":"doing","epic_id":326,"title":"Visual redesign"}],
+        \\"plan":{"now":[{"ticket":760,"repo":"arena","title":"Visual redesign","state":"building","since":"2026-11-24T04:38:21Z"}],
+        \\"next":[{"ticket":761,"repo":"arena","title":"arena crashes","why":"the crash","set_by":"human","waits_on":[{"lane":"arena","until":757}]}],
+        \\"goals":[
+        \\{"epic":410,"title":"menard runs zig too","landed":2,"total":7,"steps":[{"ticket":592,"state":"todo"}]},
+        \\{"epic":326,"title":"The board, redesigned","landed":13,"total":18,"steps":[{"ticket":760,"state":"building"},{"ticket":338,"state":"sent_back"},{"ticket":346,"state":"waiting","waits_on":[{"ticket":760}]}]}],
+        \\"landed_today":{"count":23,"newest":[632,754]},
+        \\"not_planned":{"count":21,"follow_ups":9,"by_repo":{"arena":11,"tlon":4}}}}
+    );
+    defer board.deinit();
+    var app = homeApp(&board);
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 23;
+    app.roles = bench.roles();
+    app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
+    const r = bench.roles();
+
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    // the goal with a step building, not the first listed
+    try std.testing.expectEqual(@as(usize, 1), sheet.rows[0].item);
+
+    var buf: [65536]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try planView(&app, &out, app.board_view.?);
+    const f = out.buffered();
+
+    // the first goal's card: its bar row, 2 of 7 in menard's hue on the well
+    var at: usize = 0;
+    for (sheet.rows[0..sheet.n], 0..) |row, i| {
+        if (row.kind == .goal_bar and row.item == 0) at = i;
+    }
+    const y = 2 + (at - app.planTop(&sheet));
+    const x = app.boardX() + 1 + 1 + 2;
+    const bar_w = (app.boardW() - 3 - 2) - 4 - "2/7  28%".len;
+    const filled = try bench.probe(f, x, y);
+    try std.testing.expectEqual(@as(u21, '█'), filled.cp);
+    try std.testing.expectEqual(r.repo[3], filled.fg);
+    try std.testing.expectEqual(r.well, filled.bg);
+    const empty = try bench.probe(f, x + bar_w - 1, y);
+    try std.testing.expectEqual(@as(u21, ' '), empty.cp);
+    try std.testing.expectEqual(r.well, empty.bg);
 }

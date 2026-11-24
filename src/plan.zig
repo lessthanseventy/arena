@@ -15,7 +15,7 @@ const unfolded_rows = 2;
 /// The tickets of next that are drawn; the rest are `+N`.
 const next_shown = 7;
 
-pub const Kind = enum { head, blank, now, folded, next, why, more, goal, landed, unplanned };
+pub const Kind = enum { head, blank, now, folded, next, why, more, goal, landed, unplanned, focal, card_top, goal_bar, goal_next, goal_block };
 pub const Style = enum { normal, dim, heading, attention };
 
 pub const Row = struct {
@@ -31,7 +31,42 @@ pub const Row = struct {
     /// item waits on.
     tail_at: usize = std.math.maxInt(usize),
     tail_style: Style = .dim,
+    /// Workbench's rows are drawn from the plan itself: the index of the item among its list
+    /// (now, next or goals), which of a focal window's rows this is, and a head's count.
+    item: usize = 0,
+    part: u8 = 0,
+    count: usize = 0,
 };
+
+/// The goal Home puts in the focal window: the first with a step being built, else the first not
+/// yet landed whole.
+pub fn focalGoal(goals: []const tickets.Goal) ?usize {
+    for (goals, 0..) |goal, i| for (goal.steps) |step| {
+        if (std.mem.eql(u8, step.state, "building")) return i;
+    };
+    for (goals, 0..) |goal, i| if (goal.landed < goal.total) return i;
+    return null;
+}
+
+/// Whether a step is moving, next, or sent back, as opposed to landed or still waiting.
+pub fn inFlight(step: tickets.Step) bool {
+    const mark = Sheet.stepMark(step.state);
+    return !std.mem.eql(u8, mark, "✓") and !std.mem.eql(u8, mark, "○");
+}
+
+/// A goal's next step: the first being built, else landing, else next, else the first waiting.
+pub fn goalNext(goal: tickets.Goal) ?tickets.Step {
+    for ([_][]const u8{ "◐", "◒", "●", "○" }) |want| for (goal.steps) |step| {
+        if (std.mem.eql(u8, Sheet.stepMark(step.state), want)) return step;
+    };
+    return null;
+}
+
+/// The first step of a goal that waits on a ticket, and that ticket.
+pub fn goalBlock(goal: tickets.Goal) ?struct { step: u32, on: u32 } {
+    for (goal.steps) |step| for (step.waits_on) |wait| if (wait.ticket) |on| return .{ .step = step.ticket, .on = on };
+    return null;
+}
 
 pub const Sheet = struct {
     rows: [max_rows]Row = undefined,
@@ -39,6 +74,8 @@ pub const Sheet = struct {
     picks: usize = 0,
     /// Half a screen's plan: the pipeline folded to counts, next without its whys, goals without names.
     narrow: bool = false,
+    /// Workbench's rows: a goal a card of rows, and the focal window first.
+    bench: bool = false,
     buf: [32 * 1024]u8 = undefined,
     used: usize = 0,
 
@@ -96,21 +133,37 @@ pub const Sheet = struct {
 
     /// The plan as rows `width` cells wide, `epoch` the time now, the stages in `unfolded` shown
     /// a row to a ticket.
-    pub fn build(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64, unfolded: u8, narrow: bool) void {
+    pub fn build(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64, unfolded: u8, narrow: bool, bench: bool) void {
         s.narrow = narrow;
+        s.bench = bench;
         s.n = 0;
         s.picks = 0;
         s.used = 0;
+        if (bench) if (focalGoal(given.goals)) |at| {
+            s.add(.{ .kind = .focal, .item = at, .part = 0 });
+            s.add(.{ .kind = .focal, .item = at, .part = 1, .pick = 0, .ticket = given.goals[at].epic });
+            s.add(.{ .kind = .focal, .item = at, .part = 2 });
+            s.add(.{ .kind = .focal, .item = at, .part = 3 });
+            s.add(.{ .kind = .blank });
+        };
         s.nowRows(given, width, epoch, unfolded);
         s.nextRows(given, width);
         s.goalRows(given, width);
         s.add(.{ .kind = .blank });
-        s.landedRow(given, b, width);
-        s.unplannedRow(given, width);
+        if (bench) {
+            s.headRow("not planned", given.not_planned.count);
+            s.unplannedRow(given, width);
+            s.add(.{ .kind = .blank });
+            s.landedRow(given, b, width);
+        } else {
+            s.landedRow(given, b, width);
+            s.unplannedRow(given, width);
+        }
     }
 
     fn headRow(s: *Sheet, name: []const u8, count: usize) void {
-        s.add(.{ .kind = .head, .style = .heading, .text = s.print("{s} {d}", .{ name, count }) });
+        const text = if (s.bench) name else s.print("{s} {d}", .{ name, count });
+        s.add(.{ .kind = .head, .style = .heading, .text = text, .count = count });
     }
 
     fn building(item: tickets.NowItem) bool {
@@ -119,7 +172,7 @@ pub const Sheet = struct {
 
     fn nowRows(s: *Sheet, given: *const tickets.Plan, width: usize, epoch: i64, unfolded: u8) void {
         s.headRow("now", given.now.len);
-        for (given.now) |item| if (building(item)) s.nowRow(item, width, epoch);
+        for (given.now, 0..) |item, i| if (building(item)) s.nowRow(item, i, width, epoch);
         // the pipeline's tickets, a stage at a time in the order babylon first names them
         var done: [8][]const u8 = undefined;
         var stages: usize = 0;
@@ -152,16 +205,16 @@ pub const Sheet = struct {
         const open = if (fold) |bit| unfolded & (@as(u8, 1) << bit) != 0 else true;
         const first: usize = if (fold) |bit| (if (bit == queued_fold or s.narrow) 0 else unfolded_rows) else count;
         var seen: usize = 0;
-        for (given.now) |item| {
+        for (given.now, 0..) |item, i| {
             if (!inStage(item, name)) continue;
-            if (open or seen < first) s.nowRow(item, width, epoch);
+            if (open or seen < first) s.nowRow(item, i, width, epoch);
             seen += 1;
         }
         if (open or count <= first) return;
         s.foldedRow(given, name, count - first, first, width);
     }
 
-    fn nowRow(s: *Sheet, item: tickets.NowItem, width: usize, epoch: i64) void {
+    fn nowRow(s: *Sheet, item: tickets.NowItem, at: usize, width: usize, epoch: i64) void {
         const queued = std.mem.eql(u8, item.stage orelse "", "queued");
         const mark: []const u8 = if (item.stalled != null) "◇" else if (building(item)) "◐" else if (queued) "»" else "◒";
         var age: [16]u8 = undefined;
@@ -176,6 +229,7 @@ pub const Sheet = struct {
             .kind = .now,
             .pick = 0,
             .ticket = item.ticket,
+            .item = at,
             .text = both.text,
             .tail_at = both.tail_at,
             .tail_style = if (item.stalled != null) .attention else .normal,
@@ -210,6 +264,11 @@ pub const Sheet = struct {
         s.add(.{ .kind = .blank });
         s.headRow("next", given.next.len);
         for (given.next[0..@min(given.next.len, next_shown)], 1..) |item, place_n| {
+            if (s.bench) {
+                s.add(.{ .kind = .next, .pick = 0, .ticket = item.ticket, .item = place_n - 1 });
+                if (item.why.len > 0 and !s.narrow) s.add(.{ .kind = .why, .style = .dim, .text = s.clipped(width, item.why) });
+                continue;
+            }
             const right = s.waits(item.waits_on);
             const left = s.print(" {d} #{d} {s: <8} {s}", .{ place_n, item.ticket, text_mod.clip(item.repo, 8), item.title });
             const both = s.spread(width, left, right);
@@ -241,7 +300,13 @@ pub const Sheet = struct {
         if (!s.narrow) for (given.goals) |goal| {
             name_w = @max(name_w, @min(text_mod.cells(goal.title), 26));
         };
-        for (given.goals) |goal| {
+        for (given.goals, 0..) |goal, i| {
+            if (s.bench) {
+                inline for (.{ .card_top, .goal, .goal_bar, .goal_next, .goal_block }) |kind| {
+                    s.add(.{ .kind = kind, .item = i, .pick = if (kind == .goal) 0 else null, .ticket = if (kind == .goal) goal.epic else null });
+                }
+                continue;
+            }
             var extra: [96]u8 = undefined;
             const after = s.print("  {d} of {d}  {s}", .{ goal.landed, goal.total, goalExtra(goal, &extra) });
             const name = text_mod.clip(goal.title, name_w);
@@ -265,7 +330,7 @@ pub const Sheet = struct {
         }
     }
 
-    fn stepMark(state: []const u8) []const u8 {
+    pub fn stepMark(state: []const u8) []const u8 {
         const marks = [_][2][]const u8{
             .{ "landed", "✓" },
             .{ "building", "◐" },
@@ -348,7 +413,7 @@ fn place(n: u32, buf: []u8) []const u8 {
 }
 
 /// How long ago `since` was, as `6m` or `1h05`; nothing when babylon does not say.
-fn ago(buf: []u8, since: ?[]const u8, epoch: i64) []const u8 {
+pub fn ago(buf: []u8, since: ?[]const u8, epoch: i64) []const u8 {
     const then = tickets.epochOf(since) orelse return "";
     const mins = @divFloor(@max(epoch - then, 0), 60);
     if (mins < 1) return "now";
@@ -391,7 +456,7 @@ test "the plan's rows: building first, a stage's first two tickets, the rest and
     defer b.deinit();
     var s: Sheet = undefined;
     const epoch = tickets.epochOf("2026-11-23T07:10:00Z").?;
-    s.build(b.plan().?, &b, 100, epoch, 0, false);
+    s.build(b.plan().?, &b, 100, epoch, 0, false, false);
     const eq = std.testing.expectEqualStrings;
     const ok = std.testing.expect;
     try eq("now 7", rowText(&s, .head, 0).?);
@@ -409,7 +474,7 @@ test "an unfolded stage is a row to a ticket" {
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 100, 0, 1 << queued_fold, false);
+    s.build(b.plan().?, &b, 100, 0, 1 << queued_fold, false, false);
     try std.testing.expect(rowText(&s, .folded, 1) == null);
     try std.testing.expect(std.mem.indexOf(u8, rowText(&s, .now, 5).?, "» #429") != null);
 }
@@ -418,7 +483,7 @@ test "next says what each waits on and why, goals their steps, and the picks run
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 100, 0, 0, false);
+    s.build(b.plan().?, &b, 100, 0, 0, false, false);
     const has = std.mem.indexOf;
     const ok = std.testing.expect;
     try ok(std.mem.endsWith(u8, rowText(&s, .next, 0).?, "← after #588 lands: one babylon"));
@@ -440,7 +505,24 @@ test "a row too wide is cut, its right side kept" {
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 40, 0, 0, false);
+    s.build(b.plan().?, &b, 40, 0, 0, false, false);
     for (s.rows[0..s.n]) |row| try std.testing.expect(text_mod.cells(row.text) <= 40);
     try std.testing.expect(std.mem.endsWith(u8, rowText(&s, .now, 0).?, "building · now"));
+}
+
+test "the focal goal is the first with a step being built, a card is five rows, and its next and blocker are its steps" {
+    var b = try tickets.Board.parse(std.testing.allocator, sample);
+    defer b.deinit();
+    const given = b.plan().?;
+    try std.testing.expectEqual(@as(?usize, 0), focalGoal(given.goals));
+    try std.testing.expectEqual(@as(u32, 453), goalNext(given.goals[0]).?.ticket);
+    try std.testing.expectEqual(@as(u32, 454), goalBlock(given.goals[0]).?.step);
+    try std.testing.expectEqual(@as(u32, 453), goalBlock(given.goals[0]).?.on);
+    var s: Sheet = undefined;
+    s.build(given, &b, 100, 0, 0, false, true);
+    try std.testing.expectEqual(Kind.focal, s.rows[0].kind);
+    try std.testing.expectEqual(@as(usize, 0), s.rows[1].pick.?);
+    var cards: usize = 0;
+    for (s.rows[0..s.n]) |row| cards += @intFromBool(row.kind == .card_top);
+    try std.testing.expectEqual(@as(usize, 2), cards);
 }

@@ -3546,7 +3546,7 @@ pub const App = struct {
     pub fn planSheet(app: *const App, sheet: *sheets.Sheet) bool {
         if (!app.planShown()) return false;
         const b = &app.board.?;
-        sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, app.board_view.?.unfolded, app.halfHome());
+        sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, app.board_view.?.unfolded, app.halfHome(), app.workbench());
         return true;
     }
 
