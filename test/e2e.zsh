@@ -1501,7 +1501,7 @@ key -l 'echo after-mode-jkdufltb'
 key Enter
 check "a sentence typed to a pane in a mode takes it out and reaches the pane whole" await eval 'inner capture-pane -p -t orchestrator:orch | grep -qx after-mode-jkdufltb && ! in_mode'
 : >$tmp/babylon
-check "and none of it the board, which stays open" eval '[[ ! -s $tmp/babylon ]] && shows ' every [0-9]+ +[a-z]''
+check "and none of it the board, which stays open" eval '[[ ! -s $tmp/babylon ]] && shows " every [0-9]+ +[a-z]"'
 inner send-keys -t orchestrator:orch "stty -echo -icanon; cat $tmp/clicks; timeout 2 cat -v; printf '\\033[?1006l\\033[?1000l'; stty sane" Enter
 await mousing orchestrator:orch
 mouse 64 100 10 M
