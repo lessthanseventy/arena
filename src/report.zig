@@ -158,7 +158,7 @@ pub fn writeScreen(gpa: Allocator, io: std.Io, w: *Writer, frame: []const u8, co
     }
 
     try w.print("styles around the pointer (x={d}..{d}, y={d}..{d}):\n", .{ px -| reach_x, px + reach_x, py -| reach_y, py + reach_y });
-    for (py -| reach_y..@min(lines.len, @as(usize, py) + reach_y + 1)) |y| {
+    for (@min(py -| reach_y, lines.len)..@min(lines.len, @as(usize, py) + reach_y + 1)) |y| {
         const line = lines[y];
         var x: usize = px -| reach_x;
         const last = @min(line.len, @as(usize, px) + reach_x + 1);
