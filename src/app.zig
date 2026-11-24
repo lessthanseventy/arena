@@ -1817,8 +1817,8 @@ pub const App = struct {
     /// babylon's answer to the report key's filing: `ok` and its words, or `no` and why.
     pub fn reportAnswered(app: *App, text: []const u8) !void {
         const line = std.mem.trim(u8, text, " \n");
-        const failed = !std.mem.startsWith(u8, line, "ok ");
-        const body = if (failed) std.mem.trim(u8, line[@min(3, line.len)..], " \n") else line[3..];
+        const failed = !(std.mem.eql(u8, line, "ok") or std.mem.startsWith(u8, line, "ok "));
+        const body = if (failed) std.mem.trim(u8, line[@min(3, line.len)..], " \n") else std.mem.trim(u8, line[2..], " \n");
         const first = body[0 .. std.mem.indexOfScalar(u8, body, '\n') orelse body.len];
         var clean: std.ArrayList(u8) = .empty;
         errdefer clean.deinit(app.gpa);
@@ -5263,6 +5263,9 @@ test "a refused report says babylon's reason, a filed one its number, and both g
     try std.testing.expect(app.report_failed);
     try app.reportAnswered("ok #741 the thing\n");
     try std.testing.expectEqualStrings("filed #741", app.report_said.?);
+    try std.testing.expect(!app.report_failed);
+    try app.reportAnswered("ok \n");
+    try std.testing.expectEqualStrings("filed", app.report_said.?);
     try std.testing.expect(!app.report_failed);
 }
 

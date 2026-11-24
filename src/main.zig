@@ -154,6 +154,7 @@ const BoardFile = struct {
 
 /// babylon's refusals of what the feed ran, written beside its board, taken in for the feed to say.
 fn checkRefusals(app: *App) !void {
+    try takeRefusal(app, "report");
     const b = if (app.board) |*b| b else return;
     for (b.needsYou()) |need| try takeRefusal(app, need.id);
     try takeRefusal(app, "auto");
@@ -162,7 +163,6 @@ fn checkRefusals(app: *App) !void {
         try takeRefusal(app, std.fmt.bufPrint(&id, "next:{d}", .{item.ticket}) catch continue);
     }
     try takeRefusal(app, "start");
-    try takeRefusal(app, "report");
 }
 
 fn takeRefusal(app: *App, id: []const u8) !void {
