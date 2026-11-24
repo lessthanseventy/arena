@@ -1297,7 +1297,7 @@ gone ' board  every'
 key M-b
 see ' board  every'
 key +
-check "n files one, from every repo with the repo asked" await last 'new'
+check "+ files one, from every repo with the repo asked" await last 'new'
 key M-b
 key r
 # how tmux spells the lit style varies with its terminal: any reverse-video SGR run just before the name
