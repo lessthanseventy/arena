@@ -2299,16 +2299,16 @@ fn benchBoard(app: *App, w: *Writer, r: theme.Roles, view: app_mod.BoardView) !v
 /// The epics along the board's top, side by side as slim bars: `◆ #N title` over a bar in its
 /// repo's hue, `landed/total`, and a chip when a child is being built. An epic is never a card.
 fn benchEpics(app: *const App, w: *Writer, r: theme.Roles) !void {
-    if (app.epicRows() == 0) return;
-    const b = if (app.board) |*b| b else return;
-    const goals = b.plan().?.goals;
-    const room = app.boardW() -| 2;
-    const gap = 2;
-    const n = @max(1, @min(goals.len, (room + gap) / (24 + gap)));
-    const slot = (room - gap * (n - 1)) / n;
+    const goals = app.epicBars();
+    if (goals.len == 0) return;
+    const b = &app.board.?;
+    const n = goals.len;
+    const gap = App.epic_gap;
+    const slot = (app.boardW() -| 2 - gap * (n - 1)) / n;
     const y = App.first_line - 1;
-    for (goals[0..n], 0..) |goal, i| {
+    for (goals, 0..) |goal, i| {
         const x = app.boardX() + 1 + i * (slot + gap);
+        const progress = b.epicProgress(goal.epic) orelse continue;
         const hue = goalHue(b, r, goal);
         var building: usize = 0;
         for (b.cards()) |card| building += @intFromBool(card.epic_id == goal.epic and card.status == .doing);
@@ -2317,14 +2317,14 @@ fn benchEpics(app: *const App, w: *Writer, r: theme.Roles) !void {
         try bench.say(w, x, y, id, hue, r.ground, true);
         try bench.say(w, x + cellCount(id), y, clip(goal.title, slot -| cellCount(id)), r.text, r.ground, false);
         var count: [24]u8 = undefined;
-        const label = std.fmt.bufPrint(&count, "{d}/{d}", .{ goal.landed, goal.total }) catch "";
+        const label = std.fmt.bufPrint(&count, "{d}/{d}", .{ progress.landed, progress.total }) catch "";
         var chip_buf: [24]u8 = undefined;
         const chip_text = std.fmt.bufPrint(&chip_buf, "{d} building", .{building}) catch "";
         const chip_w = cellCount(chip_text) + 5;
         const with_chip = building > 0 and slot >= 24 + chip_w;
         const tail = cellCount(label) + 1 + if (with_chip) chip_w + 1 else 0;
         const bar_w = slot -| tail;
-        try bench.bar(w, r, x, y + 1, bar_w, goal.landed, goal.total, hue);
+        try bench.bar(w, r, x, y + 1, bar_w, progress.landed, progress.total, hue);
         try bench.say(w, x + bar_w + 1, y + 1, label, r.text, r.ground, false);
         if (with_chip) _ = try bench.chipInk(w, r, x + bar_w + 2 + cellCount(label), y + 1, chip_text, r.accent, r.text, false);
     }
@@ -2412,6 +2412,11 @@ fn benchState(app: *const App, card: *const tickets.Card, r: theme.Roles, buf: [
     const eql = std.mem.eql;
     const stage = card.stage orelse "";
     if (card.proposal != null) return .{ .label = "▲ proposed", .lead = r.you, .words = r.on_accent, .filled = true };
+    if (card.isEpic()) {
+        const got = if (app.board) |*b| b.epicProgress(card.id) else null;
+        const label = if (got) |g| std.fmt.bufPrint(buf, "◆ epic {d}/{d}", .{ g.landed, g.total }) catch "◆ epic" else "◆ epic";
+        return .{ .label = label, .lead = r.dim, .words = r.text, .filled = false };
+    }
     if (card.ask != null and !eql(u8, stage, "queued")) return .{ .label = "▲ asks you", .lead = r.you, .words = r.on_accent, .filled = true };
     if (eql(u8, stage, "failed")) return .{ .label = "\u{f0e2} sent back", .lead = r.failed, .words = r.on_accent, .filled = true };
     if (stage.len > 0 and !(eql(u8, stage, "queued") and card.ask != null)) {
@@ -2426,6 +2431,13 @@ fn benchState(app: *const App, card: *const tickets.Card, r: theme.Roles, buf: [
     else
         .{ .label = "\u{f10c} no Claude", .lead = r.failed, .words = r.text, .filled = false };
     return null;
+}
+
+/// An epic's progress as words, `epic · 3/7 landed` after `lead`, `epic` alone when the board has no count for it.
+fn epicWords(app: *const App, card: *const tickets.Card, lead: []const u8, buf: []u8) []const u8 {
+    const progress = if (app.board) |*b| b.epicProgress(card.id) else null;
+    const got = progress orelse return std.fmt.bufPrint(buf, "{s}epic", .{lead}) catch "epic";
+    return std.fmt.bufPrint(buf, "{s}epic · {d}/{d} landed", .{ lead, got.landed, got.total }) catch "epic";
 }
 
 /// Row `part` of a card as a tile at `x` and `tw` cells wide, in a column `col_w` wide: the bevel,
@@ -2509,7 +2521,7 @@ fn benchRecent(app: *App, w: *Writer, r: theme.Roles, view: app_mod.BoardView) !
     const x = app.boardX();
     const focused = view.col == 3 and !app.columnFocused();
     var total: usize = 0;
-    if (app.board) |*b| total = b.column(.done, app.boardRepo(), app.findText(), &.{});
+    if (app.board != null) total = app.columnOf(.done, app.boardRepo(), app.findText(), &.{});
     try bench.titleBar(w, r, x, y0, app.boardW(), "recent", focused);
     var nbuf: [16]u8 = undefined;
     _ = try bench.chip(w, r, x + 4 + "recent".len, y0, std.fmt.bufPrint(&nbuf, "{d}", .{total}) catch "", r.dim, false);
@@ -3428,8 +3440,8 @@ fn cardLast(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, w
         .{ heading(app), if (card.proposal) |p| std.fmt.bufPrint(&proposed, "▲ proposed: {s}", .{p.why}) catch "▲ proposed" else "" },
         .{ ink(app, "amber", 4), if (card.ask != null and !queued) "? asks" else "" },
         stage,
-        .{ dim, if (card.status != .review) cardHolder(app, card, &held) else "" },
-        .{ dim, cardDetail(card, with_repo, &buf) },
+        .{ dim, if (card.status != .review and !card.isEpic()) cardHolder(app, card, &held) else "" },
+        .{ dim, cardDetail(app, card, with_repo, &buf) },
     };
     var left = width -| 2;
     try pen.set(w, .{}, null);
@@ -3529,7 +3541,7 @@ fn modelName(model: []const u8) []const u8 {
 
 /// What else is so of a card, joined: its repo where nothing else says it, the tickets it waits
 /// on, that it is an epic, a todo card's model, why a done one's Claude was left running.
-fn cardDetail(card: *const tickets.Card, with_repo: bool, buf: []u8) []const u8 {
+fn cardDetail(app: *const App, card: *const tickets.Card, with_repo: bool, buf: []u8) []const u8 {
     var out: Writer = .fixed(buf);
     var sep: []const u8 = "";
     if (with_repo) {
@@ -3541,8 +3553,9 @@ fn cardDetail(card: *const tickets.Card, with_repo: bool, buf: []u8) []const u8 
         for (card.blocked_by) |id| out.print(" #{d}", .{id}) catch {};
         sep = " · ";
     }
-    if (std.mem.eql(u8, card.kind, "epic")) {
-        out.print("{s}epic", .{sep}) catch {};
+    if (card.isEpic()) {
+        var words: [48]u8 = undefined;
+        out.print("{s}{s}", .{ sep, epicWords(app, card, "◆ ", &words) }) catch {};
         sep = " · ";
     }
     if (card.status == .todo) if (card.model) |model| {
@@ -4356,22 +4369,67 @@ test "a frame of a board of five repos and 362 cards takes under 4ms" {
     }
 }
 
-test "an epic on the board in Workbench's look is a bar over the columns, counted from its children, and no card in doing" {
+/// An epic with seven children, three done, one doing and three todo, its goal's own count wrong
+/// so that a count read from the children shows; the epic itself doing, and one more in the backlog.
+const epic_board =
+    \\{"tickets":[
+    \\{"id":326,"repo":"arena","kind":"epic","status":"doing","title":"The board, redesigned"},
+    \\{"id":11,"repo":"arena","title":"done a","status":"done","epic_id":326,"closed_at":"2026-11-24T00:00:00Z"},
+    \\{"id":12,"repo":"arena","title":"done b","status":"done","epic_id":326,"closed_at":"2026-11-24T00:00:00Z"},
+    \\{"id":13,"repo":"arena","title":"done c","status":"done","epic_id":326,"closed_at":"2026-11-24T00:00:00Z"},
+    \\{"id":14,"repo":"arena","title":"building one","status":"doing","epic_id":326,"claimed_by":"%3"},
+    \\{"id":15,"repo":"arena","title":"todo a","status":"todo","epic_id":326},
+    \\{"id":16,"repo":"arena","title":"todo b","status":"todo","epic_id":326},
+    \\{"id":17,"repo":"arena","title":"todo c","status":"todo","epic_id":326}],
+    \\"backlog":[{"id":500,"repo":"arena","kind":"epic","status":"backlog","title":"Later goal"}],
+    \\"plan":{"goals":[{"epic":326,"title":"The board, redesigned","landed":0,"total":99,"steps":[]}]}}
+;
+
+fn epicApp(roles: bool, view_h: u16, width: u16) !App {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 80;
-    app.view_w = 80;
-    app.view_h = 24;
-    app.roles = bench.roles();
-    const r = app.roles.?;
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":326,"repo":"arena","kind":"epic","status":"doing","title":"The board, redesigned"},
-        \\{"id":10,"repo":"arena","title":"building one","status":"doing","epic_id":326,"claimed_by":"%3"}],
-        \\"plan":{"goals":[{"epic":326,"title":"The board, redesigned","landed":3,"total":7,"steps":[]}]}}
-    );
-    defer app.board.?.deinit();
+    app.term_w = width;
+    app.view_w = width;
+    app.view_h = view_h;
+    if (roles) app.roles = bench.roles();
+    app.board = try tickets.Board.parse(std.testing.allocator, epic_board);
     app.board_view = .{};
-    var buf: [65536]u8 = undefined;
+    return app;
+}
+
+test "an epic with no bar is a row in its column, never a Claude: a short terminal, the classic look, the backlog" {
+    const has = std.mem.indexOf;
+    var buf: [1 << 18]u8 = undefined;
+    var short = try epicApp(true, 14, 200);
+    defer short.board.?.deinit();
+    try std.testing.expectEqual(@as(u16, 0), short.epicRows());
+    try std.testing.expectEqual(@as(usize, 2), short.boardColumnAll(1));
+    var out: Writer = .fixed(&buf);
+    try boardView(&short, &out, short.board_view.?);
+    try std.testing.expect(has(u8, out.buffered(), "epic 3/7") != null);
+
+    var classic = try epicApp(false, 24, 200);
+    defer classic.board.?.deinit();
+    try std.testing.expectEqual(@as(u16, 0), classic.epicRows());
+    out = .fixed(&buf);
+    try boardView(&classic, &out, classic.board_view.?);
+    try std.testing.expect(has(u8, out.buffered(), "epic · 3/7 landed") != null);
+    try std.testing.expect(has(u8, out.buffered(), "no Claude holds it") == null);
+
+    var backlog = try epicApp(true, 24, 80);
+    defer backlog.board.?.deinit();
+    backlog.board_view = .{ .backlog = true };
+    try std.testing.expectEqual(@as(u16, 0), backlog.epicRows());
+    out = .fixed(&buf);
+    try boardView(&backlog, &out, backlog.board_view.?);
+    try std.testing.expect(has(u8, out.buffered(), "Later goal") != null);
+    try std.testing.expect(has(u8, out.buffered(), "epic") != null);
+}
+
+test "an epic on the board in Workbench's look is a bar over the columns, counted from its children, and no card in doing" {
+    var app = try epicApp(true, 24, 80);
+    defer app.board.?.deinit();
+    const r = app.roles.?;
+    var buf: [1 << 18]u8 = undefined;
     var out: Writer = .fixed(&buf);
     try boardView(&app, &out, app.board_view.?);
     const drawn = out.buffered();
@@ -4386,6 +4444,7 @@ test "an epic on the board in Workbench's look is a bar over the columns, counte
     try eq(hue, (try bench.probe(drawn, 4, y + 1)).fg);
 
     try std.testing.expect(std.mem.indexOf(u8, drawn, "3/7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "/99") == null);
     try std.testing.expect(std.mem.indexOf(u8, drawn, "1 building") != null);
 
     // the columns start under the bars, and doing holds the step alone

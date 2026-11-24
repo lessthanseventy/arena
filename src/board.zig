@@ -57,6 +57,13 @@ pub const Card = struct {
         return std.mem.eql(u8, card.kind, "epic");
     }
 
+    /// Whether it is an epic that has a bar in `bars`.
+    pub fn barred(card: *const Card, bars: []const Goal) bool {
+        if (!card.isEpic()) return false;
+        for (bars) |bar| if (bar.epic == card.id) return true;
+        return false;
+    }
+
     /// The pane holding it, as `%12`: the one that claimed it, else the one it was handed to.
     pub fn heldBy(card: *const Card) ?[]const u8 {
         return card.claimed_by orelse card.handed_to;
@@ -430,12 +437,39 @@ pub const Board = struct {
         return b.lane_names;
     }
 
+    /// How many cards of `status` are work for a Claude, the epics left out, narrowed by `find`.
+    pub fn work(b: *const Board, status: Status, find: []const u8) usize {
+        var n: usize = 0;
+        for (b.cards()) |*card| n += @intFromBool(card.status == status and !card.isEpic() and card.finds(find));
+        return n;
+    }
+
+    /// How far an epic has got, from the tickets that name it as theirs: those landed of all. An
+    /// epic whose children the board does not list has its goal's own count, else none.
+    pub fn epicProgress(b: *const Board, epic: u32) ?struct { landed: u32, total: u32 } {
+        var landed: u32 = 0;
+        var total: u32 = 0;
+        for (b.cards()) |card| if (card.epic_id == epic) {
+            total += 1;
+            landed += @intFromBool(card.status == .done);
+        };
+        if (total > 0) return .{ .landed = landed, .total = total };
+        const given = b.plan() orelse return null;
+        for (given.goals) |goal| if (goal.epic == epic) return .{ .landed = goal.landed, .total = goal.total };
+        return null;
+    }
+
     /// The cards in `status`'s column, of `repo` alone when given and matching `find`, in board
     /// order with those waiting on others last, as many as fit in `out`; the count of them all.
     pub fn column(b: *const Board, status: Status, repo: ?[]const u8, find: []const u8, out: []*const Card) usize {
+        return b.columnBars(status, repo, find, &.{}, out);
+    }
+
+    /// `column` without the epics that have a bar in `bars`: an epic with none stays a card.
+    pub fn columnBars(b: *const Board, status: Status, repo: ?[]const u8, find: []const u8, bars: []const Goal, out: []*const Card) usize {
         var n: usize = 0;
         for ([_]bool{ false, true }) |waiting| for (b.cards()) |*card| {
-            if (card.status != status or (card.blocked_by.len > 0) != waiting or card.isEpic()) continue;
+            if (card.status != status or (card.blocked_by.len > 0) != waiting or card.barred(bars)) continue;
             if (repo) |only| if (!std.mem.eql(u8, card.repo orelse "", only)) continue;
             if (!card.finds(find)) continue;
             if (n < out.len) out[n] = card;
@@ -525,14 +559,20 @@ test "a column is narrowed to one repo, in board order, those waiting last" {
     try std.testing.expectEqual(@as(usize, 0), b.column(.done, null, "", &out));
 }
 
-test "an epic is in no column, whatever its status" {
+test "an epic is left out of a column only while it has a bar, and counted from its children" {
     var b = try Board.parse(std.testing.allocator,
-        \\{"tickets":[{"id":1,"kind":"epic","title":"goal","status":"doing"},{"id":2,"title":"step","status":"doing","epic_id":1}]}
+        \\{"tickets":[{"id":1,"kind":"epic","title":"goal","status":"doing"},{"id":2,"title":"step","status":"doing","epic_id":1},{"id":3,"title":"landed","status":"done","epic_id":1}]}
     );
     defer b.deinit();
     var out: [4]*const Card = undefined;
-    try std.testing.expectEqual(@as(usize, 1), b.column(.doing, null, "", &out));
+    try std.testing.expectEqual(@as(usize, 2), b.column(.doing, null, "", &out));
+    const bars = [_]Goal{.{ .epic = 1 }};
+    try std.testing.expectEqual(@as(usize, 1), b.columnBars(.doing, null, "", &bars, &out));
     try std.testing.expectEqual(@as(u32, 2), out[0].id);
+    try std.testing.expectEqual(@as(usize, 1), b.work(.doing, ""));
+    const progress = b.epicProgress(1).?;
+    try std.testing.expectEqual(@as(u32, 1), progress.landed);
+    try std.testing.expectEqual(@as(u32, 2), progress.total);
 }
 
 test "find keeps the cards whose number, title or repo hold it, letter case aside" {

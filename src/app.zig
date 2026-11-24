@@ -3081,7 +3081,7 @@ pub const App = struct {
             };
             return n;
         }
-        return app.shownIn(tickets.statuses[col], b.column(tickets.statuses[col], app.pickRepo(), app.findText(), out));
+        return app.shownIn(tickets.statuses[col], app.columnOf(tickets.statuses[col], app.pickRepo(), app.findText(), out));
     }
 
     /// What the board's cards are narrowed to: what is being typed after `/`, else what Enter kept.
@@ -3092,9 +3092,8 @@ pub const App = struct {
 
     /// The count of every card in the board's column `col` as it is narrowed, shown or not.
     pub fn boardColumnAll(app: *const App, col: usize) usize {
-        const b = if (app.board) |*b| b else return 0;
         if (app.boardBacklog()) return app.boardColumn(col, &.{});
-        return b.column(tickets.statuses[col], app.pickRepo(), app.findText(), &.{});
+        return app.columnOf(tickets.statuses[col], app.pickRepo(), app.findText(), &.{});
     }
 
     /// Done shows its last few closed, the first in its column, and then how many more it has.
@@ -3107,9 +3106,8 @@ pub const App = struct {
 
     /// The cards in column `col` of lane `lane`: those shown, and all of them.
     pub fn laneCounts(app: *const App, lane: usize, col: usize) struct { shown: usize, total: usize } {
-        const b = if (app.board) |*b| b else return .{ .shown = 0, .total = 0 };
         const repo = app.laneRepo(lane) orelse return .{ .shown = 0, .total = 0 };
-        const total = b.column(tickets.statuses[col], repo, app.findText(), &.{});
+        const total = app.columnOf(tickets.statuses[col], repo, app.findText(), &.{});
         return .{ .shown = app.shownIn(tickets.statuses[col], total), .total = total };
     }
 
@@ -3136,7 +3134,7 @@ pub const App = struct {
         const n = b.repos(&repos);
         if (i > n) return 0;
         const repo: ?[]const u8 = if (i == 0) null else repos[i - 1];
-        return b.column(.todo, repo, "", &.{}) + b.column(.doing, repo, "", &.{}) + b.column(.review, repo, "", &.{});
+        return app.columnOf(.todo, repo, "", &.{}) + app.columnOf(.doing, repo, "", &.{}) + app.columnOf(.review, repo, "", &.{});
     }
 
     pub fn laneRepo(app: *const App, lane: usize) ?[]const u8 {
@@ -3252,10 +3250,9 @@ pub const App = struct {
 
     /// Card `row` of column `col` in lane `lane`.
     pub fn laneCard(app: *const App, lane: usize, col: usize, row: usize) ?*const tickets.Card {
-        const b = if (app.board) |*b| b else return null;
         const repo = app.laneRepo(lane) orelse return null;
         var out: [max_cards]*const tickets.Card = undefined;
-        const n = app.shownIn(tickets.statuses[col], b.column(tickets.statuses[col], repo, app.findText(), &out));
+        const n = app.shownIn(tickets.statuses[col], app.columnOf(tickets.statuses[col], repo, app.findText(), &out));
         return if (row < @min(n, max_cards)) out[row] else null;
     }
 
@@ -3294,21 +3291,38 @@ pub const App = struct {
 
     pub const epic_rows: u16 = 3;
 
+    /// The epics the board draws as bars, as many as the width holds side by side.
+    pub fn epicBars(app: *const App) []const tickets.Goal {
+        if (app.epicRows() == 0) return &.{};
+        const goals = app.board.?.plan().?.goals;
+        return goals[0..@max(1, @min(goals.len, (app.boardW() -| 2 + epic_gap) / (epic_min_w + epic_gap)))];
+    }
+
+    pub const epic_gap = 2;
+    pub const epic_min_w = 24;
+
+    /// `Board.column` on this board: an epic is left out only while its bar is drawn.
+    pub fn columnOf(app: *const App, status: tickets.Status, repo: ?[]const u8, find: []const u8, out: []*const tickets.Card) usize {
+        const b = if (app.board) |*b| b else return 0;
+        return b.columnBars(status, repo, find, app.epicBars(), out);
+    }
+
     /// The row the board's columns start at: under the epic bars, when it has them.
     pub fn colTop(app: *const App) u16 {
         return first_line + app.epicRows();
     }
 
-    /// The cards in `status` on the whole board, whatever repo it is narrowed to, that the find holds.
+    /// The cards in `status` on the whole board, whatever repo it is narrowed to, that the find
+    /// holds; an epic is no work for a Claude, so it is not counted.
     pub fn boardCount(app: *const App, status: tickets.Status) usize {
         const b = if (app.board) |*b| b else return 0;
-        return b.column(status, null, app.findText(), &.{});
+        return b.work(status, app.findText());
     }
 
-    /// The cards in `status` on the whole board: the rail's chip, which no find narrows.
+    /// The cards in `status` on the whole board, epics not counted: the rail's chip, which no find narrows.
     pub fn railCount(app: *const App, status: tickets.Status) usize {
         const b = if (app.board) |*b| b else return 0;
-        return b.column(status, null, "", &.{});
+        return b.work(status, "");
     }
 
     pub fn boardCard(app: *const App, col: usize, row: usize) ?*const tickets.Card {
@@ -3494,9 +3508,8 @@ pub const App = struct {
 
     /// The cards the recent strip shows, the last closed first.
     pub fn stripCards(app: *const App, out: *[strip_n]*const tickets.Card) usize {
-        const b = if (app.board) |*b| b else return 0;
         var all: [max_cards]*const tickets.Card = undefined;
-        const n = @min(b.column(.done, app.boardRepo(), app.findText(), &all), strip_n);
+        const n = @min(app.columnOf(.done, app.boardRepo(), app.findText(), &all), strip_n);
         @memcpy(out[0..n], all[0..n]);
         return n;
     }
