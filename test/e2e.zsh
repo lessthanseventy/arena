@@ -1506,7 +1506,7 @@ done
 in_mode() { [[ -n $(inner display -p -t orchestrator:orch '#{pane_mode}') ]] }
 cp $tmp/run/babylon/board.json $tmp/board.chatty
 print -r -- "${$(<$tmp/board.chatty)%\}}"',"auto":{"on":true,"cap":2,"working":1}}' >$tmp/run/babylon/board.json
-see ' ◐ auto 1/2( |$)'
+see ' ◐ (auto )?1/2( |$)'
 touch $tmp/chatty
 offs=$(grep -cx 'auto off' $tmp/babylon)
 mouse 0 $(autocol) $(( $(tabrow) - 1 )) M
@@ -2019,28 +2019,39 @@ check "arena --help lists the doors" test -n "$($bin --help | grep -F 'arena [-L
 outer new-window -t o \
   "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 $bin -L $in; echo EXIT \$?; cat"
 check "arena with no session named opens home: the plan, the orchestrator's column pinned beside it" see '╭─ ○ orchestrator · idle '
-check "the plan, with its head" see '◆ plan  B board'
+check "the plan, with its head" see 'b plan · B board'
 check "next as babylon gives it" see '1 #7 +tlon +Lights +free now'
 check "and its why under it" see 'the light switch'
 check "the column with the keys" await orch_lit
 key C-Space
 key B
 check "B shows the board" see ' every [0-9]+ +[a-z]'
-check "in the plan's place" gone '◆ plan'
+check "in the plan's place" gone '1 #7 +tlon'
 key b
-check "and b comes home to the plan" see '◆ plan  B board'
+check "and b comes home to the plan" see 'b plan · B board'
 outer resize-window -t o -x 105
 check "at half the screen home is the orchestrator's column alone, saying where else it goes" see '╭─ ○ orchestrator .* p plan  B board'
-check "with no plan beside it" gone '◆ plan'
+check "with no plan beside it" gone 'b plan · B board'
 key C-Space
 key p
-check "p swaps to the plan, which has the width" see '◆ plan  o orchestrator  B board'
+check "p swaps to the plan, which has the width" see 'b plan · B board  o orchestrator'
 check "and the column is gone" gone '╭─ ○ orchestrator'
 check "its next without a row for its why, the picked row's whole title and why at the foot" see '#7 tlon +Lights — the light switch'
 key o
 check "o swaps back to the column" see '╭─ ○ orchestrator .* p plan  B board'
 outer resize-window -t o -x 121
-check "at more width the plan and the column are side by side again" see '◆ plan  B board'
+check "at more width the plan and the column are side by side again" see 'b plan · B board'
+tab_col() { local l=$(screen | grep -F 'b plan · B board' | head -1); local p=${l%%"$1"*}; print $(( ${#p} + 2 )) }
+mouse 0 $(tab_col 'B board') 1 M
+mouse 0 $(tab_col 'B board') 1 m
+check "a click on the board tab goes to the board" await shows ' every [0-9]+ +[a-z]'
+check "whose head shows the same pair of tabs" see 'b plan · B board'
+mouse 0 $(tab_col 'B board') 1 M
+mouse 0 $(tab_col 'B board') 1 m
+check "a click on the tab it is on does nothing" see ' every [0-9]+ +[a-z]'
+mouse 0 $(tab_col 'b plan') 1 M
+mouse 0 $(tab_col 'b plan') 1 m
+check "a click on the plan tab goes back to the plan" await shows '1 #7 +tlon +Lights +free now'
 mouse 0 60 1 M
 mouse 0 60 1 m
 key e
@@ -2117,7 +2128,7 @@ see '^NORMAL'
 key w
 see '^│─gamma──│'
 key b
-see '◆ plan  B board'
+see 'b plan · B board'
 check "the narrow rail at home lists the session's waiting Claude by ticket" see '^│[ ▌]▲ 901 *│'
 check "and its working one" see '^│[ ▌]◐ 902 *│'
 check "and folds the three idle ones into one line" see '^│[ ▌]· 3 *│'
@@ -2127,7 +2138,7 @@ check "none of the idle ones is listed, and no orchestrator row is" eval '! scre
 # dim, a Claude with no ticket is named by its place in its session, and a list longer than the
 # rail says how many it scrolled past
 key M-b
-gone '◆ plan'
+gone 'b plan · B board'
 mouse 0 4 4 M
 mouse 0 4 4 m
 rail_has() { outer capture-pane -p -e -t o | grep -qF -- "$1" }

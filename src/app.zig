@@ -4032,14 +4032,22 @@ pub const App = struct {
         return (at + 3) -| (app.view_h -| 2 -| @intFromBool(app.halfHome()));
     }
 
-    pub const plan_title = " ◆ plan";
-    pub const board_link = "B board";
+    pub const plan_tab = "b plan";
+    pub const board_tab = "B board";
+    pub const tab_sep = " · ";
+    /// The first row's left end on the plan and on the board alike: the same pair of tabs.
+    pub const tabs_title = " " ++ plan_tab ++ tab_sep ++ board_tab;
+    pub const plan_title = tabs_title;
     pub const orch_link = "o orchestrator";
 
-    /// Where the head's `B board` is drawn and clicked: after `o orchestrator` at half a screen.
+    /// Where the plan tab is drawn and clicked, on the plan and on the board.
+    pub fn planTab(app: *const App) struct { x: u16, w: u16 } {
+        return .{ .x = app.boardX() + 1, .w = @intCast(cellCount(plan_tab)) };
+    }
+
+    /// Where the board tab is drawn and clicked, on the plan and on the board.
     pub fn planLink(app: *const App) struct { x: u16, w: u16 } {
-        const swap: u16 = if (app.halfHome()) @intCast(cellCount(orch_link) + 2) else 0;
-        return .{ .x = app.boardX() + @as(u16, @intCast(cellCount(plan_title))) + 2 + swap, .w = @intCast(cellCount(board_link)) };
+        return .{ .x = app.boardX() + 1 + @as(u16, @intCast(cellCount(plan_tab) + cellCount(tab_sep))), .w = @intCast(cellCount(board_tab)) };
     }
 
     /// Where the head's `o orchestrator` is drawn and clicked, at half a screen.
@@ -5056,7 +5064,7 @@ pub const App = struct {
     pub const first_line: u16 = head_rows + 1;
 
     /// The title the board's first row begins with.
-    pub const board_title = " ▤ board";
+    pub const board_title = tabs_title;
 
     /// Where the board's first row ends its tabs: how many of its buttons there are, and where
     /// the `…` stands when tabs are left out.
@@ -5399,11 +5407,11 @@ pub const App = struct {
             try app.planClick(m);
             return true;
         }
-        // the board's own title is the way back to the plan
-        if (m.y == 0 and m.x < app.boardX() + cellCount(board_title) and app.hasPlan()) {
+        if (m.y == 0 and app.onPlanTab(m.x) and app.hasPlan()) {
             try app.goHome();
             return true;
         }
+        if (m.y == 0 and m.x < app.boardX() + cellCount(board_title)) return true;
         var bar: [24]BarKey = undefined;
         for (app.keyBar(&bar)) |k| if (k.hit(app, m.x, m.y)) {
             switch (k.what) {
@@ -5718,9 +5726,14 @@ pub const App = struct {
         if (card.opens and !card.moved) _ = try app.openDetail(card.id) else if (on_plan) try app.dropOnNext(card.id) else try app.dropCard(card.id, over);
     }
 
-    /// Whether the pointer is on the board's title, `▤ board`, which is the way back to the plan.
+    fn onPlanTab(app: *const App, x: u16) bool {
+        const tab = app.planTab();
+        return x >= tab.x and x < tab.x + tab.w;
+    }
+
+    /// Whether the pointer is on the board's `b plan` tab, the way back to the plan.
     fn onPlanLink(app: *const App) bool {
-        return app.hasPlan() and app.pointer.y == 0 and app.pointer.x >= app.boardX() and app.pointer.x < app.boardX() + cellCount(board_title);
+        return app.hasPlan() and app.pointer.y == 0 and app.onPlanTab(app.pointer.x);
     }
 
     /// Card `id` let go on the way back to the plan: a todo card joins next at its bottom, and

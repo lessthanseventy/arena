@@ -1887,18 +1887,19 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
 
     // the head: the title and the way to the board, then babylon's state against the right edge
     try w.print("\x1b[1;{d}H", .{ox + 1});
-    try pen.set(w, heading(app), null);
-    try w.writeAll(App.plan_title);
     try pen.set(w, .{}, null);
-    try w.writeAll("  ");
+    try w.writeAll(" ");
+    try pen.set(w, heading(app), null);
+    try w.writeAll(App.plan_tab);
+    try pen.set(w, dim, null);
+    try w.writeAll(App.tab_sep);
+    try w.writeAll(App.board_tab);
     if (app.halfHome()) {
-        try pen.set(w, dim, null);
-        try w.writeAll(App.orch_link);
         try pen.set(w, .{}, null);
         try w.writeAll("  ");
+        try pen.set(w, dim, null);
+        try w.writeAll(App.orch_link);
     }
-    try pen.set(w, dim, null);
-    try w.writeAll(App.board_link);
     const given = b.plan().?;
     var landing: usize = 0;
     for (given.now) |item| landing += @intFromBool(!std.mem.eql(u8, item.state, "building"));
@@ -1920,7 +1921,7 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     const kept = if (app.halfHome()) pieces[pieces.len - 1 ..] else pieces[0..];
     var right_w: usize = 0;
     for (kept) |piece| right_w += cellCount(piece[0]) + 3;
-    const left_w = cellCount(App.plan_title) + 2 + cellCount(App.board_link) + if (app.halfHome()) cellCount(App.orch_link) + 2 else 0;
+    const left_w = cellCount(App.plan_title) + if (app.halfHome()) cellCount(App.orch_link) + 2 else 0;
     const start = width -| right_w;
     try pen.set(w, .{}, null);
     if (start > left_w) {
@@ -2532,12 +2533,20 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     var buf: [160]u8 = undefined;
 
     if (app.roles) |r| {
-        try bench.titleBar(w, r, ox, 0, app.boardW(), App.board_title[App.board_title.len - "board".len ..], true);
+        try bench.titleBar(w, r, ox, 0, app.boardW(), "", true);
+        const plan_at = ox + 1;
+        const board_at = plan_at + cellCount(App.plan_tab) + cellCount(App.tab_sep);
+        try bench.say(w, plan_at, 0, App.plan_tab ++ App.tab_sep, r.dim, r.raised, false);
+        try bench.say(w, board_at, 0, App.board_tab, r.text, r.raised, true);
         try bench.tabRow(w, r, ox, 1, app.boardW());
     } else {
         try w.print("\x1b[1;{d}H", .{ox + 1});
+        try pen.set(w, .{}, null);
+        try w.writeAll(" ");
+        try pen.set(w, dim, null);
+        try w.writeAll(App.plan_tab ++ App.tab_sep);
         try pen.set(w, heading(app), null);
-        try w.writeAll(App.board_title);
+        try w.writeAll(App.board_tab);
         try pen.set(w, .{}, null);
         try fitted(w, "", app.boardW() -| cellCount(App.board_title));
     }
@@ -4040,10 +4049,13 @@ test "the board's head in Workbench's look: a striped title bar, tabs under it t
     const eq = std.testing.expectEqual;
 
     const bar = try bench.probe(drawn, 1, 0);
-    try eq(@as(u21, '◆'), bar.cp);
-    try eq(r.accent, bar.fg);
+    try eq(@as(u21, 'b'), bar.cp);
+    try eq(r.dim, bar.fg);
     try eq(r.raised, bar.bg);
-    const stripe = try bench.probe(drawn, 12, 0);
+    const lit = try bench.probe(drawn, 10, 0);
+    try eq(@as(u21, 'B'), lit.cp);
+    try eq(r.text, lit.fg);
+    const stripe = try bench.probe(drawn, 20, 0);
     try eq(@as(u21, '═'), stripe.cp);
     try eq(r.accent.mix(r.raised, 0.5), stripe.fg);
 
@@ -4201,8 +4213,8 @@ test "unpicked cards are filled tiles a blank row apart, their chips pills on th
 
 test "with the roles set, the find line is on the bar's face, clipped before the right group, and the hint is dim on it" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 60;
-    app.view_w = 60;
+    app.term_w = 70;
+    app.view_w = 70;
     app.view_h = 20;
     app.roles = bench.roles();
     const r = app.roles.?;
@@ -4223,7 +4235,7 @@ test "with the roles set, the find line is on the bar's face, clipped before the
     var right: u16 = app.boardX() + app.boardW();
     for (heads[0..app.header(&heads).n]) |b| right = @min(right, b.x);
     try std.testing.expect(right < app.boardX() + app.boardW());
-    const slash = try bench.probe(drawn, 10, 0);
+    const slash = try bench.probe(drawn, 19, 0);
     try eq(@as(u21, '/'), slash.cp);
     try eq(r.raised, slash.bg);
     try eq(@as(u21, '…'), (try bench.probe(drawn, right - 2, 0)).cp);
@@ -4234,7 +4246,7 @@ test "with the roles set, the find line is on the bar's face, clipped before the
     app.find_len = 2;
     var short: Writer = .fixed(&buf);
     try boardView(&app, &short, app.board_view.?);
-    const hint = try bench.probe(short.buffered(), 16, 0);
+    const hint = try bench.probe(short.buffered(), 25, 0);
     try eq(@as(u21, 'e'), hint.cp);
     try eq(r.dim, hint.fg);
     try eq(r.raised, hint.bg);
@@ -4833,4 +4845,27 @@ test "a peek row too long for its slot is cut at a whole character and ends in �
     }
     try std.testing.expect(std.mem.startsWith(u8, p.rows[0].text, "#1 xxx"));
     try std.testing.expectEqualStrings("short", p.rows[2].text);
+}
+
+test "the plan's head and the board's head show the same pair of tabs, the current one lit" {
+    var board = try tickets.Board.parse(std.testing.allocator, epic_board);
+    defer board.deinit();
+    var app = homeApp(&board);
+    app.view_w = 80;
+    app.term_w = 80;
+    const eq = std.testing.expectEqual;
+    var buf: [1 << 17]u8 = undefined;
+    const views = [_]app_mod.BoardView{ .{ .home = true, .plan = true, .alone = false, .focus = .board }, .{} };
+    for (views, 0..) |view, i| {
+        app.board_view = view;
+        var out: Writer = .fixed(&buf);
+        try boardView(&app, &out, view);
+        const drawn = out.buffered();
+        const plan = try bench.probe(drawn, app.planTab().x, 0);
+        const link = try bench.probe(drawn, app.planLink().x, 0);
+        try eq(@as(u21, 'b'), plan.cp);
+        try eq(@as(u21, 'B'), link.cp);
+        try eq(i == 0, plan.bold);
+        try eq(i == 1, link.bold);
+    }
 }
