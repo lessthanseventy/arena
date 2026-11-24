@@ -2014,7 +2014,7 @@ claude gamma:g1 waiting '{"message": "Claude needs your permission to use Bash"}
 for n in 3 4 5; claude gamma:g$n stop
 shows '^NORMAL' || key C-Space
 see '^NORMAL'
-key M-w
+key w
 see '^│─gamma──│'
 key b
 see ' board  every'
