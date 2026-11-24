@@ -2001,7 +2001,7 @@ see ' board  every'
 check "the narrow rail at home lists the session's waiting Claude by ticket" see '^│[ ▌]▲ 901 *│'
 check "and its working one" see '^│[ ▌]◐ 902 *│'
 check "and folds the three idle ones into one line" see '^│[ ▌]· 3 *│'
-check "none of the idle ones is listed, and no orchestrator row is" eval '! screen | cut -c1-10 | grep -qE "903|904|905|orch"'
+check "none of the idle ones is listed, and no orchestrator row is" eval '! screen | grep -qE "^│[ ▌]. (903|904|905|orch)"'
 
 key M-b
 key M-q
