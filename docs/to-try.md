@@ -1,7 +1,9 @@
 # To try
 
 This design is for #833, held to [the principles](principles.md) and read with
-[the orchestrator](orchestrator.md), whose Your move it grows. Nothing in it is built yet.
+[the orchestrator](orchestrator.md), whose Your move it grows. The human approved it as drawn on
+2026-11-24 ("go, file the build tickets"). Nothing in it is built yet. The build is epic #837,
+the tickets at the end.
 
 The human, 2026-11-24, looking at #825's `▲ asks you` card: "do we need to call out somewhere
 stuff that I need to look at/review/verify? Like 825 I guess. There's going to be some stuff the
@@ -179,4 +181,23 @@ steps, each with its own actions:
 
 ## The build
 
-To be filed on the human's go, as specified Sonnet tickets, babylon first.
+babylon, in order:
+
+1. **Checks (#838).** The `check` rows, `checks` on `file_ticket`, `add_check`, `update_check` and
+   `babylon check`, and `checks` on every card in board.json.
+2. **The `try` status (#839).** Landing to try, `try` freeing what it blocks, the epic's status,
+   and `babylon tried` (ok, no with words as a send-back, skip), with every check reopened on
+   landing again. After 1.
+3. **The words sessions read (#840).** The claim and submit answers, the reviewer adding missing
+   checks, and the orchestrator writing them when it triages. After 1.
+4. **To try in Your move and the digest (#841).** needs_you's `try` kind with its steps and the
+   machine's line, and the digest's to-try section with ages. After 2.
+
+arena, one stack:
+
+5. **On the board (#842).** `.try`, the `▲ try it` chip, the top of the done column, and the
+   checks in the card's modal. After 2.
+6. **Your move's to try (#843).** The tile, its step rows, `y`, `n` with its line, `x` and
+   `space`. After 4 and 5.
+7. **On Plan (#844).** `▲ N to try` beside a goal's bar and `▲ to try` in the epic's modal.
+   After 5.
