@@ -78,7 +78,7 @@ orchestrator would set it.
 
 ### Piece by piece
 
-1. **The head:** `◆ plan` is lit, `B board` is the way to the drill-down. Then auto, the pipeline,
+1. **The head:** `b plan · B board`, the same pair on the board, the current tab lit. Then auto, the pipeline,
    the day's landings, and `▲ N`, each said once and each a button (as Board 2 has it).
 2. **Now:** one row per ticket a Claude is building, then the pipeline's tickets in flight, each with
    its stage and how long it has been in that stage. The marks are the house's: `◐` building, `▲`
@@ -162,11 +162,11 @@ Unfolding a folded now row is the one place a row grows. It is a *go* (`⏎`), n
 
 The keys change from [orchestrator.md](orchestrator.md#what-arena-shows-on-open) in one way: `b`
 still goes home from anywhere, and home now shows the plan. `B` is the board, from anywhere in
-normal mode, and `b` from the board comes home to the plan. A click on the head's `◆ plan` and
-`B board` does the same.
+normal mode, and `b` from the board comes home to the plan. A click on the head's `b plan` or
+`B board` tab does the same; a click on the tab you are on does nothing.
 
 On the board, a picked todo card's key bar gains `w next`: it adds the card to the bottom of next
-and asks for its why in a line at the foot; `W` adds it at the top, with no why asked. Dragging a card onto the board's `▤ board` title, the
+and asks for its why in a line at the foot; `W` adds it at the top, with no why asked. Dragging a card onto the board's `b plan` tab, the
 way back to the plan, is the same. Dragging a next row onto another on the plan takes that place.
 
 ## Who sets next, and where its why lives
