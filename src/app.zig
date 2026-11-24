@@ -380,6 +380,8 @@ pub const BoardView = struct {
     /// The plan's pick among its rows that can be picked, and the stages unfolded, a bit each.
     plan_pick: usize = 0,
     unfolded: u8 = 0,
+    /// The plan's pick is of a ticket the feed has an item for, which is the feed's pick.
+    feed_lit: bool = false,
     /// At home with the room of half a screen: the orchestrator's column alone, else the plan
     /// or the board alone.
     alone: bool = true,
@@ -1778,6 +1780,41 @@ pub const App = struct {
         return app.columnFocused() and (app.normal or !app.sideShown());
     }
 
+    pub const FeedLit = enum { none, focused, dim };
+
+    /// How the feed's pick is lit: bright while the feed has the keys, dim while the plan has them
+    /// and its pick is of a ticket the feed shows.
+    pub fn feedLit(app: *const App) FeedLit {
+        if (app.feedFocused()) return .focused;
+        return if (app.planShown() and !app.columnFocused() and app.board_view.?.feed_lit) .dim else .none;
+    }
+
+    /// The plan's pick put on the row of ticket `id` in now or next, when the plan is shown.
+    fn pickPlan(app: *App, id: u32) void {
+        var sheet: sheets.Sheet = undefined;
+        if (!app.planSheet(&sheet)) return;
+        for (sheet.rows[0..sheet.n]) |row| {
+            const pick = row.pick orelse continue;
+            if (row.ticket != id or (row.kind != .now and row.kind != .next)) continue;
+            app.board_view.?.plan_pick = pick;
+            return;
+        }
+    }
+
+    /// The feed's pick put on the item of the ticket the plan's pick is on, when the feed has one.
+    fn pickFeed(app: *App, sheet: *const sheets.Sheet) void {
+        const view = &app.board_view.?;
+        view.feed_lit = false;
+        const id = (sheet.picked(view.plan_pick) orelse return).ticket orelse return;
+        var f: feed.Feed = undefined;
+        if (!app.feedOf(&f)) return;
+        for (0..f.itemCount()) |i| if (f.item(i).?.ticket == id) {
+            view.pick = i;
+            view.feed_lit = true;
+            return;
+        };
+    }
+
     /// The feed's pick, kept to what the feed has now: none while it has nothing to pick.
     pub fn feedPick(app: *const App, f: *const feed.Feed) ?feed.Item {
         const view = app.board_view orelse return null;
@@ -1809,11 +1846,13 @@ pub const App = struct {
         } else if (anyKey(key, &.{" "})) {
             const id = f.item(view.pick).?.ticket orelse return true;
             _ = app.pickCard(id);
+            app.pickPlan(id);
             _ = try app.openDetail(id);
         } else return app.feedAct(f.item(view.pick).?, key);
         app.dirty = true;
         if (view.pick != was) if (f.item(view.pick).?.ticket) |id| {
             _ = app.pickCard(id);
+            app.pickPlan(id);
         };
         return true;
     }
@@ -3584,6 +3623,7 @@ pub const App = struct {
         view.plan_pick = @min(view.plan_pick, sheet.picks -| 1);
         if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) view.plan_pick = @min(view.plan_pick + 1, sheet.picks -| 1);
         if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.plan_pick -|= 1;
+        app.pickFeed(&sheet);
         if (is(key, &.{"?"})) view.help = true;
         if (is(key, &.{"B"})) return app.toBoard();
         if (is(key, &.{ "J", "K", "x", "e" })) {
@@ -3683,7 +3723,10 @@ pub const App = struct {
         if (at >= sheet.n) return;
         const row = sheet.rows[at];
         const pick = row.pick orelse return;
-        if (view.plan_pick == pick) try app.planAct(&row, "\r") else view.plan_pick = pick;
+        if (view.plan_pick == pick) try app.planAct(&row, "\r") else {
+            view.plan_pick = pick;
+            app.pickFeed(&sheet);
+        }
     }
 
     /// The needs-you inbox: home, the feed atop its column.
@@ -3745,7 +3788,10 @@ pub const App = struct {
             view.pick = i;
             break;
         };
-        if (f.item(view.pick).?.ticket) |id| _ = app.pickCard(id);
+        if (f.item(view.pick).?.ticket) |id| {
+            _ = app.pickCard(id);
+            app.pickPlan(id);
+        }
     }
 
     /// A key on the board: h, l and the arrows go between columns, j and k along one, r narrows
@@ -7218,4 +7264,40 @@ test "in Workbench's look a click on a popup's option answers the ask and one on
     app.board_view.?.detail = 4;
     try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = rect.x + rect.w - 4, .y = rect.y, .release = false }));
     try eq(@as(?u32, null), app.board_view.?.detail);
+}
+
+test "the plan's pick lights its ticket's Your move item dim in the feed, and the feed's pick moves the plan's" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 40;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],
+        \\"needs_you":[
+        \\{"id":"a","kind":"ask","ticket":760,"repo":"arena","text":"Which?","actions":[]},
+        \\{"id":"b","kind":"sent_back","ticket":338,"repo":"arena","text":"sent back","actions":[]}],
+        \\"plan":{"now":[
+        \\{"ticket":760,"repo":"arena","title":"One","state":"building"},
+        \\{"ticket":338,"repo":"arena","title":"Two","state":"building"},
+        \\{"ticket":99,"repo":"arena","title":"Three","state":"building"}]}}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    const eq = std.testing.expectEqual;
+    const view = &app.board_view.?;
+
+    try app.planKey("j");
+    try eq(@as(usize, 1), view.plan_pick);
+    try eq(@as(usize, 1), view.pick);
+    try eq(App.FeedLit.dim, app.feedLit());
+    // a ticket with no item in the feed lights none
+    try app.planKey("j");
+    try eq(App.FeedLit.none, app.feedLit());
+
+    view.focus = .orchestrator;
+    app.normal = true;
+    view.pick = 0;
+    try std.testing.expect(try app.feedKey("j"));
+    try eq(@as(usize, 1), view.pick);
+    try eq(@as(usize, 1), view.plan_pick);
 }

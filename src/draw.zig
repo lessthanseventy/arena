@@ -1234,6 +1234,13 @@ fn sideHint(app: *const App) []const u8 {
     return if (app.columnAlone()) App.half_hint else fold_hint;
 }
 
+/// The feed's pick while the plan has the keys: dim ink, inverted.
+fn dimLit(app: *const App) vt.Style {
+    var style = ink(app, "dim", 8);
+    style.flags.inverse = true;
+    return style;
+}
+
 /// A style on Workbench's panel when it sets no background of its own.
 fn onPanel(app: *const App, style: vt.Style) vt.Style {
     const r = app.roles orelse return style;
@@ -1309,7 +1316,8 @@ fn spaceRun(n: usize) []const u8 {
 /// pick lit raised. Chips keep their cells, so the pick's place is the text's.
 fn benchFeedRow(app: *const App, w: *Writer, pen: *Pen, r: theme.Roles, f: *const feed.Feed, row: usize, inner: u16) !void {
     const line = f.line(row);
-    const on = if (app.feedFocused()) app.feedPick(f) else null;
+    const on = if (app.feedLit() != .none) app.feedPick(f) else null;
+    const strong = app.feedLit() == .focused;
     var head = row;
     if (line.kind == .buttons or line.kind == .refused) {
         while (head > 0 and f.line(head).kind != .item) head -= 1;
@@ -1320,7 +1328,7 @@ fn benchFeedRow(app: *const App, w: *Writer, pen: *Pen, r: theme.Roles, f: *cons
     try o.say(r.text, false, " ");
     switch (line.kind) {
         .item => {
-            try o.say(r.accent, true, if (lit) "▌ " else "  ");
+            try o.say(if (strong) r.accent else r.dim, true, if (lit) "▌ " else "  ");
             const need = if (line.need) |at| app.board.?.needsYou()[at] else null;
             const kind = if (need) |n| n.kind else "";
             const eql = std.mem.eql;
@@ -1332,7 +1340,7 @@ fn benchFeedRow(app: *const App, w: *Writer, pen: *Pen, r: theme.Roles, f: *cons
             try o.say(r.text, false, line.text);
         },
         .buttons => {
-            try o.say(r.accent, true, if (lit) "▌ " else "  ");
+            try o.say(if (strong) r.accent else r.dim, true, if (lit) "▌ " else "  ");
             var primary = true;
             var pieces = std.mem.splitSequence(u8, line.text, "   ");
             while (pieces.next()) |piece| {
@@ -1344,7 +1352,7 @@ fn benchFeedRow(app: *const App, w: *Writer, pen: *Pen, r: theme.Roles, f: *cons
             }
         },
         .refused => {
-            try o.say(r.accent, true, if (lit) "▌ " else "  ");
+            try o.say(if (strong) r.accent else r.dim, true, if (lit) "▌ " else "  ");
             try o.say(r.failed, false, line.text);
         },
         .move_head => {
@@ -1374,7 +1382,7 @@ fn benchFeedRow(app: *const App, w: *Writer, pen: *Pen, r: theme.Roles, f: *cons
                 _ = words.next();
                 _ = words.next();
                 const stage = words.next() orelse "";
-                const lead = if (here) r.accent else if (failed) r.failed else if (building) r.building else stepHue(r, stage).lead;
+                const lead = if (here) (if (strong) r.accent else r.dim) else if (failed) r.failed else if (building) r.building else stepHue(r, stage).lead;
                 try o.chip(r, lead, label, here);
             }
         },
@@ -1437,7 +1445,7 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
     var lit_from: usize = 0;
     var lit_to: usize = 0;
     var shown = line.text;
-    if (if (app.feedFocused()) app.feedPick(f) else null) |on| if (on.line == row) {
+    if (if (app.feedLit() != .none) app.feedPick(f) else null) |on| if (on.line == row) {
         if (line.alt.len > 0) shown = line.alt;
         lit_from = clip(shown, on.at).len;
         lit_to = lit_from + (if (on.w == 0) shown.len - lit_from else clip(shown[lit_from..], on.w).len);
@@ -1453,7 +1461,7 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
         if (lit_from > at) end = @min(end, lit_from);
         if (at >= lit_from and at < lit_to) {
             end = @min(end, lit_to);
-            run_style = chip(app);
+            run_style = if (app.feedLit() == .focused) chip(app) else dimLit(app);
         }
         const text = clip(shown[at..end], avail - used);
         if (text.len == 0) break;
