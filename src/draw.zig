@@ -2619,6 +2619,45 @@ test "the feed draws Your move's header bold, a send-back in the error colour, a
     try std.testing.expectEqual(@as(usize, 4), seen);
 }
 
+test "the done strip's picked card is lit while the board has the keys and dims like its neighbours once the column has them" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"repo":"arena","title":"todo","status":"todo"},
+        \\{"id":2,"repo":"arena","title":"first","status":"done","stage":"landed"},
+        \\{"id":3,"repo":"arena","title":"second","status":"done","stage":"landed"}]}
+    );
+    defer app.board.?.deinit();
+    app.view_w = 100;
+    app.term_w = 100;
+    app.view_h = 12;
+    app.board_view = .{ .col = 3, .row = 0 };
+    var buf: [4096]u8 = undefined;
+    var pen: Pen = .{};
+    const lit = heading(&app);
+    var want: [64]u8 = undefined;
+    var pat: [128]u8 = undefined;
+
+    var out: Writer = .fixed(&buf);
+    try columnLines(&app, &out, &pen, app.board_view.?, 3, 0, 40);
+    const board_keys_drawn = out.buffered();
+    const picked_lit = try std.fmt.bufPrint(&pat, "{s} ✓ #2", .{try sgr(&want, lit)});
+    try std.testing.expect(std.mem.indexOf(u8, board_keys_drawn, picked_lit) != null);
+    const neighbour = "│ ✓ #3";
+    try std.testing.expect(std.mem.indexOf(u8, board_keys_drawn, neighbour) != null);
+
+    app.board_view.?.home = true;
+    app.board_view.?.focus = .orchestrator;
+    try std.testing.expect(app.columnFocused());
+    pen = .{};
+    out = .fixed(&buf);
+    try columnLines(&app, &out, &pen, app.board_view.?, 3, 0, 40);
+    const column_keys_drawn = out.buffered();
+    const picked_dim = "│ ✓ #2";
+    try std.testing.expect(std.mem.indexOf(u8, column_keys_drawn, picked_dim) != null);
+    try std.testing.expect(std.mem.indexOf(u8, column_keys_drawn, picked_lit) == null);
+}
+
 test "auto's line draws a paused repo in the error colour, hold on in bold, and a pinned ticket's mark in the accent" {
     var b = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[],"needs_you":[],"hold":true,
