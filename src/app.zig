@@ -4149,6 +4149,7 @@ pub const App = struct {
             if (row.opens and !row.moved) try app.planAct(&sheet.rows[at], "\r");
             return;
         }
+        if (row.from >= app.board.?.next().len) return;
         const view = &app.board_view.?;
         view.plan_pick = sheet.rows[at].pick orelse return;
         var id: [12]u8 = undefined;
