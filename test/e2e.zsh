@@ -1294,9 +1294,9 @@ check "and Enter opens its card's modal" see '╭─ #7 '
 key q
 gone '╭─ #7 '
 key q
-gone ' board  every'
+gone ' every [0-9]+ +[a-z]'
 key M-b
-see ' board  every'
+see ' every [0-9]+ +[a-z]'
 key +
 check "+ files one, from every repo with the repo asked" await last 'new'
 key M-b
@@ -2015,7 +2015,7 @@ see '^NORMAL'
 key w
 see '^│─gamma──│'
 key b
-see ' board  every'
+see ' every [0-9]+ +[a-z]'
 check "the narrow rail at home lists the session's waiting Claude by ticket" see '^│[ ▌]▲ 901 *│'
 check "and its working one" see '^│[ ▌]◐ 902 *│'
 check "and folds the three idle ones into one line" see '^│[ ▌]· 3 *│'
@@ -2025,7 +2025,7 @@ check "none of the idle ones is listed, and no orchestrator row is" eval '! scre
 # dim, a Claude with no ticket is named by its place in its session, and a list longer than the
 # rail says how many it scrolled past
 key M-b
-gone ' board  every'
+gone ' every [0-9]+ +[a-z]'
 mouse 0 4 4 M
 mouse 0 4 4 m
 rail_has() { outer capture-pane -p -e -t o | grep -qF -- "$1" }
