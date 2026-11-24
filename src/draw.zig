@@ -1766,10 +1766,6 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     if (view.help) try helpBox(app, w);
 }
 
-/// babylon's board in place of the strip: a row naming the repo it is narrowed to and its keys,
-/// then a column a status, each a box of its cards, a card a box of its own: the ticket's number
-/// and title on two rows, a footer of what else is so of it, its left edge its priority, and
-/// the picked one's border lit.
 /// Nerd Font glyphs, one a repo, in `Roles.repo_names`' order.
 const repo_glyphs = [_][]const u8{ "\u{f120}", "\u{f1b3}", "\u{f013}", "\u{f0ad}", "\u{f015}" };
 
@@ -1967,6 +1963,10 @@ fn benchRecent(app: *App, w: *Writer, r: theme.Roles, view: app_mod.BoardView) !
     }
 }
 
+/// babylon's board in place of the strip: a row naming the repo it is narrowed to and its keys,
+/// then a column a status, each a box of its cards, a card a box of its own: the ticket's number
+/// and title on two rows, a footer of what else is so of it, its left edge its priority, and
+/// the picked one's border lit.
 fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     if (app.planShown()) return planView(app, w, view);
     const ox = app.boardX();
