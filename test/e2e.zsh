@@ -2023,6 +2023,28 @@ check "and its working one" see '^│[ ▌]◐ 902 *│'
 check "and folds the three idle ones into one line" see '^│[ ▌]· 3 *│'
 check "none of the idle ones is listed, and no orchestrator row is" eval '! screen | grep -qE "^│[ ▌]. (903|904|905|orch)"'
 
+# off home, every Claude of a session is listed: a header says it holds the one in view by going
+# dim, a Claude with no ticket is named by its place in its session, and a list longer than the
+# rail says how many it scrolled past
+key M-b
+gone ' board  every'
+mouse 0 4 4 M
+mouse 0 4 4 m
+rail_has() { outer capture-pane -p -e -t o | grep -qF -- "$1" }
+check "a session's header goes dim while a Claude of it is the one in view" await rail_has $'\e[38;5;8m│─gamma──│'
+inner new-window -t gamma -n g6 sh
+claude gamma:g6 prompt
+check "a Claude on no ticket's branch is named by its place in its session" see '^│[ ▌]◐ w6 *│'
+inner new-window -t gamma -n g7 sh
+check "and the header is lit, in bold, when none is" await rail_has $'\e[1m\e[38;5;4m─gamma'
+for n in {8..18}; do
+  inner new-window -t gamma -n g$n sh
+  inner set -p -t gamma:g$n @arena_claude_branch t9$n-rail
+  claude gamma:g$n prompt
+done
+check "a list longer than the rail says how many Claudes are scrolled above" see '^│ ↑[1-9][0-9]* *│'
+check "and the one in view is still in it" see '^│▌◐ 918 *│'
+
 key M-b
 key M-q
 gone ' board  every'
