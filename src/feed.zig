@@ -59,6 +59,8 @@ const Part = struct {
     starts: [24]usize = undefined,
     tickets: [24]?u32 = undefined,
     items: usize = 0,
+    /// How many items babylon gave, of which `items` are held.
+    total: usize = 0,
     buf: [4096]u8 = undefined,
     used: usize = 0,
     spots: [96]Spot = undefined,
@@ -138,7 +140,7 @@ pub const Feed = struct {
     }
 
     fn cut(f: *const Feed) bool {
-        return f.items_shown < f.move.items;
+        return f.items_shown < f.move.total;
     }
 
     /// How many things the pick can be on.
@@ -169,7 +171,7 @@ pub const Feed = struct {
 
     fn moreText(f: *const Feed) []const u8 {
         const buf: *[32]u8 = @constCast(&f.more);
-        return std.fmt.bufPrint(buf, "↓ {d} more", .{f.move.items - f.items_shown}) catch "";
+        return std.fmt.bufPrint(buf, "↓ {d} more", .{f.move.total - f.items_shown}) catch "";
     }
 };
 
@@ -182,8 +184,10 @@ pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, wi
     const needs = board.needsYou();
     if (needs.len == 0) f.move.add(.quiet, false, "nothing needs you", .{});
     if (needs.len > 0) f.move.add(.move_head, false, "▲ your move {d}", .{needs.len});
+    f.move.total = needs.len;
     for (needs) |need| {
-        if (f.move.items == f.move.starts.len) break;
+        // an item is held whole or not at all: its row, a refusal or up to four rows of buttons
+        if (f.move.items == f.move.starts.len or f.move.n + 5 > f.move.lines.len) break;
         const failed = std.mem.eql(u8, need.kind, "sendback");
         f.move.starts[f.move.items] = f.move.n;
         f.move.tickets[f.move.items] = need.ticket;
@@ -227,16 +231,16 @@ pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, wi
 
     const floor = if (f.move.items > 0) @min(f.move.n, f.move.starts[0] + 2) else f.move.n;
     var want = @max(floor, room -| f.rest.n);
-    if (f.move.n <= want) {
+    if (f.move.n <= want and f.move.items == f.move.total) {
         f.shown = f.move.n;
         f.items_shown = f.move.items;
     } else {
         // whole items only, and a line kept for how many more there are
         want -|= 1;
-        var k = f.move.items - 1;
-        while (k > 1 and f.move.starts[k] > want) k -= 1;
-        f.items_shown = @max(1, k);
-        f.shown = if (f.items_shown < f.move.items) f.move.starts[f.items_shown] else f.move.n;
+        var k = f.move.items;
+        while (k > 1 and (if (k < f.move.items) f.move.starts[k] else f.move.n) > want) k -= 1;
+        f.items_shown = k;
+        f.shown = if (k < f.move.items) f.move.starts[k] else f.move.n;
     }
     f.rest.n = @min(f.rest.n, room -| (f.count() - f.rest.n));
 }
@@ -540,6 +544,26 @@ test "a short column cuts Your move to whole items and says how many more, and k
     try std.testing.expectEqualStrings("↓ 2 more", f.line(3).text);
     try std.testing.expectEqualStrings("◒ landing 3", f.line(4).text);
     try std.testing.expectEqualStrings("✓ landed today 2", f.line(10).text);
+}
+
+test "more items than the feed holds are counted in ↓ N more, and only whole items are shown" {
+    var json: std.ArrayList(u8) = .empty;
+    defer json.deinit(std.testing.allocator);
+    try json.appendSlice(std.testing.allocator, "{\"tickets\":[],\"needs_you\":[");
+    for (0..30) |i| {
+        if (i > 0) try json.append(std.testing.allocator, ',');
+        try json.print(std.testing.allocator, "{{\"id\":\"ask:{d}\",\"kind\":\"ask\",\"ticket\":{d},\"repo\":\"arena\",\"text\":\"#{d} arena  asks: Q?\"," ++
+            "\"actions\":[{{\"key\":\"1\",\"label\":\"A\",\"argv\":[\"babylon\",\"answer\",\"{d}\",\"1\"]}}]}}", .{ i, i + 100, i + 100, i });
+    }
+    try json.appendSlice(std.testing.allocator, "]}");
+    var b = try tickets.Board.parse(std.testing.allocator, json.items);
+    defer b.deinit();
+    var f: Feed = undefined;
+    build(&f, &b, &.{}, 56, 200, now, 0, 0);
+    try std.testing.expect(f.items_shown < 30);
+    var want: [16]u8 = undefined;
+    try std.testing.expectEqualStrings(try std.fmt.bufPrint(&want, "↓ {d} more", .{30 - f.items_shown}), f.line(f.shown).text);
+    try std.testing.expectEqualStrings("1 A", f.line(f.shown - 1).text);
 }
 
 test "with nothing that needs the human, the feed shrinks to one dim line above the rest" {

@@ -1465,6 +1465,21 @@ pub const App = struct {
     }
 
     /// The rail's width as drawn, which a narrow one peeking is not.
+    /// Where the rail's top row says how many need the human, right of `▤ board`.
+    pub const rail_needs_x = 9;
+
+    /// How many items are the human's move.
+    pub fn needsCount(app: *const App) usize {
+        return if (app.board) |*b| b.needsYou().len else 0;
+    }
+
+    /// The rail's top row's count of what needs the human, as ` ▲ N`; nothing with none, so the
+    /// row keeps its room for the rest.
+    pub fn railNeeds(app: *const App, buf: []u8) []const u8 {
+        if (app.needsCount() == 0) return "";
+        return std.fmt.bufPrint(buf, " ▲ {d}", .{app.needsCount()}) catch "";
+    }
+
     pub fn railDrawnW(app: *const App) u16 {
         return if (app.peek and app.railW() > 0) app.railWideW() else app.railW();
     }
@@ -1567,6 +1582,7 @@ pub const App = struct {
         const action = for (need.actions) |action| {
             if (std.mem.eql(u8, action.key, named)) break action;
         } else return false;
+        if (action.needs) |needs| if (std.mem.eql(u8, needs, "words")) return app.openWords(need.id);
         if (action.argv) |argv| return app.runNeed(need.id, argv);
         const ticket = need.ticket orelse return true;
         const needs = action.needs orelse return true;
@@ -1579,6 +1595,48 @@ pub const App = struct {
             app.dirty = true;
         }
         return true;
+    }
+
+    /// A line opened at the column's foot for the human's words on Your move item `id`: Enter
+    /// runs its words action with them, Escape drops it.
+    fn openWords(app: *App, id: []const u8) bool {
+        if (id.len > @typeInfo(@FieldType(menu.Prompt, "target")).array.len) return true;
+        var prompt: menu.Prompt = .{ .what = .words };
+        @memcpy(prompt.target[0..id.len], id);
+        prompt.target_len = id.len;
+        app.prompt = prompt;
+        app.normal = false;
+        app.dirty = true;
+        return true;
+    }
+
+    /// Enter on a words line: the item's words action run with what was typed as its last
+    /// argument, as babylon's `argv` says. Nothing typed runs nothing.
+    fn sendWords(app: *App, prompt: menu.Prompt) !void {
+        app.endWords();
+        const b = if (app.board) |*b| b else return;
+        if (prompt.len == 0) return;
+        for (b.needsYou()) |need| {
+            if (!std.mem.eql(u8, need.id, prompt.item())) continue;
+            for (need.actions) |action| {
+                const needs = action.needs orelse continue;
+                if (!std.mem.eql(u8, needs, "words")) continue;
+                const argv = action.argv orelse return;
+                const full = try app.gpa.alloc([]const u8, argv.len + 1);
+                defer app.gpa.free(full);
+                @memcpy(full[0..argv.len], argv);
+                full[argv.len] = prompt.text();
+                _ = try app.runNeed(need.id, full);
+                return;
+            }
+        }
+    }
+
+    /// The words line gone, the feed having its keys back.
+    fn endWords(app: *App) void {
+        app.prompt = null;
+        app.normal = app.sideDue();
+        app.dirty = true;
     }
 
     /// The doc of a row, opened: a link by `xdg-open`, a file of the ticket's repo in a
@@ -2989,7 +3047,7 @@ pub const App = struct {
         if (is(key, &.{"o"})) return app.toOrchestrator();
         if (is(key, &.{"A"})) return app.toggleAuto();
         if (is(key, &.{"P"})) return app.jumpProposed();
-        if (is(key, &.{ "]", "[" })) return app.toFeed(key);
+        if (is(key, &.{ "]", "[" })) return app.toFeed(key, null);
         if (is(key, &.{ "l", "\x1b[C", "\x1bOC" }) and app.sided()) {
             view.focus = .orchestrator;
             if (app.sideDue()) app.normal = true;
@@ -3109,8 +3167,8 @@ pub const App = struct {
     }
 
     /// `]` or `[` from the board: the column's feed takes the keys, in normal mode, with the pick
-    /// on Your move's first item or its last.
-    fn toFeed(app: *App, key: []const u8) !void {
+    /// on Your move's first item or its last, or on the one of `ticket` when it has one.
+    fn toFeed(app: *App, key: []const u8, ticket: ?u32) !void {
         const view = &app.board_view.?;
         if (!app.sided()) return;
         view.focus = .orchestrator;
@@ -3119,6 +3177,10 @@ pub const App = struct {
         var f: feed.Feed = undefined;
         if (!app.feedOf(&f) or f.items_shown == 0) return;
         view.pick = if (anyKey(key, &.{"["})) f.items_shown - 1 else 0;
+        if (ticket) |id| for (0..f.items_shown) |i| if (f.item(i).?.ticket == id) {
+            view.pick = i;
+            break;
+        };
         if (f.item(view.pick).?.ticket) |id| _ = app.pickCard(id);
     }
 
@@ -3211,7 +3273,7 @@ pub const App = struct {
         if (is(key, &.{"o"})) return app.toOrchestrator();
         if (is(key, &.{"A"})) return app.toggleAuto();
         if (is(key, &.{"P"})) return app.jumpProposed();
-        if (is(key, &.{ "]", "[" })) return app.toFeed(key);
+        if (is(key, &.{ "]", "[" })) return app.toFeed(key, null);
         if (is(key, &.{"x"})) return app.act(.no);
         if (is(key, &.{"W"})) if (app.boardCard(view.col, view.row)) |card| {
             if (card.status == .todo) return app.toNext(card.id, true);
@@ -3595,7 +3657,7 @@ pub const App = struct {
             .gate => try app.toGate(),
             .orch => try app.toOrchestrator(),
             .auto => try app.toggleAuto(),
-            .needs => try app.toFeed("]"),
+            .needs => try app.toFeed("]", null),
             .new => try app.newTicket(),
             .card => |action| try app.act(action),
         }
@@ -3716,11 +3778,32 @@ pub const App = struct {
             return true;
         };
         const at = app.boardCardAt(m.x, m.y) orelse return true;
+        if (try app.cardNeedsClick(at, m)) return true;
         view.answering = false;
         if (view.col == at.col and view.row == at.row and view.lane == at.lane) {
             try app.goCard();
         } else view.* = .{ .back = view.back, .col = at.col, .row = at.row, .lane = at.lane, .repo = view.repo, .backlog = view.backlog, .home = view.home };
         return true;
+    }
+
+    /// A click on the `▲ proposed` a card wears on its top edge or footer, whose ticket has an item
+    /// of Your move: the feed's pick goes to that item. Whether it was that click.
+    fn cardNeedsClick(app: *App, at: CardAt, m: keys.Mouse) !bool {
+        const card = app.boardCard(at.col, at.row) orelse return false;
+        if (card.proposal == null or app.cardRows(at.col) != card_rows) return false;
+        const part: CardRow = if (app.boardLanes()) blk: {
+            const line = app.laneLineAt(m.y - 2 + app.laneScroll()) orelse return false;
+            break :blk @fromBackingInt(@intCast(line.row % card_rows));
+        } else (cardRowAt(m.y) orelse return false).part;
+        if (part != .top and part != .footer) return false;
+        const x = app.boardColX(at.col) + 2;
+        if (m.x < x or m.x >= x + cellCount("▲ proposed")) return false;
+        const b = if (app.board) |*b| b else return false;
+        for (b.needsYou()) |need| if (need.ticket == card.id) {
+            try app.toFeed("]", card.id);
+            return true;
+        };
+        return false;
     }
 
     /// The mouse in the overview: a click on a picture goes to its window; a picture dragged
@@ -4124,7 +4207,9 @@ pub const App = struct {
             const listed = prompt.what == .jump and m.leftPress() and m.x > at.x and m.x + 1 < at.x + menu.width and
                 m.y >= first and m.y < first + menu.jump_rows;
             if (!listed) {
-                app.prompt = null;
+                if (prompt.what == .words) app.endWords() else {
+                    app.prompt = null;
+                }
                 return;
             }
             prompt.selected = m.y - first;
@@ -4195,6 +4280,13 @@ pub const App = struct {
                 return true;
             }
             if (m.y == 1 and app.board != null) {
+                var text: [16]u8 = undefined;
+                const needs = app.railNeeds(&text);
+                if (app.railDrawnW() == app.railWideW() and app.needsCount() > 0 and m.x >= rail_needs_x and m.x < rail_needs_x + cellCount(needs)) {
+                    if (app.board_view == null) try app.goHome();
+                    try app.toFeed("]", null);
+                    return true;
+                }
                 try app.goHome();
                 return true;
             }
@@ -4438,7 +4530,9 @@ pub const App = struct {
                 app.dirty = true;
                 switch (prompt.press(key)) {
                     .none => {},
-                    .cancel => app.prompt = null,
+                    .cancel => if (prompt.what == .words) app.endWords() else {
+                        app.prompt = null;
+                    },
                     .commit => try app.commit(),
                     .up => prompt.selected -|= 1,
                     .down => {
@@ -4455,6 +4549,7 @@ pub const App = struct {
     fn commit(app: *App) !void {
         const prompt = app.prompt orelse return;
         if (prompt.what == .search) return app.searchNext();
+        if (prompt.what == .words) return app.sendWords(prompt);
         app.prompt = null;
         if (prompt.what == .report) return app.fileReport(prompt.text());
         const s = app.cur() orelse return;
@@ -4467,7 +4562,7 @@ pub const App = struct {
                 if (prompt.selected < n) try app.jumpTo(hits[prompt.selected].session, hits[prompt.selected].index);
                 return;
             },
-            .search, .report => return,
+            .search, .report, .words => return,
             .window => try cmd.writer.print("rename-window -t @{d} -- '", .{(s.focused() orelse return).id}),
             .session => try cmd.writer.print("rename-session -t '${d}' -- '", .{s.id}),
         }

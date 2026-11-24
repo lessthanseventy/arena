@@ -1358,7 +1358,7 @@ key 'echo again' Enter
 check "and what is typed reaches the new one's pane" see '│again +│'
 print -r -- "${$(<$tmp/board.pipe)%\}}"',"orchestrator":{"on":true,"running":true},"needs_you":['\
 '{"id":"ask:5","kind":"ask","ticket":8,"repo":"arena","text":"#8 arena  asks: Blue or green?",'\
-'"actions":[{"key":"1","label":"Blue","argv":["babylon","answer","5","1"]},{"key":"c","label":"in words","argv":null,"needs":"words"}]}]}' >$tmp/run/babylon/board.json
+'"actions":[{"key":"1","label":"Blue","argv":["babylon","answer","5","1"]},{"key":"c","label":"in words","argv":["babylon","answer","5","--words"],"needs":"words"}]}]}' >$tmp/run/babylon/board.json
 feed_above() {
   local head=$(rowof '○ orchestrator · idle') move=$(rowof '▲ your move 1') said=$(rowof '│again ')
   [[ -n $head && -n $move && -n $said ]] && (( head < move && move < said ))
@@ -1368,11 +1368,12 @@ check "each item as babylon words it, its actions under it" see '▌     1 Blue 
 check "the pane under the feed is as tall as what is left of the column" await eval '(( $(inner display -p -t orchestrator:orch "#{pane_height}") == 22 - $(rowof "✓ landed today") - 1 ))'
 print -r -- "${$(jq -c '.tickets += [{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[],"stage":"failed"}]' $tmp/board.pipe)%\}}"',"orchestrator":{"on":true,"running":true},"needs_you":['\
 '{"id":"ask:5","kind":"ask","ticket":8,"repo":"arena","text":"#8 arena  asks: Blue or green?",'\
-'"actions":[{"key":"1","label":"Blue","argv":["babylon","answer","5","1"]},{"key":"c","label":"in words","argv":null,"needs":"words"}]},'\
+'"actions":[{"key":"1","label":"Blue","argv":["babylon","answer","5","1"]},{"key":"c","label":"in words","argv":["babylon","answer","5","--words"],"needs":"words"}]},'\
 '{"id":"sendback:7","kind":"sendback","ticket":7,"repo":"tlon","text":"✗ #7 tlon  sent back, free: red",'\
 '"actions":[{"key":"G","label":"give","argv":null,"needs":"pick"},{"key":"⏎","label":"start","argv":null,"needs":"surface"},'\
 '{"key":"x","label":"close","argv":["babylon","update","7","--status","done"]}]}]}' >$tmp/run/babylon/board.json
 see '▲ your move 2'
+check "the rail's top row says how many need the human" see '^│ ▤ board ▲ 2'
 : >$tmp/babylon
 key C-Space
 feed_lit() { [[ $(outer capture-pane -ep -t o | grep -F -- "$1") =~ $'((\e\\[[0-9;]*m)+)'"$1" && $match[1] =~ '[[;]7[;m]' ]] }
@@ -1395,6 +1396,18 @@ key Escape
 gone ' give #7 to '
 key k
 check "and closing them gives the feed back its keys" await feed_lit '#8 arena  asks'
+key c
+check "c on an ask opens a line at the column's foot" see '❯ .*⏎ send  esc drop'
+key 'never mind'
+key Escape
+check "Escape drops it, and the feed has its keys again" await feed_lit '#8 arena  asks'
+gone '⏎ send  esc drop'
+: >$tmp/babylon
+key c
+key 'in words'
+key Enter
+check "Enter runs the action with the words as its last argument" await last 'answer 5 --words in words'
+check "and the line is gone, the feed has its keys" await feed_lit '#8 arena  asks'
 jq -c '. + {"hold":false,"auto":{"on":true,"cap":6,"working":2,"idle":{"slots":1,"why":"next empty"},"repo_caps":{"arena":3,"babylon":2,"tlon":1}},"plan":{"next":[{"ticket":655,"repo":"arena","title":"Typing reaches no pane","why":"third sighting","set_by":"orchestrator"},{"ticket":656,"repo":"babylon","title":"Held lines","why":"","set_by":"orchestrator"}]}}' $tmp/run/babylon/board.json >$tmp/board.tmp && mv $tmp/board.tmp $tmp/run/babylon/board.json
 see '▷ next 2 · 1 slot idle'
 check "next is under Your move, auto's line at its top" see 'auto on · 2 of 6 · hold off'

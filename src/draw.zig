@@ -393,6 +393,10 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
             else
                 std.fmt.bufPrint(&buf, "{d} todo  {d} doing ", .{ todo, doing }) catch "";
             try w.writeAll(" ▤ board");
+            var needs_buf: [16]u8 = undefined;
+            const needs = app.railNeeds(&needs_buf);
+            if (!open) try pen.set(w, if (app.needsCount() > 0) heading(app) else dim, null);
+            try w.writeAll(needs);
             var auto_buf: [32]u8 = undefined;
             const auto = if (app.auto()) |state| (if (state.tools) |t|
                 std.fmt.bufPrint(&auto_buf, " auto {d}/{d} · tools {d}/{d}", .{ state.working, state.cap, t.working, t.cap })
@@ -403,11 +407,11 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
             const orch: []const u8 = if (orch_state) |state| (if (state.running or state.on) " orch" else " orch off") else "";
             // both give way to the counts on a rail too narrow: a running orchestrator first,
             // then auto's state, and one that is not running last
-            const room = inner -| (8 + 1 + cellCount(counts));
+            const room = inner -| (8 + cellCount(needs) + 1 + cellCount(counts));
             const down_w = if (!runs_orch and cellCount(orch) <= room) cellCount(orch) else 0;
             const auto_w = if (cellCount(auto) + down_w <= room) cellCount(auto) else 0;
             const orch_w = if (runs_orch and auto_w + cellCount(orch) <= room) cellCount(orch) else down_w;
-            const head = 8 + auto_w + orch_w;
+            const head = 8 + cellCount(needs) + auto_w + orch_w;
             if (auto_w > 0) {
                 if (!open) try pen.set(w, autoOn(app), null);
                 try w.writeAll(auto);
@@ -876,7 +880,7 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
     const was: []const u8 = switch (prompt.what) {
         .window => if (session) |s| (if (s.focused()) |win| win.name else "") else "",
         .session => if (session) |s| s.name else "",
-        .jump, .search, .report => "",
+        .jump, .search, .report, .words => "",
     };
 
     try b.edge("╭", "╮");
@@ -889,6 +893,7 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
             .jump => "  → Jump to window",
             .search => "  / Search history",
             .report => "  ! What's wrong?",
+            .words => "",
         },
         dim,
         std.fmt.bufPrint(&buf, "{s}  ", .{clip(was, 12)}) catch "",
@@ -923,6 +928,33 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
     } else try b.line(dim, "  ⏎ rename   esc cancel", dim, "");
     try b.edge("╰", "╯");
     return .{ .x = at.x + 6 + @as(i32, @intCast(cellCount(shown))), .y = at.y + 4 };
+}
+
+/// The line the human's words are typed into, at the foot of the orchestrator's column, over its
+/// last row. Returns where its cursor goes.
+fn wordsLine(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
+    const x = app.term_w - app.view_w;
+    const y = app.view_h -| 2;
+    const inner = app.view_w -| 4;
+    var buf: [256]u8 = undefined;
+    const hint = "  ⏎ send  esc drop";
+    const room = inner -| 2 -| cellCount(hint);
+    const text = prompt.text();
+    var shown = text;
+    while (cellCount(shown) > room and shown.len > 0) shown = shown[1..];
+    while (shown.len > 0 and shown[0] & 0xC0 == 0x80) shown = shown[1..];
+    var pen: Pen = .{};
+    try pen.set(w, ink(app, "amber", 4), null);
+    try w.print("\x1b[{d};{d}H", .{ y + 1, x + 2 });
+    try pen.set(w, heading(app), null);
+    try w.writeAll("❯ ");
+    try pen.set(w, .{}, null);
+    try w.writeAll(std.fmt.bufPrint(&buf, "{s}", .{shown}) catch "");
+    const used = 2 + cellCount(shown);
+    for (used..inner -| cellCount(hint)) |_| try w.writeAll(" ");
+    try pen.set(w, ink(app, "dim", 8), null);
+    if (inner >= used + cellCount(hint)) try w.writeAll(hint);
+    return .{ .x = @as(i32, x) + 1 + @as(i32, @intCast(used)), .y = y };
 }
 
 const Cursor = struct { x: i32, y: i32 };
@@ -2271,7 +2303,7 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
         cursor = null;
     }
     if (app.prompt) |*prompt| {
-        cursor = try promptBox(app, w, prompt);
+        cursor = if (prompt.what == .words) try wordsLine(app, w, prompt) else try promptBox(app, w, prompt);
     } else if (app.menu) |open| {
         try menuBox(app, w, open);
         cursor = null;
