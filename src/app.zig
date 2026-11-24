@@ -2522,6 +2522,7 @@ pub const App = struct {
         const text = app.report_said orelse return;
         app.gpa.free(text);
         app.report_said = null;
+        app.report_until = 0;
         app.dirty = true;
     }
 
