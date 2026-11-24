@@ -332,7 +332,8 @@ pub const BoardView = struct {
     /// The session the human was in when arena went to the orchestrator's to have its window
     /// live beside the board: gone back to when the board closes or the side is folded.
     back: ?u32 = null,
-    /// The column and the card in it picked, and in the every view the lane it is in.
+    /// The column and the card in it picked, and in the every view the repo whose group it is
+    /// in, by its place among `laneRepos`.
     col: usize = 0,
     row: usize = 0,
     lane: usize = 0,
@@ -2627,76 +2628,47 @@ pub const App = struct {
         return if (lane < n) repos[lane] else null;
     }
 
-    /// The rows lane `repo` takes: a card's for each card its longest column shows, with a row for
-    /// how many more it has, one at least.
-    pub fn laneRows(app: *const App, repo: []const u8) usize {
-        const b = if (app.board) |*b| b else return 1;
-        var most: usize = 1;
-        for (tickets.statuses) |status| {
-            const total = b.column(status, repo, &.{});
-            const shown = shownOf(status, total);
-            const each: usize = if (status == .done) 1 else card_rows;
-            most = @max(most, shown * each + @intFromBool(total > shown));
-        }
-        return most;
+    /// The rows lane `lane`'s cards take in column `col` under its heading, with a row for how
+    /// many more it has; none when it has no card there.
+    fn groupRows(app: *const App, lane: usize, col: usize) usize {
+        const n = app.laneCounts(lane, col);
+        return n.shown * app.cardRows(col) + @intFromBool(n.total > n.shown);
     }
 
-    /// The line of the lanes lane `lane` starts on.
-    pub fn laneStart(app: *const App, lane: usize) usize {
-        var heights: [max_repos + 1]usize = undefined;
-        const n = app.laneHeights(&heights);
-        var start: usize = 0;
-        for (heights[0..@min(lane, n)]) |rows| start += rows + 1;
-        return start;
-    }
+    /// A line of column `col` in the every view, counted from its first: a lane's heading, or
+    /// row `row` of its cards.
+    pub const ColumnLine = struct { lane: usize, row: ?usize };
 
-    /// The rows each lane is given: those it needs, and the lines under the last shared among
-    /// them as they need, so the lanes reach the board's foot.
-    pub fn laneHeights(app: *const App, out: *[max_repos + 1]usize) usize {
+    pub fn columnLineAt(app: *const App, col: usize, line: usize) ?ColumnLine {
         var repos: [max_repos + 1][]const u8 = undefined;
-        const n = app.laneRepos(&repos);
-        if (n == 0) return 0;
-        var rows: usize = 0;
-        for (repos[0..n], 0..) |repo, k| {
-            out[k] = app.laneRows(repo);
-            rows += out[k];
-        }
-        const need = rows + n - 1;
-        const room = app.view_h -| 3;
-        if (need >= room) return n;
-        const extra = room - need;
-        var given: usize = 0;
-        for (out[0..n]) |*h| {
-            const more = extra * h.* / rows;
-            h.* += more;
-            given += more;
-        }
-        out[n - 1] += extra - given;
-        return n;
-    }
-
-    /// A line of the every view's lanes, counted from the first: lane `lane`'s row `row`, or the
-    /// rule under it, which the last has none of.
-    pub const LaneLine = struct { lane: usize, row: usize, rule: bool };
-
-    pub fn laneLineAt(app: *const App, line: usize) ?LaneLine {
-        var heights: [max_repos + 1]usize = undefined;
-        const n = app.laneHeights(&heights);
         var start: usize = 0;
-        for (heights[0..n], 0..) |rows, k| {
-            if (line < start + rows) return .{ .lane = k, .row = line - start, .rule = false };
-            if (line == start + rows and k + 1 < n) return .{ .lane = k, .row = rows, .rule = true };
+        for (0..app.laneRepos(&repos)) |k| {
+            const rows = app.groupRows(k, col);
+            if (rows == 0) continue;
+            if (line == start) return .{ .lane = k, .row = null };
+            if (line <= start + rows) return .{ .lane = k, .row = line - start - 1 };
             start += rows + 1;
         }
         return null;
     }
 
-    /// The line of the lanes on the board's first row inside its border: scrolled to keep the
-    /// picked card in view, down to its bottom edge.
-    pub fn laneScroll(app: *const App) usize {
+    /// The line of column `col` lane `lane`'s heading is on.
+    pub fn groupStart(app: *const App, col: usize, lane: usize) usize {
+        var start: usize = 0;
+        for (0..lane) |k| {
+            const rows = app.groupRows(k, col);
+            if (rows > 0) start += rows + 1;
+        }
+        return start;
+    }
+
+    /// The line of column `col` on its first row inside its border: the picked card's column is
+    /// scrolled to keep it in view, down to its bottom edge.
+    pub fn columnScroll(app: *const App, col: usize) usize {
         const view = app.board_view orelse return 0;
-        const each = app.cardRows(view.col);
-        const pick = app.laneStart(view.lane) + view.row * each + each - 1;
+        if (col != view.col) return 0;
+        const each = app.cardRows(col);
+        const pick = app.groupStart(col, view.lane) + 1 + view.row * each + each - 1;
         const shown = app.view_h -| 3;
         return if (pick >= shown) pick - shown + 1 else 0;
     }
@@ -2746,26 +2718,63 @@ pub const App = struct {
         return if (row < @min(n, max_cards)) out[row] else null;
     }
 
-    /// The board's four columns side by side under a row of its own, right of the lanes' names
-    /// in the every view; in each, cards stacked from the second row inside its border. The
-    /// every view's strip is narrow, and the columns before it share what it leaves.
+    /// The board's columns side by side under a row of its own; in each, cards stacked from the
+    /// second row inside its border.
     pub fn boardColW(app: *const App, col: usize) u16 {
-        const room = app.boardW() - app.laneLabelW();
-        const cols: u16 = @intCast(app.boardCols());
-        if (!app.boardLanes()) return room / cols;
-        const strip = @min(strip_max, app.boardW() / 6);
-        return if (app.boardStrip(col)) strip else (room - strip) / (cols - 1);
+        var widths: [tickets.statuses.len]u16 = undefined;
+        app.boardWidths(&widths);
+        return widths[col];
+    }
+
+    /// Width goes to what has cards: an empty column is as narrow as its heading, done takes
+    /// `recent_w`, doing and review a share each by their cards, and todo the rest, the most.
+    fn boardWidths(app: *const App, out: *[tickets.statuses.len]u16) void {
+        const room = app.boardW();
+        if (app.boardBacklog()) {
+            out[0] = room;
+            return;
+        }
+        var counts: [tickets.statuses.len]usize = undefined;
+        var left = room;
+        for (tickets.statuses, 0..) |status, c| {
+            counts[c] = if (app.boardLanes()) app.boardCount(status) else app.boardColumnAll(c);
+            out[c] = if (counts[c] == 0) emptyColW(c, app.columnName(c)) else if (status == .done) @min(recent_w, room / 4) else 0;
+            left -|= out[c];
+        }
+        const sum = counts[0] + counts[1] + counts[2];
+        if (sum == 0) {
+            out[0] += left;
+            return;
+        }
+        var rest = left;
+        for (1..3) |c| if (counts[c] > 0) {
+            const share: u16 = @intCast(left * counts[c] / sum);
+            out[c] = if (counts[0] > 0) std.math.clamp(share, left / 4, left / 3) else share;
+            rest -= out[c];
+        };
+        out[if (counts[0] > 0) 0 else if (counts[2] > 0) 2 else 1] += rest;
+    }
+
+    pub const recent_w = 40;
+
+    /// An empty column's width: its heading, ` name 0 `, in its border, and todo's + beside it.
+    fn emptyColW(col: usize, name: []const u8) u16 {
+        return @intCast(cellCount(name) + 4 + 3 + @as(usize, if (col == 0) 4 else 0));
+    }
+
+    /// What column `col` is headed: its status, recent for the every view's strip, or backlog.
+    pub fn columnName(app: *const App, col: usize) []const u8 {
+        if (app.boardBacklog()) return "backlog";
+        return if (app.boardStrip(col)) "recent" else @tagName(tickets.statuses[col]);
     }
 
     pub fn boardColX(app: *const App, col: usize) u16 {
-        var x = app.boardX() + app.laneLabelW();
+        var x = app.boardX();
         for (0..col) |c| x += app.boardColW(c);
         return x;
     }
 
-    pub const strip_max = 24;
-
-    /// Whether column `col` is the every view's strip of what each lane closed last: done, a
+    /// Whether column `col` is the every view's strip of what each repo closed last: done, a
     /// card a row with no box.
     pub fn boardStrip(app: *const App, col: usize) bool {
         return app.boardLanes() and tickets.statuses[col] == .done;
@@ -2774,10 +2783,6 @@ pub const App = struct {
     /// The rows a card takes in column `col`.
     pub fn cardRows(app: *const App, col: usize) usize {
         return if (app.boardStrip(col)) 1 else card_rows;
-    }
-
-    pub fn laneLabelW(app: *const App) u16 {
-        return if (app.boardLanes()) @min(14, app.boardW() / 6) else 0;
     }
 
     /// A card is a box: its top edge, its title on two rows, a footer of what else is so of it,
@@ -2816,9 +2821,9 @@ pub const App = struct {
             if (x < app.boardColX(c) + app.boardColW(c)) break c;
         } else return null;
         if (app.boardLanes()) {
-            const at = app.laneLineAt(y - 2 + app.laneScroll()) orelse return null;
-            const k = at.row / app.cardRows(col);
-            if (at.rule or app.laneCard(at.lane, col, k) == null) return null;
+            const at = app.columnLineAt(col, y - 2 + app.columnScroll(col)) orelse return null;
+            const k = (at.row orelse return null) / app.cardRows(col);
+            if (app.laneCard(at.lane, col, k) == null) return null;
             return .{ .lane = at.lane, .col = col, .row = k };
         }
         const at = cardRowAt(y) orelse return null;
@@ -3139,9 +3144,14 @@ pub const App = struct {
         const up = is(key, &.{ "k", "\x1b[A", "\x1bOA" });
         const down = is(key, &.{ "j", "\x1b[B", "\x1bOB" });
         if (app.boardLanes()) {
-            // off a lane's end the pick goes on to the next lane with a card in the same column
+            // off a repo's group the pick goes on to the next with a card in the same column
             var repos: [max_repos + 1][]const u8 = undefined;
             const lanes = app.laneRepos(&repos);
+            if (app.laneCounts(view.lane, view.col).shown == 0) for (0..lanes) |k| {
+                if (app.laneCounts(k, view.col).shown == 0) continue;
+                view.lane = k;
+                break;
+            };
             if (up and view.row > 0) {
                 view.row -= 1;
             } else if (up) {
@@ -3534,8 +3544,8 @@ pub const App = struct {
         const card = app.boardCard(view.col, view.row) orelse return out[0..n];
         const strip = app.boardStrip(view.col);
         const y: u16 = if (strip) app.view_h -| 1 else if (app.boardLanes()) blk: {
-            const line = app.laneStart(view.lane) + view.row * card_rows + @backingInt(CardRow.bottom);
-            const scroll = app.laneScroll();
+            const line = app.groupStart(view.col, view.lane) + 1 + view.row * card_rows + @backingInt(CardRow.bottom);
+            const scroll = app.columnScroll(view.col);
             if (line < scroll) return out[0..n];
             break :blk @intCast(@min(2 + line - scroll, app.view_h));
         } else cardTop(view.row - app.boardFirst(view.col)) + @backingInt(CardRow.bottom);
@@ -4902,7 +4912,7 @@ test "the column's head says the orchestrator's state: its Claude's, else restar
     try eq(.off, app.orchestratorState());
 }
 
-test "the every view's lanes: their lines, the pick stepping across them, and the scroll" {
+test "the every view's columns grouped by repo: their lines, the pick stepping across groups, the scroll, the widths" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     app.term_w = 100;
     app.view_w = 80;
@@ -4920,14 +4930,26 @@ test "the every view's lanes: their lines, the pick stepping across them, and th
     app.board_view = .{};
     const eq = std.testing.expectEqual;
 
-    // a card's rows for each card: arena two cards, tlon one, the cards of no repo one, a rule
-    // between lanes
+    // in todo, arena's heading and its two cards, then the cards of no repo's; tlon has none
+    // there, so no rows
     const cr = App.card_rows;
-    try eq(App.LaneLine{ .lane = 0, .row = 1, .rule = false }, app.laneLineAt(1).?);
-    try eq(App.LaneLine{ .lane = 0, .row = 2 * cr, .rule = true }, app.laneLineAt(2 * cr).?);
-    try eq(App.LaneLine{ .lane = 1, .row = 0, .rule = false }, app.laneLineAt(2 * cr + 1).?);
-    try eq(App.LaneLine{ .lane = 2, .row = 0, .rule = false }, app.laneLineAt(3 * cr + 2).?);
-    try eq(@as(?App.LaneLine, null), app.laneLineAt(4 * cr + 2));
+    const Line = App.ColumnLine;
+    try eq(Line{ .lane = 0, .row = null }, app.columnLineAt(0, 0).?);
+    try eq(Line{ .lane = 0, .row = 0 }, app.columnLineAt(0, 1).?);
+    try eq(Line{ .lane = 0, .row = 2 * cr - 1 }, app.columnLineAt(0, 2 * cr).?);
+    try eq(Line{ .lane = 2, .row = null }, app.columnLineAt(0, 2 * cr + 1).?);
+    try eq(Line{ .lane = 2, .row = 0 }, app.columnLineAt(0, 2 * cr + 2).?);
+    try eq(@as(?Line, null), app.columnLineAt(0, 3 * cr + 2));
+    // in doing, arena's then tlon's
+    try eq(Line{ .lane = 1, .row = null }, app.columnLineAt(1, cr + 1).?);
+
+    // review and done have nothing, so are as narrow as their headings; todo the widest
+    var sum: u16 = 0;
+    for (0..4) |c| sum += app.boardColW(c);
+    try eq(app.boardW(), sum);
+    try eq(@as(u16, " review 0 ".len + 3), app.boardColW(2));
+    try eq(@as(u16, " recent 0 ".len + 3), app.boardColW(3));
+    try std.testing.expect(app.boardColW(0) > app.boardColW(1));
 
     const picked = struct {
         fn id(a: *const App) ?u32 {
@@ -4938,15 +4960,19 @@ test "the every view's lanes: their lines, the pick stepping across them, and th
     try eq(@as(?u32, 1), picked(&app));
     try app.boardKey("j");
     try eq(@as(?u32, 2), picked(&app));
-    // three lines shown, and the second card's bottom edge on the tenth
-    try eq(@as(usize, 2 * cr - 3), app.laneScroll());
+    // three lines shown, and the second card's bottom edge under arena's heading on the eleventh
+    try eq(@as(usize, 2 * cr + 1 - 3), app.columnScroll(0));
+    try eq(@as(usize, 0), app.columnScroll(1));
     try app.boardKey("j");
     try eq(@as(?u32, 5), picked(&app));
-    try eq(@as(usize, 4 * cr + 2 - 3), app.laneScroll());
+    try eq(@as(usize, 3 * cr + 2 - 3), app.columnScroll(0));
     try app.boardKey("j");
     try eq(@as(?u32, 5), picked(&app));
-    try app.boardKey("k");
-    try eq(@as(?u32, 2), picked(&app));
+    // the cards of no repo have none doing: l goes to the first group that has
+    try app.boardKey("l");
+    try eq(@as(?u32, 3), picked(&app));
+    try app.boardKey("h");
+    try eq(@as(?u32, 1), picked(&app));
     try app.boardKey("l");
     try eq(@as(?u32, 3), picked(&app));
     try app.boardKey("j");
@@ -5023,12 +5049,10 @@ test "the every view's done column is a strip: narrow, a card a row, its reopen 
     app.board_view = .{};
     const eq = std.testing.expectEqual;
 
-    try eq(@min(App.strip_max, app.boardW() / 6), app.boardColW(3));
+    try eq(@min(App.recent_w, app.boardW() / 4), app.boardColW(3));
     try std.testing.expect(app.boardColW(0) > app.boardColW(3));
     try eq(app.boardColX(2) + app.boardColW(2), app.boardColX(3));
     try std.testing.expect(app.boardColX(3) + app.boardColW(3) <= app.boardX() + app.boardW());
-    // one card's rows, where done's three rows and its count of the rest are four
-    try eq(@as(usize, App.card_rows), app.laneRows("arena"));
 
     try app.boardKey("l");
     try app.boardKey("l");
@@ -5036,16 +5060,18 @@ test "the every view's done column is a strip: narrow, a card a row, its reopen 
     try app.boardKey("j");
     const view = app.board_view.?;
     try eq(@as(usize, 1), view.row);
-    try eq(view.row, app.boardCardAt(app.boardColX(3) + 1, 2 + 1).?.row);
+    // under arena's heading
+    try eq(view.row, app.boardCardAt(app.boardColX(3) + 1, 2 + 2).?.row);
     var buttons: [48]App.Button = undefined;
     const shown = app.boardButtons(&buttons);
     const last = shown[shown.len - 1];
     try eq(App.CardAction.reopen, last.what.card);
     try eq(app.view_h - 1, last.y);
 
-    // one repo's view keeps done a column like the others
+    // one repo's view keeps done's width, its cards boxed as the others'
     app.board_view.?.repo = 1;
-    try eq(app.boardColW(0), app.boardColW(3));
+    try eq(@min(App.recent_w, app.boardW() / 4), app.boardColW(3));
+    try std.testing.expect(!app.boardStrip(3));
 }
 
 test "the board opens on a ticket by its id: its lane, its repo's columns or the backlog, its question shown" {

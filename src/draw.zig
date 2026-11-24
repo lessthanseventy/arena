@@ -1621,9 +1621,8 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     try fitted(w, "", app.boardW() -| cellCount(App.board_title));
 
     const lanes = app.boardLanes();
-    if (lanes) try laneNames(app, w, &pen);
     for (0..app.boardCols()) |c| {
-        const name = if (view.backlog) "backlog" else if (app.boardStrip(c)) "recent" else @tagName(tickets.statuses[c]);
+        const name = app.columnName(c);
         const x = app.boardColX(c);
         const inner = app.boardColW(c) -| 2;
         var cards: [app_mod.max_cards]*const tickets.Card = undefined;
@@ -1641,7 +1640,7 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         const first = app.boardFirst(c);
         var y: u16 = 2;
         if (lanes) {
-            try laneColumn(app, w, &pen, view, c, x, inner);
+            try groupedColumn(app, w, &pen, view, c, x, inner);
             y = app.view_h;
         }
         while (y + 1 < app.view_h) : (y += 1) {
@@ -1657,6 +1656,12 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
             } else try cardLine(app, w, &pen, cards[at], slot.part, c == view.col and at == view.row, hovers(app, 0, c, at), repo == null, inner);
             try pen.set(w, edge, null);
             try w.writeAll("│");
+        }
+        if (total == 0 and app.view_h > 3) {
+            try pen.set(w, dim, null);
+            try w.print("\x1b[3;{d}H", .{x + 2});
+            try fitted(w, " none", inner);
+            try pen.set(w, edge, null);
         }
         try w.print("\x1b[{d};{d}H╰", .{ app.view_h, x + 1 });
         for (0..inner) |_| try w.writeAll("─");
@@ -1974,52 +1979,26 @@ fn boxLine(w: *Writer, pen: *Pen, edge: vt.Style, style: vt.Style, x: u16, y: u1
     try w.writeAll(" │");
 }
 
-/// The every view's lane names down the board's left, a rule between lanes as between their cards.
-fn laneNames(app: *const App, w: *Writer, pen: *Pen) !void {
-    const ox = app.boardX();
-    const lw = app.laneLabelW();
-    const view = app.board_view.?;
-    const scroll = app.laneScroll();
-    var y: u16 = 1;
-    while (y < app.view_h) : (y += 1) {
-        try w.print("\x1b[{d};{d}H", .{ y + 1, ox + 1 });
-        const at = if (y >= 2 and y + 1 < app.view_h) app.laneLineAt(y - 2 + scroll) else null;
-        const line = at orelse {
-            try pen.set(w, .{}, null);
-            try fitted(w, "", lw);
-            continue;
-        };
-        if (line.rule) {
-            try pen.set(w, .{ .fg_color = .palette(8) }, null);
-            for (0..lw) |_| try w.writeAll("─");
-            continue;
-        }
-        const repo = app.laneRepo(line.lane).?;
-        try pen.set(w, if (line.lane == view.lane) heading(app) else .{}, null);
-        try w.writeAll(" ");
-        try fitted(w, if (line.row != 0) "" else if (repo.len == 0) "no repo" else repo, lw -| 1);
-    }
-}
-
-/// Column `c` of the every view: each lane's cards in it boxed, a rule between lanes. The strip's
-/// are a dim row each, ✓ and its number and title, the picked one lit.
-fn laneColumn(app: *const App, w: *Writer, pen: *Pen, view: app_mod.BoardView, c: usize, x: u16, inner: u16) !void {
+/// Column `c` of the every view: each repo with cards in it a heading row, `arena ──── 13`, and
+/// its cards boxed under it. The strip's are a dim row each, ✓ and its number and title, the
+/// picked one lit.
+fn groupedColumn(app: *const App, w: *Writer, pen: *Pen, view: app_mod.BoardView, c: usize, x: u16, inner: u16) !void {
     const edge: vt.Style = .{ .fg_color = .palette(8) };
-    const scroll = app.laneScroll();
+    const scroll = app.columnScroll(c);
     var y: u16 = 2;
     while (y + 1 < app.view_h) : (y += 1) {
         try w.print("\x1b[{d};{d}H", .{ y + 1, x + 1 });
         try pen.set(w, edge, null);
-        const at = app.laneLineAt(y - 2 + scroll);
-        if (at) |line| if (line.rule) {
-            try w.writeAll("├");
-            for (0..inner) |_| try w.writeAll("─");
-            try w.writeAll("┤");
+        try w.writeAll("│");
+        const at = app.columnLineAt(c, y - 2 + scroll);
+        if (at) |line| if (line.row == null) {
+            try groupHeading(app, w, pen, app.laneRepo(line.lane).?, app.laneCounts(line.lane, c).total, line.lane == view.lane and c == view.col, inner);
+            try pen.set(w, edge, null);
+            try w.writeAll("│");
             continue;
         };
-        try w.writeAll("│");
         const each = app.cardRows(c);
-        const k = if (at) |line| line.row / each else 0;
+        const k = if (at) |line| line.row.? / each else 0;
         const card = if (at) |line| app.laneCard(line.lane, c, k) else null;
         if (card) |it| {
             const line = at.?;
@@ -2033,17 +2012,34 @@ fn laneColumn(app: *const App, w: *Writer, pen: *Pen, view: app_mod.BoardView, c
                 if (hovered) style.flags.underline = .single;
                 try pen.set(w, style, null);
                 try fitted(w, std.fmt.bufPrint(&buf, "✓ #{d} {s}", .{ it.id, it.title }) catch it.title, inner -| 1);
-            } else try cardLine(app, w, pen, it, @fromBackingInt(@intCast(line.row % each)), picked, hovered, false, inner);
+            } else try cardLine(app, w, pen, it, @fromBackingInt(@intCast(line.row.? % each)), picked, hovered, false, inner);
         } else {
             var buf: [24]u8 = undefined;
             const counts = if (at) |line| app.laneCounts(line.lane, c) else null;
-            const more = if (counts) |n| at.?.row == n.shown * each and n.total > n.shown else false;
+            const more = if (counts) |n| at.?.row.? == n.shown * each and n.total > n.shown else false;
             try pen.set(w, ink(app, "dim", 8), null);
             try fitted(w, if (more) std.fmt.bufPrint(&buf, " {d} more", .{counts.?.total - counts.?.shown}) catch "" else "", inner);
         }
         try pen.set(w, edge, null);
         try w.writeAll("│");
     }
+}
+
+/// A repo's heading row in a column, `arena ──── 13`: its name, lit where the pick is, then a
+/// dim rule to its count of cards there.
+fn groupHeading(app: *const App, w: *Writer, pen: *Pen, repo: []const u8, count: usize, lit: bool, inner: u16) !void {
+    var buf: [24]u8 = undefined;
+    const num = std.fmt.bufPrint(&buf, " {d}", .{count}) catch "";
+    const name = clip(if (repo.len == 0) "no repo" else repo, inner -| (cellCount(num) + 3));
+    try pen.set(w, if (lit) heading(app) else .{}, null);
+    try w.writeAll(" ");
+    try w.writeAll(name);
+    try pen.set(w, ink(app, "dim", 8), null);
+    const used = 2 + cellCount(name) + cellCount(num);
+    if (used > inner) return fitted(w, "", inner -| (1 + cellCount(name)));
+    try w.writeAll(" ");
+    for (used..inner) |_| try w.writeAll("─");
+    try w.writeAll(num);
 }
 
 /// Whether the pointer is on the card at `lane`, `col` and `row`.
