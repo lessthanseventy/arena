@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("build_options");
 const layout = @import("layout.zig");
 const color = @import("color.zig");
 const draw = @import("draw.zig");
@@ -263,6 +264,7 @@ const clients_option = "@arena_clients";
 
 const usage =
     \\usage: arena [-L socket] [session]
+    \\       arena --version
     \\       arena [-L socket] board <ticket>         the board on that ticket
     \\       arena [-L socket] show <%pane|#ticket>   that pane, or the Claude holding that ticket, in front
     \\       arena [-L socket] inbox                  home, with what needs you
@@ -370,6 +372,9 @@ fn run(init: std.process.Init, exe: ?[]const u8) !Ended {
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "-h") or std.mem.eql(u8, args[i], "--help")) {
             try std.Io.File.stdout().writeStreamingAll(io, usage);
+            return .shown;
+        } else if (std.mem.eql(u8, args[i], "--version")) {
+            try std.Io.File.stdout().writeStreamingAll(io, "arena " ++ build_options.commit ++ "\n");
             return .shown;
         } else if (std.mem.eql(u8, args[i], "-L") and i + 1 < args.len) {
             try argv.appendSlice(gpa, &.{ "-L", args[i + 1] });

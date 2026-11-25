@@ -124,7 +124,19 @@ always did; arena draws them and leaves them running when it quits.
 
 ## Install
 
-arena needs tmux and [Zig](https://ziglang.org) 0.17.1. With [mise](https://mise.jdx.dev):
+From a release: download the tarball for your machine (Linux or macOS, x86_64 or aarch64) from the
+[releases](https://github.com/lessthanseventy/arena/releases), check it against its `.sha256`, and put
+`arena` on your path. It needs tmux.
+
+```sh
+sha256sum -c arena-<version>-<target>.tar.gz.sha256   # shasum -a 256 -c on macOS
+tar xzf arena-<version>-<target>.tar.gz
+arena-<version>-<target>/arena --version
+```
+
+`mise run dist` builds the four tarballs into `dist/`.
+
+From a checkout, arena needs tmux and [Zig](https://ziglang.org) 0.17.1. With [mise](https://mise.jdx.dev):
 
 ```sh
 git clone https://github.com/lessthanseventy/arena

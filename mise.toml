@@ -47,3 +47,8 @@ run = "zig build"
 [tasks.check]
 description = "the unit tests, then end to end, then the hooks and the plugin"
 depends = ["test", "e2e", "hooks", "plugin"]
+
+[tasks.dist]
+description = "release tarballs and checksums for Linux and macOS, x86_64 and aarch64, in dist/"
+timeout = "40m"
+run = "zsh scripts/dist.zsh"
