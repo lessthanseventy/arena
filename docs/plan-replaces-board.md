@@ -2,7 +2,9 @@
 
 This design is for #883. It follows [the principles](principles.md), including #887's rule that
 nothing jumps or changes size. It builds on [Home is the plan](plan-view.md),
-[to try](to-try.md) and [goals from an idea](goals-from-an-idea.md). It is not approved yet.
+[to try](to-try.md) and [goals from an idea](goals-from-an-idea.md). The human approved it as drawn
+on 2026-11-24 (ask #40, "looks good"). Nothing in it is built yet. The build is epic #896, the
+tickets at the end.
 
 The human, 2026-11-24, looking at Plan: "I don't think we need the board view any more the plan
 view covers it all really. might just need to add a couple missing things to the plan view like
@@ -247,24 +249,24 @@ Last, once everything above has landed:
 All arena. Each is a specified Sonnet ticket and lands on its own. Each is blocked by the one before it,
 except where noted.
 
-1. **Repo identity.** The row's `▌` edge and icon on every Plan row, chips with lead bars, the
+1. **Repo identity (#897).** The row's `▌` edge and icon on every Plan row, chips with lead bars, the
    rail's group headings, and babylon off violet. Free.
-2. **Folding windows in fixed slots.** Layout from screen size alone, scrolling inside each window, `z`, `Z`,
+2. **Folding windows in fixed slots (#898).** Layout from screen size alone, scrolling inside each window, `z`, `Z`,
    the title bar's `▾`, the summaries, `f` for a window whole as a modal, and `plan:` lines in
    `folded`. Free.
-3. **Rows are cards.** `cardActions` on every ticket row, the buttons on the picked row's second line,
+3. **Rows are cards (#899).** `cardActions` on every ticket row, the buttons on the picked row's second line,
    the foot bar, and the hover peek. After 2.
-4. **Landing as its own window.** Pipeline rows out of now and into landing, and the gate's modal
+4. **Landing as its own window (#900).** Pipeline rows out of now and into landing, and the gate's modal
    from them. After 2.
-5. **Not planned is the todo list.** Chips, #849's folds, the rows, backlog, `J` `K`, `w` `W`, `+ new`
+5. **Not planned is the todo list (#901).** Chips, #849's folds, the rows, backlog, `J` `K`, `w` `W`, `+ new`
    (and `+` in that window), and dragging a row onto next. After 3.
-6. **Landed: to try and recent.** To-try rows pinned, `y` `n` on the row, and recent with ages. After 3.
-7. **The board's tools on Plan.** `/` find, `r` repo filter in the head, `h` `l` between windows,
+6. **Landed: to try and recent (#902).** To-try rows pinned, `y` `n` on the row, and recent with ages. After 3.
+7. **The board's tools on Plan (#903).** `/` find, `r` repo filter in the head, `h` `l` between windows,
    `g`, and `arena plan N`. After 3.
-8. **Workspace link and pane frames.** The workspace chip, tying a session to a repo by its Claudes'
+8. **Workspace link and pane frames (#904).** The workspace chip, tying a session to a repo by its Claudes'
    worktrees, the rail's colours, and the pane border. After 1 and 3.
-9. **Plan at half the screen** as one column of slots. After 4, 5 and 6.
-10. **The e2e moves to Plan.** Every board step that has a Plan equivalent is rewritten to drive Plan,
+9. **Plan at half the screen (#905)** as one column of slots. After 4, 5 and 6.
+10. **The e2e moves to Plan (#906).** Every board step that has a Plan equivalent is rewritten to drive Plan,
     with the board still there. After 5, 6 and 7.
-11. **Remove the board.** Delete it, `◆ home` on the rail, `arena board N` as an alias, the README and
+11. **Remove the board (#907).** Delete it, `◆ home` on the rail, `arena board N` as an alias, the README and
     screenshots. After 8, 9 and 10.
