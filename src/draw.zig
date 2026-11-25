@@ -2289,8 +2289,8 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
             const state = item.stage orelse item.state;
             const label = if (item.stalled) |why|
                 std.fmt.bufPrint(&lbuf, "stalled · {s}", .{why}) catch "stalled"
-            else if (how.len > 0) std.fmt.bufPrint(&lbuf, "{s} · {s}", .{ state, how }) catch state else state;
-            const lead = if (item.stalled != null) r.failed else stepHue(r, state).lead;
+            else if (item.waiting_on) |wait| wait.say(&lbuf) else if (how.len > 0) std.fmt.bufPrint(&lbuf, "{s} · {s}", .{ state, how }) catch state else state;
+            const lead = if (item.stalled != null) r.failed else if (item.waiting_on != null) r.dim else stepHue(r, state).lead;
             const chip_w = cellCount(label) + 2;
             const chip_x = x0 + ww -| (chip_w + 1);
             const title_x = x0 + 5 + cellCount(id);
@@ -3845,6 +3845,11 @@ fn cardDetail(app: *const App, card: *const tickets.Card, with_repo: bool, buf: 
     var sep: []const u8 = "";
     if (with_repo) {
         out.print("{s}{s}", .{ sep, card.repo orelse "no repo" }) catch {};
+        sep = " · ";
+    }
+    if (card.waiting_on) |wait| {
+        var said: [96]u8 = undefined;
+        out.print("{s}{s}", .{ sep, wait.say(&said) }) catch {};
         sep = " · ";
     }
     if (card.blocked_by.len > 0) {

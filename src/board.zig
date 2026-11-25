@@ -65,6 +65,7 @@ pub const Card = struct {
     /// The steps a to-try ticket waits on the human for, and when it landed.
     checks: []Check = &.{},
     landed_at: ?[]const u8 = null,
+    waiting_on: ?WaitingOn = null,
 
     /// Whether it is an epic: a goal over other tickets, which no session ever holds.
     pub fn isEpic(card: *const Card) bool {
@@ -213,6 +214,21 @@ pub const Wait = struct {
     until: ?u32 = null,
 };
 
+/// Whom a ticket is waiting on: another ticket, or words, since when. Babylon sets it on a ticket
+/// card and a `plan.now` row that is parked on purpose, which is not stalled.
+pub const WaitingOn = struct {
+    ticket: ?u32 = null,
+    @"for": ?[]const u8 = null,
+    since: ?[]const u8 = null,
+
+    /// `◷ waiting on #829`, or `◷ waiting for <words>`, in `buf`.
+    pub fn say(wait: WaitingOn, buf: []u8) []const u8 {
+        if (wait.ticket) |id| return std.fmt.bufPrint(buf, "◷ waiting on #{d}", .{id}) catch "◷ waiting";
+        if (wait.@"for") |words| return std.fmt.bufPrint(buf, "◷ waiting for {s}", .{words}) catch "◷ waiting";
+        return "◷ waiting";
+    }
+};
+
 /// One ticket in `plan.now`: building under a Claude's pane, or in the pipeline at a stage.
 pub const NowItem = struct {
     ticket: u32,
@@ -225,6 +241,7 @@ pub const NowItem = struct {
     place: ?u32 = null,
     /// Why nothing is moving it (`idle 9m`, `no Claude`), when nothing is.
     stalled: ?[]const u8 = null,
+    waiting_on: ?WaitingOn = null,
 
     /// The id of the pane working it, if babylon names one.
     pub fn holder(item: *const NowItem) ?u32 {
@@ -297,6 +314,9 @@ pub const Board = struct {
             card.title = try cleanLine(arena, card.title);
             card.session_note = try cleanLine(arena, card.session_note);
             card.stage_note = try cleanLine(arena, card.stage_note);
+            if (card.waiting_on) |*wait| if (wait.@"for") |words| {
+                wait.@"for" = try cleanLine(arena, words);
+            };
             for (card.checks) |*check| check.text = try cleanLine(arena, check.text);
         }
         for (parsed.value.backlog) |*card| card.title = try cleanLine(arena, card.title);
@@ -314,6 +334,9 @@ pub const Board = struct {
                 item.title = try cleanLine(arena, item.title);
                 item.repo = try cleanLine(arena, item.repo);
                 if (item.stalled) |why| item.stalled = try cleanLine(arena, why);
+                if (item.waiting_on) |*wait| if (wait.@"for") |words| {
+                    wait.@"for" = try cleanLine(arena, words);
+                };
             }
             for (given.next) |*item| {
                 item.repo = try cleanLine(arena, item.repo);
@@ -786,4 +809,19 @@ test "the repos are each named once, in order" {
     try std.testing.expectEqual(@as(usize, 2), n);
     try std.testing.expectEqualStrings("arena", out[0]);
     try std.testing.expectEqualStrings("tlon", out[1]);
+}
+
+test "waiting_on says whom a card or a now row waits on, ticket or words" {
+    var b = try Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1,"title":"A","status":"doing","waiting_on":{"ticket":829,"for":null,"since":"2026-11-24T21:00:00Z"}},
+        \\{"id":2,"title":"B","status":"doing","waiting_on":{"ticket":null,"for":"the human","since":null}},
+        \\{"id":3,"title":"C","status":"doing","waiting_on":null}],
+        \\"plan":{"now":[{"ticket":1,"waiting_on":{"ticket":829}}]}}
+    );
+    defer b.deinit();
+    var buf: [96]u8 = undefined;
+    try std.testing.expectEqualStrings("◷ waiting on #829", b.cards()[0].waiting_on.?.say(&buf));
+    try std.testing.expectEqualStrings("◷ waiting for the human", b.cards()[1].waiting_on.?.say(&buf));
+    try std.testing.expectEqual(@as(?WaitingOn, null), b.cards()[2].waiting_on);
+    try std.testing.expectEqualStrings("◷ waiting on #829", b.plan().?.now[0].waiting_on.?.say(&buf));
 }

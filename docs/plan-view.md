@@ -86,6 +86,7 @@ orchestrator would set it.
    of its stage (`idle 9m`, `no Claude`), in the attention colour. Pipeline tickets in the same
    stage past the first two fold into one row (`◒ verifying 4 …`), and queued ones into `» queued N`
    with their places. Building rows never fold: there are at most auto's cap of them.
+   A row parked on purpose says `◷ waiting on #829` (or `◷ waiting for <words>`) in the dim colour, never the stalled red.
 3. **Next:** the ordered list, numbered. Each item is two rows: the ticket and what it waits on
    (`← needs #589`, `← after #588 lands: one babylon` for a repo's lane, or `free now`), then its
    why, dim. Up to seven items show; past that, `+N`.

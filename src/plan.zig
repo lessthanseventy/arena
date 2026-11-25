@@ -226,12 +226,15 @@ pub const Sheet = struct {
 
     fn nowRow(s: *Sheet, item: tickets.NowItem, at: usize, width: usize, epoch: i64) void {
         const queued = std.mem.eql(u8, item.stage orelse "", "queued");
-        const mark: []const u8 = if (item.stalled != null) "◇" else if (building(item)) "◐" else if (queued) "»" else "◒";
+        const mark: []const u8 = if (item.stalled != null) "◇" else if (item.waiting_on != null) "◷" else if (building(item)) "◐" else if (queued) "»" else "◒";
         var age: [16]u8 = undefined;
         const how = ago(&age, item.since, epoch);
         const state = item.stage orelse item.state;
+        var said: [96]u8 = undefined;
         const right = if (item.stalled) |why|
             s.print("stalled · {s}", .{why})
+        else if (item.waiting_on) |wait|
+            s.print("{s}", .{wait.say(&said)})
         else if (how.len > 0) s.print("{s} · {s}", .{ state, how }) else s.print("{s}", .{state});
         const left = s.print(" {s} #{d} {s: <8} {s}", .{ mark, item.ticket, text_mod.clip(item.repo, 8), item.title });
         const both = s.spread(width, left, right);
@@ -573,4 +576,18 @@ test "goals past what fits fold into one row, and landed and not planned keep th
     try std.testing.expect(rowText(&s, .landed, 0) != null);
     try std.testing.expect(rowText(&s, .unplanned, 0) != null);
     try std.testing.expect(std.mem.indexOf(u8, rowText(&s, .goals_more, 0).?, "more goals") != null);
+}
+
+test "a now row waiting on a ticket says so, with its own mark, and is not drawn as stalled" {
+    var b = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"plan":{"now":[
+        \\{"ticket":505,"repo":"arena","title":"Parked","state":"building","since":"2026-11-23T07:00:00Z","pane":"%580","waiting_on":{"ticket":829,"for":null,"since":"2026-11-23T07:01:00Z"}}]}}
+    );
+    defer b.deinit();
+    var s: Sheet = undefined;
+    s.build(b.plan().?, &b, 100, tickets.epochOf("2026-11-23T07:10:00Z").?, 0, false, false);
+    const row = rowText(&s, .now, 0).?;
+    try std.testing.expect(std.mem.indexOf(u8, row, "◷ #505") != null);
+    try std.testing.expect(std.mem.endsWith(u8, row, "◷ waiting on #829"));
+    try std.testing.expect(std.mem.indexOf(u8, row, "stalled") == null);
 }

@@ -4243,7 +4243,8 @@ pub const App = struct {
             (card.status != .review and (card.holder() != null or card.status == .doing)) or
             with_repo or card.blocked_by.len > 0 or std.mem.eql(u8, card.kind, "epic") or
             (card.status == .todo and card.model != null) or
-            (card.status == .done and card.session_note.len > 0) or card.handed_off_from != null;
+            (card.status == .done and card.session_note.len > 0) or card.handed_off_from != null or
+            card.waiting_on != null;
     }
 
     pub const CardAt = struct { lane: usize, col: usize, row: usize };
