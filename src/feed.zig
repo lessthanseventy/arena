@@ -343,6 +343,11 @@ pub fn buildPicked(f: *Feed, board: *const tickets.Board, refused: []const Refus
                 n += 1;
             }
         };
+        // so is the new goal a landed drive item asks for
+        if (std.mem.eql(u8, need.kind, "drive") and n < chips.len) {
+            chips[n] = "+ a new goal";
+            n += 1;
+        }
         // reading a draft is arena's own too: its modal
         if (draft and n < chips.len) {
             chips[n] = "space read it";
@@ -1098,6 +1103,20 @@ fn kindsOf(f: *const Feed, kind: Kind) usize {
     var n: usize = 0;
     for (0..f.shown) |i| n += @intFromBool(f.line(i).kind == kind);
     return n;
+}
+
+test "a landed drive item's buttons in Your move are babylon's, then + a new goal" {
+    var b = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"needs_you":[{"id":"drive:14","kind":"drive","ticket":14,"repo":"","text":"goal landed",
+        \\"actions":[{"key":"1","label":"the board","argv":["babylon","drive","326"]}]}]}
+    );
+    defer b.deinit();
+    var f: Feed = undefined;
+    build(&f, &b, &.{}, 56, 40, now, 0, .{});
+    var row: usize = 0;
+    while (f.line(row).kind != .buttons) row += 1;
+    try std.testing.expectEqualStrings("1 the board   + a new goal", f.line(row).text);
+    try std.testing.expectEqualStrings("+", chipKeyAt(f.line(row).text, 6 + "1 the board   ".len, false).?);
 }
 
 test "to try is a section after the decisions and before the send-backs, a tile for each ticket, a row for each check" {

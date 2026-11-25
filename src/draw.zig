@@ -2377,7 +2377,7 @@ fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet
     const mine = sheet.span(win);
     const picked_at = if (lit) sheet.rowOf(view.plan_pick) else null;
     const focused = !app.columnFocused() and (if (picked_at) |at| sheet.rows[at].win == win else false);
-    try bench.window(w, r, rect.x, rect.y, ww, rect.h - 1, if (win == .driving) sheets.drivingTitle(given) else win.title(), windowCount(given, win), focused);
+    try bench.window(w, r, rect.x, rect.y, ww, rect.h - 1, if (win == .driving) sheets.drivingTitle(given, &app.board.?) else win.title(), windowCount(given, win), focused);
     const bar = if (focused) r.raised else r.tile;
     if (whole) {
         try bench.say(w, rect.x + ww - 10, rect.y, "q close", r.dim, bar, false);

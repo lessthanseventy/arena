@@ -126,9 +126,15 @@ pub fn driveLanded(given: *const tickets.Plan, b: *const tickets.Board) ?*const 
     return b.driveNeed();
 }
 
-/// The focal window's title: whether the goal is the human's pick.
-pub fn drivingTitle(given: *const tickets.Plan) []const u8 {
+/// The focal window's title: whether the goal is the human's pick, or has landed.
+pub fn drivingTitle(given: *const tickets.Plan, b: *const tickets.Board) []const u8 {
+    if (driveLanded(given, b) != null) return "driving towards · landed";
     return if (given.driving != null) "driving towards · your pick" else "driving towards · d to pick";
+}
+
+fn drivenTitle(b: *const tickets.Board, need: *const tickets.Need, epic: u32) []const u8 {
+    for (b.cards()) |card| if (card.id == epic) return card.title;
+    return need.text;
 }
 
 /// A button under a landed goal: the drive item's action `at`, numbered; one past them
@@ -335,10 +341,8 @@ pub const Sheet = struct {
 
     /// Workbench's plan: each window's rows, in the order the pick walks them.
     fn windowRows(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64) void {
-        if (s.begin(.driving)) s.summaryRow(s.drivingSummary(given)) else if (driveLanded(given, b)) |need| {
-            const title = for (b.cards()) |card| {
-                if (card.id == given.driving.?) break card.title;
-            } else need.text;
+        if (s.begin(.driving)) s.summaryRow(s.drivingSummary(given, b)) else if (driveLanded(given, b)) |need| {
+            const title = drivenTitle(b, need, given.driving.?);
             s.add(.{ .kind = .drove, .part = 1, .pick = 0, .ticket = given.driving, .text = s.print("✓ #{d} {s}", .{ given.driving.?, title }) });
             s.add(.{ .kind = .drove, .part = 2, .text = "landed. what next?" });
             s.add(.{ .kind = .drove, .part = 3 });
@@ -365,7 +369,13 @@ pub const Sheet = struct {
         s.end("none");
     }
 
-    fn drivingSummary(s: *Sheet, given: *const tickets.Plan) []const u8 {
+    fn drivingSummary(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board) []const u8 {
+        if (driveLanded(given, b)) |need| {
+            const epic = given.driving.?;
+            const title = drivenTitle(b, need, epic);
+            const progress = b.epicProgress(epic) orelse return s.print("✓ #{d} {s} · landed. what next?", .{ epic, title });
+            return s.print("✓ #{d} {s}  {d}/{d} · landed. what next?", .{ epic, title, progress.total, progress.total });
+        }
         const goal = given.goals[focalGoal(given) orelse return "no goal yet"];
         return s.print("#{d} {s}  {d}/{d}", .{ goal.epic, goal.title, goal.landed, goal.total });
     }
@@ -957,7 +967,7 @@ test "the focal goal is the first with a step being built, a card is five rows, 
 
 test "the focal window follows plan.driving, says whose pick it is, and asks what next when that goal has landed" {
     const open =
-        \\{"tickets":[{"id":14,"repo":"arena","kind":"epic","status":"done","title":"The house"}],
+        \\{"tickets":[{"id":14,"repo":"arena","kind":"epic","status":"done","title":"The house"},{"id":15,"repo":"arena","status":"done","title":"a step","epic_id":14}],
         \\"needs_you":[{"id":"drive:14","kind":"drive","ticket":14,"repo":"","text":"goal landed",
         \\"actions":[{"key":"1","label":"the board","argv":["babylon","drive","326"]},{"key":"2","label":"the orchestrator","argv":["babylon","drive","500"]}]}],
         \\"plan":{
@@ -978,7 +988,7 @@ test "the focal window follows plan.driving, says whose pick it is, and asks wha
         defer b.deinit();
         const given = b.plan().?;
         try std.testing.expectEqual(@as(?u32, case.epic), given.goals[focalGoal(given).?].epic);
-        try std.testing.expectEqualStrings(case.title, drivingTitle(given));
+        try std.testing.expectEqualStrings(case.title, drivingTitle(given, &b));
         try std.testing.expect(driveLanded(given, &b) == null);
         s.build(given, &b, 100, 0, 0, false, true, .empty);
         var cards: usize = 0;
@@ -995,6 +1005,7 @@ test "the focal window follows plan.driving, says whose pick it is, and asks wha
     s.build(given, &b, 100, 0, 0, false, true, .empty);
     try std.testing.expectEqualStrings("✓ #14 The house", s.rows[0].text);
     try std.testing.expectEqualStrings("landed. what next?", s.rows[1].text);
+
     try std.testing.expectEqual(Kind.drove, s.rows[2].kind);
     var buf: [96]u8 = undefined;
     try std.testing.expectEqualStrings("2 the orchestrator", driveButton(&buf, need, 1));
@@ -1002,6 +1013,9 @@ test "the focal window follows plan.driving, says whose pick it is, and asks wha
     try std.testing.expectEqual(@as(?usize, 0), driveButtonAt(need, 10, 12));
     try std.testing.expectEqual(@as(?usize, 1), driveButtonAt(need, 10, 12 + "1 the board".len + 3));
     try std.testing.expectEqual(@as(?usize, null), driveButtonAt(need, 10, 10));
+    try std.testing.expectEqualStrings("driving towards · landed", drivingTitle(given, &b));
+    s.build(given, &b, 100, 0, 0, false, true, Shut.initOne(.driving));
+    try std.testing.expectEqualStrings("✓ #14 The house  1/1 · landed. what next?", s.rows[0].text);
 }
 
 test "goals past what fits fold into one row, and landed and not planned keep theirs" {

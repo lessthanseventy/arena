@@ -2316,6 +2316,10 @@ pub const App = struct {
             return true;
         };
         const need = b.needsYou()[at];
+        if (std.mem.eql(u8, need.kind, "drive") and anyKey(key, &.{"+"})) {
+            try app.openGoal();
+            return true;
+        }
         if (std.mem.eql(u8, need.kind, "draft") and anyKey(key, &.{" "})) {
             app.openDraft(need.ticket orelse return true);
             return true;
