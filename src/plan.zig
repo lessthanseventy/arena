@@ -22,7 +22,7 @@ const ideas_shown = 3;
 /// The bit of `unfolded` that holds the ideas open.
 pub const ideas_fold: u3 = 0;
 
-pub const Kind = enum { head, blank, need, need_card, now, next, why, more, goals_more, goal, landed, unplanned, chips, todo, backlog, focal, drove, card_top, goal_bar, goal_next, goal_block, idea, ideas_more, summary, note, buttons, held };
+pub const Kind = enum { head, blank, other, need, need_card, now, next, why, more, goals_more, goal, landed, unplanned, chips, todo, backlog, focal, drove, card_top, goal_bar, goal_next, goal_block, idea, ideas_more, summary, note, buttons, held };
 pub const Style = enum { normal, dim, heading, attention };
 
 /// Workbench's plan is six windows, each a fixed slot of the screen.
@@ -340,6 +340,33 @@ pub const Sheet = struct {
             }
         }
         s.n += extra;
+    }
+
+    /// A rule `other Claudes N` and a pick for each of the `n` Claudes with no ticket, at the foot
+    /// of in flight's rows, where its `none` stood. `item` of a row is its place among them.
+    pub fn withOthers(s: *Sheet, n: usize) void {
+        if (n == 0 or !s.bench or s.shut.contains(.now)) return;
+        var foot: usize = 0;
+        for (s.rows[0..s.n], 0..) |row, i| {
+            if (row.win == .now) foot = i + 1;
+        }
+        const placeholder = foot > 0 and s.rows[foot - 1].kind == .note and s.rows[foot - 1].win == .now;
+        if (placeholder) foot -= 1;
+        const dropped = @intFromBool(placeholder);
+        if (s.n + 1 + n - dropped > max_rows) return;
+        var rows: [max_rows]Row = undefined;
+        @memcpy(rows[0..foot], s.rows[0..foot]);
+        rows[foot] = .{ .kind = .head, .text = "other Claudes", .count = n, .win = .now };
+        for (0..n) |i| rows[foot + 1 + i] = .{ .kind = .other, .pick = 0, .item = i, .win = .now };
+        const rest = s.rows[foot + dropped .. s.n];
+        @memcpy(rows[foot + 1 + n ..][0..rest.len], rest);
+        s.n = foot + 1 + n + rest.len;
+        @memcpy(s.rows[0..s.n], rows[0..s.n]);
+        s.picks = 0;
+        for (s.rows[0..s.n]) |*row| if (row.pick != null) {
+            row.pick = s.picks;
+            s.picks += 1;
+        };
     }
 
     /// Workbench's rows narrowed to the repo `repo` (none for every one) and to what `find` holds.

@@ -349,7 +349,7 @@ fn tabs(app: *const App, w: *Writer, pen: *Pen, s: *const Session) !bool {
 const rail_title = " sessions ";
 
 /// How long ago `since` was, in its largest whole unit: 45s, 4m, 2h, 3d.
-fn ago(buf: []u8, epoch: i64, since: u32) []const u8 {
+pub fn ago(buf: []u8, epoch: i64, since: u32) []const u8 {
     if (since == 0) return "";
     const s = @max(0, epoch - since);
     return (if (s < 60)
@@ -820,7 +820,7 @@ fn repoStyle(repo: []const u8) vt.Style {
 }
 
 /// A Claude's mark in a list of them, where one done and looked at is still listed.
-fn agentGlyph(app: *const App, win: *const Window) u21 {
+pub fn agentGlyph(app: *const App, win: *const Window) u21 {
     return if (win.claude == .none) '○' else glyph(app, win.claude);
 }
 
@@ -2477,7 +2477,7 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
         },
         .need, .need_card => try win_move.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .focal, .drove => try win_driving.paint(app, w, r, sheet, at, y, x0, ww, lit),
-        .now => try win_now.paint(app, w, r, sheet, at, y, x0, ww, lit),
+        .now, .other => try win_now.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .next => try win_next.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .idea, .ideas_more, .card_top, .goal, .goal_bar, .goal_next, .goal_block => try win_goals.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .why, .more, .goals_more => {

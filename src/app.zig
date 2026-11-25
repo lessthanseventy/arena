@@ -841,6 +841,36 @@ pub const App = struct {
         return n;
     }
 
+    pub const max_others = 16;
+
+    /// The Claudes whose branch names no ticket, as many as `out` holds, the most pressing first.
+    pub fn otherClaudes(app: *const App, out: []Agent) []Agent {
+        var all: [64]Agent = undefined;
+        const total = app.agents(&all);
+        var n: usize = 0;
+        for (all[0..total]) |a| {
+            if (n == out.len) break;
+            if (branchTicket(a.win.text(.branch)) != null) continue;
+            out[n] = a;
+            n += 1;
+        }
+        std.sort.insertion(Agent, out[0..n], {}, otherBefore);
+        return out[0..n];
+    }
+
+    fn otherBefore(_: void, a: Agent, b: Agent) bool {
+        const ua = urgency(a.win);
+        const ub = urgency(b.win);
+        return ua > ub or (ua == ub and a.win.id < b.win.id);
+    }
+
+    /// The `at`th of the Claudes with no ticket, as in-flight's group lists them.
+    pub fn otherAt(app: *const App, at: usize) ?Agent {
+        var others: [max_others]Agent = undefined;
+        const found = app.otherClaudes(&others);
+        return if (at < found.len) found[at] else null;
+    }
+
     fn agentBefore(app: *const App, a: Agent, b: Agent) bool {
         if (app.agent_sort == .ticket) return app.ticketBefore(a, b);
         if (a.session != b.session) {
@@ -1781,6 +1811,7 @@ pub const App = struct {
             var sheet: sheets.Sheet = undefined;
             if (!app.planSheet(&sheet)) return null;
             const row = sheet.rows[app.planRowAt(&sheet, x, y) orelse return null];
+            if (row.kind == .other) return .{ .window = (app.otherAt(row.item) orelse return null).win.id };
             return if (opensInPlace(&row)) .{ .ticket = row.ticket.? } else null;
         }
         if (app.board_view == null) return null;
@@ -4750,6 +4781,8 @@ pub const App = struct {
             sheet.withNeedCards(app.plan_open, b);
             sheet.withButtons(app.plan_open);
             sheet.withHeld(b.plan().?, KnownPanes{ .app = app });
+            var others: [max_others]Agent = undefined;
+            sheet.withOthers(app.otherClaudes(&others).len);
         }
         return true;
     }
@@ -5265,6 +5298,11 @@ pub const App = struct {
         const view = &app.board_view.?;
         const given = app.board.?.plan().?;
         app.dirty = true;
+        if (row.kind == .other) {
+            const a = app.otherAt(row.item) orelse return;
+            try app.closeBoard();
+            return app.goAgent(a);
+        }
         if (row.kind == .idea and sheets.Sheet.ideaState(given.ideas[row.item]) == .draft) return app.openDraft(given.ideas[row.item].epic);
         if (!std.mem.eql(u8, key, "\r")) {
             if (row.ticket) |id| _ = try app.openDetail(id);
@@ -11649,4 +11687,44 @@ test "Your move is a fixed slot whatever it holds, the picked item opens to its 
         try eq(@as(usize, 2), cards);
         try eq(@as(usize, n), sheet.pickRange(.move).?.n);
     }
+}
+
+test "⏎ on a Claude with no ticket in in flight's foot closes the board and shows its window, and its peek is its window" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"plan":{"now":[],"next":[],"goals":[],
+        \\"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer board.deinit();
+    var calm: Window = .{ .id = 1, .index = 1, .name = @constCast("a"), .claude = .working, .since = 1, .info = @constCast("\t\tindexing\t\t\t\t\t/h/projects/arena") };
+    var asks: Window = .{ .id = 2, .index = 2, .name = @constCast("b"), .claude = .waiting, .since = 1, .info = @constCast("\t\tasks\t\t\t\t\t/h/projects/babylon") };
+    var wins = [_]*Window{ &calm, &asks };
+    var session: Session = .{ .id = 3, .name = @constCast("menard") };
+    session.wins = .fromOwnedSlice(&wins);
+    var sessions = [_]*Session{&session};
+    var devnull = try std.Io.Dir.openFileAbsolute(std.testing.io, "/dev/null", .{ .mode = .write_only });
+    defer devnull.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = devnull, .board = board, .current = 3 };
+    defer app.pending.deinit(app.gpa);
+    app.sessions = .fromOwnedSlice(&sessions);
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 30;
+    app.roles = @import("parts.zig").roles();
+    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    const eq = std.testing.expectEqual;
+
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    const first = for (sheet.rows[0..sheet.n]) |row| {
+        if (row.kind == .other) break row;
+    } else return error.TestExpectedEqual;
+    try eq(@as(usize, 0), first.item);
+    try eq(sheets.Window.now, first.win);
+    try std.testing.expect(app.otherAt(0).?.win == &asks);
+    app.board_view.?.plan_pick = first.pick.?;
+    try std.testing.expect(app.peekOf(.{ .window = 2 }).?.win == &asks);
+
+    try app.planKey("\r");
+    try eq(@as(?BoardView, null), app.board_view);
+    try eq(@as(usize, 1), session.focus);
 }
