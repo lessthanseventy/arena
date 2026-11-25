@@ -350,6 +350,10 @@ const File = struct {
 
 pub const Board = struct {
     parsed: std.json.Parsed(File),
+    /// Babylon's own needs_you while `parsed` holds it with arena's own after it, and the arena
+    /// those are copied into.
+    given: ?[]Need = null,
+    own: ?std.heap.ArenaAllocator = null,
     /// Found once at parse, since a frame asks for them on every line it draws.
     names: []const []const u8 = &.{},
     lane_names: []const []const u8 = &.{},
@@ -464,7 +468,27 @@ pub const Board = struct {
     }
 
     pub fn deinit(b: *Board) void {
+        if (b.own) |*own| own.deinit();
         b.parsed.deinit();
+    }
+
+    /// Puts `items`, copied, after babylon's own in Your move, in place of the ones put there before.
+    pub fn setOwn(b: *Board, gpa: std.mem.Allocator, items: []const Need) !void {
+        const given = b.given orelse b.parsed.value.needs_you;
+        var own = if (b.own) |*old| old.* else std.heap.ArenaAllocator.init(gpa);
+        errdefer own.deinit();
+        _ = own.reset(.free_all);
+        const out = try own.allocator().alloc(Need, given.len + items.len);
+        @memcpy(out[0..given.len], given);
+        for (items, out[given.len..]) |item, *slot| {
+            slot.* = item;
+            slot.id = try own.allocator().dupe(u8, item.id);
+            slot.text = try own.allocator().dupe(u8, item.text);
+            slot.repo = try own.allocator().dupe(u8, item.repo);
+        }
+        b.given = given;
+        b.own = own;
+        b.parsed.value.needs_you = out;
     }
 
     pub fn cards(b: *const Board) []const Card {

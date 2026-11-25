@@ -2386,6 +2386,12 @@ pub const App = struct {
             return true;
         };
         const need = b.needsYou()[at];
+        if (std.mem.eql(u8, need.kind, "pane")) {
+            if (!std.mem.eql(u8, named, "⏎")) return false;
+            const win = std.fmt.parseInt(u32, need.id["pane:".len..], 10) catch return true;
+            for (app.sessions.items) |s| for (s.wins.items) |w| if (w.id == win) try app.showPane(w.agent_pane);
+            return true;
+        }
         if (std.mem.eql(u8, need.kind, "drive") and anyKey(key, &.{"+"})) {
             try app.openGoal();
             return true;
@@ -3370,6 +3376,7 @@ pub const App = struct {
             if (!s.placed) s.scroll = app.target(s);
             s.placed = true;
         }
+        try app.syncWaiting();
         try app.notify();
         app.follow_active = false;
         if (app.cur()) |s| try app.see(s);
@@ -3680,6 +3687,7 @@ pub const App = struct {
             b.deinit();
         }
         if (app.board == null) try app.closeBoard();
+        try app.syncWaiting();
         try app.frameSync();
         app.settleAuto();
         // the feed's height may change, and the orchestrator's window with it
@@ -3705,6 +3713,41 @@ pub const App = struct {
             view.lane = @min(view.lane, app.laneRepos(&repos) -| 1);
         }
         app.dirty = true;
+    }
+
+    /// Your move's items for the Claudes waiting in their panes, put after babylon's: babylon does
+    /// not know of them. Each leaves with the window's state.
+    fn syncWaiting(app: *App) !void {
+        const b = if (app.board) |*b| b else return;
+        var items: std.ArrayList(tickets.Need) = .empty;
+        defer items.deinit(app.gpa);
+        var texts: Writer.Allocating = .init(app.gpa);
+        defer texts.deinit();
+        var ends: std.ArrayList(usize) = .empty;
+        defer ends.deinit(app.gpa);
+        for (app.sessions.items) |s| for (s.wins.items) |win| {
+            if (win.claude != .waiting) continue;
+            const ticket = if (branchTicket(win.text(.branch))) |digits| std.fmt.parseInt(u32, digits, 10) catch null else null;
+            const on = win.text(.doing);
+            if (ticket == null) try texts.writer.print("{s}:{d} ", .{ s.name, win.index });
+            try texts.writer.writeAll("waits in its pane");
+            if (on.len > 0) try texts.writer.print(": {s}", .{on});
+            try ends.append(app.gpa, texts.written().len);
+            try items.append(app.gpa, .{
+                .id = try std.fmt.allocPrint(app.gpa, "pane:{d}", .{win.id}),
+                .kind = "pane",
+                .ticket = ticket,
+                .repo = if (ticket) |t| if (app.ticketCard(t)) |card| card.repo orelse "" else "" else "",
+                .text = "",
+            });
+        };
+        defer for (items.items) |item| app.gpa.free(item.id);
+        var from: usize = 0;
+        for (items.items, ends.items) |*item, end| {
+            item.text = texts.written()[from..end];
+            from = end;
+        }
+        try b.setOwn(app.gpa, items.items);
     }
 
     /// The doc window of each ask in `old` that the board now shown no longer holds, answered or
@@ -11741,4 +11784,51 @@ test "⏎ on a Claude with no ticket in in flight's foot shows its window, space
     try eq(@as(?BoardView, null), app.board_view);
     try std.testing.expect(app.popup == null);
     try eq(@as(usize, 1), session.focus);
+}
+
+test "a Claude waiting in its pane is a Your move item after babylon's, ⏎ shows its pane, and it goes when the pane stops waiting" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    const gpa = std.testing.allocator;
+    var app: App = .{ .gpa = gpa, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(gpa);
+    app.board = try tickets.Board.parse(gpa,
+        \\{"tickets":[{"id":7,"repo":"arena","title":"a","status":"doing"}],"needs_you":[{"id":"ask:9","kind":"ask","ticket":4,"repo":"tlon","text":"t","actions":[]}]}
+    );
+    defer app.board.?.deinit();
+    var info = "wants to run: ls\t\t\t\tt7-x".*;
+    var win: Window = .{ .id = 3, .name = @constCast("w"), .claude = .waiting, .agent_pane = 5, .info = &info };
+    var bare: Window = .{ .id = 4, .name = @constCast("v"), .index = 2, .claude = .waiting, .info = @constCast("") };
+    const pane = try Pane.create(&app, 5, 10, 5);
+    defer pane.destroy(gpa);
+    try win.panes.append(gpa, pane);
+    defer win.panes.deinit(gpa);
+    var slots = [_]*Window{ &win, &bare };
+    var s: Session = .{ .id = 1, .name = @constCast("arena"), .wins = .fromOwnedSlice(&slots) };
+    var list = [_]*Session{&s};
+    app.sessions = .fromOwnedSlice(&list);
+    app.current = 1;
+
+    try app.syncWaiting();
+    const needs = app.board.?.needsYou();
+    try std.testing.expectEqual(@as(usize, 3), needs.len);
+    try std.testing.expectEqualStrings("ask:9", needs[0].id);
+    try std.testing.expectEqualStrings("waits in its pane: wants to run: ls", needs[1].text);
+    try std.testing.expectEqual(@as(?u32, 7), needs[1].ticket);
+    try std.testing.expectEqualStrings("arena", needs[1].repo);
+    try std.testing.expectEqualStrings("arena:2 waits in its pane", needs[2].text);
+
+    try std.testing.expect(try app.feedAct(.{ .line = 0, .ticket = 7, .need = 1 }, "\r"));
+    var got: [128]u8 = undefined;
+    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "select-pane -t %5") != null);
+
+    win.claude = .working;
+    try app.syncWaiting();
+    try std.testing.expectEqual(@as(usize, 2), app.board.?.needsYou().len);
+    bare.claude = .done;
+    try app.syncWaiting();
+    try std.testing.expectEqual(@as(usize, 1), app.board.?.needsYou().len);
 }
