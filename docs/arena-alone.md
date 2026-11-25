@@ -13,17 +13,17 @@ Most of "arena alone" exists. What is missing is a home that does not assume a b
 - **arena reads babylon through one file.** `boardPath` (src/main.zig:87) looks for
   `babylon/board.json` under `$XDG_RUNTIME_DIR`, then `$XDG_STATE_HOME`, then `~/.local/state`.
   `BoardFile.check` reads it every second (`theme_check_ms`, main.zig:19). A missing or unreadable
-  file gives `app.board == null`, and `setBoard` closes the board view (app.zig:3570).
+  file gives `app.board == null`, and `setBoard` closes the board view (app.zig:3578).
 - **Every Claude's state is arena's own.** The rail's marks (`◐` working, `◔` only its shell runs,
   `▲` waiting, `✗` stalled, `◉` done and not looked at) and its words (what it is about, what it is
   doing or last said, its branch and context) are pane options set by arena's `claude-state.sh`
   hook. arena reads them with one `list-panes` (app.zig:70). Babylon is not involved.
-- **"Looked at" is arena's too.** `see` (app.zig:1944) clears `◉` when the window is the one in
+- **"Looked at" is arena's too.** `see` (app.zig:1952) clears `◉` when the window is the one in
   front.
 - **Answering a question box without babylon exists.** A Claude's own question box can be
-  answered by sending its option's keys into the pane (app.zig:1407).
+  answered by sending its option's keys into the pane (app.zig:1399).
 - **Without a board today,** arena opens the most recent session's strip. `b` and `n` do nothing,
-  because `goHome` returns at once (app.zig:4510). The rail's top row is left blank (draw.zig:427).
+  because `goHome` returns at once (app.zig:4526). The rail's top row is left blank (draw.zig:427).
 - **After Portable 4 (#962)** arena's plugin is just `claude-state.sh` and `tmux-guard.sh`.
 
 ## How arena knows
@@ -60,7 +60,7 @@ Claude is the unit, where on Plan it is a ticket.
    auto, landing or today, because those are babylon's.
 2. **Your move.** Every Claude that needs the human: `✗` stalled, then `▲` waiting, then `◉` done
    and not looked at, oldest first within each. That is the rail's urgency order (`urgency`,
-   app.zig:895), so the rail and home always agree.
+   app.zig:897), so the rail and home always agree.
    - Each row has the mark and `session:window` in its repo's colour, then what it is about. On the
      right are its branch, context and how long it has been like this. Its second line is what it
      asks, what it wants to run, the error it stopped on, or its last words.
