@@ -1371,8 +1371,12 @@ touch $tmp/refuse-start
 key Enter
 check "Enter on a card babylon refuses to start says why on the card, the board still open" see 'babylon: ticke'
 rm $tmp/refuse-start
+: >$tmp/babylon
 key Enter
 check "Enter on a free todo card runs babylon start on it" await last 'start 7'
+# arena deletes babylon's answer in the step that closes the board: M-b before that would close it
+await eval '[[ -e $tmp/run/babylon/refused-start ]]'
+await eval '[[ ! -e $tmp/run/babylon/refused-start ]]'
 check "and closes the board once babylon has started it" gone ' every [0-9]+ +[a-z]'
 key M-b
 check "and the board opens again on every repo" await tablit every
