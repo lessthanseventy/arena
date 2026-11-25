@@ -11,6 +11,7 @@ const feed = @import("feed.zig");
 const sheets = @import("plan.zig");
 const goal_mod = @import("goal.zig");
 const win_landed = @import("win_landed.zig");
+const win_next = @import("win_next.zig");
 const win_goals = @import("win_goals.zig");
 const win_unplanned = @import("win_unplanned.zig");
 const App = app_mod.App;
@@ -2468,32 +2469,7 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
                 try bench.say(w, title_x, y, clip(item.title, chip_x - title_x - 1), if (row.dim) r.dim else r.text, bg, false);
             } else try bench.say(w, title_x, y, clip(item.title, x0 + ww -| title_x -| 1), if (row.dim) r.dim else r.text, bg, false);
         },
-        .next => {
-            const item = given.next[row.item];
-            try bench.fill(w, x0, y, ww, bg);
-            if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
-            var nb: [16]u8 = undefined;
-            try bench.say(w, x0 + 2, y, std.fmt.bufPrint(&nb, "{d}", .{row.item + 1}) catch "", r.dim, bg, false);
-            const repo = repoHue(r, item.repo);
-            var idb: [16]u8 = undefined;
-            const id = std.fmt.bufPrint(&idb, "#{d}", .{item.ticket}) catch "";
-            try bench.say(w, x0 + 1, y, "▌", repo.hue, bg, false);
-            try bench.say(w, x0 + 4, y, repo.glyph, repo.hue, bg, false);
-            try bench.say(w, x0 + 6, y, id, repo.hue, bg, true);
-            var lbuf: [48]u8 = undefined;
-            const first = tickets.Wait.first(item.waits_on);
-            const label = if (first) |wt| if (wt.ticket) |t|
-                std.fmt.bufPrint(&lbuf, "\u{f0c1} waits #{d}", .{t}) catch "waits"
-            else
-                std.fmt.bufPrint(&lbuf, "\u{f0c1} after #{d}", .{wt.until.?}) catch "waits" else "ready";
-            const chip_x = x0 + ww -| (cellCount(label) + 3);
-            const title_x = x0 + 7 + cellCount(id);
-            const pin_w: usize = if (item.pinned()) 2 else 0;
-            _ = try bench.chipInk(w, r, chip_x, y, label, if (first == null) r.landed else r.dim, if (first == null) r.text else r.dim, false);
-            if (item.pinned()) try bench.say(w, chip_x -| 2, y, "\u{f08d}", r.accent, bg, false);
-            try bench.say(w, title_x, y, clip(item.title, chip_x -| title_x -| 1 -| pin_w), if (row.dim) r.dim else r.text, bg, false);
-            try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
-        },
+        .next => try win_next.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .idea, .ideas_more, .card_top, .goal, .goal_bar, .goal_next, .goal_block => try win_goals.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .why, .more, .goals_more => {
             try bench.fill(w, x0, y, ww, r.panel);
