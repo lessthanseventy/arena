@@ -321,7 +321,8 @@ pub const Sheet = struct {
             name_w = @max(name_w, @min(text_mod.cells(goal.title), 26));
         };
         const per: usize = if (s.bench) 5 else 1;
-        const room_rows = max_rows -| s.n -| foot_rows -| idea_rows;
+        const ideas_room: usize = if (given.ideas.len == 0) 0 else idea_rows;
+        const room_rows = max_rows -| s.n -| foot_rows -| ideas_room;
         const shown = if (given.goals.len * per <= room_rows) given.goals.len else (room_rows -| 1) / per;
         for (given.goals[0..shown], 0..) |goal, i| {
             if (s.bench) {
