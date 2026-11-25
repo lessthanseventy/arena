@@ -755,7 +755,6 @@ fn repoEdge(app: *const App, repo: []const u8) ?vt.Style {
     return null;
 }
 
-/// A repo's colour, one of the terminal's own, the same for the same name.
 /// The rail's first cell of a row: the picked mark, else `repo`'s `▌`, else a space in `base`.
 fn repoBar(app: *const App, w: *Writer, pen: *Pen, repo: []const u8, picked: bool, base: vt.Style) !void {
     if (!picked) if (repoEdge(app, repo)) |edge| {
@@ -780,6 +779,7 @@ fn repoIcon(app: *const App, repo: []const u8) ?[]const u8 {
     return null;
 }
 
+/// A repo's colour, one of the terminal's own, the same for the same name.
 fn repoStyle(repo: []const u8) vt.Style {
     return .{ .fg_color = .palette(@intCast(2 + std.hash.Wyhash.hash(0, repo) % 5)) };
 }
