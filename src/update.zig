@@ -85,6 +85,13 @@ fn installed(gpa: std.mem.Allocator, io: std.Io, dir: []const u8) ?u32 {
     return std.fmt.parseInt(u32, std.mem.trim(u8, text, " #\n"), 10) catch null;
 }
 
+/// Removes `installed`, so a later restart does not name the same ticket again.
+fn clearInstalled(gpa: std.mem.Allocator, io: std.Io, dir: []const u8) void {
+    const path = std.fs.path.join(gpa, &.{ dir, "installed" }) catch return;
+    defer gpa.free(path);
+    std.Io.Dir.cwd().deleteFile(io, path) catch {};
+}
+
 /// Writes the view for the arena that replaces this one, which has this pid too.
 pub fn save(init: std.process.Init, kept: ?app_mod.App.Kept) !void {
     const gpa = init.gpa;
@@ -109,7 +116,9 @@ pub fn arrive(init: std.process.Init) Arrival {
     const text = std.Io.Dir.cwd().readFileAlloc(init.io, path, gpa, .limited(1 << 12)) catch return .{};
     defer gpa.free(text);
     std.Io.Dir.cwd().deleteFile(init.io, path) catch {};
-    return decode(text);
+    const arrival = decode(text);
+    if (arrival.ticket != null) clearInstalled(gpa, init.io, dir);
+    return arrival;
 }
 
 /// Removes what `save` left, when the new build did not start.
@@ -185,6 +194,17 @@ test "a view and a ticket come back as they went" {
     try std.testing.expectEqual(@as(?u32, 822), back.ticket);
     try std.testing.expect(back.kept.?.folded);
     try std.testing.expectEqualDeep(view, back.kept.?.view);
+}
+
+test "the installed ticket file is removed once taken, so the next restart finds none" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(std.testing.io, &buf)];
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "installed", .data = "#872\n" });
+    try std.testing.expectEqual(@as(?u32, 872), installed(std.testing.allocator, std.testing.io, dir));
+    clearInstalled(std.testing.allocator, std.testing.io, dir);
+    try std.testing.expectEqual(@as(?u32, null), installed(std.testing.allocator, std.testing.io, dir));
 }
 
 test "no view is no kept home, and a stranger's lines are skipped" {
