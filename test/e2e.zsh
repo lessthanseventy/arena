@@ -65,8 +65,15 @@ worked_on() {
   print -r -- ${b:-detached $(git -C $root rev-parse --short HEAD)}
 }
 key() { outer send-keys -t o "$@" }
-# button, column and row from 1, then M to press or move and m to let go
-mouse() { outer send-keys -t o -l $'\e'"[<$1;$2;$3$4" }
+# button, column and row from 1, then M to press or move and m to let go. A spot not found on the
+# screen is no cell: arena would take the broken report for typing and pass it to the pane.
+mouse() {
+  [[ $2 == <1-> && $3 == <1-> ]] || { fail "a mouse report at no cell: $*"; return 1 }
+  outer send-keys -t o -l $'\e'"[<$1;$2;$3$4"
+}
+# a press and its let go on one cell, read once: read again after the press, it can land on the
+# press's redraw
+click() { mouse 0 $1 $2 M && mouse 0 $1 $2 m }
 
 # Up to ten seconds for a command to succeed: babylon runs the gate on a busy machine.
 poll() {
@@ -144,7 +151,7 @@ check "the rail keeps + new and the menu at its foot" await foot
 dots() { local s=$(screen); [[ $(sed -n 23p <<<$s) == ╰* && $(sed -n 24p <<<$s) =~ "[^ ]+ +$1 │ s go to  ≡" ]] }
 check "a row of its own under the strip has a dot per window, centred on it" await dots '●○○'
 # the column, from 1, where $1 starts on the screen's last row
-col() { local l=$(screen | sed -n 24p); local pre=${l%%$1*}; print $(( ${#pre} + 1 )) }
+col() { local l=$(settled | sed -n 24p); local pre=${l%%$1*}; print $(( ${#pre} + 1 )) }
 mouse 35 100 24 M
 check "the pointer on it has each window's number and name in place of its dot" see '^ +1 one +2 two +3 three *$'
 x=$(col '2 two')
@@ -307,7 +314,7 @@ await shows '╭─ sessions ─+╮ ╭─ 1 one '
 mousing() { [[ $(inner display -p -t $1 '#{mouse_standard_flag}') == 1 ]] }
 await mousing alpha:one
 # the pane's third column, second row: its frame starts at the title's corner
-at=$(( $(screen | awk 'NR == 1 { print index($0, "╭─ 1 one") }') + 3 ))
+at=$(( $(settled | awk 'NR == 1 { print index($0, "╭─ 1 one") }') + 3 ))
 mouse 0 $at 3 M
 # the middle of the cell, in the window's cells, spelled as od spells it
 cw=$(inner display -p -t alpha:one '#{window_cell_width}')
@@ -340,8 +347,8 @@ print -rn -- $'\e[?1003h\e[?1006h' >$tmp/any
 inner send-keys -t alpha:two "clear; stty -echo -icanon; echo shift-copy-target; cat $tmp/any; timeout 3 cat -v; printf '\\033[?1006l\\033[?1003l'; stty sane" Enter
 check "window two shows the text to copy, whole" await shows 'shift-copy-target'
 zselect -t 30
-row=$(screen | grep -n 'shift-copy-target' | head -1 | cut -d: -f1)
-col=$(screen | awk -v r=$row 'NR == r { print index($0, "shift-copy-target") }')
+row=$(settled | grep -n 'shift-copy-target' | head -1 | cut -d: -f1)
+col=$(settled | awk -v r=$row 'NR == r { print index($0, "shift-copy-target") }')
 mouse 35 $((col + 2)) $((row + 1)) M
 mouse 4 $col $row M
 mouse 36 $((col + 16)) $row M
@@ -737,7 +744,7 @@ inner new-window -d -t alpha -n subs "zsh $tmp/bin/fake-agents"
 claude alpha:subs stop '{"last_assistant_message": "Waiting", "background_tasks": [
   {"id": "s1", "type": "subagent", "status": "running", "description": "Explore the rail"},
   {"id": "s2", "type": "subagent", "status": "running", "description": "Review it"}]}'
-row() { screen | grep -n -- "$1" | head -1 | cut -d: -f1 }
+row() { settled | grep -n -- "$1" | head -1 | cut -d: -f1 }
 see '│   ◔ Review it '
 y=$(row '│   ◔ Review it ')
 mouse 0 8 $y M
@@ -1007,7 +1014,7 @@ key -l i
 
 key 'echo hello brave world' Enter
 see '│hello brave world'
-row=$(screen | grep -n '│hello brave world' | cut -d: -f1)
+row=$(settled | grep -n '│hello brave world' | cut -d: -f1)
 mouse 0 45 $row M
 mouse 32 55 $row M
 mouse 0 55 $row m
@@ -1048,14 +1055,14 @@ key M-b
 check "Alt+b opens it in place of the strip, its repos as tabs" see ' every [0-9]+ +arena [0-9]+ +tlon [0-9]+ '
 check "and where its keys are" see '\? keys'
 check "the picked card's actions as buttons on a row of its box, each with its key" see '⏎ start +a answer '
-rowof() { screen | grep -n -m1 -- "$1" | cut -d: -f1 }
+rowof() { settled | grep -n -m1 -- "$1" | cut -d: -f1 }
 check "under its detail row" test $(( $(rowof '│ med  *│') + 1 )) -eq "$(rowof '⏎ start   a answer ')"
 key l k
 check "l to a column its repo has no card in picks the first repo's that has" see '⏎ go +e edit '
 key h j
 check "and h back to its own, j off its group's end staying when none is below" see '⏎ start +a answer '
 # column and row from one picture, taken again while it shows nothing (mid-frame): from two, a click goes out with no row
-spot() { local at l p i; for i in {1..30}; do at=$(screen | grep -n -m1 -- "$1") && break; zselect -t 100; done; [[ -n $at ]] || return 1; l=${at#*:} p=${l%%"$1"*}; print $(( ${#p} + 2 )) ${at%%:*} }
+spot() { local at l p i; for i in {1..30}; do at=$(settled | grep -n -m1 -- "$1") && break; zselect -t 100; done; [[ -n $at ]] || return 1; l=${at#*:} p=${l%%"$1"*}; print $(( ${#p} + 2 )) ${at%%:*} }
 mouse 0 ${(z)$(spot '#8 Board')} M
 check "a click on a card in a repo's group picks it" see '⏎ go +e edit '
 mouse 0 ${(z)$(spot '#7 Lights')} M
@@ -1122,9 +1129,9 @@ key 1
 refused() { [[ -f $tmp/notified && $(<$tmp/notified) == *'babylon: no session to answer'* ]] }
 check "and refused by babylon, it says why" await refused
 rm $tmp/refuse
-settled() { screen | awk '{ s = $0; out = ""; while (match(s, / [0-9]+[smhd]/)) { tok = substr(s, RSTART, RLENGTH); gsub(/[0-9]/, "N", tok); out = out substr(s, 1, RSTART - 1) tok; s = substr(s, RSTART + RLENGTH) } print out s }' | sed 's/[◓◑◒]/◐/g' }
-close_at() { local l=$(screen | grep -m1 "╰─ .*q close"); print ${l[(i)q close]} }
-foot_at() { local l=$(screen | grep -m1 "╰─ .*q close"); print $(( ${l[(i)╰]} - 1 )) }
+masked() { screen | awk '{ s = $0; out = ""; while (match(s, / [0-9]+[smhd]/)) { tok = substr(s, RSTART, RLENGTH); gsub(/[0-9]/, "N", tok); out = out substr(s, 1, RSTART - 1) tok; s = substr(s, RSTART + RLENGTH) } print out s }' | sed 's/[◓◑◒]/◐/g' }
+close_at() { local l=$(settled | grep -m1 "╰─ .*q close"); print ${l[(i)q close]} }
+foot_at() { local l=$(settled | grep -m1 "╰─ .*q close"); print $(( ${l[(i)╰]} - 1 )) }
 # every cell but the box's: its rows from the third, and its columns from the left edge to the right
 mask() {
   local n=0 line
@@ -1133,14 +1140,14 @@ mask() {
     if ((n >= 3 && n <= box_f)); then print -r -- "${line[1,box_l]}${line[box_r+1,-1]}"; else print -r -- $line; fi
   done
 }
-outside() { settled | mask }
-board_before=$(settled)
+outside() { masked | mask }
+board_before=$(masked)
 key ' '
 check "Space shows the picked card's whole ticket, as babylon tells it" see '│ the whole of it '
 check "in a frame with its close button in the foot" see '╰─ .*q close '
 box_l=$(foot_at)
-box_f=$(screen | grep -n -m1 '╰─ .*q close' | cut -d: -f1)
-foot=$(screen | grep -m1 '╰─ .*q close')
+box_f=$(settled | grep -n -m1 '╰─ .*q close' | cut -d: -f1)
+foot=$(settled | grep -m1 '╰─ .*q close')
 box_r=$(( box_l + ${${foot[box_l+1,-1]}[(i)╯]} ))
 outside_before=$(print -r -- "$board_before" | mask)
 check "no cell outside it has changed" eval '[[ $(outside) == "$outside_before" ]]'
@@ -1151,10 +1158,10 @@ key j j j j j
 check "and j scrolls it no further than its last line" see '│ the whole of it '
 key Escape
 check "and Escape puts it away" gone 'the whole of it'
-check "leaving the screen as it was" await eval '[[ $(settled) == "$board_before" ]]'
+check "leaving the screen as it was" await eval '[[ $(masked) == "$board_before" ]]'
 key ' '
 see 'the whole of it'
-mouse 0 $(close_at) $(screen | grep -n -m1 "╰─ .*q close" | cut -d: -f1) M
+mouse 0 $(close_at) $(settled | grep -n -m1 "╰─ .*q close" | cut -d: -f1) M
 check "a click on its close button puts it away" gone 'the whole of it'
 key ' '
 see 'the whole of it'
@@ -1280,9 +1287,9 @@ check "and a turns it off" await last 'auto off'
 key Escape
 cp $tmp/board.noauto $tmp/run/babylon/board.json
 check "off, the state is gone" gone 'auto [0-9]'
-tabrow() { screen | grep -n -m1 -E ' every [0-9]+ +[a-z]' | cut -d: -f1 }
-tabcol() { local l=$(screen | grep -m1 -E ' every [0-9]+ +[a-z]'); local p=${l%%" $1 "*}; print $(( ${#p} + 2 )) }
-autocol() { local l=$(screen | sed -n "$(( $(tabrow) - 1 ))p"); local p=${l%% ◐ *}; print $(( ${#p} + 2 )) }
+tabrow() { settled | grep -n -m1 -E ' every [0-9]+ +[a-z]' | cut -d: -f1 }
+tabcol() { local l=$(settled | grep -m1 -E ' every [0-9]+ +[a-z]'); local p=${l%%" $1 "*}; print $(( ${#p} + 2 )) }
+autocol() { local l=$(settled | sed -n "$(( $(tabrow) - 1 ))p"); local p=${l%% ◐ *}; print $(( ${#p} + 2 )) }
 mouse 0 $(autocol) $(( $(tabrow) - 1 )) M
 check "a click on the switch turns it on" await last 'auto on'
 check "with nothing of the orchestrator in babylon's file, the board's header has no button for it" hides ' ● orch '
@@ -1367,10 +1374,13 @@ check "which are whole there: number and title" see '▌ #8 Board of the lanes +
 check "a high card's bar amber" high_edge
 check "under them the window of the Claude holding it, then what it waits on" see '▌ one · [0-9]+[sm] · waits #7 +│'
 check "its priority said by its bar, not in words" gone '· high'
+tlon=($(tabcol tlon) $(tabrow))
 key '?'
-mouse 0 $(tabcol tlon) $(tabrow) M
+see "the board's keys"
+mouse 0 $tlon M
 check "a click while the keys are shown only puts them away" await tablit arena
-mouse 0 $(tabcol tlon) $(tabrow) M
+gone "the board's keys"
+mouse 0 $tlon M
 check "a click on a tab narrows it to that repo" see '#7 Lights'
 check "and only that" gone '#8 Board'
 check "the picked card's border is lit" picked_lit
@@ -1382,9 +1392,10 @@ check "r from the last repo goes to the backlog tab, lit" await tablit backlog
 check "which shows its cards in place of the columns" see '#12 Someday'
 check "and not the four columns" gone '╭─ doing '
 told() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == 'update 12 --status todo' ]] }
+onto=($(tabcol tlon) $(tabrow))
 mouse 0 ${(z)$(spot '#12 Someday')} M
-mouse 32 $(tabcol tlon) $(tabrow) M
-mouse 0 $(tabcol tlon) $(tabrow) m
+mouse 32 $onto M
+mouse 0 $onto m
 check "a press on the picked card, dragged onto a repo's tab, moves it to todo through babylon" await told
 check "and does not open its modal" gone '╭─ #12 '
 : >$tmp/babylon
@@ -1415,8 +1426,7 @@ check "and its holder's state" see '│ its Claude: '
 key Escape
 check "Escape puts it away" gone '│ its Claude: '
 zselect -t 10
-mouse 0 ${(z)$(spot '#8 Board')} M
-mouse 0 ${(z)$(spot '#8 Board')} m
+click ${(z)$(spot '#8 Board')}
 check "a click on the picked card opens its modal and does not go" see '│ the whole of it '
 key Enter
 check "and Enter in it goes to the Claude holding it" see '╭─ 1 one '
@@ -1531,7 +1541,7 @@ check "the board keeps the keys: its column is unlit, the cursor in no pane" eva
 cp $tmp/run/babylon/board.json $tmp/board.two
 print -r -- "${$(<$tmp/board.two)%\}}"',"orchestrator":{"on":true,"running":true}}' >$tmp/run/babylon/board.json
 in_orch() { in_session orchestrator }
-orchspot() { local row=$(( $(tabrow) - 1 )); local l=$(screen | sed -n "${row}p"); local p=${l%%●*}; print $(( ${#p} + 1 )) $row }
+orchspot() { local row=$(( $(tabrow) - 1 )); local l=$(settled | sed -n "${row}p"); local p=${l%%●*}; print $(( ${#p} + 1 )) $row }
 check "the board's header has an orchestrator button once babylon's file has an orchestrator" see ' ● +◐'
 mouse 0 ${(z)$(orchspot)} M
 check "and a click on it closes the board, in the orchestrator's session" hides ' every [0-9]+ +[a-z]'
@@ -1549,8 +1559,7 @@ check "Alt+l from the board focuses it, lit as the focused column" await orch_li
 key 'echo side' Enter
 check "what is typed then reaches its pane" see '│side +│'
 for control in ' every' ' arena'; do
-  mouse 0 ${(z)$(spot $control)} M
-  mouse 0 ${(z)$(spot $control)} m
+  click ${(z)$(spot $control)}
   key -l "echo after${control// /}-jkdufltb"
   key Enter
   check "a click on the header's$control leaves the column the keys: a sentence reaches its pane whole" await eval "inner capture-pane -p -t orchestrator:orch | grep -qx after${control// /}-jkdufltb"
@@ -1563,6 +1572,7 @@ see ' ◐ (auto )?1/2( |$)'
 touch $tmp/chatty
 offs=$(grep -cx 'auto off' $tmp/babylon)
 mouse 0 $(autocol) $(( $(tabrow) - 1 )) M
+see ' ◐ turn off\?( |$)'
 mouse 0 $(autocol) $(( $(tabrow) - 1 )) M
 await eval '(( $(grep -cx "auto off" $tmp/babylon) > offs ))'
 zselect -t 50
@@ -1746,8 +1756,8 @@ see '◐ (auto )?2/6'
 mouse 0 $(( $(autocol) + 3 )) $(( $(tabrow) - 1 )) M
 check "a click on the header's auto words opens its settings, one row for each repo" see 'arena +\[-\] +3 +\[\+\]'
 check "and says how many work of the cap" see 'working 2 of 6'
-repo_row() { screen | grep -n -m1 -E "$1 +\\[-\\]" | cut -d: -f1 }
-plus_col() { local l=$(screen | grep -m1 -E "$1 +\\[-\\]"); local p=${l%%\[+\]*}; print $(( ${#p} + 2 )) }
+repo_row() { settled | grep -n -m1 -E "$1 +\\[-\\]" | cut -d: -f1 }
+plus_col() { local l=$(settled | grep -m1 -E "$1 +\\[-\\]"); local p=${l%%\[+\]*}; print $(( ${#p} + 2 )) }
 press=$'\e'"[<0;$(plus_col arena);$(repo_row arena)M"
 outer send-keys -t o -l "$press$press"
 check "two clicks on a repo's [+] show its cap two up at once" see 'arena +\[-\] +5 +\[\+\]'
@@ -1884,10 +1894,10 @@ pic() {
   done
   print -r -- "$now"
 }
-rowof() { screen | grep -n -m1 -F -- "$1" | cut -d: -f1 }
-colof() { local l=$(screen | sed -n $1p); [[ $l == *"$2"* ]] || return 1; local p=${l%%"$2"*}; print $(( ${#p} + 1 )) }
+rowof() { settled | grep -n -m1 -F -- "$1" | cut -d: -f1 }
+colof() { local l=$(settled | sed -n $1p); [[ $l == *"$2"* ]] || return 1; local p=${l%%"$2"*}; print $(( ${#p} + 1 )) }
 # the column of the first │ at or after column $2 of row $1
-barof() { local l=$(screen | sed -n $1p); local p=${${l[$2,-1]}%%│*}; print $(( $2 + ${#p} )) }
+barof() { local l=$(settled | sed -n $1p); local p=${${l[$2,-1]}%%│*}; print $(( $2 + ${#p} )) }
 park() { mouse 35 $rest_x $rest_y M }
 # The pointer from where nothing is under it to column $1, row $2: no cell changed, text or
 # attribute. Then away again, and it is all as it was.
@@ -1967,7 +1977,7 @@ see '#42 Landed'
 # every cell outside the peek is as it was in $1, a screen's text; the orchestrator's panes, which
 # tmux draws again when it likes, are not the board's, so what is right of $ox below its divider is left out
 outside() {
-  local -a was=("${(@f)1}") now=("${(@f)$(settled)}")
+  local -a was=("${(@f)1}") now=("${(@f)$(masked)}")
   local foot=${(M)#${(@M)now:#*esc away*}} r left top bot pane=$(( $#now + 1 )) a b
   for (( r = 1; r <= $#now; r++ )); do [[ $now[r] == *'⏎ go   space'* ]] && foot=$r; done
   for (( r = 4; r <= $#now; r++ )); do [[ ${now[r][ox,ox+2]} == '│──' ]] && { pane=$r; break }; done
@@ -1989,7 +1999,7 @@ outside() {
 peeks() {
   park
   zselect -t 50
-  local before=$(settled)
+  local before=$(masked)
   mouse 35 $1 $2 M
   await shows "esc away" || { print "      no peek"; return 1 }
   await shows "$3" || { print "      peek lacks $3"; return 1 }
@@ -2091,16 +2101,13 @@ key o
 check "o swaps back to the column" see '╭─ ○ orchestrator .* p plan  B board'
 outer resize-window -t o -x 121
 check "at more width the plan and the column are side by side again" see 'b plan · B board'
-tab_col() { local l=$(screen | grep -F 'b plan · B board' | head -1); local p=${l%%"$1"*}; print $(( ${#p} + 2 )) }
-mouse 0 $(tab_col 'B board') 1 M
-mouse 0 $(tab_col 'B board') 1 m
+tab_col() { local l=$(settled | grep -F 'b plan · B board' | head -1); local p=${l%%"$1"*}; print $(( ${#p} + 2 )) }
+click $(tab_col 'B board') 1
 check "a click on the board tab goes to the board" await shows ' every [0-9]+ +[a-z]'
 check "whose head shows the same pair of tabs" see 'b plan · B board'
-mouse 0 $(tab_col 'B board') 1 M
-mouse 0 $(tab_col 'B board') 1 m
+click $(tab_col 'B board') 1
 check "a click on the tab it is on does nothing" see ' every [0-9]+ +[a-z]'
-mouse 0 $(tab_col 'b plan') 1 M
-mouse 0 $(tab_col 'b plan') 1 m
+click $(tab_col 'b plan') 1
 check "a click on the plan tab goes back to the plan" await shows '1 #7 +tlon +Lights +free now'
 mouse 0 60 1 M
 mouse 0 60 1 m
@@ -2122,7 +2129,7 @@ check "in Workbench's look the plan's windows have their title bars" await shows
 check "in flight holds the ticket being built" see 'First buil'
 check "and the pipeline's, with its stage" see 'Second lan'
 check "landed holds today's landing, a row to a ticket" see '✓ #703'
-title_row() { screen | grep -n "$1" | head -1 | cut -d: -f1 }
+title_row() { settled | grep -n "$1" | head -1 | cut -d: -f1 }
 next_row=$(title_row '◆ next')
 key z
 check "z folds the picked window to its summary" see '◐ 1 building · ◒ verif'
@@ -2138,7 +2145,7 @@ check "f opens the window whole, as a modal" see 'q close'
 key q
 check "and q closes it" gone 'q close'
 check "with the window below still on its row" same_row
-title_click() { local row=$(title_row "$1"); local line=$(screen | sed -n "${row}p"); mouse 0 $(( ${#${line%%$1*}} + 3 )) $row M; mouse 0 $(( ${#${line%%$1*}} + 3 )) $row m }
+title_click() { local row=$(title_row "$1"); local line=$(settled | sed -n "${row}p"); mouse 0 $(( ${#${line%%$1*}} + 3 )) $row M; mouse 0 $(( ${#${line%%$1*}} + 3 )) $row m }
 title_click '◆ in flight'
 check "a click on a window's title bar folds it, off its ▾ too" see '◐ 1 building · ◒ verif'
 title_click '◆ in flight'
@@ -2187,7 +2194,7 @@ key b
 print -r -- '{"tickets":[{"id":801,"repo":"q","title":"Alp","kind":"ticket","status":"todo","priority":"high","blocked_by":[]},{"id":802,"repo":"z","title":"Bet","kind":"ticket","status":"todo","priority":"med","blocked_by":[]}],"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":2,"follow_ups":0,"by_repo":{"q":1,"z":1}}}}' >$tmp/run/babylon/board.json
 check "not planned lists the open repos' todo tickets under its chips" await shows 'Alp'
 check "with a chip for every repo" see 'q 1.*z 1'
-chip_click() { local row=$(screen | grep -n "$1" | head -1 | cut -d: -f1); local line=$(screen | sed -n "${row}p"); mouse 0 $(( ${#${line%%$1*}} + 2 )) $row M; mouse 0 $(( ${#${line%%$1*}} + 2 )) $row m }
+chip_click() { local row=$(settled | grep -n "$1" | head -1 | cut -d: -f1); local line=$(settled | sed -n "${row}p"); mouse 0 $(( ${#${line%%$1*}} + 2 )) $row M; mouse 0 $(( ${#${line%%$1*}} + 2 )) $row m }
 chip_click 'q 1'
 check "a click on a repo's chip folds its rows" await gone 'Alp'
 check "and the other repo's rows are the ones left" see 'Bet'
@@ -2195,8 +2202,7 @@ check "the fold is kept with the repo folds" await eval 'grep -qx q $folded_file
 chip_click 'q 1'
 check "a click on the chip again opens them" await shows 'Alp'
 : >$tmp/babylon
-mouse 0 $(( ${#${$(screen | grep 'Alp' | head -1)%%Alp*}} + 2 )) $(screen | grep -n 'Alp' | head -1 | cut -d: -f1) M
-mouse 0 $(( ${#${$(screen | grep 'Alp' | head -1)%%Alp*}} + 2 )) $(screen | grep -n 'Alp' | head -1 | cut -d: -f1) m
+click ${(z)$(spot Alp)}
 key w
 check "w on a not planned row asks why it goes to next" see '❯'
 key -l 'it is next'
@@ -2407,14 +2413,14 @@ see ' every [0-9]+ +arena'
 see '#920 Peek me'
 mouse 35 80 24 M
 zselect -t 100
-base=$(settled)
+base=$(masked)
 mouse 35 ${(z)$(spot '#920 Peek')} M
 check "a pointer resting on a card opens a peek with its ticket, its Claude's doing and a line of its pane" await eval 'shows "esc away" && shows "doing: Read" && shows "peek-pane-line" && [[ $(screen | grep -c "#920 Peek me") -ge 2 ]]'
 mouse 35 80 24 M
-as_base() { [[ $(settled) == $base ]] }
+as_base() { [[ $(masked) == $base ]] }
 back_to_base() {
   poll as_base && return 0
-  diff <(print -r -- $base) <(settled) | sed 's/^/      /'
+  diff <(print -r -- $base) <(masked) | sed 's/^/      /'
   return 1
 }
 check "and leaving it takes the peek away, the board as it was" back_to_base
@@ -2529,8 +2535,7 @@ check "the terminal's server outlives the session restarted in it" eval '[[ $(ou
 see '^╭─ sessions'
 key M-b
 see ' every [0-9]+ +arena [0-9]+ '
-mouse 0 ${(z)$(spot '#9')} M
-mouse 0 ${(z)$(spot '#9')} m
+click ${(z)$(spot '#9')}
 key ' '
 see '#9 Lights'
 key Escape
