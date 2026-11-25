@@ -2145,25 +2145,69 @@ fn repeat(w: *Writer, x: usize, y: usize, cell_glyph: []const u8, n: usize, fg: 
     try bench.say(w, x, y, out.buffered(), fg, bg, false);
 }
 
-/// The plan's rows in Workbench's look, from `rows_end` up: each section a window on the ground,
-/// the focal goal's first, a goal a card with its bar, and what landed a strip along the foot.
+/// The plan's rows in Workbench's look, from `rows_end` up: seven windows, each in the slot
+/// the screen's size gives it, a goal a card with its bar. A window shown whole is a modal over
+/// them, and what is behind it is drawn as it was.
 fn benchPlan(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, view: app_mod.BoardView, rows_end: u16) !void {
-    const top = app.planTop(sheet);
     var y: u16 = 2;
-    while (y < rows_end) : (y += 1) {
-        try bench.fill(w, app.boardX(), y, app.boardW(), r.ground);
-        const at = top + (y - 2);
-        if (at < sheet.n) try benchPlanRow(app, w, r, sheet, view, at, y);
+    while (y < rows_end) : (y += 1) try bench.fill(w, app.boardX(), y, app.boardW(), r.ground);
+    if (view.whole == null) {
+        for (std.enums.values(sheets.Window)) |win| try benchWindow(app, w, r, sheet, view, win, true);
+        return;
     }
+    var behind: sheets.Sheet = undefined;
+    const b = &app.board.?;
+    behind.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.halfHome(), true, app.plan_shut);
+    for (std.enums.values(sheets.Window)) |win| try benchWindow(app, w, r, &behind, view, win, false);
+    try benchWindow(app, w, r, sheet, view, view.whole.?, true);
 }
 
-/// Whether the pick is in the section the row at `at` heads: its rows to the next gap.
-fn sectionPicked(sheet: *const sheets.Sheet, at: usize, pick: usize) bool {
-    for (sheet.rows[at + 1 .. sheet.n]) |row| {
-        if (row.kind == .blank) return false;
-        if (row.pick == pick) return true;
+fn windowCount(given: *const tickets.Plan, win: sheets.Window) ?usize {
+    var building: usize = 0;
+    for (given.now) |item| building += @intFromBool(std.mem.eql(u8, item.state, "building"));
+    return switch (win) {
+        .driving => null,
+        .now => building,
+        .landing => given.now.len - building,
+        .next => given.next.len,
+        .goals => given.goals.len,
+        .unplanned => given.not_planned.count,
+        .landed => given.landed_today.count,
+    };
+}
+
+/// `win` in its slot (or the modal, when it is the one shown whole): its frame, fold mark and
+/// the rows from the one that keeps the pick in view. `lit` is whether the pick is drawn.
+fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, view: app_mod.BoardView, win: sheets.Window, lit: bool) !void {
+    const rect = app.planRect(win);
+    const whole = lit and view.whole == win;
+    if (rect.h <= sheets.window_chrome or rect.w < 16) return;
+    const given = app.board.?.plan().?;
+    const ww: usize = rect.w - 1;
+    const body: usize = rect.h - sheets.window_chrome;
+    const mine = sheet.span(win);
+    const picked_at = if (lit) sheet.rowOf(view.plan_pick) else null;
+    const focused = !app.columnFocused() and (if (picked_at) |at| sheet.rows[at].win == win else false);
+    try bench.window(w, r, rect.x, rect.y, ww, rect.h - 1, win.title(), windowCount(given, win), focused);
+    const bar = if (focused) r.raised else r.tile;
+    if (whole) {
+        try bench.say(w, rect.x + ww - 10, rect.y, "q close", r.dim, bar, false);
+    } else try bench.say(w, rect.x + ww - 3, rect.y, if (app.plan_shut.contains(win)) "▸" else "▾", r.dim, bar, false);
+    if (win == .goals and !whole) {
+        const head = app.goalHead();
+        try bench.headButton(w, r, head.x, head.y, " + goal ", r.accent, false);
     }
-    return false;
+    if (win == .driving and !app.plan_shut.contains(win)) if (sheets.focalGoal(given.goals)) |at| {
+        const goal = given.goals[at];
+        var buf: [160]u8 = undefined;
+        const text = std.fmt.bufPrint(&buf, "epic #{d}{s}{s}", .{ goal.epic, if (goal.doc != null) " · " else "", goal.doc orelse "" }) catch "";
+        try bench.say(w, rect.x + 20, rect.y, clip(text, ww -| 24), r.dim, bar, false);
+    };
+    const top = if (lit) app.planWindowTop(sheet, win, body) else 0;
+    for (0..body) |line| {
+        if (top + line >= mine.len) break;
+        try benchPlanRow(app, w, r, sheet, mine.start + top + line, rect.y + 1 + @as(u16, @intCast(line)), rect.x, ww, lit);
+    }
 }
 
 fn stepHue(r: theme.Roles, state: []const u8) struct { word: []const u8, lead: color.RGB, filled: bool } {
@@ -2193,36 +2237,32 @@ fn stepChip(w: *Writer, r: theme.Roles, x: usize, y: usize, step: tickets.Step) 
 
 /// The row at `at` of the plan, drawn on row `y`, in a window one cell in from the board's left
 /// edge and short of its right by the shadow.
-fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, view: app_mod.BoardView, at: usize, y: u16) !void {
+fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, at: usize, y: u16, x0: usize, ww: usize, lit: bool) !void {
     const b = &app.board.?;
     const given = b.plan().?;
     const row = sheet.rows[at];
-    const x0: usize = app.boardX() + 1;
-    const ww: usize = app.boardW() -| 3;
-    if (ww < 16) return;
-    const picked = app.planRowLit(row);
+    const picked = lit and app.planRowLit(row);
     const mark = if (app.columnFocused()) r.dim else r.accent;
     const bg = if (picked) r.raised else r.panel;
     const room = ww - 4;
     switch (row.kind) {
-        .blank => if (at > 0 and sheet.rows[at - 1].kind != .blank) try repeat(w, x0 + 1, y, "▀", ww, r.well, r.ground),
+        .blank => {},
         .head => {
-            const focused = sectionPicked(sheet, at, view.plan_pick) and !app.columnFocused();
-            try bench.titleBar(w, r, x0, y, ww, row.text, focused);
-            var nbuf: [16]u8 = undefined;
-            _ = try bench.chip(w, r, x0 + 4 + cellCount(row.text), y, std.fmt.bufPrint(&nbuf, "{d}", .{row.count}) catch "", r.dim, false);
-            if (std.mem.eql(u8, row.text, "goals")) try bench.headButton(w, r, app.goalHead().x, y, " + goal ", r.accent, false);
-            try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
+            try bench.fill(w, x0, y, ww, r.panel);
+            var buf: [48]u8 = undefined;
+            const label = std.fmt.bufPrint(&buf, "── {s} {d} ", .{ row.text, row.count }) catch "";
+            try bench.say(w, x0 + 1, y, label, r.dim, r.panel, false);
+            try repeat(w, x0 + 1 + cellCount(label), y, "─", ww -| 2 -| cellCount(label), r.dim, r.panel);
+        },
+        .summary, .note => {
+            try bench.fill(w, x0, y, ww, bg);
+            if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
+            try bench.say(w, x0 + 2, y, clip(row.text, room), r.dim, bg, false);
         },
         .focal => {
             const goal = given.goals[row.item];
             const hue = goalHue(b, r, goal);
-            if (row.part == 0) {
-                try bench.titleBar(w, r, x0, y, ww, "driving towards", true);
-                var buf: [160]u8 = undefined;
-                const text = std.fmt.bufPrint(&buf, "epic #{d}{s}{s}", .{ goal.epic, if (goal.doc != null) " · " else "", goal.doc orelse "" }) catch "";
-                try bench.say(w, x0 + 20, y, clip(text, ww -| 22), r.dim, r.raised, false);
-            } else {
+            {
                 try bench.fill(w, x0, y, ww, bg);
                 if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
                 switch (row.part) {
@@ -2359,7 +2399,7 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
                 .goal_next => 3,
                 else => 4,
             });
-            const card_picked = sheet.rows[base + 1].pick == view.plan_pick;
+            const card_picked = lit and sheet.rows[base + 1].pick == app.board_view.?.plan_pick;
             const face = if (card_picked) r.raised else r.tile;
             try bench.fill(w, x0, y, ww, r.panel);
             const cx = x0 + 1;
@@ -2423,7 +2463,8 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
         },
         .landed => {
             const today = given.landed_today;
-            const face = r.ground;
+            const face = bg;
+            try bench.fill(w, x0, y, ww, face);
             if (picked) try bench.say(w, x0, y, "▌", mark, face, true);
             var buf: [48]u8 = undefined;
             const head = std.fmt.bufPrint(&buf, "✓ landed today {d}", .{today.count}) catch "";
@@ -3476,6 +3517,8 @@ const plan_keys = [_][2][]const u8{
     .{ "j k, arrows", "pick a row: now, next, goals, ideas, landed, not planned" },
     .{ "⏎, click it", "go: its Claude, the gate, start it, plan an idea, unfold a row, the board on it" },
     .{ "space, t", "its whole ticket" },
+    .{ "z, Z", "fold the picked window to its summary; fold all but it, and open all" },
+    .{ "f", "the picked window whole, over the plan; q closes it" },
     .{ "+", "a new goal: plan it now, or just keep it" },
     .{ "J K x e", "on next: move it down or up, take it out, edit its why" },
     .{ "x e", "on a kept idea: withdraw it, edit it" },
@@ -4895,14 +4938,15 @@ test "Home in Workbench's look: the focal goal is the one with a step building, 
     try planView(&app, &out, app.board_view.?);
     const f = out.buffered();
 
-    // the first goal's card: its bar row, 2 of 7 in menard's hue on the well
+    // the first goal's card in the goals window: its bar row, 2 of 7 in menard's hue on the well
     var at: usize = 0;
     for (sheet.rows[0..sheet.n], 0..) |row, i| {
         if (row.kind == .goal_bar and row.item == 0) at = i;
     }
-    const y = 2 + (at - app.planTop(&sheet));
-    const x = app.boardX() + 1 + 1 + 2;
-    const bar_w = (app.boardW() - 3 - 2) - 4 - "2/7  28%".len;
+    const slot = app.planSlot(.goals);
+    const y = slot.y + 1 + (at - sheet.span(.goals).start);
+    const x = slot.x + 1 + 2;
+    const bar_w = (slot.w - 1 - 2) - 4 - "2/7  28%".len;
     const filled = try bench.probe(f, x, y);
     try std.testing.expectEqual(@as(u21, '█'), filled.cp);
     try std.testing.expectEqual(r.repo[3], filled.fg);
@@ -5352,4 +5396,42 @@ test "a to-try tile is drawn: its chip, its age in the you colour at a week, the
     try std.testing.expect(Rows.has(old, "11d"));
     const other = try Rows.at(&app, &f, &buf, week + 1);
     try std.testing.expect(!Rows.has(other, "close untried"));
+}
+
+test "Plan's windows keep their slots: another window's rows, a count or a fold move none of them" {
+    const eq = std.testing.expectEqual;
+    const few =
+        \\{"tickets":[],"plan":{"now":[],"next":[{"ticket":9,"repo":"arena","title":"n","why":"","waits_on":[]}],
+        \\"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    ;
+    var many_text: [4096]u8 = undefined;
+    var used = (try std.fmt.bufPrint(&many_text, "{{\"tickets\":[],\"plan\":{{\"now\":[", .{})).len;
+    for (0..30) |i| {
+        used += (try std.fmt.bufPrint(many_text[used..], "{s}{{\"ticket\":{d},\"repo\":\"arena\",\"title\":\"t\",\"state\":\"building\"}}", .{ if (i > 0) "," else "", 100 + i })).len;
+    }
+    used += (try std.fmt.bufPrint(many_text[used..], "],\"next\":[],\"goals\":[],\"landed_today\":{{\"count\":40,\"newest\":[]}},\"not_planned\":{{\"count\":3,\"follow_ups\":0,\"by_repo\":{{}}}}}}}}", .{})).len;
+    var shapes: [3]struct { text: []const u8, fold: bool } = .{
+        .{ .text = few, .fold = false },
+        .{ .text = many_text[0..used], .fold = false },
+        .{ .text = many_text[0..used], .fold = true },
+    };
+    for (&shapes) |shape| {
+        var board = try tickets.Board.parse(std.testing.allocator, shape.text);
+        defer board.deinit();
+        var app = homeApp(&board);
+        app.term_w = 200;
+        app.view_w = 200;
+        app.view_h = 40;
+        app.roles = bench.roles();
+        app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
+        if (shape.fold) app.plan_shut.insert(.now);
+        var buf: [262144]u8 = undefined;
+        var out: Writer = .fixed(&buf);
+        try planView(&app, &out, app.board_view.?);
+        for (std.enums.values(sheets.Window)) |win| {
+            const slot = app.planSlot(win);
+            const diamond = try bench.probe(out.buffered(), slot.x + 1, slot.y);
+            try eq(@as(u21, '◆'), diamond.cp);
+        }
+    }
 }

@@ -14,6 +14,8 @@ const queued_fold = folds.len - 1;
 const unfolded_rows = 2;
 /// The tickets of next that are drawn; the rest are `+N`.
 const next_shown = 7;
+/// The tickets of next a folded window names.
+const next_summary = 5;
 
 /// Rows kept past the goals for the foot: a gap, not planned's head and row, a gap, landed.
 const foot_rows = 5;
@@ -24,8 +26,58 @@ const ideas_shown = 3;
 /// The bit of `unfolded` that holds the ideas open, past the pipeline's folds.
 pub const ideas_fold: u3 = folds.len;
 
-pub const Kind = enum { head, blank, now, folded, next, why, more, goals_more, goal, landed, unplanned, focal, card_top, goal_bar, goal_next, goal_block, idea, ideas_more };
+pub const Kind = enum { head, blank, now, folded, next, why, more, goals_more, goal, landed, unplanned, focal, card_top, goal_bar, goal_next, goal_block, idea, ideas_more, summary, note };
 pub const Style = enum { normal, dim, heading, attention };
+
+/// Workbench's plan is seven windows, each a fixed slot of the screen.
+pub const Window = enum {
+    driving,
+    now,
+    landing,
+    next,
+    goals,
+    unplanned,
+    landed,
+
+    pub fn title(win: Window) []const u8 {
+        return switch (win) {
+            .driving => "driving towards",
+            .unplanned => "not planned",
+            else => @tagName(win),
+        };
+    }
+};
+
+pub const Shut = std.EnumSet(Window);
+
+pub const Rect = struct { x: u16, y: u16, w: u16, h: u16 };
+
+/// Rows of a window's slot that are not its body: the title bar, and the shadow's row.
+pub const window_chrome = 2;
+const driving_h = 5;
+
+/// Where `win` sits on a plan area `w` by `h` cells: its title bar, body and shadow. Worked out
+/// from the area alone, so nothing in a window or its fold moves another.
+pub fn slot(win: Window, w: u16, h: u16) Rect {
+    const top = @min(driving_h, h);
+    const rest = h - top;
+    const half = w / 2;
+    return switch (win) {
+        .driving => .{ .x = 0, .y = 0, .w = w, .h = top },
+        .now => .{ .x = 0, .y = top, .w = half, .h = rest * 3 / 10 },
+        .landing => .{ .x = 0, .y = top + rest * 3 / 10, .w = half, .h = rest * 3 / 10 },
+        .next => .{ .x = 0, .y = top + rest * 6 / 10, .w = half, .h = rest - rest * 6 / 10 },
+        .goals => .{ .x = half, .y = top, .w = w - half, .h = rest * 4 / 10 },
+        .unplanned => .{ .x = half, .y = top + rest * 4 / 10, .w = w - half, .h = rest * 3 / 10 },
+        .landed => .{ .x = half, .y = top + rest * 7 / 10, .w = w - half, .h = rest - rest * 7 / 10 },
+    };
+}
+
+/// The first of `len` rows a window of `body` rows shows, the row at `at` kept in view with the
+/// rest of its card (two rows) below it.
+pub fn windowTop(at: usize, len: usize, body: usize) usize {
+    return @min((at + 3) -| body, len -| body);
+}
 
 pub const Row = struct {
     kind: Kind,
@@ -45,6 +97,8 @@ pub const Row = struct {
     item: usize = 0,
     part: u8 = 0,
     count: usize = 0,
+    /// Workbench's window the row is in.
+    win: Window = .now,
 };
 
 /// The goal Home puts in the focal window: the first with a step being built, else the first not
@@ -94,6 +148,32 @@ pub const Sheet = struct {
     bench: bool = false,
     buf: [32 * 1024]u8 = undefined,
     used: usize = 0,
+    /// Workbench's windows folded to their summary, and the one rows are being added to.
+    shut: Shut = undefined,
+    cur: Window = .driving,
+    from: usize = 0,
+
+    /// The rows of `win`: where they start and how many.
+    pub fn span(s: *const Sheet, win: Window) struct { start: usize, len: usize } {
+        var start: usize = s.n;
+        var len: usize = 0;
+        for (s.rows[0..s.n], 0..) |row, i| if (row.win == win) {
+            if (len == 0) start = i;
+            len += 1;
+        };
+        return .{ .start = start, .len = len };
+    }
+
+    /// The picks of `win`: the first and how many.
+    pub fn pickRange(s: *const Sheet, win: Window) ?struct { first: usize, n: usize } {
+        var first: ?usize = null;
+        var n: usize = 0;
+        for (s.rows[0..s.n]) |row| if (row.win == win) if (row.pick) |p| {
+            if (first == null) first = p;
+            n += 1;
+        };
+        return if (first) |f| .{ .first = f, .n = n } else null;
+    }
 
     /// The row picked as `pick`.
     pub fn picked(s: *const Sheet, pick: usize) ?*const Row {
@@ -110,6 +190,7 @@ pub const Sheet = struct {
     fn add(s: *Sheet, row: Row) void {
         if (s.n == s.rows.len) return;
         var r = row;
+        r.win = s.cur;
         if (r.pick != null) {
             r.pick = s.picks;
             s.picks += 1;
@@ -149,33 +230,132 @@ pub const Sheet = struct {
 
     /// The plan as rows `width` cells wide, `epoch` the time now, the stages in `unfolded` shown
     /// a row to a ticket.
-    pub fn build(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64, unfolded: u8, narrow: bool, bench: bool) void {
+    pub fn build(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64, unfolded: u8, narrow: bool, bench: bool, shut: Shut) void {
         s.narrow = narrow;
         s.bench = bench;
+        s.shut = shut;
         s.n = 0;
         s.picks = 0;
         s.used = 0;
-        if (bench) if (focalGoal(given.goals)) |at| {
-            s.add(.{ .kind = .focal, .item = at, .part = 0 });
-            s.add(.{ .kind = .focal, .item = at, .part = 1, .pick = 0, .ticket = given.goals[at].epic });
-            s.add(.{ .kind = .focal, .item = at, .part = 2 });
-            s.add(.{ .kind = .focal, .item = at, .part = 3 });
-            s.add(.{ .kind = .blank });
-        };
+        if (bench) return s.windowRows(given, b, width, epoch);
         s.nowRows(given, width, epoch, unfolded);
         s.nextRows(given, width);
         s.goalRows(given, width);
         s.ideaRows(given, width, epoch, unfolded);
         s.add(.{ .kind = .blank });
-        if (bench) {
-            s.headRow("not planned", given.not_planned.count);
-            s.unplannedRow(given, width);
-            s.add(.{ .kind = .blank });
-            s.landedRow(given, b, width);
-        } else {
-            s.landedRow(given, b, width);
-            s.unplannedRow(given, width);
+        s.landedRow(given, b, width);
+        s.unplannedRow(given, width);
+    }
+
+    /// Starts `win`'s rows; true when it is folded, and its summary is all it holds.
+    fn begin(s: *Sheet, win: Window) bool {
+        s.cur = win;
+        s.from = s.n;
+        return s.shut.contains(win);
+    }
+
+    fn summaryRow(s: *Sheet, text: []const u8) void {
+        s.add(.{ .kind = .summary, .pick = 0, .style = .dim, .text = text });
+    }
+
+    /// Ends a window's rows; a window with none says `empty`.
+    fn end(s: *Sheet, empty: []const u8) void {
+        if (s.n == s.from) s.add(.{ .kind = .note, .style = .dim, .text = empty });
+    }
+
+    /// Workbench's plan: each window's rows, in the order the pick walks them.
+    fn windowRows(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64) void {
+        if (s.begin(.driving)) s.summaryRow(s.drivingSummary(given)) else if (focalGoal(given.goals)) |at| {
+            s.add(.{ .kind = .focal, .item = at, .part = 1, .pick = 0, .ticket = given.goals[at].epic });
+            s.add(.{ .kind = .focal, .item = at, .part = 2 });
+            s.add(.{ .kind = .focal, .item = at, .part = 3 });
         }
+        s.end("no goal yet");
+        if (s.begin(.now)) s.summaryRow(s.nowSummary(given)) else s.buildingRows(given, width, epoch);
+        s.end("none");
+        if (s.begin(.landing)) s.summaryRow(s.landingSummary(given)) else s.pipelineRows(given, width, epoch, 0);
+        s.end("none");
+        if (s.begin(.next)) s.summaryRow(s.nextSummary(given)) else s.nextRows(given, width);
+        s.end("none");
+        if (s.begin(.goals)) s.summaryRow(s.goalsSummary(given)) else {
+            s.goalRows(given, width);
+            s.ideaRows(given, width, epoch, 0);
+        }
+        s.end("none");
+        if (s.begin(.unplanned)) s.summaryRow(s.unplannedSummary(given)) else s.unplannedRow(given, width);
+        s.end("none");
+        if (s.begin(.landed)) s.summaryRow(s.landedSummary(given, b)) else s.landedRow(given, b, width);
+        s.end("none");
+    }
+
+    fn drivingSummary(s: *Sheet, given: *const tickets.Plan) []const u8 {
+        const goal = given.goals[focalGoal(given.goals) orelse return "no goal yet"];
+        return s.print("#{d} {s}  {d}/{d}", .{ goal.epic, goal.title, goal.landed, goal.total });
+    }
+
+    fn nowSummary(s: *Sheet, given: *const tickets.Plan) []const u8 {
+        var working: usize = 0;
+        var stalled: usize = 0;
+        for (given.now) |item| if (building(item)) {
+            if (item.stalled != null) stalled += 1 else working += 1;
+        };
+        if (stalled == 0) return s.print("◐ {d} building", .{working});
+        return s.print("◐ {d} building · ◇ {d} stalled", .{ working, stalled });
+    }
+
+    fn landingSummary(s: *Sheet, given: *const tickets.Plan) []const u8 {
+        const start = s.used;
+        var done: [8][]const u8 = undefined;
+        var stages: usize = 0;
+        for (given.now) |item| {
+            if (building(item)) continue;
+            const name = item.stage orelse "";
+            const seen = for (done[0..stages]) |was| {
+                if (std.mem.eql(u8, was, name)) break true;
+            } else false;
+            if (seen or stages == done.len) continue;
+            done[stages] = name;
+            stages += 1;
+            var count: usize = 0;
+            for (given.now) |other| count += @intFromBool(inStage(other, name));
+            _ = s.print("{s}{s} {d}", .{ if (stages == 1) "◒ " else " · ", name, count });
+        }
+        if (stages == 0) return "◒ none";
+        return s.buf[start..s.used];
+    }
+
+    fn nextSummary(s: *Sheet, given: *const tickets.Plan) []const u8 {
+        if (given.next.len == 0) return "none";
+        const start = s.used;
+        for (given.next[0..@min(given.next.len, next_summary)], 1..) |item, place_n| {
+            _ = s.print("{s}{d} #{d}", .{ if (place_n == 1) "" else " · ", place_n, item.ticket });
+        }
+        if (given.next.len > next_summary) _ = s.print(" …", .{});
+        return s.buf[start..s.used];
+    }
+
+    fn goalsSummary(s: *Sheet, given: *const tickets.Plan) []const u8 {
+        if (given.goals.len == 0) return "none";
+        const start = s.used;
+        for (given.goals, 0..) |goal, i| {
+            const pct: u32 = if (goal.total == 0) 0 else goal.landed * 100 / goal.total;
+            _ = s.print("{s}#{d} {d}%", .{ if (i == 0) "" else " · ", goal.epic, pct });
+        }
+        return s.buf[start..s.used];
+    }
+
+    fn unplannedSummary(s: *Sheet, given: *const tickets.Plan) []const u8 {
+        const not = given.not_planned;
+        const start = s.used;
+        for (not.by_repo.map.keys(), not.by_repo.map.values()) |repo, n| _ = s.print("{s} {d} · ", .{ repo, n });
+        _ = s.print("{d} follow-ups", .{not.follow_ups});
+        return s.buf[start..s.used];
+    }
+
+    fn landedSummary(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board) []const u8 {
+        var trying: usize = 0;
+        for (b.cards()) |card| trying += @intFromBool(card.status == .@"try");
+        return s.print("▲ {d} to try · ✓ {d} today", .{ trying, given.landed_today.count });
     }
 
     fn headRow(s: *Sheet, name: []const u8, count: usize) void {
@@ -189,8 +369,17 @@ pub const Sheet = struct {
 
     fn nowRows(s: *Sheet, given: *const tickets.Plan, width: usize, epoch: i64, unfolded: u8) void {
         s.headRow("now", given.now.len);
+        s.buildingRows(given, width, epoch);
+        s.pipelineRows(given, width, epoch, unfolded);
+    }
+
+    fn buildingRows(s: *Sheet, given: *const tickets.Plan, width: usize, epoch: i64) void {
         for (given.now, 0..) |item, i| if (building(item)) s.nowRow(item, i, width, epoch);
-        // the pipeline's tickets, a stage at a time in the order babylon first names them
+    }
+
+    /// The pipeline's tickets, a stage at a time in the order babylon first names them; in
+    /// Workbench's landing window a row to each, which scrolls.
+    fn pipelineRows(s: *Sheet, given: *const tickets.Plan, width: usize, epoch: i64, unfolded: u8) void {
         var done: [8][]const u8 = undefined;
         var stages: usize = 0;
         for (given.now) |item| {
@@ -219,7 +408,7 @@ pub const Sheet = struct {
         var count: usize = 0;
         for (given.now) |item| count += @intFromBool(inStage(item, name));
         const fold = foldOf(name);
-        const open = if (fold) |bit| unfolded & (@as(u8, 1) << bit) != 0 else true;
+        const open = s.bench or if (fold) |bit| unfolded & (@as(u8, 1) << bit) != 0 else true;
         const first: usize = if (fold) |bit| (if (bit == queued_fold or s.narrow) 0 else unfolded_rows) else count;
         var seen: usize = 0;
         for (given.now, 0..) |item, i| {
@@ -281,9 +470,12 @@ pub const Sheet = struct {
     }
 
     fn nextRows(s: *Sheet, given: *const tickets.Plan, width: usize) void {
-        s.add(.{ .kind = .blank });
-        s.headRow("next", given.next.len);
-        for (given.next[0..@min(given.next.len, next_shown)], 1..) |item, place_n| {
+        if (!s.bench) {
+            s.add(.{ .kind = .blank });
+            s.headRow("next", given.next.len);
+        }
+        const shown = if (s.bench) given.next.len else @min(given.next.len, next_shown);
+        for (given.next[0..shown], 1..) |item, place_n| {
             if (s.bench) {
                 s.add(.{ .kind = .next, .pick = 0, .ticket = item.ticket, .item = place_n - 1 });
                 if (item.why.len > 0 and !s.narrow) s.add(.{ .kind = .why, .style = .dim, .text = s.clipped(width, item.why) });
@@ -295,7 +487,7 @@ pub const Sheet = struct {
             s.add(.{ .kind = .next, .pick = 0, .ticket = item.ticket, .text = both.text, .tail_at = both.tail_at });
             if (item.why.len > 0 and !s.narrow) s.add(.{ .kind = .why, .style = .dim, .text = s.clipped(width, s.print("      {s}", .{item.why})) });
         }
-        if (given.next.len > next_shown) s.add(.{ .kind = .more, .style = .dim, .text = s.print("  +{d}", .{given.next.len - next_shown}) });
+        if (shown < given.next.len) s.add(.{ .kind = .more, .style = .dim, .text = s.print("  +{d}", .{given.next.len - shown}) });
     }
 
     /// What an item waits on, as babylon says it: a ticket, or its repo's lane until one lands.
@@ -314,8 +506,10 @@ pub const Sheet = struct {
     }
 
     fn goalRows(s: *Sheet, given: *const tickets.Plan, width: usize) void {
-        s.add(.{ .kind = .blank });
-        s.headRow("goals", given.goals.len);
+        if (!s.bench) {
+            s.add(.{ .kind = .blank });
+            s.headRow("goals", given.goals.len);
+        }
         var name_w: usize = 0;
         if (!s.narrow) for (given.goals) |goal| {
             name_w = @max(name_w, @min(text_mod.cells(goal.title), 26));
@@ -363,7 +557,7 @@ pub const Sheet = struct {
     /// three, one row that unfolds them.
     fn ideaRows(s: *Sheet, given: *const tickets.Plan, width: usize, epoch: i64, unfolded: u8) void {
         if (given.ideas.len == 0) return;
-        s.add(.{ .kind = .blank });
+        if (!s.bench) s.add(.{ .kind = .blank });
         s.headRow("ideas", given.ideas.len);
         if (given.ideas.len > ideas_shown and unfolded & (@as(u8, 1) << ideas_fold) == 0) {
             s.add(.{ .kind = .ideas_more, .pick = 0, .fold = ideas_fold, .style = .dim, .text = s.print(" +{d} ideas", .{given.ideas.len}) });
@@ -554,7 +748,7 @@ test "the plan's rows: building first, a stage's first two tickets, the rest and
     defer b.deinit();
     var s: Sheet = undefined;
     const epoch = tickets.epochOf("2026-11-23T07:10:00Z").?;
-    s.build(b.plan().?, &b, 100, epoch, 0, false, false);
+    s.build(b.plan().?, &b, 100, epoch, 0, false, false, .empty);
     const eq = std.testing.expectEqualStrings;
     const ok = std.testing.expect;
     try eq("now 7", rowText(&s, .head, 0).?);
@@ -572,7 +766,7 @@ test "an unfolded stage is a row to a ticket" {
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 100, 0, 1 << queued_fold, false, false);
+    s.build(b.plan().?, &b, 100, 0, 1 << queued_fold, false, false, .empty);
     try std.testing.expect(rowText(&s, .folded, 1) == null);
     try std.testing.expect(std.mem.indexOf(u8, rowText(&s, .now, 5).?, "» #429") != null);
 }
@@ -591,7 +785,7 @@ test "next says what each waits on and why, goals their steps, and the picks run
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 100, 0, 0, false, false);
+    s.build(b.plan().?, &b, 100, 0, 0, false, false, .empty);
     const has = std.mem.indexOf;
     const ok = std.testing.expect;
     try ok(std.mem.endsWith(u8, rowText(&s, .next, 0).?, "← after #588 lands: one babylon"));
@@ -620,7 +814,7 @@ test "ideas draw a row each under their rule, one in each state, and fold past t
     var b = given;
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 80, tickets.epochOf("2026-11-24T20:04:00Z").?, 0, false, false);
+    s.build(b.plan().?, &b, 80, tickets.epochOf("2026-11-24T20:04:00Z").?, 0, false, false, .empty);
     try ok(std.mem.eql(u8, rowText(&s, .head, 3).?, "ideas 3"));
     const planning = rowText(&s, .idea, 0).?;
     try ok(std.mem.indexOf(u8, planning, "◐ #830 money") != null);
@@ -636,10 +830,10 @@ test "ideas draw a row each under their rule, one in each state, and fold past t
         \\{"epic":1,"title":"a"},{"epic":2,"title":"b"},{"epic":3,"title":"c"},{"epic":4,"title":"d"}]}}
     );
     defer four.deinit();
-    s.build(four.plan().?, &four, 80, 0, 0, false, false);
+    s.build(four.plan().?, &four, 80, 0, 0, false, false, .empty);
     try ok(rowText(&s, .idea, 0) == null);
     try ok(std.mem.eql(u8, rowText(&s, .ideas_more, 0).?, " +4 ideas"));
-    s.build(four.plan().?, &four, 80, 0, @as(u8, 1) << ideas_fold, false, false);
+    s.build(four.plan().?, &four, 80, 0, @as(u8, 1) << ideas_fold, false, false, .empty);
     try ok(rowText(&s, .ideas_more, 0) == null);
     try ok(rowText(&s, .idea, 3) != null);
 }
@@ -652,7 +846,7 @@ test "a goal with a step to try reads ▲ N to try, and the step is neither next
     );
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 100, 0, 0, false, false);
+    s.build(b.plan().?, &b, 100, 0, 0, false, false, .empty);
     try std.testing.expect(std.mem.indexOf(u8, rowText(&s, .goal, 0).?, "1 of 2  ○ #2  ▲ 1 to try") != null);
     try std.testing.expectEqual(@as(u32, 2), goalNext(b.plan().?.goals[0]).?.ticket);
 }
@@ -661,7 +855,7 @@ test "a row too wide is cut, its right side kept" {
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 40, 0, 0, false, false);
+    s.build(b.plan().?, &b, 40, 0, 0, false, false, .empty);
     for (s.rows[0..s.n]) |row| try std.testing.expect(text_mod.cells(row.text) <= 40);
     try std.testing.expect(std.mem.endsWith(u8, rowText(&s, .now, 0).?, "building · now"));
 }
@@ -675,7 +869,7 @@ test "the focal goal is the first with a step being built, a card is five rows, 
     try std.testing.expectEqual(@as(u32, 454), goalBlock(given.goals[0]).?.step);
     try std.testing.expectEqual(@as(u32, 453), goalBlock(given.goals[0]).?.on);
     var s: Sheet = undefined;
-    s.build(given, &b, 100, 0, 0, false, true);
+    s.build(given, &b, 100, 0, 0, false, true, .empty);
     try std.testing.expectEqual(Kind.focal, s.rows[0].kind);
     try std.testing.expectEqual(@as(usize, 0), s.rows[1].pick.?);
     var cards: usize = 0;
@@ -693,7 +887,7 @@ test "goals past what fits fold into one row, and landed and not planned keep th
     var b = try tickets.Board.parse(std.testing.allocator, buf[0..used]);
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 100, 0, 0, false, true);
+    s.build(b.plan().?, &b, 100, 0, 0, false, true, .empty);
     try std.testing.expect(rowText(&s, .landed, 0) != null);
     try std.testing.expect(rowText(&s, .unplanned, 0) != null);
     try std.testing.expect(std.mem.indexOf(u8, rowText(&s, .goals_more, 0).?, "more goals") != null);
@@ -706,7 +900,7 @@ test "a now row waiting on a ticket says so, with its own mark, and is not drawn
     );
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 100, tickets.epochOf("2026-11-23T07:10:00Z").?, 0, false, false);
+    s.build(b.plan().?, &b, 100, tickets.epochOf("2026-11-23T07:10:00Z").?, 0, false, false, .empty);
     const row = rowText(&s, .now, 0).?;
     try std.testing.expect(std.mem.indexOf(u8, row, "◷ #505") != null);
     try std.testing.expect(std.mem.endsWith(u8, row, "◷ waiting on #829"));

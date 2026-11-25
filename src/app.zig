@@ -402,13 +402,15 @@ pub const BoardView = struct {
     /// The plan's pick among its rows that can be picked, and the stages unfolded, a bit each.
     plan_pick: usize = 0,
     unfolded: u8 = 0,
+    /// Workbench's plan window shown whole, as a modal over the plan.
+    whole: ?sheets.Window = null,
     /// At home with the room of half a screen: the orchestrator's column alone, else the plan
     /// or the board alone.
     alone: bool = true,
 
     /// Whether a box lies over the board, the keys its own.
     pub fn boxed(view: BoardView) bool {
-        return view.help or view.detail != null or view.answering or view.giving != null or view.auto_pick != null or view.goal_open or view.draft != null;
+        return view.help or view.detail != null or view.answering or view.giving != null or view.auto_pick != null or view.goal_open or view.draft != null or view.whole != null;
     }
 };
 
@@ -605,6 +607,8 @@ pub const App = struct {
     folds: [max_repos][48]u8 = undefined,
     fold_lens: [max_repos]u8 = @splat(0),
     fold_n: usize = 0,
+    /// Workbench's plan windows folded to their summary, kept in the folds file as `plan:<window>`.
+    plan_shut: sheets.Shut = .empty,
     folds_path: ?[]const u8 = null,
     /// Bytes for the terminal arena runs in, written inside the next frame.
     out: std.ArrayList(u8) = .empty,
@@ -3749,14 +3753,23 @@ pub const App = struct {
     /// The folds read from the file's lines, one repo each.
     pub fn loadFolds(app: *App, text: []const u8) void {
         var lines = std.mem.splitScalar(u8, text, '\n');
-        while (lines.next()) |line| if (line.len > 0) app.setFold(line, true);
+        while (lines.next()) |line| {
+            if (line.len == 0) continue;
+            if (std.mem.startsWith(u8, line, plan_fold)) {
+                if (std.meta.stringToEnum(sheets.Window, line[plan_fold.len..])) |win| app.plan_shut.insert(win);
+            } else app.setFold(line, true);
+        }
     }
+
+    const plan_fold = "plan:";
 
     fn saveFolds(app: *App) !void {
         const path = app.folds_path orelse return;
         var data: Writer.Allocating = .init(app.gpa);
         defer data.deinit();
         for (0..app.fold_n) |i| try data.writer.print("{s}\n", .{app.folds[i][0..app.fold_lens[i]]});
+        var shut = app.plan_shut.iterator();
+        while (shut.next()) |win| try data.writer.print(plan_fold ++ "{s}\n", .{@tagName(win)});
         if (std.fs.path.dirname(path)) |dir| std.Io.Dir.cwd().createDirPath(app.io, dir) catch return;
         std.Io.Dir.cwd().writeFile(app.io, .{ .sub_path = path, .data = data.written() }) catch {};
     }
@@ -4441,8 +4454,140 @@ pub const App = struct {
     pub fn planSheet(app: *const App, sheet: *sheets.Sheet) bool {
         if (!app.planShown()) return false;
         const b = &app.board.?;
-        sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, app.board_view.?.unfolded, app.halfHome(), app.workbench());
+        const view = app.board_view.?;
+        var shut = app.plan_shut;
+        if (view.whole) |win| shut.remove(win);
+        sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.halfHome(), app.workbench(), shut);
         return true;
+    }
+
+    /// The plan's windows are laid out on this: the cells under the head's rule to the last row.
+    fn planArea(app: *const App) sheets.Rect {
+        return .{ .x = app.boardX() + 1, .y = 2, .w = app.boardW() -| 2, .h = (app.view_h -| @intFromBool(app.halfHome())) -| 2 };
+    }
+
+    /// Where `win` is on the screen: its title bar, body and shadow.
+    pub fn planSlot(app: *const App, win: sheets.Window) sheets.Rect {
+        const area = app.planArea();
+        const at = sheets.slot(win, area.w, area.h);
+        return .{ .x = area.x + at.x, .y = area.y + at.y, .w = at.w, .h = at.h };
+    }
+
+    /// The window shown whole, over the plan: inset from its area.
+    pub fn planWhole(app: *const App) sheets.Rect {
+        const area = app.planArea();
+        return .{ .x = area.x + 2, .y = area.y + 1, .w = area.w -| 4, .h = area.h -| 2 };
+    }
+
+    /// The rect `win` is drawn in: its slot, or the modal when it is shown whole.
+    pub fn planRect(app: *const App, win: sheets.Window) sheets.Rect {
+        const view = app.board_view orelse return app.planSlot(win);
+        return if (view.whole == win) app.planWhole() else app.planSlot(win);
+    }
+
+    /// Where the `+ goal` button is on the goals window's title bar.
+    pub fn goalHead(app: *const App) struct { x: u16, y: u16, w: u16 } {
+        const rect = app.planSlot(.goals);
+        return .{ .x = rect.x + rect.w -| 13, .y = rect.y, .w = 8 };
+    }
+
+    /// The first row of `win` drawn in a body of `body` rows: the picked row kept in view when
+    /// it is the window's, else the window's first.
+    pub fn planWindowTop(app: *const App, sheet: *const sheets.Sheet, win: sheets.Window, body: usize) usize {
+        const view = app.board_view orelse return 0;
+        const at = sheet.rowOf(view.plan_pick) orelse return 0;
+        if (sheet.rows[at].win != win) return 0;
+        const span = sheet.span(win);
+        return sheets.windowTop(at - span.start, span.len, body);
+    }
+
+    pub const PlanHit = struct { win: sheets.Window, row: ?usize = null, title: bool = false, fold: bool = false };
+
+    /// What is under (`x`, `y`) of the plan: a window's title bar, its fold mark, or a row.
+    pub fn planHit(app: *const App, sheet: *const sheets.Sheet, x: u16, y: u16) ?PlanHit {
+        const view = app.board_view orelse return null;
+        if (view.whole) |win| return app.hitIn(sheet, win, app.planWhole(), x, y);
+        for (std.enums.values(sheets.Window)) |win| if (app.hitIn(sheet, win, app.planSlot(win), x, y)) |hit| return hit;
+        return null;
+    }
+
+    fn hitIn(app: *const App, sheet: *const sheets.Sheet, win: sheets.Window, rect: sheets.Rect, x: u16, y: u16) ?PlanHit {
+        if (rect.h <= sheets.window_chrome or x < rect.x or x + 1 >= rect.x + rect.w or y < rect.y or y + 1 >= rect.y + rect.h) return null;
+        if (y == rect.y) {
+            const glyph = rect.x + rect.w - 4;
+            return .{ .win = win, .title = true, .fold = x + 1 >= glyph and x <= glyph + 1 };
+        }
+        const body = rect.h - sheets.window_chrome;
+        const span = sheet.span(win);
+        const line = app.planWindowTop(sheet, win, body) + (y - rect.y - 1);
+        return .{ .win = win, .row = if (line < span.len) span.start + line else null };
+    }
+
+    /// The sheet's row under (`x`, `y`).
+    fn planRowAt(app: *const App, sheet: *const sheets.Sheet, x: u16, y: u16) ?usize {
+        if (!app.workbench()) {
+            const at = app.planTop(sheet) + (y -| 2);
+            return if (at < sheet.n) at else null;
+        }
+        const hit = app.planHit(sheet, x, y) orelse return null;
+        return hit.row;
+    }
+
+    /// The pick as its window and its place among that window's picks.
+    fn planPlace(app: *App) ?struct { win: sheets.Window, at: usize } {
+        var sheet: sheets.Sheet = undefined;
+        if (!app.planSheet(&sheet)) return null;
+        const row = sheet.picked(app.board_view.?.plan_pick) orelse return null;
+        return .{ .win = row.win, .at = app.board_view.?.plan_pick - sheet.pickRange(row.win).?.first };
+    }
+
+    /// The pick put back in the place it had in its window, now that a fold has renumbered the picks.
+    fn planRestore(app: *App, place: anytype) void {
+        var sheet: sheets.Sheet = undefined;
+        if (!app.planSheet(&sheet)) return;
+        const range = sheet.pickRange(place.win) orelse return;
+        app.board_view.?.plan_pick = range.first + @min(place.at, range.n - 1);
+    }
+
+    /// `win` folded to its summary, or opened again; the pick stays where it was.
+    fn togglePlanFold(app: *App, win: sheets.Window) !void {
+        const place = app.planPlace();
+        app.plan_shut.toggle(win);
+        app.dirty = true;
+        try app.saveFolds();
+        if (place) |p| app.planRestore(p);
+    }
+
+    /// Every window but `keep` folded; with those folded already, all opened.
+    fn foldPlanAll(app: *App, keep: sheets.Window) !void {
+        const place = app.planPlace();
+        var others = sheets.Shut.full;
+        others.remove(keep);
+        app.plan_shut = if (app.plan_shut.eql(others)) .empty else others;
+        app.dirty = true;
+        try app.saveFolds();
+        if (place) |p| app.planRestore(p);
+    }
+
+    fn openWhole(app: *App, win: sheets.Window) void {
+        const view = &app.board_view.?;
+        view.whole = win;
+        app.dirty = true;
+        var sheet: sheets.Sheet = undefined;
+        if (!app.planSheet(&sheet)) return;
+        const range = sheet.pickRange(win) orelse return;
+        view.plan_pick = std.math.clamp(view.plan_pick, range.first, range.first + range.n - 1);
+    }
+
+    fn closeWhole(app: *App) void {
+        const view = &app.board_view.?;
+        const win = view.whole orelse return;
+        view.whole = null;
+        app.dirty = true;
+        if (!app.plan_shut.contains(win)) return;
+        var sheet: sheets.Sheet = undefined;
+        if (!app.planSheet(&sheet)) return;
+        if (sheet.pickRange(win)) |range| view.plan_pick = range.first;
     }
 
     /// The first of the plan's rows that is drawn: the row picked kept in view, two rows more
@@ -4484,10 +4629,21 @@ pub const App = struct {
         const is = anyKey;
         var sheet: sheets.Sheet = undefined;
         if (!app.planSheet(&sheet)) return;
-        view.plan_pick = @min(view.plan_pick, sheet.picks -| 1);
-        if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) view.plan_pick = @min(view.plan_pick + 1, sheet.picks -| 1);
-        if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.plan_pick -|= 1;
+        // shown whole, the pick stays among its window's rows
+        const range = if (view.whole) |win| sheet.pickRange(win) else null;
+        const first = if (range) |r| r.first else 0;
+        const last = if (range) |r| r.first + r.n - 1 else sheet.picks -| 1;
+        view.plan_pick = std.math.clamp(view.plan_pick, first, last);
+        if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) view.plan_pick = @min(view.plan_pick + 1, last);
+        if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.plan_pick = @max(view.plan_pick -| 1, first);
         if (is(key, &.{"?"})) view.help = true;
+        if (view.whole != null and is(key, &.{ "\x1b", "q" })) return app.closeWhole();
+        if (view.whole != null and !is(key, &.{ "J", "K", "x", "e", "\r", " ", "t" })) return;
+        if (app.workbench()) if (sheet.picked(view.plan_pick)) |row| {
+            if (is(key, &.{"z"})) return app.togglePlanFold(row.win);
+            if (is(key, &.{"Z"})) return app.foldPlanAll(row.win);
+            if (is(key, &.{"f"})) return app.openWhole(row.win);
+        };
         if (is(key, &.{"+"})) return app.openGoal();
         if (is(key, &.{"B"})) return app.toBoard();
         if (is(key, &.{ "J", "K", "x", "e" })) {
@@ -4542,6 +4698,7 @@ pub const App = struct {
             return;
         }
         switch (row.kind) {
+            .summary => try app.togglePlanFold(row.win),
             .folded, .ideas_more => if (row.fold) |bit| {
                 view.unfolded ^= @as(u8, 1) << bit;
             },
@@ -4602,11 +4759,17 @@ pub const App = struct {
         }
         var sheet: sheets.Sheet = undefined;
         if (m.y < 2 or !app.planSheet(&sheet)) return;
-        const at = app.planTop(&sheet) + (m.y - 2);
-        if (at >= sheet.n) return;
+        if (app.workbench()) {
+            const hit = app.planHit(&sheet, m.x, m.y) orelse return app.closeWhole();
+            if (hit.title) {
+                const head = app.goalHead();
+                if (view.whole != null) return;
+                if (hit.win == .goals and m.x >= head.x and m.x < head.x + head.w) return app.openGoal();
+                return if (hit.fold) app.togglePlanFold(hit.win) else app.openWhole(hit.win);
+            }
+        }
+        const at = app.planRowAt(&sheet, m.x, m.y) orelse return;
         const row = sheet.rows[at];
-        const head = app.goalHead();
-        if (row.kind == .head and app.workbench() and std.mem.eql(u8, row.text, "goals") and m.x >= head.x and m.x < head.x + head.w) return app.openGoal();
         const pick = row.pick orelse return;
         const picked = view.plan_pick == pick;
         view.plan_pick = pick;
@@ -4635,8 +4798,8 @@ pub const App = struct {
         if (!m.release) return;
         var sheet: sheets.Sheet = undefined;
         if (m.y < 2 or !app.planSheet(&sheet)) return;
-        const at = app.planTop(&sheet) + (m.y - 2);
-        if (at >= sheet.n or sheet.rows[at].kind != .next) return;
+        const at = app.planRowAt(&sheet, m.x, m.y) orelse return;
+        if (sheet.rows[at].kind != .next) return;
         const to = nextPlace(&sheet, at);
         if (to == row.from) {
             if (row.opens and !row.moved) try app.planAct(&sheet.rows[at], "\r");
@@ -4667,6 +4830,7 @@ pub const App = struct {
     pub fn kept(app: *const App) ?Kept {
         var view = app.board_view orelse return null;
         view.help = false;
+        view.whole = null;
         view.detail = null;
         view.giving = null;
         view.answering = false;
@@ -5091,11 +5255,6 @@ pub const App = struct {
             x += button.w + 2;
         }
         return out;
-    }
-
-    /// Where the `+ goal` button sits on a goals title bar, `x` and width.
-    pub fn goalHead(app: *const App) struct { x: u16, w: u16 } {
-        return .{ .x = app.boardX() + 1 + app.boardW() -| 3 -| 10, .w = 8 };
     }
 
     fn openGoal(app: *App) !void {
@@ -6191,6 +6350,10 @@ pub const App = struct {
                     return true;
                 }
                 if (rect.contains(m.x, m.y)) return true;
+            }
+            if (open.whole != null and open.detail == null and !open.help and !open.answering and open.giving == null) {
+                try app.planClick(m);
+                return true;
             }
             open.help = false;
             open.detail = null;
@@ -9982,4 +10145,54 @@ test "a tab clicked lights its list in place, and j and the wheel scroll the pan
     try eq(@as(usize, 0), view.tab_scroll);
     try std.testing.expect(app.feedOf(&f));
     try eq(height, f.height());
+}
+
+test "on Plan's windows z folds the picked one and keeps the pick, Z folds the rest and opens them again, f shows one whole and q closes it, and the folds load from their file's plan: lines" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 30;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"plan":{"now":[
+        \\{"ticket":1,"repo":"arena","title":"a","state":"building"},
+        \\{"ticket":2,"repo":"arena","title":"b","state":"building"}],
+        \\"next":[{"ticket":11,"repo":"arena","title":"n","why":"","waits_on":[]}],
+        \\"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    const eq = std.testing.expectEqual;
+    const view = &app.board_view.?;
+    var sheet: sheets.Sheet = undefined;
+
+    try app.planKey("j");
+    try eq(@as(usize, 1), view.plan_pick);
+    try app.planKey("z");
+    try std.testing.expect(app.plan_shut.contains(.now));
+    try std.testing.expect(app.planSheet(&sheet));
+    try eq(sheets.Window.now, sheet.picked(view.plan_pick).?.win);
+    try eq(sheets.Kind.summary, sheet.picked(view.plan_pick).?.kind);
+    try app.planKey("z");
+    try std.testing.expect(!app.plan_shut.contains(.now));
+
+    try app.planKey("Z");
+    try eq(@as(usize, 6), app.plan_shut.count());
+    try std.testing.expect(!app.plan_shut.contains(.now));
+    try app.planKey("Z");
+    try eq(@as(usize, 0), app.plan_shut.count());
+
+    try app.planKey("f");
+    try eq(@as(?sheets.Window, .now), view.whole);
+    try app.planKey("j");
+    try app.planKey("j");
+    try std.testing.expect(app.planSheet(&sheet));
+    try eq(sheets.Window.now, sheet.picked(view.plan_pick).?.win);
+    try app.planKey("q");
+    try eq(@as(?sheets.Window, null), view.whole);
+
+    var fresh: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    fresh.loadFolds("tlon\nplan:now\nplan:nowhere\nplan:landed\n");
+    try std.testing.expect(fresh.folded("tlon") and !fresh.folded("plan:now"));
+    try std.testing.expect(fresh.plan_shut.contains(.now) and fresh.plan_shut.contains(.landed) and fresh.plan_shut.count() == 2);
 }
