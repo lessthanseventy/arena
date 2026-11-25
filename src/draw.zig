@@ -4615,7 +4615,7 @@ fn bigBoard(gpa: std.mem.Allocator) !tickets.Board {
     return tickets.Board.parse(gpa, json.written());
 }
 
-test "a frame of a board of five repos and 362 cards takes under 4ms" {
+test "a frame of a board of five repos and 362 cards walks the cards under 3000 times" {
     const gpa = std.testing.allocator;
     var board = try bigBoard(gpa);
     defer board.deinit();
@@ -4633,17 +4633,14 @@ test "a frame of a board of five repos and 362 cards takes under 4ms" {
         .{ .home = true, .repo = 1 },
         .{ .home = true, .backlog = true },
     };
+    // Walks, not time, which a loaded machine stretches: a frame is slow when per-line helpers each
+    // walk the whole board. Today's views take 157 to 2420; a helper scanning per line takes far more.
     for (views) |view| {
         app.board_view = view;
-        const rounds = 20;
-        const start = std.Io.Timestamp.now(std.testing.io, .awake);
-        for (0..rounds) |_| {
-            out.clearRetainingCapacity();
-            try frame(&app, &out.writer, .all);
-        }
-        const ns = start.durationTo(std.Io.Timestamp.now(std.testing.io, .awake)).toNanoseconds();
-        // half of main's 8ms between frames, with room for a loaded machine
-        try std.testing.expect(@divTrunc(ns, rounds) < 4 * std.time.ns_per_ms);
+        tickets.passes = 0;
+        out.clearRetainingCapacity();
+        try frame(&app, &out.writer, .all);
+        try std.testing.expect(tickets.passes < 3000);
     }
 }
 

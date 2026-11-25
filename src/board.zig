@@ -1,5 +1,9 @@
 //! babylon's board, from the file it keeps: the tickets every Claude on the machine shares.
 const std = @import("std");
+const builtin = @import("builtin");
+
+/// How many times the cards have been walked; in tests only, where a frame's budget of walks is held.
+pub var passes: if (builtin.is_test) usize else void = if (builtin.is_test) 0 else {};
 
 /// `try` is landed and waiting on the human's hands: drawn in the done column, above the done cards.
 pub const Status = enum { todo, doing, review, @"try", done, backlog };
@@ -418,6 +422,7 @@ pub const Board = struct {
     }
 
     pub fn cards(b: *const Board) []const Card {
+        if (builtin.is_test) passes += 1;
         return b.parsed.value.tickets;
     }
 
@@ -487,6 +492,7 @@ pub const Board = struct {
 
     /// The cards waiting to be put on the board, by repo then board order.
     pub fn backlog(b: *const Board) []const Card {
+        if (builtin.is_test) passes += 1;
         return b.parsed.value.backlog;
     }
 
