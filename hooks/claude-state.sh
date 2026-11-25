@@ -164,6 +164,7 @@ start)
 $(jq -r '.cwd // "", .pane // "", .socket // ""' "$f" 2>/dev/null)
 EOF
 		{ [ -z "$d" ] || [ -d "$d" ]; } && continue
+		[ "${f##*/}" = "$sid.json" ] && continue
 		if [ -n "$p" ]; then
 			if [ -n "$s" ]; then
 				command tmux -S "$s" display-message -p -t "$p" '' >/dev/null 2>&1 && continue
