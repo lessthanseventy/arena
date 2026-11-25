@@ -6305,6 +6305,13 @@ pub const App = struct {
                     return true;
                 }
             }
+            if (m.leftPress() and m.y == 0) if (draw.sideAutoButton(app)) |button| {
+                const left = app.term_w - app.view_w;
+                if (m.x >= left + button.x and m.x < left + button.x + button.w) {
+                    try app.openAuto();
+                    return true;
+                }
+            };
             if (m.leftPress() and try app.feedClick(m)) return true;
             if (m.wheel() and app.panelWheel(m)) return true;
             if (app.sideShown() and (app.sideFocused() or m.wheel())) return false;

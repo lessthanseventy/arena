@@ -116,6 +116,8 @@ const Column = struct {
     mark_at: ?usize = null,
     /// Dim at the right end of its top edge.
     right: []const u21 = &.{},
+    /// The cells of the title, from and up to, that are a button: raised off the bar.
+    button: ?[2]usize = null,
     /// Drawn as Workbench's window: a title bar, a panel for sides and a well along the foot.
     roles: ?theme.Roles = null,
 
@@ -130,6 +132,9 @@ const Column = struct {
             if (cx >= 2 and cx - 2 < col.title.len) {
                 cp = col.title[cx - 2];
                 style = paintStyle(if (col.mark_at == cx - 2) r.accent else if (quiet) r.dim else r.text, face, true);
+                if (col.button) |cells| if (cx - 2 >= cells[0] and cx - 2 < cells[1]) {
+                    style = paintStyle(r.text, if (quiet) r.raised else r.tile, true);
+                };
             } else if (cx >= right_at and cx < col.w -| 2) {
                 cp = col.right[cx - right_at];
                 style = paintStyle(r.dim, face, false);
@@ -173,7 +178,8 @@ const Column = struct {
 
         if (top and cx >= 2 and cx - 2 < col.title.len) {
             const marked = col.mark_at == cx - 2;
-            try pen.set(w, if (col.focused or col.drop) chip(app) else if (marked) ink(app, "amber", 4) else ink(app, "dim", 8), null);
+            const pressed = if (col.button) |cells| cx - 2 >= cells[0] and cx - 2 < cells[1] else false;
+            try pen.set(w, if (pressed or col.focused or col.drop) chip(app) else if (marked) ink(app, "amber", 4) else ink(app, "dim", 8), null);
             return put(w, col.title[cx - 2]);
         }
         const right_at = col.w -| 2 -| col.right.len;
@@ -1169,7 +1175,8 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
         var title_cps: [64]u21 = undefined;
         var right_cps: [24]u21 = undefined;
         const headed = i == 0 and s.orchestrator() and app.sided();
-        const title = if (headed) sideHead(app, &title_buf) else std.fmt.bufPrint(&title_buf, " {d} {s} ", .{ i + 1, win.name }) catch title_buf[0..0];
+        var button: ?[2]usize = null;
+        const title = if (headed) sideHead(app, &title_buf, &button, col_w) else std.fmt.bufPrint(&title_buf, " {d} {s} ", .{ i + 1, win.name }) catch title_buf[0..0];
         var title_len = codepoints(title, &title_cps);
         const mark = if (headed) .none else app.mark(s, win);
         if (mark != .none and title_len + 2 <= title_cps.len) {
@@ -1187,6 +1194,7 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
             .title = title_cps[0..title_len],
             .mark_at = if (headed and title_len > 0) 1 else if (mark != .none and title_len > 0) title_len - 2 else null,
             .right = if (title_len + right.len + 6 <= col_w) right else right[0..0],
+            .button = if (title_len > 0) button else null,
             .roles = if (headed) app.roles else null,
         };
 
@@ -1642,7 +1650,8 @@ fn sideEmpty(app: *const App, w: *Writer) !void {
     var title_buf: [96]u8 = undefined;
     var title_cps: [64]u21 = undefined;
     var right_cps: [24]u21 = undefined;
-    var title_len = codepoints(sideHead(app, &title_buf), &title_cps);
+    var button: ?[2]usize = null;
+    var title_len = codepoints(sideHead(app, &title_buf, &button, app.view_w), &title_cps);
     if (title_len + 4 > app.view_w) title_len = 0;
     const right = right_cps[0..codepoints(sideHint(app), &right_cps)];
     const col: Column = .{
@@ -1652,6 +1661,7 @@ fn sideEmpty(app: *const App, w: *Writer) !void {
         .title = title_cps[0..title_len],
         .mark_at = if (title_len > 0) 1 else null,
         .right = if (title_len + right.len + 6 <= app.view_w) right else right[0..0],
+        .button = if (title_len > 0) button else null,
         .roles = app.roles,
     };
     var pen: Pen = .{};
@@ -1690,9 +1700,20 @@ fn codepoints(text: []const u8, out: []u21) usize {
 }
 
 /// The orchestrator's column's head, on its top edge: its mark, its state in words and the
-/// share of its context used.
-fn sideHead(app: *const App, buf: []u8) []const u8 {
+/// share of its context used, then auto's count as a button, whose cells are `button`.
+fn sideHead(app: *const App, buf: []u8, button: *?[2]usize, col_w: usize) []const u8 {
     var out: Writer = .fixed(buf);
+    const room = col_w -| 4;
+    var full = true;
+    while (true) {
+        out.end = 0;
+        sideHeadInto(app, &out, button, full);
+        if (!full or cellCount(out.buffered()) <= room) return out.buffered();
+        full = false;
+    }
+}
+
+fn sideHeadInto(app: *const App, out: *Writer, button: *?[2]usize, full: bool) void {
     const win = app.orchestratorWindow();
     const state = app.orchestratorState();
     const mark: u21 = switch (state) {
@@ -1704,7 +1725,11 @@ fn sideHead(app: *const App, buf: []u8) []const u8 {
     };
     var when: [16]u8 = undefined;
     out.writeAll(" ") catch {};
-    put(&out, mark) catch {};
+    put(out, mark) catch {};
+    if (!full) {
+        sideHeadAuto(app, out, button);
+        return;
+    }
     out.writeAll(" orchestrator · ") catch {};
     switch (state) {
         .working => out.print("working {s}", .{ago(&when, app.epoch, win.?.since)}) catch {},
@@ -1715,11 +1740,28 @@ fn sideHead(app: *const App, buf: []u8) []const u8 {
         .off => out.writeAll("off") catch {},
     }
     if (win) |it| if (it.ctx > 0) out.print(" · ctx {d}%", .{@min(it.ctx, 999)}) catch {};
+    sideHeadAuto(app, out, button);
+}
+
+fn sideHeadAuto(app: *const App, out: *Writer, button: *?[2]usize) void {
+    button.* = null;
     if (app.board) |*b| if (b.autoState()) |auto| {
-        (if (auto.on) out.print(" · auto {d}/{d}", .{ auto.working, auto.cap }) else out.writeAll(" · auto off")) catch {};
+        out.writeAll(" ") catch {};
+        const from = cellCount(out.buffered());
+        (if (auto.on) out.print(" auto {d}/{d} ", .{ auto.working, auto.cap }) else out.writeAll(" auto off ")) catch {};
+        button.* = .{ from, cellCount(out.buffered()) };
     };
     out.writeAll(" ") catch {};
-    return out.buffered();
+}
+
+/// Where auto's button is on the top edge of the orchestrator's column: its first cell from the
+/// column's left edge, and its width.
+pub fn sideAutoButton(app: *const App) ?struct { x: u16, w: u16 } {
+    var buf: [96]u8 = undefined;
+    var cells: ?[2]usize = null;
+    _ = sideHead(app, &buf, &cells, app.view_w);
+    const at = cells orelse return null;
+    return .{ .x = @intCast(at[0] + 2), .w = @intCast(at[1] - at[0]) };
 }
 
 /// A window's picture in the overview, its top left corner at (`x`, `y`): a small frame with its

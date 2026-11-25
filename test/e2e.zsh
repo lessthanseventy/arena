@@ -1724,6 +1724,15 @@ zselect -t 30
 check "once, not a command for each click" eval '(( $(grep -c -- "--repo-cap arena=" $tmp/babylon) == 1 ))'
 key Escape
 check "esc closes the settings" gone 'working 2 of 6'
+headrow() { screen | grep -n -m1 '╭─ [^╭]*auto 2/6' | cut -d: -f1 }
+headcol() { local l=$(screen | grep -m1 '╭─ [^╭]*auto 2/6'); local p=${l%%auto 2/6*}; print $(( ${#p} + 2 )) }
+check "the column's head has auto 2/6 in it" see '╭─ [^╭]*auto 2/6'
+: >$tmp/babylon
+mouse 0 $(headcol) $(headrow) M
+check "a click on it opens auto's settings, one row for each repo" see 'arena +\[-\] +3 +\[\+\]'
+check "with its switch" see 'working 2 of 6'
+key Escape
+check "esc closes them" gone 'working 2 of 6'
 pane_h() { inner display -p -t orchestrator:orch '#{pane_height}' }
 r=$(rowof 'nxt  *2'); h=$(pane_h)
 for tab in bld lnd tdy nxt; do
