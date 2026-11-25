@@ -1247,7 +1247,6 @@ check "and esc closes them" gone 'working [0-9]+ of [0-9]+'
 cp $tmp/run/babylon/board.json $tmp/board.noauto
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":2,"working":1}}' >$tmp/run/babylon/board.json
 check "on, the switch beside the tabs says how many work of the cap" see ' ◐ auto 1/2( |$)'
-check "and so does the board's row atop the rail" see '^│ ▤ board auto 1/2 '
 key A
 key a
 check "and a turns it off" await last 'auto off'
@@ -1662,8 +1661,6 @@ feed_above() {
 }
 check "the feed sits atop the orchestrator's column, Your move above its pane's first line" await feed_above
 check "each item as babylon words it, its actions under it" see '▌     1 Blue   c in words'
-pane_under_feed() { local h=$(inner display -p -t orchestrator:orch '#{pane_height}') r=$(rowof 'tdy  *[0-9]'); (( h == 22 - r - 5 - 1 )) || { print "      pane $h, tabs at row $r"; return 1 } }
-check "the pane under the feed is as tall as what is left of the column, under the tabs and their panel of five rows" await pane_under_feed
 print -r -- "${$(jq -c '.tickets += [{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[],"stage":"failed"}]' $tmp/board.pipe)%\}}"',"orchestrator":{"on":true,"running":true},"needs_you":['\
 '{"id":"ask:5","kind":"ask","ticket":8,"repo":"arena","text":"#8 arena  asks: Blue or green?",'\
 '"actions":[{"key":"1","label":"Blue","argv":["babylon","answer","5","1"]},{"key":"c","label":"in words","argv":["babylon","answer","5","--words"],"needs":"words"}]},'\
@@ -1709,9 +1706,7 @@ key Enter
 check "Enter runs the action with the words as its last argument" await last 'answer 5 --words in words'
 check "and the line is gone, the feed has its keys" await feed_lit '#8 arena  asks'
 jq -c '. + {"hold":false,"auto":{"on":true,"cap":6,"working":2,"idle":{"slots":1,"why":"next empty"},"repo_caps":{"arena":3,"babylon":2,"tlon":1}},"plan":{"next":[{"ticket":655,"repo":"arena","title":"Typing reaches no pane","why":"third sighting","set_by":"orchestrator"},{"ticket":656,"repo":"babylon","title":"Held lines","why":"","set_by":"orchestrator"}]}}' $tmp/run/babylon/board.json >$tmp/board.tmp && mv $tmp/board.tmp $tmp/run/babylon/board.json
-see 'nxt +2'
-check "next is the lit tab, its tickets in the panel under the tabs" see '#656 babylon  Held lines'
-check "the column has no auto row, and none for its repos" hides 'auto on · 2 of 6|arena 3 · babylon 2'
+see '◐ (auto )?2/6'
 : >$tmp/babylon
 mouse 0 $(( $(autocol) + 3 )) $(( $(tabrow) - 1 )) M
 check "a click on the header's auto words opens its settings, one row for each repo" see 'arena +\[-\] +3 +\[\+\]'
@@ -1726,38 +1721,6 @@ zselect -t 30
 check "once, not a command for each click" eval '(( $(grep -c -- "--repo-cap arena=" $tmp/babylon) == 1 ))'
 key Escape
 check "esc closes the settings" gone 'working 2 of 6'
-headrow() { screen | grep -n -m1 '╭─ [^╭]*auto 2/6' | cut -d: -f1 }
-headcol() { local l=$(screen | grep -m1 '╭─ [^╭]*auto 2/6'); local p=${l%%auto 2/6*}; print $(( ${#p} + 2 )) }
-check "the column's head has auto 2/6 in it" see '╭─ [^╭]*auto 2/6'
-: >$tmp/babylon
-mouse 0 $(headcol) $(headrow) M
-check "a click on it opens auto's settings, one row for each repo" see 'arena +\[-\] +3 +\[\+\]'
-check "with its switch" see 'working 2 of 6'
-key Escape
-check "esc closes them" gone 'working 2 of 6'
-pane_h() { inner display -p -t orchestrator:orch '#{pane_height}' }
-r=$(rowof 'nxt  *2'); h=$(pane_h)
-for tab in bld lnd tdy nxt; do
-  l=$(screen | sed -n ${r}p); c=$(( ${#${l%%$tab*}} + 1 ))
-  mouse 0 $((c + 2)) $r M
-  check "a click on the $tab tab leaves the chat's height as it was" await eval '(( $(pane_h) == h ))'
-done
-check "a click on the next tab lights its list in the panel, a row for each ticket" see '#656 babylon  Held lines'
-key j
-check "and the feed has its keys again: the pick goes on to next's tickets" await feed_lit '#655 arena  third sighting'
-touch $tmp/refuse-next
-key p
-check "a next key babylon refuses says why under the ticket's row" see 'babylon: ticket #655 is c'
-rm $tmp/refuse-next
-key p
-check "p pins a ticket where it is, through babylon as the human" await last 'next 655 --at 1'
-check "and the next key takes the refusal away" gone 'babylon: ticket #655 is c'
-key J
-check "J moves it down" await last 'next 655 --at 2'
-key K
-check "K moves the one under it up" await last 'next 656 --at 1'
-key x
-check "x drops it from next" await last 'next 655 --drop'
 jq -c "del(.hold,.auto,.plan)" $tmp/run/babylon/board.json >$tmp/board.tmp && mv $tmp/board.tmp $tmp/run/babylon/board.json
 key k k
 key i
@@ -1996,11 +1959,6 @@ peeks() {
 r=$(rowof ' one '); check "resting on a Claude in the rail peeks its last words" peeks 4 $r 'said: Hovered'
 r=$(rowof 'P4 Start #40'); c=$(colof $r 'P4 Start')
 check "on a needs you item in the feed, its ticket" peeks $((c + 2)) $r 'arena · med · default model'
-r=$(rowof 'bld  '); c=$(colof $r 'bld')
-mouse 0 $((c + 2)) $r M
-check "a click on the building tab lights its list in the panel, with its ticket a row there" see '#41 menard'
-r=$(rowof '#41 menard'); c=$(colof $r '#41 menard')
-check "on a ticket building in the panel, that ticket" peeks $((c + 2)) $r 'menard · med · default model'
 r=$(rowof '#42 Landed'); c=$(colof $r '#42 Landed')
 check "on a card in recent, its ticket" peeks $((c + 3)) $r 'arena · med · default model'
 r=$(rowof '#41 Over'); c=$(colof $r '#41 Over')
@@ -2150,6 +2108,25 @@ key Enter
 check "⏎ on a pipeline row opens the gate's modal for its run" await shows '✗ gate +failed'
 key q
 key k
+: >$tmp/babylon
+see '◐ auto'
+r=$(rowof '◐ auto'); c=$(colof $r '◐ auto')
+mouse 0 $((c + 1)) $r M
+mouse 0 $((c + 1)) $r m
+check "a click on the switch in Plan's head turns auto on" await last 'auto on'
+cp $tmp/run/babylon/board.json $tmp/board.plan
+print -r -- "${$(<$tmp/board.plan)%\}}"',"auto":{"on":true,"cap":4,"working":2,"tools":{"working":1,"cap":1}}}' >$tmp/run/babylon/board.json
+check "on, Plan's head says how many work of the cap" see '◐ auto 2/4'
+check "and the orchestrator's column and the rail say nothing of auto" eval '[[ $(screen | grep -c "auto 2/4") == 1 ]]'
+offs=$(auto_offs)
+r=$(rowof '◐ auto'); c=$(colof $r '◐ auto')
+mouse 0 $((c + 1)) $r M
+mouse 0 $((c + 1)) $r m
+check "one click on it only asks to turn it off" see '◐ turn off\?'
+mouse 0 $((c + 1)) $r M
+mouse 0 $((c + 1)) $r m
+check "a second click does" await eval '(( $(auto_offs) > offs ))'
+cp $tmp/board.plan $tmp/run/babylon/board.json
 : >$tmp/babylon
 key -l ' '
 check "space opens the row in place, with the card's buttons under it" await shows 'o open +e edit'

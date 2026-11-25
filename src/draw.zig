@@ -116,8 +116,7 @@ const Column = struct {
     mark_at: ?usize = null,
     /// Dim at the right end of its top edge.
     right: []const u21 = &.{},
-    /// The cells of the title, from and up to, that are a button: raised off the bar.
-    button: ?[2]usize = null,
+
     /// Drawn as Workbench's window: a title bar, a panel for sides and a well along the foot.
     roles: ?theme.Roles = null,
 
@@ -132,9 +131,6 @@ const Column = struct {
             if (cx >= 2 and cx - 2 < col.title.len) {
                 cp = col.title[cx - 2];
                 style = paintStyle(if (col.mark_at == cx - 2) r.accent else if (quiet) r.dim else r.text, face, true);
-                if (col.button) |cells| if (cx - 2 >= cells[0] and cx - 2 < cells[1]) {
-                    style = paintStyle(r.text, if (quiet) r.raised else r.tile, true);
-                };
             } else if (cx >= right_at and cx < col.w -| 2) {
                 cp = col.right[cx - right_at];
                 style = paintStyle(r.dim, face, false);
@@ -178,8 +174,7 @@ const Column = struct {
 
         if (top and cx >= 2 and cx - 2 < col.title.len) {
             const marked = col.mark_at == cx - 2;
-            const pressed = if (col.button) |cells| cx - 2 >= cells[0] and cx - 2 < cells[1] else false;
-            try pen.set(w, if (pressed or col.focused or col.drop) chip(app) else if (marked) ink(app, "amber", 4) else ink(app, "dim", 8), null);
+            try pen.set(w, if (col.focused or col.drop) chip(app) else if (marked) ink(app, "amber", 4) else ink(app, "dim", 8), null);
             return put(w, col.title[cx - 2]);
         }
         const right_at = col.w -| 2 -| col.right.len;
@@ -449,25 +444,13 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
             const needs = app.railNeeds(&needs_buf);
             if (!open) try pen.set(w, if (app.needsCount() > 0) heading(app) else dim, null);
             try w.writeAll(needs);
-            var auto_buf: [32]u8 = undefined;
-            const auto = if (app.auto()) |state| (if (state.tools) |t|
-                std.fmt.bufPrint(&auto_buf, " auto {d}/{d} · tools {d}/{d}", .{ state.working, state.cap, t.working, t.cap })
-            else
-                std.fmt.bufPrint(&auto_buf, " auto {d}/{d}", .{ state.working, state.cap })) catch "" else "";
             const orch_state = app.orchestrator();
             const runs_orch = if (orch_state) |state| state.running else false;
             const orch: []const u8 = if (orch_state) |state| (if (state.running or state.on) " orch" else " orch off") else "";
-            // both give way to the counts on a rail too narrow: a running orchestrator first,
-            // then auto's state, and one that is not running last
+            // it gives way to the counts on a rail too narrow
             const room = inner -| (8 + cellCount(needs) + 1 + cellCount(counts));
-            const down_w = if (!runs_orch and cellCount(orch) <= room) cellCount(orch) else 0;
-            const auto_w = if (cellCount(auto) + down_w <= room) cellCount(auto) else 0;
-            const orch_w = if (runs_orch and auto_w + cellCount(orch) <= room) cellCount(orch) else down_w;
-            const head = 8 + cellCount(needs) + auto_w + orch_w;
-            if (auto_w > 0) {
-                if (!open) try pen.set(w, autoOn(app), null);
-                try w.writeAll(auto);
-            }
+            const orch_w = if (cellCount(orch) <= room) cellCount(orch) else 0;
+            const head = 8 + cellCount(needs) + orch_w;
             if (orch_w > 0) {
                 if (!open) try pen.set(w, if (runs_orch) ink(app, "violet", 5) else ink(app, "dim", 8), null);
                 try w.writeAll(orch);
@@ -1302,8 +1285,7 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
         var title_cps: [64]u21 = undefined;
         var right_cps: [24]u21 = undefined;
         const headed = i == 0 and s.orchestrator() and app.sided();
-        var button: ?[2]usize = null;
-        const title = if (headed) sideHead(app, &title_buf, &button, col_w) else std.fmt.bufPrint(&title_buf, " {d} {s} ", .{ i + 1, win.name }) catch title_buf[0..0];
+        const title = if (headed) sideHead(app, &title_buf, col_w) else std.fmt.bufPrint(&title_buf, " {d} {s} ", .{ i + 1, win.name }) catch title_buf[0..0];
         var title_len = codepoints(title, &title_cps);
         const mark = if (headed) .none else app.mark(s, win);
         if (mark != .none and title_len + 2 <= title_cps.len) {
@@ -1321,7 +1303,6 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
             .title = title_cps[0..title_len],
             .mark_at = if (headed and title_len > 0) 1 else if (mark != .none and title_len > 0) title_len - 2 else null,
             .right = if (title_len + right.len + 6 <= col_w) right else right[0..0],
-            .button = if (title_len > 0) button else null,
             .roles = if (headed) app.roles else null,
         };
 
@@ -1464,9 +1445,8 @@ fn spaceRun(n: usize) []const u8 {
     return space_run[0..@min(n, space_run.len)];
 }
 
-/// Workbench's row of the feed for the lines that are tiles, buttons or chips: a Your move item a
-/// tile led by its kind's chip, its buttons raised, landing and building chips as chips, the
-/// pick lit raised. Chips keep their cells, so the pick's place is the text's.
+/// Workbench's row of the feed for the lines that are tiles or buttons: a Your move item a tile
+/// led by its kind's chip, its buttons raised, the pick lit raised.
 fn benchFeedRow(app: *const App, w: *Writer, pen: *Pen, r: theme.Roles, f: *const feed.Feed, row: usize, inner: u16) !void {
     const line = f.line(row);
     const on = app.feedLitItem(f);
@@ -1508,46 +1488,13 @@ fn benchFeedRow(app: *const App, w: *Writer, pen: *Pen, r: theme.Roles, f: *cons
             try o.say(if (strong) r.accent else r.dim, true, if (lit) "▌ " else "  ");
             try o.say(r.failed, false, line.text);
         },
-        .strip => {
-            try o.say(r.text, false, " ");
-            // each tab's chip takes the two cells of the gap before it
-            for (f.chips[0..f.n_chips]) |tab| {
-                const here = on != null and on.?.line == row and on.?.at == tab.at;
-                const piece = line.text[tab.at..@min(line.text.len, tab.at + tab.w)];
-                try o.chip(r, if (here) (if (strong) r.accent else r.dim) else r.dim, piece, here or tab.section == f.lit);
-            }
-        },
         .move_head => {
             const cut = std.mem.lastIndexOfScalar(u8, line.text, ' ') orelse 0;
             try o.say(r.you, true, line.text[0..cut]);
             try o.say(r.text, false, " ");
             try o.chip(r, r.dim, line.text[@min(cut + 1, line.text.len)..], false);
         },
-        else => {
-            // landing's and building's chips, three cells apart in the text and one here, the chip
-            // taking the gap's two
-            try o.say(r.text, false, " ");
-            const building = line.kind == .building_chips;
-            var at: usize = 0;
-            var pieces = std.mem.splitSequence(u8, line.text, "   ");
-            while (pieces.next()) |piece| {
-                const failed = std.mem.startsWith(u8, piece, "✗ ");
-                const label = if (failed) piece["✗ ".len..] else piece;
-                const here = on != null and on.?.line == row and on.?.at == at;
-                at += cellCount(piece) + 3;
-                if (piece.len == 0) continue;
-                if (piece[0] == '+') {
-                    try o.say(r.dim, false, piece);
-                    continue;
-                }
-                var words = std.mem.tokenizeScalar(u8, label, ' ');
-                _ = words.next();
-                _ = words.next();
-                const stage = words.next() orelse "";
-                const lead = if (here) (if (strong) r.accent else r.dim) else if (failed) r.failed else if (building) r.building else stepHue(r, stage).lead;
-                try o.chip(r, lead, label, here);
-            }
-        },
+        else => {},
     }
     try o.finish();
 }
@@ -1624,7 +1571,7 @@ fn benchTryRow(app: *const App, w: *Writer, pen: *Pen, r: theme.Roles, f: *const
 fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usize, inner: u16) !void {
     const dim = ink(app, "dim", 8);
     if (row < f.count()) if (app.roles) |r| switch (f.line(row).kind) {
-        .item, .buttons, .refused, .move_head, .strip, .landing_chips, .building_chips => return benchFeedRow(app, w, pen, r, f, row, inner),
+        .item, .buttons, .refused, .move_head => return benchFeedRow(app, w, pen, r, f, row, inner),
         .try_head, .try_title, .try_machine, .try_step, .try_buttons => return benchTryRow(app, w, pen, r, f, row, inner),
         else => {},
     };
@@ -1641,8 +1588,7 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
     const lead: []const u8 = switch (line.kind) {
         .item => "▌ ",
         .buttons, .refused => "▌     ",
-        .next_refused => "    ",
-        .landing_chips, .building_chips, .next_item, .try_step => "  ",
+        .try_step => "  ",
         .try_buttons => "      ",
         else => "",
     };
@@ -1655,119 +1601,28 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
     bold.flags.bold = true;
     const style: vt.Style = switch (line.kind) {
         .move_head => bold,
-        .next_head => ink(app, "amberdim", 8),
-        .next_item => .{},
-        .quiet, .more, .buttons, .strip, .blank, .try_head, .try_machine => dim,
-        .refused, .next_refused => ink(app, "emberdim", 1),
+        .quiet, .more, .buttons, .try_head, .try_machine => dim,
+        .refused => ink(app, "emberdim", 1),
         .try_buttons => if (line.failed) ink(app, "emberdim", 1) else dim,
-        .item, .landing_chips, .building_chips, .try_title, .try_step => .{},
+        .item, .try_title, .try_step => .{},
     };
     if (room == 0) return;
-    // the pick's cells lit: the whole line of a Your move item, a ticket's chip of its own
-    var lit_from: usize = 0;
-    var lit_to: usize = 0;
+    var lit = false;
     var shown = line.text;
     var marked: [256]u8 = undefined;
     // without Workbench's raised cells, a settled check ends on its mark and a picked tile's machine line on its button
     if (line.kind == .try_step and line.settled) shown = std.fmt.bufPrint(&marked, "{s}  ✓", .{line.text}) catch shown;
     if (line.kind == .try_machine and line.alt.len > 0) shown = std.fmt.bufPrint(&marked, "{s}   {s}", .{ line.text, line.alt }) catch shown;
-    if (app.feedLitItem(f)) |on| if (on.line == row) {
-        if (line.alt.len > 0) shown = line.alt;
-        lit_from = clip(shown, on.at).len;
-        lit_to = lit_from + (if (on.w == 0) shown.len - lit_from else clip(shown[lit_from..], on.w).len);
-    };
+    if (app.feedLitItem(f)) |on| lit = on.line == row;
     const cut = cellCount(shown) > room;
     const avail = if (cut) room - 1 else room;
-    var used: usize = 0;
-    var at: usize = 0;
-    while (at < shown.len and used < avail) {
-        const run = feedRun(app, line, shown, at, style);
-        var end = run.end;
-        var run_style = run.style;
-        if (lit_from > at) end = @min(end, lit_from);
-        if (at >= lit_from and at < lit_to) {
-            end = @min(end, lit_to);
-            run_style = if (app.feedLit() == .focused) chip(app) else dimLit(app);
-        }
-        const text = clip(shown[at..end], avail - used);
-        if (text.len == 0) break;
-        try pen.set(w, onPanel(app, run_style), null);
-        try w.writeAll(text);
-        used += cellCount(text);
-        at += text.len;
-    }
+    const text = clip(shown, avail);
+    const used = cellCount(text);
+    try pen.set(w, onPanel(app, if (lit) (if (app.feedLit() == .focused) chip(app) else dimLit(app)) else style), null);
+    try w.writeAll(text);
     try pen.set(w, onPanel(app, style), null);
     if (cut) try w.writeAll("…");
     for (used + @intFromBool(cut)..room) |_| try w.writeAll(" ");
-}
-
-const Run = struct { end: usize, style: vt.Style };
-
-/// The run of one style that starts at byte `at` of a feed line: all of it, but for the chips of
-/// landing and building, whose ticket number, repo, age and stage word each have a style of
-/// their own. The stage word is coloured as the board's cards colour it.
-fn feedRun(app: *const App, line: feed.Line, text: []const u8, at: usize, base: vt.Style) Run {
-    const kind = line.kind;
-    if (kind == .next_item) return nextRun(app, text, at);
-    if (kind != .landing_chips and kind != .building_chips) return .{ .end = text.len, .style = base };
-    if (text[at] == ' ') return .{ .end = std.mem.indexOfNonePos(u8, text, at, " ") orelse text.len, .style = .{} };
-    // a chip's words, counted from where the run of three spaces before it ends
-    var idx: usize = 0;
-    var failed = false;
-    var pos: usize = 0;
-    while (true) {
-        const end = std.mem.indexOfScalarPos(u8, text, pos, ' ') orelse text.len;
-        if (idx == 0) failed = std.mem.eql(u8, text[pos..end], "✗");
-        if (at < end) {
-            const word = text[pos..end];
-            return .{ .end = end, .style = feedWord(app, kind, word, idx, failed) };
-        }
-        const next = std.mem.indexOfNonePos(u8, text, end, " ") orelse text.len;
-        idx = if (next - end >= 3) 0 else idx + 1;
-        pos = next;
-    }
-}
-
-/// The run of a line of next that starts at `at`: the human's pin and the ticket's number in the
-/// card-number accent, its repo dim, then its title or why plain.
-fn nextRun(app: *const App, text: []const u8, at: usize) Run {
-    const first: usize = @intFromBool(std.mem.startsWith(u8, text, "▪"));
-    var idx: usize = 0;
-    var pos: usize = 0;
-    while (pos < text.len) {
-        const end = std.mem.indexOfScalarPos(u8, text, pos, ' ') orelse text.len;
-        if (idx > first + 1) break;
-        if (at < end) return .{ .end = end, .style = if (idx == first + 1) ink(app, "dim", 8) else ink(app, "amber", 4) };
-        const gap = std.mem.indexOfNonePos(u8, text, end, " ") orelse text.len;
-        if (at < gap) return .{ .end = gap, .style = .{} };
-        idx += 1;
-        pos = gap;
-    }
-    return .{ .end = text.len, .style = .{} };
-}
-
-fn feedWord(app: *const App, kind: feed.Kind, word: []const u8, idx: usize, failed: bool) vt.Style {
-    const dim = ink(app, "dim", 8);
-    const error_ink = ink(app, "emberdim", 1);
-    const first: usize = @intFromBool(failed);
-    if (word[0] == '+') return dim;
-    if (idx < first) return error_ink;
-    if (idx == first) return if (failed) error_ink else ink(app, "amber", 4);
-    if (idx == first + 1 or word[0] == '+' or isAge(word)) return dim;
-    if (failed) return error_ink;
-    if (kind == .landing_chips) {
-        const stage = stageStyle(app, word);
-        return if (stage) |s| s else dim;
-    }
-    return if (std.mem.eql(u8, word, "▲")) ink(app, "amber", 4) else dim;
-}
-
-/// A ticket's age (`3h`) or its place in the queue (`2nd`).
-fn isAge(word: []const u8) bool {
-    const digits = std.mem.indexOfNone(u8, word, "0123456789") orelse return false;
-    return digits > 0 and (std.mem.eql(u8, word[digits..], "m") or std.mem.eql(u8, word[digits..], "h") or
-        std.mem.eql(u8, word[digits..], "d") or std.mem.eql(u8, word[digits..], "st") or
-        std.mem.eql(u8, word[digits..], "nd") or std.mem.eql(u8, word[digits..], "rd") or std.mem.eql(u8, word[digits..], "th"));
 }
 
 /// The orchestrator's column with no window of its in it: its head, and while it is off, how to
@@ -1777,8 +1632,7 @@ fn sideEmpty(app: *const App, w: *Writer) !void {
     var title_buf: [96]u8 = undefined;
     var title_cps: [64]u21 = undefined;
     var right_cps: [24]u21 = undefined;
-    var button: ?[2]usize = null;
-    var title_len = codepoints(sideHead(app, &title_buf, &button, app.view_w), &title_cps);
+    var title_len = codepoints(sideHead(app, &title_buf, app.view_w), &title_cps);
     if (title_len + 4 > app.view_w) title_len = 0;
     const right = right_cps[0..codepoints(sideHint(app), &right_cps)];
     const col: Column = .{
@@ -1788,7 +1642,6 @@ fn sideEmpty(app: *const App, w: *Writer) !void {
         .title = title_cps[0..title_len],
         .mark_at = if (title_len > 0) 1 else null,
         .right = if (title_len + right.len + 6 <= app.view_w) right else right[0..0],
-        .button = if (title_len > 0) button else null,
         .roles = app.roles,
     };
     var pen: Pen = .{};
@@ -1827,20 +1680,20 @@ fn codepoints(text: []const u8, out: []u21) usize {
 }
 
 /// The orchestrator's column's head, on its top edge: its mark, its state in words and the
-/// share of its context used, then auto's count as a button, whose cells are `button`.
-fn sideHead(app: *const App, buf: []u8, button: *?[2]usize, col_w: usize) []const u8 {
+/// share of its context used.
+fn sideHead(app: *const App, buf: []u8, col_w: usize) []const u8 {
     var out: Writer = .fixed(buf);
     const room = col_w -| 4;
     var full = true;
     while (true) {
         out.end = 0;
-        sideHeadInto(app, &out, button, full);
+        sideHeadInto(app, &out, full);
         if (!full or cellCount(out.buffered()) <= room) return out.buffered();
         full = false;
     }
 }
 
-fn sideHeadInto(app: *const App, out: *Writer, button: *?[2]usize, full: bool) void {
+fn sideHeadInto(app: *const App, out: *Writer, full: bool) void {
     const win = app.orchestratorWindow();
     const state = app.orchestratorState();
     const mark: u21 = switch (state) {
@@ -1854,7 +1707,7 @@ fn sideHeadInto(app: *const App, out: *Writer, button: *?[2]usize, full: bool) v
     out.writeAll(" ") catch {};
     put(out, mark) catch {};
     if (!full) {
-        sideHeadAuto(app, out, button);
+        out.writeAll(" ") catch {};
         return;
     }
     out.writeAll(" orchestrator · ") catch {};
@@ -1867,28 +1720,7 @@ fn sideHeadInto(app: *const App, out: *Writer, button: *?[2]usize, full: bool) v
         .off => out.writeAll("off") catch {},
     }
     if (win) |it| if (it.ctx > 0) out.print(" · ctx {d}%", .{@min(it.ctx, 999)}) catch {};
-    sideHeadAuto(app, out, button);
-}
-
-fn sideHeadAuto(app: *const App, out: *Writer, button: *?[2]usize) void {
-    button.* = null;
-    if (app.board) |*b| if (b.autoState()) |auto| {
-        out.writeAll(" ") catch {};
-        const from = cellCount(out.buffered());
-        (if (auto.on) out.print(" auto {d}/{d} ", .{ auto.working, auto.cap }) else out.writeAll(" auto off ")) catch {};
-        button.* = .{ from, cellCount(out.buffered()) };
-    };
     out.writeAll(" ") catch {};
-}
-
-/// Where auto's button is on the top edge of the orchestrator's column: its first cell from the
-/// column's left edge, and its width.
-pub fn sideAutoButton(app: *const App) ?struct { x: u16, w: u16 } {
-    var buf: [96]u8 = undefined;
-    var cells: ?[2]usize = null;
-    _ = sideHead(app, &buf, &cells, app.view_w);
-    const at = cells orelse return null;
-    return .{ .x = @intCast(at[0] + 2), .w = @intCast(at[1] - at[0]) };
 }
 
 /// A window's picture in the overview, its top left corner at (`x`, `y`): a small frame with its
@@ -2137,6 +1969,69 @@ fn planFoot(app: *App, w: *Writer, sheet: *const sheets.Sheet, pick: usize) !voi
     try fitted(w, text, app.boardW());
 }
 
+const PlanHeadBufs = struct { auto: [48]u8, today: [32]u8, needs: [16]u8 };
+
+/// Plan's head against its right edge: auto's switch, today's landings and what
+/// needs the human, three cells apart, from cell `start` of the board's width, the head's own
+/// words taking `left_w`; with less room it keeps auto and what needs the human, then auto alone.
+/// Auto says its tools slots when babylon gives them and the room is there.
+const PlanHead = struct {
+    pieces: [3]struct { text: []const u8, style: vt.Style },
+    keep: u3,
+    start: usize,
+    left_w: usize,
+
+    fn shows(head: PlanHead, i: usize) bool {
+        return head.keep >> @intCast(i) & 1 == 1;
+    }
+};
+
+fn planHead(app: *const App, bufs: *PlanHeadBufs) PlanHead {
+    const b = &app.board.?;
+    const given = b.plan().?;
+    const needs_n = b.needsYou().len;
+    const dim = ink(app, "dim", 8);
+    const left_w = cellCount(App.plan_title) + if (app.halfHome()) cellCount(App.orch_link) + 2 else 0;
+    var head: PlanHead = .{ .pieces = undefined, .keep = 0b111, .start = 0, .left_w = left_w };
+    const tries = [_]struct { tools: bool, keep: u3 }{
+        .{ .tools = true, .keep = if (app.halfHome()) 0b101 else 0b111 },
+        .{ .tools = false, .keep = if (app.halfHome()) 0b101 else 0b111 },
+        .{ .tools = false, .keep = 0b101 },
+        .{ .tools = false, .keep = 0b001 },
+    };
+    for (tries) |try_| {
+        const tools = try_.tools;
+        head.keep = try_.keep;
+        const auto: []const u8 = if (app.auto() != null and app.now < app.auto_armed_until)
+            "◐ turn off?"
+        else if (app.auto()) |state| (if (tools and state.tools != null)
+            std.fmt.bufPrint(&bufs.auto, "◐ auto {d}/{d} · tools {d}/{d}", .{ state.working, state.cap, state.tools.?.working, state.tools.?.cap })
+        else
+            std.fmt.bufPrint(&bufs.auto, "◐ auto {d}/{d}", .{ state.working, state.cap })) catch "◐" else "◐ auto";
+        head.pieces = .{
+            .{ .text = auto, .style = if (app.auto() != null) autoOn(app) else dim },
+            .{ .text = std.fmt.bufPrint(&bufs.today, "✓ {d} today", .{given.landed_today.count}) catch "", .style = dim },
+            .{ .text = std.fmt.bufPrint(&bufs.needs, "▲ {d}", .{needs_n}) catch "", .style = if (needs_n > 0) heading(app) else dim },
+        };
+        var right_w: usize = 0;
+        for (head.pieces, 0..) |piece, i| {
+            if (head.shows(i)) right_w += cellCount(piece.text) + 3;
+        }
+        head.start = app.boardW() -| right_w;
+        if (head.start > left_w) break;
+    }
+    return head;
+}
+
+/// Where Plan's auto switch is on the top row: its first cell and its width; none where the head
+/// has no room for it.
+pub fn planAutoSwitch(app: *const App) ?struct { x: u16, w: u16 } {
+    var bufs: PlanHeadBufs = undefined;
+    const head = planHead(app, &bufs);
+    if (head.start <= head.left_w) return null;
+    return .{ .x = app.boardX() + @as(u16, @intCast(head.start)), .w = @intCast(cellCount(head.pieces[0].text)) };
+}
+
 /// Home's plan in the board's place: its head, a rule, then its rows from the one the pick keeps
 /// in view, the pick a bar at the left edge. What lies over the board lies over it.
 fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
@@ -2145,9 +2040,7 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     const ox = app.boardX();
     const width = app.boardW();
     const dim = ink(app, "dim", 8);
-    const b = &app.board.?;
     var pen: Pen = .{};
-    var buf: [96]u8 = undefined;
 
     // the head: the title and the way to the board, then babylon's state against the right edge
     try w.print("\x1b[1;{d}H", .{ox + 1});
@@ -2164,36 +2057,19 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         try pen.set(w, dim, null);
         try w.writeAll(App.orch_link);
     }
-    const given = b.plan().?;
-    const auto = if (app.auto()) |state|
-        std.fmt.bufPrint(&buf, "◐ auto {d}/{d}", .{ state.working, state.cap }) catch "◐"
-    else
-        "◐ auto";
-    var today_buf: [32]u8 = undefined;
-    var needs_buf: [16]u8 = undefined;
-    const needs_n = b.needsYou().len;
-    const pieces = [_]struct { []const u8, vt.Style }{
-        .{ auto, if (app.auto() != null) autoOn(app) else dim },
-
-        .{ std.fmt.bufPrint(&today_buf, "✓ {d} today", .{given.landed_today.count}) catch "", dim },
-        .{ std.fmt.bufPrint(&needs_buf, "▲ {d}", .{needs_n}) catch "", if (needs_n > 0) heading(app) else dim },
-    };
-    // at half a screen the head keeps the way to the column and the board, and what needs the human
-    const kept = if (app.halfHome()) pieces[pieces.len - 1 ..] else pieces[0..];
-    var right_w: usize = 0;
-    for (kept) |piece| right_w += cellCount(piece[0]) + 3;
-    const left_w = cellCount(App.plan_title) + if (app.halfHome()) cellCount(App.orch_link) + 2 else 0;
-    const start = width -| right_w;
+    var head_bufs: PlanHeadBufs = undefined;
+    const head = planHead(app, &head_bufs);
     try pen.set(w, .{}, null);
-    if (start > left_w) {
-        for (left_w..start) |_| try w.writeAll(" ");
-        for (kept) |piece| {
-            try pen.set(w, piece[1], null);
-            try w.writeAll(piece[0]);
+    if (head.start > head.left_w) {
+        for (head.left_w..head.start) |_| try w.writeAll(" ");
+        for (head.pieces, 0..) |piece, i| {
+            if (!head.shows(i)) continue;
+            try pen.set(w, piece.style, null);
+            try w.writeAll(piece.text);
             try pen.set(w, .{}, null);
             try w.writeAll("   ");
         }
-    } else for (left_w..width) |_| try w.writeAll(" ");
+    } else for (head.left_w..width) |_| try w.writeAll(" ");
 
     try w.print("\x1b[2;{d}H", .{ox + 1});
     try pen.set(w, dim, null);
@@ -4115,13 +3991,6 @@ fn stageOf(app: *const App, card: *const tickets.Card) ?struct { style: vt.Style
     return .{ .style = ink(app, "dim", 8), .glyph = 0, .word = s };
 }
 
-/// The colour the board gives a pipeline stage's word, none for one it leaves dim.
-fn stageStyle(app: *const App, word: []const u8) ?vt.Style {
-    if (std.mem.eql(u8, word, "queued")) return ink(app, "violet", 5);
-    if (std.mem.eql(u8, word, "verifying") or std.mem.eql(u8, word, "reviewing")) return ink(app, "amber", 4);
-    return null;
-}
-
 /// A card's last row in `width` cells, what is so of it past its title joined by ` · `: the
 /// orchestrator's proposal, a question waiting on the human, where the pipeline has it as a glyph
 /// in its colour, the Claude holding it, and its detail.
@@ -4369,170 +4238,6 @@ fn sgr(buf: []u8, style: vt.Style) ![]const u8 {
     var pen: Pen = .{};
     try pen.set(&out, style, null);
     return out.buffered();
-}
-
-test "a landing row's stage word is drawn in its state's colour" {
-    var b = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":14,"repo":"arena","title":"a","status":"doing","claimed_by":"%3","claimed_at":"2026-11-21T10:00:00Z"},
-        \\{"id":17,"repo":"arena","title":"b","status":"review","stage":"queued","submitted_at":"2026-11-21T11:30:00Z"},
-        \\{"id":15,"repo":"babylon","title":"c","status":"review","stage":"reviewing","submitted_at":"2026-11-21T11:58:00Z"}],
-        \\"needs_you":[]}
-    );
-    defer b.deinit();
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    var f: feed.Feed = undefined;
-    feed.build(&f, &b, &.{}, 56, 80, 1795262400, 0, .{ .lit = .landing });
-
-    var buf: [2048]u8 = undefined;
-    var pen: Pen = .{};
-    var want: [64]u8 = undefined;
-    const at = struct {
-        fn row(app_: *const App, f_: *const feed.Feed, pen_: *Pen, out_: []u8, i: usize) ![]const u8 {
-            var out: Writer = .fixed(out_);
-            try feedRow(app_, &out, pen_, f_, i, 56);
-            return out.buffered();
-        }
-    };
-    // row 0 is the quiet line, 1 the strip; the lit list's chips follow
-    const quiet = try at.row(&app, &f, &pen, &buf, 0);
-    try std.testing.expect(std.mem.indexOf(u8, quiet, "nothing needs you") != null);
-
-    pen = .{};
-    const chips = try at.row(&app, &f, &pen, &buf, 2);
-    const reviewing = try std.fmt.allocPrint(std.testing.allocator, "{s}reviewing", .{try sgr(&want, ink(&app, "amber", 4))});
-    defer std.testing.allocator.free(reviewing);
-    try std.testing.expect(std.mem.indexOf(u8, chips, reviewing) != null);
-    const queued = try std.fmt.allocPrint(std.testing.allocator, "{s}queued", .{try sgr(&want, ink(&app, "violet", 5))});
-    defer std.testing.allocator.free(queued);
-    try std.testing.expect(std.mem.indexOf(u8, chips, queued) != null);
-    const repo = try std.fmt.allocPrint(std.testing.allocator, "{s}babylon", .{try sgr(&want, ink(&app, "dim", 8))});
-    defer std.testing.allocator.free(repo);
-    try std.testing.expect(std.mem.indexOf(u8, chips, repo) != null);
-}
-
-test "the feed draws Your move's header bold, a send-back in the error colour, a sent back chip's ✗ and words in it, and the strip dim" {
-    var b = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":495,"repo":"arena","title":"a","status":"doing","claimed_by":"%610","claimed_at":"2026-11-21T11:00:00Z","stage":"failed"},
-        \\{"id":9,"repo":"arena","title":"b","status":"done","stage":"landed","closed_at":"2026-11-21T11:30:00Z"}],
-        \\"needs_you":[
-        \\{"id":"ask:3","kind":"ask","ticket":16,"repo":"arena","text":"#16 arena  asks: Blue?",
-        \\ "actions":[{"key":"1","label":"Blue","argv":["babylon","answer","3","1"]}]},
-        \\{"id":"sendback:12","kind":"sendback","ticket":12,"repo":"arena","text":"✗ #12 arena  sent back, free: red",
-        \\ "actions":[{"key":"G","label":"give","argv":null,"needs":"pick"}]}]}
-    );
-    defer b.deinit();
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    var f: feed.Feed = undefined;
-    feed.build(&f, &b, &.{}, 56, 80, 1795262400, 1795262400 - 12 * 3600, .{ .lit = .landed });
-    var buf: [2048]u8 = undefined;
-    const has = struct {
-        fn in(drawn: []const u8, style: vt.Style, text: []const u8) !bool {
-            var buf_: [64]u8 = undefined;
-            var pat: [128]u8 = undefined;
-            return std.mem.indexOf(u8, drawn, try std.fmt.bufPrint(&pat, "{s}{s}", .{ try sgr(&buf_, style), text })) != null;
-        }
-    }.in;
-    const row = struct {
-        fn of(app_: *const App, f_: *const feed.Feed, out_: []u8, i: usize) ![]const u8 {
-            var out: Writer = .fixed(out_);
-            var pen: Pen = .{};
-            try feedRow(app_, &out, &pen, f_, i, 56);
-            return out.buffered();
-        }
-    }.of;
-
-    var bold = heading(&app);
-    bold.flags.bold = true;
-    const head = try row(&app, &f, &buf, 0);
-    try std.testing.expect(try has(head, bold, "▲ your move 2"));
-
-    var seen: usize = 0;
-    for (0..f.count()) |i| {
-        const line = f.line(i);
-        const drawn = try row(&app, &f, &buf, i);
-        switch (line.kind) {
-            .item => {
-                seen += 1;
-                const bar = if (line.failed) ink(&app, "emberdim", 1) else ink(&app, "amber", 4);
-                try std.testing.expect(try has(drawn, bar, "▌ "));
-                if (line.failed) {
-                    try std.testing.expect(std.mem.indexOf(u8, line.text, "sent back") != null);
-                } else try std.testing.expect(!try has(drawn, ink(&app, "emberdim", 1), "▌ "));
-            },
-            .strip => seen += 1,
-            else => {},
-        }
-    }
-    try std.testing.expectEqual(@as(usize, 3), seen);
-
-    feed.build(&f, &b, &.{}, 56, 80, 1795262400, 1795262400 - 12 * 3600, .{ .lit = .building });
-    for (0..f.count()) |i| if (f.line(i).kind == .building_chips) {
-        const drawn = try row(&app, &f, &buf, i);
-        const error_ink = ink(&app, "emberdim", 1);
-        try std.testing.expect(try has(drawn, error_ink, "✗"));
-        try std.testing.expect(try has(drawn, error_ink, "#495"));
-    };
-}
-
-test "the done strip's picked card is lit while the board has the keys and dims like its neighbours once the column has them" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":1,"repo":"arena","title":"todo","status":"todo"},
-        \\{"id":2,"repo":"arena","title":"first","status":"done","stage":"landed"},
-        \\{"id":3,"repo":"arena","title":"second","status":"done","stage":"landed"}]}
-    );
-    defer app.board.?.deinit();
-    app.view_w = 100;
-    app.term_w = 100;
-    app.view_h = 12;
-    app.board_view = .{ .col = 3, .row = 0 };
-    var buf: [4096]u8 = undefined;
-    var pen: Pen = .{};
-    const lit = heading(&app);
-    var want: [64]u8 = undefined;
-    var pat: [128]u8 = undefined;
-
-    var out: Writer = .fixed(&buf);
-    try columnLines(&app, &out, &pen, app.board_view.?, 3, 0, 40);
-    const board_keys_drawn = out.buffered();
-    const picked_lit = try std.fmt.bufPrint(&pat, "{s} ✓ #2", .{try sgr(&want, lit)});
-    try std.testing.expect(std.mem.indexOf(u8, board_keys_drawn, picked_lit) != null);
-    const neighbour = "│ ✓ #3";
-    try std.testing.expect(std.mem.indexOf(u8, board_keys_drawn, neighbour) != null);
-
-    app.board_view.?.home = true;
-    app.board_view.?.focus = .orchestrator;
-    try std.testing.expect(app.columnFocused());
-    pen = .{};
-    out = .fixed(&buf);
-    try columnLines(&app, &out, &pen, app.board_view.?, 3, 0, 40);
-    const column_keys_drawn = out.buffered();
-    const picked_dim = "│ ✓ #2";
-    try std.testing.expect(std.mem.indexOf(u8, column_keys_drawn, picked_dim) != null);
-    try std.testing.expect(std.mem.indexOf(u8, column_keys_drawn, picked_lit) == null);
-}
-
-test "a pinned ticket's mark in next is drawn in the accent" {
-    var b = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[],"needs_you":[],"hold":true,
-        \\"auto":{"on":true,"cap":6,"working":4,"idle":{"slots":2,"why":"next empty"},"repo_caps":{"arena":2,"tlon":0}},
-        \\"plan":{"next":[{"ticket":655,"repo":"arena","title":"Typing","why":"third","set_by":"human"}]}}
-    );
-    defer b.deinit();
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    var f: feed.Feed = undefined;
-    feed.build(&f, &b, &.{}, 70, 80, 1795262400, 0, .{ .lit = .next });
-    var buf: [2048]u8 = undefined;
-    var want: [64]u8 = undefined;
-    var out: Writer = .fixed(&buf);
-    var pen: Pen = .{};
-    try feedRow(&app, &out, &pen, &f, 3, 70);
-    const pin = try std.fmt.allocPrint(std.testing.allocator, "{s}  ▪", .{try sgr(&want, ink(&app, "amber", 4))});
-    defer std.testing.allocator.free(pin);
-    try std.testing.expect(std.mem.indexOf(u8, out.buffered(), pin) != null);
 }
 
 test "a queued card says its place in its repo's line, and with a question open it is held" {
@@ -4959,9 +4664,11 @@ test "a frame of the board with an orchestrator column draws at every width from
     }
 }
 
-test "the report's answer is drawn under the picked feed line, the tab strip's row untouched" {
+test "the report's answer is drawn under the picked feed line" {
     var board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[{"id":17,"repo":"arena","title":"b","status":"review","stage":"queued","submitted_at":"2026-11-21T11:30:00Z"}],"needs_you":[]}
+        \\{"tickets":[],"needs_you":[
+        \\{"id":"ask:3","kind":"ask","ticket":16,"repo":"arena","text":"#16 arena  asks: Blue?",
+        \\ "actions":[{"key":"1","label":"Blue","argv":["babylon","answer","3","1"]}]}]}
     );
     defer board.deinit();
     var app = homeApp(&board);
@@ -4976,10 +4683,6 @@ test "the report's answer is drawn under the picked feed line, the tab strip's r
     var want: [48]u8 = undefined;
     const under = try std.fmt.bufPrint(&want, "\x1b[{d};{d}Hfiled #9", .{ pick.line + 3, app.term_w - app.view_w + 3 });
     try std.testing.expect(std.mem.indexOf(u8, out.buffered(), under) != null);
-    var strip_row: [16]u8 = undefined;
-    const tab_row = try std.fmt.bufPrint(&strip_row, "\x1b[{d};", .{app.view_h + 1});
-    const at = std.mem.indexOf(u8, out.buffered(), "filed #9").?;
-    try std.testing.expect(std.mem.indexOf(u8, out.buffered()[at - 12 .. at], tab_row) == null);
 }
 
 test "the feed draws at every width and with every item picked, with a long next and every line present" {
@@ -5002,7 +4705,7 @@ test "the feed draws at every width and with every item picked, with a long next
     var buf: [4096]u8 = undefined;
     for (8..120) |width| {
         var f: feed.Feed = undefined;
-        feed.build(&f, &b, &.{}, width, 80, 1795262400, 0, .{});
+        feed.build(&f, &b, &.{}, width, 80, 1795262400);
         for (0..f.itemCount() + 1) |pick| {
             app.board_view = .{ .home = true, .focus = .orchestrator, .pick = pick };
             for (0..f.count() + 1) |row| {
@@ -5661,6 +5364,42 @@ test "the plan's head and the board's head show the same pair of tabs, the curre
     }
 }
 
+test "auto is in Plan's head alone, with its tools; the orchestrator's column, the rail and the feed lack it" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"needs_you":[
+        \\{"id":"ask:3","kind":"ask","ticket":16,"repo":"arena","text":"#16 arena  asks: Blue?",
+        \\ "actions":[{"key":"1","label":"Blue","argv":["babylon","answer","3","1"]}]}],
+        \\"auto":{"on":true,"cap":6,"working":4,"idle":{"slots":2,"why":"next empty"},"tools":{"working":1,"cap":2}},
+        \\"plan":{"now":[],"next":[]}}
+    );
+    defer board.deinit();
+    var app = homeApp(&board);
+    app.term_w = 140;
+    app.view_w = 60;
+    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    var buf: [1 << 17]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try frame(&app, &out, .all);
+    const drawn = out.buffered();
+    const count = struct {
+        fn of(hay: []const u8, needle: []const u8) usize {
+            return std.mem.count(u8, hay, needle);
+        }
+    }.of;
+    try std.testing.expectEqual(@as(usize, 1), count(drawn, "auto 4/6"));
+    try std.testing.expectEqual(@as(usize, 1), count(drawn, "tools 1/2"));
+    try std.testing.expectEqual(@as(usize, 0), count(drawn, "slots idle"));
+    try std.testing.expectEqual(@as(usize, 0), count(drawn, "idle"));
+    app.term_w = 80;
+    app.view_w = 80;
+    app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
+    var head_out: Writer = .fixed(&buf);
+    try boardView(&app, &head_out, app.board_view.?);
+    const at = planAutoSwitch(&app).?;
+    const mark = try bench.probe(head_out.buffered(), at.x, 0);
+    try std.testing.expectEqual(@as(u21, '◐'), mark.cp);
+}
+
 test "a card to try wears ▲ try it in the you colour, filled, and leads the recent strip with the same mark" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     app.term_w = 80;
@@ -5703,7 +5442,7 @@ test "a to-try tile is drawn: its chip, its age in the you colour at a week, the
     app.roles = @import("parts.zig").roles();
     const r = app.roles.?;
     var f: feed.Feed = undefined;
-    feed.buildPicked(&f, &b, &.{}, &.{}, 56, 80, 1795262400, 0, .{}, 2);
+    feed.buildPicked(&f, &b, &.{}, &.{}, 56, 80, 1795262400, 2);
     var buf: [2048]u8 = undefined;
     var want: [64]u8 = undefined;
     const Rows = struct {

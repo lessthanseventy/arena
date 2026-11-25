@@ -367,9 +367,7 @@ pub const BoardView = struct {
     /// The ticket whose whole detail is shown over the board, and how far down it is scrolled.
     detail: ?u32 = null,
     detail_scroll: usize = 0,
-    /// The tab of the orchestrator's strip that is lit, and how far its list is scrolled.
-    tab: feed.Section = .next,
-    tab_scroll: usize = 0,
+
     /// The option of the modal's open ask that ⏎ answers, from 1.
     ask_pick: u8 = 1,
     /// The check of the modal's to-try ticket that `y` and `n` act on, from 1.
@@ -549,8 +547,7 @@ pub const App = struct {
     auto_wants: autos.Wants = .{},
     /// Seconds since the epoch, set each turn of the loop.
     epoch: i64 = 0,
-    /// Seconds the local clock is ahead of UTC, for where today began.
-    utc_offset: i64 = 0,
+
     /// babylon's refusals of what the feed ran for its items, said in their place.
     refusals: std.ArrayList(feed.Refusal) = .empty,
     /// babylon's refusal of the board's start, drawn on the card's action row until the next key.
@@ -1720,23 +1717,18 @@ pub const App = struct {
         var f: feed.Feed = undefined;
         if (!app.feedOf(&f)) return null;
         const line = y - 1;
-        if (line >= f.count() or f.line(line).kind == .buttons) return null;
-        if (line < f.shown and isTryRow(f.line(line).kind)) {
+        if (line >= f.shown or f.line(line).kind == .buttons) return null;
+        if (isTryRow(f.line(line).kind)) {
             const need = (app.board orelse return null).needsYou()[f.line(line).need orelse return null];
             return if (need.ticket) |id| .{ .ticket = id } else null;
         }
-        const col = x - (left + 2);
         var held: ?feed.Item = null;
         for (0..f.itemCount()) |i| {
             const item = f.item(i).?;
-            if (item.need != null) {
-                if (item.line <= line) held = item;
-            } else if (item.line == line and col >= item.at and col < item.at + item.w) {
-                return if (item.ticket) |id| .{ .ticket = id } else null;
-            }
+            if (item.line <= line) held = item;
         }
         const item = held orelse return null;
-        return if (line < f.shown) (if (item.ticket) |id| .{ .ticket = id } else null) else null;
+        return if (item.ticket) |id| .{ .ticket = id } else null;
     }
 
     /// The fold of the rail that holds Claude `a`, if one does.
@@ -2079,13 +2071,11 @@ pub const App = struct {
     /// The feed atop the orchestrator's column, from babylon's board: none without one.
     pub fn feedOf(app: *const App, f: *feed.Feed) bool {
         const b = if (app.board) |*b| b else return false;
-        const today = app.epoch - @mod(app.epoch + app.utc_offset, 86400);
-        const lit: feed.View = if (app.board_view) |view| .{ .lit = view.tab, .scroll = view.tab_scroll } else .{};
         const pick = if (app.board_view) |view| view.pick else std.math.maxInt(usize);
         var asks: [box_max]Asked = undefined;
         var boxes: [box_max]feed.Box = undefined;
         const n = app.questionBoxes(&asks, &boxes);
-        feed.buildPicked(f, b, app.refusals.items, boxes[0..n], app.view_w -| 4, app.view_h -| 2, app.epoch, today, lit, pick);
+        feed.buildPicked(f, b, app.refusals.items, boxes[0..n], app.view_w -| 4, app.view_h -| 2, app.epoch, pick);
         return true;
     }
 
@@ -2194,9 +2184,8 @@ pub const App = struct {
     }
 
     /// A key on the feed, while the orchestrator's column has the keys in normal mode: `j` `k`
-    /// move the pick through it and `]` `[` through Your move, the picked card lit on the board;
-    /// on a Your move item, an action's key runs it as babylon gives it, and on a ticket landing
-    /// or building, Enter goes to its Claude. Whether the key was the feed's.
+    /// move the pick through Your move's items and `]` `[` from need to need, the picked card lit
+    /// on the board; an action's key runs it as babylon gives it. Whether the key was the feed's.
     fn feedKey(app: *App, key: []const u8) !bool {
         var f: feed.Feed = undefined;
         if (!app.feedOf(&f)) return false;
@@ -2206,21 +2195,9 @@ pub const App = struct {
         view.pick = @min(view.pick, n - 1);
         const moves = f.items_shown;
         const was = view.pick;
-        if (f.item(view.pick).?.chip and anyKey(key, &.{ " ", "\r" })) return app.openChip(f.item(view.pick).?);
-        const first = f.firstSpot();
         if (anyKey(key, &.{ "j", "\x1b[B", "\x1bOB" })) {
-            if (view.pick + 1 == first + f.popCount() and view.pick >= first and f.scroll < f.max_scroll) {
-                view.tab_scroll = f.scroll + 1;
-                app.dirty = true;
-                return app.pickPanelEnd(true);
-            }
             view.pick = @min(view.pick + 1, n - 1);
         } else if (anyKey(key, &.{ "k", "\x1b[A", "\x1bOA" })) {
-            if (view.pick == first and f.scroll > 0) {
-                view.tab_scroll = f.scroll - 1;
-                app.dirty = true;
-                return app.pickPanelEnd(false);
-            }
             view.pick -|= 1;
         } else if (anyKey(key, &.{"]"})) {
             if (moves > 0) view.pick = nextTile(&f, view.pick, moves);
@@ -2265,50 +2242,10 @@ pub const App = struct {
         return to;
     }
 
-    /// A tab of the strip clicked or opened: its list lit in the panel, from the top.
-    fn openChip(app: *App, item: feed.Item) !bool {
-        const view = &app.board_view.?;
-        app.dirty = true;
-        const section = item.section.?;
-        if (view.tab != section) view.tab_scroll = 0;
-        view.tab = section;
-        return true;
-    }
-
-    /// The pick put on the panel's last ticket, or its first, once it has scrolled a line.
-    fn pickPanelEnd(app: *App, last: bool) bool {
-        var f: feed.Feed = undefined;
-        if (!app.feedOf(&f)) return true;
-        const view = &app.board_view.?;
-        const first = f.firstSpot();
-        if (f.popCount() > 0) view.pick = if (last) first + f.popCount() - 1 else first;
-        if (f.item(view.pick).?.ticket) |id| {
-            _ = app.pickCard(id);
-            app.pickPlan(id);
-        }
-        return true;
-    }
-
-    /// The wheel over the panel scrolls its list a line a notch. Whether it was over the panel.
-    fn panelWheel(app: *App, m: keys.Mouse) bool {
-        if (!app.sided() or m.y < 1) return false;
-        const left = app.term_w - app.view_w;
-        if (m.x < left + 2 or m.x + 2 > app.term_w) return false;
-        var f: feed.Feed = undefined;
-        if (!app.feedOf(&f)) return false;
-        const top = f.height() - f.panel;
-        const row = m.y - 1;
-        if (row < top or row >= f.height()) return false;
-        const view = &app.board_view.?;
-        view.tab_scroll = if (m.code & 1 == 0) f.scroll -| 1 else @min(f.scroll + 1, f.max_scroll);
-        app.dirty = true;
-        return true;
-    }
-
     fn feedAct(app: *App, item: feed.Item, key: []const u8) !bool {
         const b = if (app.board) |*b| b else return false;
         const named: []const u8 = if (std.mem.eql(u8, key, "\r")) "⏎" else key;
-        if (item.next) |at| return app.nextKey(at, &app.board_view.?.pick, key);
+
         const at = item.need orelse {
             if (!std.mem.eql(u8, named, "⏎")) return false;
             const id = item.ticket orelse return true;
@@ -2357,29 +2294,6 @@ pub const App = struct {
         return true;
     }
 
-    /// A click under Your move's items: on a chip of the strip, which opens its list, or on a
-    /// ticket of the open list, which is the pick. Whether it was on the strip or the list.
-    fn stripClick(app: *App, f: *const feed.Feed, row: usize, col: usize) !bool {
-        if (row >= f.count()) return false;
-        const view = &app.board_view.?;
-        for (f.items_shown..f.itemCount()) |i| {
-            const item = f.item(i).?;
-            const here = item.line == row and (item.w == 0 or (col >= item.at and col < item.at + item.w));
-            if (!here) continue;
-            view.focus = .orchestrator;
-            if (app.sideDue()) app.normal = true;
-            view.pick = i;
-            if (item.chip) return app.openChip(item);
-            if (item.ticket) |id| {
-                _ = app.pickCard(id);
-                app.pickPlan(id);
-            }
-            app.dirty = true;
-            return true;
-        }
-        return true;
-    }
-
     /// A click on the feed's Your move: its item is the pick, and on a button, what the button's
     /// key does. Whether the click was on one of its items.
     fn feedClick(app: *App, m: keys.Mouse) !bool {
@@ -2389,7 +2303,7 @@ pub const App = struct {
         var f: feed.Feed = undefined;
         if (!app.feedOf(&f)) return false;
         const row = m.y - 1;
-        if (row >= f.shown) return app.stripClick(&f, row, m.x - (left + 2));
+        if (row >= f.shown) return false;
         if (isTryRow(f.line(row).kind) or f.line(row).kind == .try_head) return app.tryClick(&f, row, m.x - (left + 2));
         var at: ?usize = null;
         for (0..f.items_shown) |i| {
@@ -5017,6 +4931,7 @@ pub const App = struct {
     fn planClick(app: *App, m: keys.Mouse) !void {
         const view = &app.board_view.?;
         if (m.y == 0) {
+            if (draw.planAutoSwitch(app)) |at| if (m.x >= at.x and m.x < at.x + at.w) return app.planAutoClick();
             const link = app.planLink();
             if (m.x >= link.x and m.x < link.x + link.w) try app.toBoard();
             const orch = app.orchLink();
@@ -5054,6 +4969,18 @@ pub const App = struct {
         } else if (opensInPlace(&row)) {
             try app.togglePlanOpen(&row);
         } else if (picked) try app.planAct(&row, "\r");
+    }
+
+    /// A click on Plan's auto switch: off turns it on; on asks to turn it off, and a second click
+    /// within a few seconds does.
+    fn planAutoClick(app: *App) !void {
+        if (app.auto() != null and app.now >= app.auto_armed_until) {
+            app.auto_armed_until = app.now + auto_confirm_ms;
+            app.dirty = true;
+            return;
+        }
+        app.auto_armed_until = 0;
+        try app.toggleAuto();
     }
 
     /// A click on the buttons row at `at`: the button under it pressed on its ticket, which the
@@ -6613,15 +6540,9 @@ pub const App = struct {
                     return true;
                 }
             }
-            if (m.leftPress() and m.y == 0) if (draw.sideAutoButton(app)) |button| {
-                const left = app.term_w - app.view_w;
-                if (m.x >= left + button.x and m.x < left + button.x + button.w) {
-                    try app.openAuto();
-                    return true;
-                }
-            };
+
             if (m.leftPress() and try app.feedClick(m)) return true;
-            if (m.wheel() and app.panelWheel(m)) return true;
+
             if (app.sideShown() and (app.sideFocused() or m.wheel())) return false;
             if (m.leftPress()) {
                 view.focus = .orchestrator;
@@ -10463,65 +10384,6 @@ test "o on a check to look at the diff opens meatcheck on the landed range in a 
     try std.testing.expect(std.mem.indexOf(u8, said, "abc123^..abc123") != null);
     try std.testing.expect(std.mem.indexOf(u8, said, "is the retry bounded?") != null);
 }
-test "a tab clicked lights its list in place, and j and the wheel scroll the panel without resizing the feed" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
-    defer sent.close(std.testing.io);
-    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
-    defer app.pending.deinit(std.testing.allocator);
-    app.term_w = 200;
-    app.view_w = 60;
-    app.view_h = 40;
-    var json: std.ArrayList(u8) = .empty;
-    defer json.deinit(std.testing.allocator);
-    try json.appendSlice(std.testing.allocator, "{\"tickets\":[],\"needs_you\":[],\"plan\":{\"next\":[");
-    for (0..30) |i| {
-        if (i > 0) try json.append(std.testing.allocator, ',');
-        try json.print(std.testing.allocator, "{{\"ticket\":{d},\"repo\":\"arena\",\"title\":\"n\",\"why\":\"\",\"set_by\":\"orchestrator\"}}", .{i + 100});
-    }
-    try json.appendSlice(std.testing.allocator, "]}}");
-    app.board = try tickets.Board.parse(std.testing.allocator, json.items);
-    defer app.board.?.deinit();
-    app.board_view = .{ .home = true, .plan = true, .focus = .orchestrator };
-    const view = &app.board_view.?;
-    const eq = std.testing.expectEqual;
-
-    var f: feed.Feed = undefined;
-    try std.testing.expect(app.feedOf(&f));
-    const height = f.height();
-    const tabs = f.chips;
-    for (tabs) |tab| {
-        _ = try app.openChip(.{ .line = 0, .chip = true, .section = tab.section });
-        try std.testing.expect(app.feedOf(&f));
-        try eq(height, f.height());
-    }
-    _ = try app.openChip(.{ .line = 0, .chip = true, .section = .next });
-    try eq(feed.Section.next, view.tab);
-
-    try std.testing.expect(app.feedOf(&f));
-    view.pick = f.firstSpot() + f.popCount() - 1;
-    try std.testing.expect(try app.feedKey("j"));
-    try eq(@as(usize, 1), view.tab_scroll);
-    try std.testing.expect(app.feedOf(&f));
-    try eq(f.firstSpot() + f.popCount() - 1, view.pick);
-    try std.testing.expect(try app.feedKey("k"));
-    try eq(@as(usize, 1), view.tab_scroll);
-
-    view.pick = f.firstSpot();
-    try std.testing.expect(try app.feedKey("k"));
-    try eq(@as(usize, 0), view.tab_scroll);
-
-    const wheel_y: u16 = @intCast(f.height() + 1 - f.panel);
-    const x = app.term_w - app.view_w + 3;
-    try std.testing.expect(try app.boardMouse(.{ .code = 65, .x = x, .y = wheel_y, .release = false }));
-    try eq(@as(usize, 1), view.tab_scroll);
-    try std.testing.expect(try app.boardMouse(.{ .code = 64, .x = x, .y = wheel_y, .release = false }));
-    try eq(@as(usize, 0), view.tab_scroll);
-    try std.testing.expect(app.feedOf(&f));
-    try eq(height, f.height());
-}
-
 test "on Plan's windows z folds the picked one and keeps the pick, Z folds the rest and opens them again, f shows one whole and q closes it, and the folds load from their file's plan: lines" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     app.term_w = 200;
