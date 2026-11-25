@@ -2460,4 +2460,19 @@ modes() { [[ $(outer display -p -t p '#{mouse_any_flag}#{mouse_all_flag}#{mouse_
 check "and leaves mouse reporting off, the alternate screen left and the cursor shown" await modes
 check "and says why" grep -q ARENA_TEST_PANIC $tmp/panic-err
 
+# a held row on the plan says which session, window and pane holds its Claude, and a click on it goes there
+mkdir -p $tmp/.config/ficciones/theme
+for name in AMBER VIOLET AMBERDIM EMBERDIM INK DIM GREY SURFACE0 SURFACE2 SURFACE3 SURFACE4 BG CYAN MOSS PINK RED; do print -r -- "PALETTE_$name=#808080"; done >$tmp/.config/ficciones/theme/palette.sh
+held_pane=$(inner list-panes -s -t alpha -F '#{pane_id}' | sed -n 2p)
+held_index=$(inner display -p -t $held_pane '#{window_index}')
+print -r -- '{"tickets":[{"id":701,"repo":"arena","title":"Held building","kind":"ticket","status":"doing","priority":"med","blocked_by":[]}],"plan":{"now":[{"ticket":701,"repo":"arena","title":"Held building","state":"building","since":"2026-11-24T10:00:00Z","pane":"'$held_pane'"}],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}' >$tmp/run/babylon/board.json
+outer kill-session -t o
+outer new-session -d -s o -x 121 -y 24 \
+  "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 $bin -L $in 2>$tmp/err; echo EXIT \$?; cat"
+check "a held row's chip reads its session, window and pane" see "alpha:$held_index · $held_pane"
+inner select-window -t alpha:one
+mouse 0 ${(z)$(spot "alpha:$held_index · $held_pane")} M
+mouse 0 ${(z)$(spot "alpha:$held_index · $held_pane")} m
+check "and a click on it goes to that pane" await eval '[[ $(inner display -p -t alpha "#{pane_id}") == $held_pane ]]'
+
 exit $((fails > 0))

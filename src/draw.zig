@@ -2313,6 +2313,16 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
                 _ = try bench.button(w, r, button.x, button.y, button.key, button.word, i == 0, null);
             }
         },
+        .held => {
+            const item = given.now[row.item];
+            try bench.fill(w, x0, y, ww, bg);
+            try bench.say(w, x0 + 1, y, "▌", repoHue(r, item.repo).hue, bg, false);
+            const pane = item.holder() orelse return;
+            const there = app.workspace(pane) orelse return;
+            var buf: [96]u8 = undefined;
+            const label = std.fmt.bufPrint(&buf, "{s}:{d} · %{d}", .{ there.session, there.window, pane }) catch return;
+            _ = try bench.chipOn(w, x0 + 4, y, clip(label, ww -| 8), repoHue(r, there.repo).hue, r.text, false, r.well);
+        },
         .head => {
             try bench.fill(w, x0, y, ww, r.panel);
             var buf: [48]u8 = undefined;
@@ -5239,6 +5249,7 @@ fn lookBox(app: *App, w: *Writer, look: App.Look) !void {
     const peek = app.peekOf(look) orelse return;
     var age_buf: [8]u8 = undefined;
     if (peek.card) |card| {
+        if (card.holder()) |pane| if (app.workspace(pane)) |at| p.add(.head, "%{d} · {s}:{d}", .{ pane, at.session, at.window });
         p.add(.head, "#{d} {s}", .{ card.id, card.title });
         p.add(.dim, "{s} · {s} · {s}", .{ card.repo orelse "no repo", card.priority, card.model orelse "default model" });
         var rel: [120]u8 = undefined;
@@ -5635,4 +5646,33 @@ test "the rail's sessions and Claudes wear their repo's ▌ and icon, one repo's
         seen += 1;
     }
     try std.testing.expect(seen >= 4);
+}
+
+test "an in-flight row with a Claude says its session, window and pane on a second line, in the session's repo colour" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":701,"repo":"arena","status":"doing","title":"A","claimed_by":"%5"}],
+        \\"plan":{"now":[{"ticket":701,"repo":"arena","title":"A","state":"building","pane":"%5"}],"next":[],"goals":[],
+        \\"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer board.deinit();
+    var pane: Pane = .{ .id = 5, .term = undefined, .stream = undefined };
+    var panes = [_]*Pane{&pane};
+    var win: Window = .{ .id = 1, .index = 2, .name = @constCast("w"), .claude = .working, .since = 1, .info = @constCast("\t\t\t\tt701-x\t\t\t/h/projects/babylon/.worktrees/t701-x") };
+    win.panes = .fromOwnedSlice(&panes);
+    var wins = [_]*Window{&win};
+    var session: Session = .{ .id = 2, .name = @constCast("babylon-work") };
+    session.wins = .fromOwnedSlice(&wins);
+    var sessions = [_]*Session{&session};
+    var app = homeApp(&board);
+    app.sessions = .fromOwnedSlice(&sessions);
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 23;
+    app.roles = bench.roles();
+    app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
+    var buf: [262144]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try planView(&app, &out, app.board_view.?);
+    const drawn = out.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "babylon-work:2 · %5") != null);
 }

@@ -22,7 +22,7 @@ const ideas_shown = 3;
 /// The bit of `unfolded` that holds the ideas open.
 pub const ideas_fold: u3 = 0;
 
-pub const Kind = enum { head, blank, now, next, why, more, goals_more, goal, landed, unplanned, focal, drove, card_top, goal_bar, goal_next, goal_block, idea, ideas_more, summary, note, buttons };
+pub const Kind = enum { head, blank, now, next, why, more, goals_more, goal, landed, unplanned, focal, drove, card_top, goal_bar, goal_next, goal_block, idea, ideas_more, summary, note, buttons, held };
 pub const Style = enum { normal, dim, heading, attention };
 
 /// Workbench's plan is six windows, each a fixed slot of the screen.
@@ -231,6 +231,35 @@ pub const Sheet = struct {
             }
             j -= 1;
             s.rows[j] = s.rows[i];
+        }
+        s.n += extra;
+    }
+
+    /// A second line under each in-flight row whose Claude's pane `known` has, for its workspace
+    /// chip; it is no pick, so the picks stay where they were.
+    pub fn withHeld(s: *Sheet, given: *const tickets.Plan, known: anytype) void {
+        var extra: usize = 0;
+        var has: [max_rows]bool = @splat(false);
+        for (s.rows[0..s.n], 0..) |row, i| {
+            if (row.kind != .now) continue;
+            const pane = given.now[row.item].holder() orelse continue;
+            if (!known.has(pane)) continue;
+            has[i] = true;
+            extra += 1;
+        }
+        if (extra == 0 or s.n + extra > max_rows) return;
+        var j = s.n + extra;
+        var i = s.n;
+        while (i > 0) {
+            i -= 1;
+            j -= 1;
+            s.rows[j] = s.rows[i];
+            if (has[i]) {
+                const owner = s.rows[j];
+                s.rows[j] = .{ .kind = .held, .ticket = owner.ticket, .item = owner.item, .win = owner.win };
+                j -= 1;
+                s.rows[j] = owner;
+            }
         }
         s.n += extra;
     }
@@ -1027,4 +1056,30 @@ test "landed is a row to each of today's tickets, newest first, and folds to its
     try std.testing.expectEqualSlices(u32, &.{ 6, 5 }, &tickets_seen);
     s.build(b.plan().?, &b, 100, 0, 0, false, true, .initOne(.landed));
     try std.testing.expectEqualStrings("✓ 23 today", rowText(&s, .summary, 0).?);
+}
+
+test "a second line under each in-flight row whose pane is known, and no pick of its own" {
+    var b = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"plan":{"now":[
+        \\{"ticket":1,"repo":"arena","title":"Held","state":"building","pane":"%7"},
+        \\{"ticket":2,"repo":"arena","title":"Elsewhere","state":"building","pane":"%8"},
+        \\{"ticket":3,"repo":"arena","title":"Nobody","state":"building"}]}}
+    );
+    defer b.deinit();
+    var s: Sheet = undefined;
+    s.build(b.plan().?, &b, 100, 0, 0, false, true, .empty);
+    const before = s.n;
+    const Known = struct {
+        pub fn has(_: @This(), pane: u32) bool {
+            return pane == 7;
+        }
+    };
+    s.withHeld(b.plan().?, Known{});
+    try std.testing.expectEqual(before + 1, s.n);
+    for (s.rows[0..s.n], 0..) |row, i| if (row.kind == .held) {
+        try std.testing.expectEqual(@as(?u32, 1), row.ticket);
+        try std.testing.expectEqual(Kind.now, s.rows[i - 1].kind);
+        try std.testing.expectEqual(@as(?u32, 1), s.rows[i - 1].ticket);
+        try std.testing.expectEqual(@as(?usize, null), row.pick);
+    };
 }

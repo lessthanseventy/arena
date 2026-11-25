@@ -74,8 +74,9 @@ const pane_format = "#{{session_id}} #{{window_id}} #{{pane_id}} #{{window_width
     "#{{?@arena_claude_tokens,#{{@arena_claude_tokens}},0}} #{{?@arena_claude_at,#{{@arena_claude_at}},0}} " ++
     "#{{?@arena_claude_took,#{{@arena_claude_took}},0}} #{{?@arena_claude_ctx,#{{@arena_claude_ctx}},0}} " ++
     "#{{?@arena_claude_stirred,#{{@arena_claude_stirred}},0}} #{{?window_bell_flag,2,#{{?window_activity_flag,1,0}}}} " ++
+    "#{{window_index}} " ++
     "#{{@arena_claude_doing}}\t#{{@arena_claude_prompt}}\t#{{@arena_claude_title}}\t#{{@arena_claude_said}}\t" ++
-    "#{{@arena_claude_branch}}\t#{{@arena_claude_background}}\t#{{@arena_claude_agents}}\t#{{window_name}}";
+    "#{{@arena_claude_branch}}\t#{{@arena_claude_background}}\t#{{@arena_claude_agents}}\t#{{pane_current_path}}\t#{{window_name}}";
 
 /// The least and the most of the view a window's column is given, in hundredths, and how much
 /// one press of narrower or wider changes it.
@@ -121,6 +122,8 @@ pub const Pane = struct {
     seed: enum { wanted, asked, done } = .wanted,
     /// The `App.colors_known` this pane's colours were last told to tmux at, 0 for never.
     colors_told: u32 = 0,
+    /// The colour of the border arena last set on it, none while tmux's own shows.
+    frame: ?color.RGB = null,
     /// What the pane's program had set when last asked, by `mode_sets`.
     modes: [mode_sets.len]bool = @splat(false),
 
@@ -189,6 +192,8 @@ pub const Pane = struct {
 
 pub const Window = struct {
     id: u32,
+    /// Its place in its session as tmux numbers it, the `2` of `arena:2`.
+    index: u32 = 0,
     name: []u8 = &.{},
     panes: std.ArrayList(*Pane) = .empty,
     active: usize = 0,
@@ -225,7 +230,7 @@ pub const Window = struct {
     took: u32 = 0,
     info: []u8 = &.{},
 
-    pub const Info = enum { doing, prompt, title, said, branch, background, agents };
+    pub const Info = enum { doing, prompt, title, said, branch, background, agents, path };
 
     pub fn text(win: *const Window, field: Info) []const u8 {
         var it = std.mem.splitScalar(u8, win.info, '\t');
@@ -855,10 +860,56 @@ pub const App = struct {
         };
     }
 
+    /// The repo a path is in, `~/projects/<repo>/…` worktrees included; empty for any other.
+    pub fn pathRepo(path: []const u8) []const u8 {
+        const marker = "/projects/";
+        const at = std.mem.indexOf(u8, path, marker) orelse return "";
+        const rest = path[at + marker.len ..];
+        return rest[0 .. std.mem.indexOfScalar(u8, rest, '/') orelse rest.len];
+    }
+
     /// The repo of a session's lowest ticket, empty for a session holding none.
     pub fn sessionRepo(app: *const App, si: usize) []const u8 {
         return if (app.sessionTicket(si)) |key| key.repo else "";
     }
+
+    /// The repo most of a session's Claudes work in, by where their panes are, never by the
+    /// session's name; the first of those tied. Empty for a session with no Claude in a repo.
+    pub fn workspaceRepo(app: *const App, si: usize) []const u8 {
+        const wins = app.sessions.items[si].wins.items;
+        var best: []const u8 = "";
+        var most: usize = 0;
+        for (wins) |win| {
+            if (!win.agent()) continue;
+            const repo = pathRepo(win.text(.path));
+            if (repo.len == 0) continue;
+            var count: usize = 0;
+            for (wins) |other| count += @intFromBool(other.agent() and std.mem.eql(u8, pathRepo(other.text(.path)), repo));
+            if (count > most) {
+                best = repo;
+                most = count;
+            }
+        }
+        return best;
+    }
+
+    /// Where a Claude's pane is: its session's name, its window's number and its session's repo.
+    pub const Workspace = struct { session: []const u8, window: u32, repo: []const u8 };
+
+    pub fn workspace(app: *const App, pane: u32) ?Workspace {
+        for (app.sessions.items, 0..) |s, si| for (s.wins.items) |win| for (win.panes.items) |p| {
+            if (p.id == pane) return .{ .session = s.name, .window = win.index, .repo = app.workspaceRepo(si) };
+        };
+        return null;
+    }
+
+    /// Whether a pane of this session's tmux is known, for the plan's workspace chips.
+    const KnownPanes = struct {
+        app: *const App,
+        pub fn has(k: KnownPanes, pane: u32) bool {
+            return k.app.workspace(pane) != null;
+        }
+    };
 
     /// The lowest ticket among a session's Claudes, null for a session holding none.
     fn sessionTicket(app: *const App, si: usize) ?TicketKey {
@@ -3136,7 +3187,7 @@ pub const App = struct {
         var lines = std.mem.tokenizeScalar(u8, body, '\n');
         while (lines.next()) |line| {
             var it = std.mem.tokenizeScalar(u8, line, ' ');
-            var n: [23]u32 = undefined;
+            var n: [24]u32 = undefined;
             for (&n, 0..) |*field, i| {
                 const token = it.next() orelse break;
                 field.* = std.fmt.parseInt(u32, token[@intFromBool(i < 3)..], 10) catch break;
@@ -3168,6 +3219,7 @@ pub const App = struct {
                     win.h = @intCast(n[4]);
                     win.cell_w = @intCast(n[12]);
                     win.cell_h = @intCast(n[13]);
+                    win.index = n[23];
                     win.claude = .none;
                     win.review = .none;
                     win.stirring = false;
@@ -3211,6 +3263,7 @@ pub const App = struct {
         }
         for (old_panes.items) |pane| pane.destroy(app.gpa);
         try app.tellColors();
+        try app.frameSync();
         for (old_wins.items) |win| win.destroy(app.gpa);
 
         for (app.sessions.items, 0..) |s, i| {
@@ -3503,6 +3556,7 @@ pub const App = struct {
             b.deinit();
         }
         if (app.board == null) try app.closeBoard();
+        try app.frameSync();
         app.settleAuto();
         // the feed's height may change, and the orchestrator's window with it
         app.want_list = true;
@@ -4538,7 +4592,10 @@ pub const App = struct {
         var shut = app.plan_shut;
         if (view.whole) |win| shut.remove(win);
         sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.halfHome(), app.workbench(), shut);
-        if (app.workbench()) sheet.withButtons(app.plan_open);
+        if (app.workbench()) {
+            sheet.withButtons(app.plan_open);
+            sheet.withHeld(b.plan().?, KnownPanes{ .app = app });
+        }
         return true;
     }
 
@@ -4961,6 +5018,10 @@ pub const App = struct {
             return app.driveAnswer(button);
         }
         if (row.kind == .buttons) return app.planButtonClick(&sheet, at, m);
+        if (row.kind == .held) {
+            const pane = app.board.?.plan().?.now[row.item].holder() orelse return;
+            return app.showPane(pane);
+        }
         const pick = row.pick orelse return;
         const picked = view.plan_pick == pick;
         view.plan_pick = pick;
@@ -4989,7 +5050,7 @@ pub const App = struct {
         var buttons: [12]PlanButton = undefined;
         for (app.planButtons(sheet, at, &buttons)) |button| {
             if (m.y != button.y or m.x < button.x or m.x >= button.x + button.w) continue;
-            const owner = sheet.rows[at - 1 - @as(usize, @intFromBool(sheet.rows[at - 1].kind == .why))];
+            const owner = sheet.rows[at - 1 - @as(usize, @intFromBool(sheet.rows[at - 1].kind == .why or sheet.rows[at - 1].kind == .held))];
             app.board_view.?.plan_pick = owner.pick orelse return;
             return app.act(button.action);
         }
@@ -7991,6 +8052,34 @@ pub const App = struct {
 
     /// tmux answers a program's question for its foreground and background with what the client
     /// reported for the pane, and a control client that reported nothing gets black for both.
+    /// The repo colour of the ticket claimed by the Claude in `pane`, if one is.
+    fn frameOf(app: *const App, pane: u32) ?color.RGB {
+        const r = app.roles orelse return null;
+        const b = if (app.board) |*board| board else return null;
+        for (b.cards()) |card| {
+            if (card.status != .doing or (card.holder() orelse continue) != pane) continue;
+            for (Roles.repo_names, 0..) |name, i| if (std.mem.eql(u8, name, card.repo orelse "")) return r.repo[i];
+        }
+        return null;
+    }
+
+    /// The border of each pane holding a claimed ticket in the ticket's repo colour, and tmux's
+    /// own again where the claim has ended.
+    fn frameSync(app: *App) !void {
+        for (app.sessions.items) |s| for (s.wins.items) |win| for (win.panes.items) |pane| {
+            const want = app.frameOf(pane.id);
+            if (std.meta.eql(want, pane.frame)) continue;
+            pane.frame = want;
+            if (want) |c| {
+                try app.send(.ignore, "set -p -t %{d} pane-border-style \"fg=#{x:0>2}{x:0>2}{x:0>2}\"", .{ pane.id, c.r, c.g, c.b });
+                try app.send(.ignore, "set -p -t %{d} pane-active-border-style \"fg=#{x:0>2}{x:0>2}{x:0>2}\"", .{ pane.id, c.r, c.g, c.b });
+            } else {
+                try app.send(.ignore, "set -pu -t %{d} pane-border-style", .{pane.id});
+                try app.send(.ignore, "set -pu -t %{d} pane-active-border-style", .{pane.id});
+            }
+        };
+    }
+
     fn tellColors(app: *App) !void {
         if (app.colors_known == 0) return;
         const fg = app.palette.fg;
@@ -10481,4 +10570,27 @@ test "space opens a Plan ticket row in place, one to a window, with the card's o
 
     app.loadFolds("open:now:7\nopen:nowhere:3\n");
     try eq(@as(u32, 7), app.plan_open.get(.now));
+}
+
+test "a session's repo is where its Claudes' panes are, a worktree's included, never its name" {
+    const eq = std.testing.expectEqualStrings;
+    try eq("babylon", App.pathRepo("/home/a/projects/babylon/.worktrees/t1-x"));
+    try eq("arena", App.pathRepo("/home/a/projects/arena"));
+    try eq("", App.pathRepo("/home/a/elsewhere"));
+
+    var one: Window = .{ .id = 1, .claude = .working, .info = @constCast("\t\t\t\t\t\t\t/h/projects/babylon/.worktrees/x") };
+    var two: Window = .{ .id = 2, .claude = .working, .info = @constCast("\t\t\t\t\t\t\t/h/projects/arena") };
+    var three: Window = .{ .id = 3, .claude = .working, .info = @constCast("\t\t\t\t\t\t\t/h/projects/arena/.worktrees/y") };
+    var shell: Window = .{ .id = 4, .info = @constCast("\t\t\t\t\t\t\t/h/projects/tlon") };
+    var mixed: Session = .{ .id = 2, .name = @constCast("babylon-work") };
+    var wins = [_]*Window{ &one, &two, &three, &shell };
+    mixed.wins = .fromOwnedSlice(&wins);
+    var plain: Session = .{ .id = 3, .name = @constCast("arena") };
+    var only = [_]*Window{&one};
+    plain.wins = .fromOwnedSlice(&only);
+    var sessions = [_]*Session{ &mixed, &plain };
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.sessions = .fromOwnedSlice(&sessions);
+    try eq("arena", app.workspaceRepo(0));
+    try eq("babylon", app.workspaceRepo(1));
 }
