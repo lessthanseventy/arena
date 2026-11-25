@@ -2098,11 +2098,11 @@ key -l ' '
 check "space opens the row in place, with the card's buttons under it" await shows 'o open +e edit'
 key -l ' '
 check "and space closes it" gone 'o open +e edit'
-check "the pick starts on the first window's row" see '▌▌ #701 First building'
+check "the pick starts on the first window's row" see '▌▌. #701 First building'
 key /
 key -l Light
 key Enter
-check "/ with part of a title keeps the rows that hold it, and the pick skips the rest" await shows '▌▌1 +#7 Lights'
+check "/ with part of a title keeps the rows that hold it, and the pick skips the rest" await shows '▌▌1 . #7 Lights'
 check "the rows that miss it stay, dimmed" see '#701 First building'
 key Escape
 check "and Escape clears it" gone '/ Light'
