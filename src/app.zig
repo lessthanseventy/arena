@@ -4763,7 +4763,6 @@ pub const App = struct {
         return if (view.whole == win) app.planWhole() else app.planSlot(win);
     }
 
-    /// Where the `+ goal` button is on the goals window's title bar.
     /// Where the `+ new` button is on not planned's title bar, none where the window is too
     /// narrow to hold it beside its title.
     pub fn newHead(app: *const App) ?struct { x: u16, y: u16, w: u16 } {
@@ -4772,6 +4771,7 @@ pub const App = struct {
         return .{ .x = rect.x + rect.w -| 13, .y = rect.y, .w = 7 };
     }
 
+    /// Where the `+ goal` button is on the goals window's title bar.
     pub fn goalHead(app: *const App) struct { x: u16, y: u16, w: u16 } {
         const rect = app.planSlot(.goals);
         return .{ .x = rect.x + rect.w -| 13, .y = rect.y, .w = 8 };
@@ -11071,6 +11071,13 @@ test "J K on a todo row move it in its repo, W adds it to next, + opens the new 
     try app.planKey("x");
     try std.testing.expect(app.prompt.?.what == .why);
     try std.testing.expectEqualStrings("close:6", app.prompt.?.item());
+    var typed = app.prompt.?;
+    @memcpy(typed.buf[0..8], "not need");
+    typed.len = 8;
+    try app.sendWhy(typed);
+    len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'update' '6' '--status' 'done' '--why' 'not need'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "not need") != null);
 }
 
 test "a click on not planned's + new button opens the new ticket window, and a window too narrow for it has none" {
