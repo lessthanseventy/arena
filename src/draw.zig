@@ -5724,3 +5724,26 @@ test "the empty switcher lists Claudes by urgency, then sessions in tmux's order
         try std.testing.expect(found);
     }
 }
+
+test "a Claude's hover card lists each subagent and its shell under its state line" {
+    var win: Window = .{ .id = 1, .name = @constCast("w"), .claude = .working, .info = @constCast("\t\t\t\t\tmix ecto.migrate\tlint run\x1fcheck deps") };
+    var s: Session = .{ .id = 1, .name = @constCast("s") };
+    var wins = [_]*Window{&win};
+    s.wins = .fromOwnedSlice(&wins);
+    var sessions = [_]*Session{&s};
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 100;
+    app.view_w = 100;
+    app.view_h = 30;
+    app.sessions = .fromOwnedSlice(&sessions);
+    var buf: [65536]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try lookBox(&app, &out, .{ .window = 1 });
+    const drawn = out.buffered();
+    const state = std.mem.indexOf(u8, drawn, "working") orelse return error.NoState;
+    const first = std.mem.indexOf(u8, drawn, "◔ lint run") orelse return error.NoSub;
+    const second = std.mem.indexOf(u8, drawn, "◔ check deps") orelse return error.NoSub;
+    const shell = std.mem.indexOf(u8, drawn, "◔ mix ecto.migrate") orelse return error.NoShell;
+    try std.testing.expect(state < first and first < second and second < shell);
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "2 agents") == null);
+}

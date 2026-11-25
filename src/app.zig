@@ -11532,3 +11532,49 @@ test "only a Claude come to wait or stall is a notice" {
     try std.testing.expect(App.notifies(.done, .stalled));
     try std.testing.expect(!App.notifies(.waiting, .waiting));
 }
+
+test "⏎ on a subagent row in a card's modal shows that subagent, as the rail's click did" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 24;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":4,"repo":"tlon","title":"d","status":"doing","claimed_by":"%12"}]}
+    );
+    defer app.board.?.deinit();
+    const pane = try Pane.create(&app, 12, 80, 24);
+    defer pane.destroy(std.testing.allocator);
+    var win: Window = .{ .id = 7, .name = @constCast("w"), .claude = .working, .agent_pane = 12, .info = @constCast("\t\t\t\t\t\tlint run\x1fcheck deps") };
+    defer win.panes.deinit(std.testing.allocator);
+    try win.panes.append(std.testing.allocator, pane);
+    var s: Session = .{ .id = 1, .name = @constCast("s") };
+    var wins = [_]*Window{&win};
+    s.wins = .fromOwnedSlice(&wins);
+    var sessions = [_]*Session{&s};
+    app.sessions = .fromOwnedSlice(&sessions);
+    app.current = 1;
+    app.board_view = .{ .col = 1, .detail = 4 };
+
+    var buttons: [16]App.ModalButton = undefined;
+    var rows: [2]u16 = undefined;
+    var seen: usize = 0;
+    for (app.modalButtons(&buttons)) |b| if (b.action == .sub) {
+        rows[seen] = b.y;
+        seen += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 2), seen);
+    try std.testing.expectEqual(rows[0] + 1, rows[1]);
+
+    try app.modalKey("\t");
+    try app.modalKey("\t");
+    try app.modalKey("\r");
+    try std.testing.expect(app.board_view == null);
+    try std.testing.expectEqual(@as(u32, 12), app.pick.?.pane);
+    try std.testing.expectEqualStrings("check deps", app.pick.?.name[0..app.pick.?.len]);
+}
