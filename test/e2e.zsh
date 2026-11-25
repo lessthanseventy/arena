@@ -1960,20 +1960,24 @@ print -r -- '{"tickets":[{"id":40,"repo":"arena","title":"Hover me","kind":"tick
 '"orchestrator":{"on":true,"running":true}}' >$tmp/run/babylon/board.json
 see 'P4 Start #40'
 see '#42 Landed'
-# every cell outside the peek is as it was in $1, a screen's text
+# every cell outside the peek is as it was in $1, a screen's text; the orchestrator's panes, which
+# tmux draws again when it likes, are not the board's, so what is right of $ox below its divider is left out
 outside() {
   local -a was=("${(@f)1}") now=("${(@f)$(settled)}")
-  local foot=${(M)#${(@M)now:#*esc away*}} r left top bot
+  local foot=${(M)#${(@M)now:#*esc away*}} r left top bot pane=$(( $#now + 1 )) a b
   for (( r = 1; r <= $#now; r++ )); do [[ $now[r] == *'⏎ go   space'* ]] && foot=$r; done
+  for (( r = 4; r <= $#now; r++ )); do [[ ${now[r][ox,ox+2]} == '│──' ]] && { pane=$r; break }; done
   left=$(colof $foot '⏎ go   space'); left=$(( left - 2 ))
   top=$foot
   while [[ ${now[top-1][left]} == '│' ]]; do top=$(( top - 1 )); done
   top=$(( top - 1 )); bot=$(( foot + 1 ))
   for (( r = 1; r <= $#was; r++ )); do
+    a=$was[r] b=$now[r]
+    (( r >= pane )) && { a=${a[1,ox-1]}; b=${b[1,ox-1]} }
     if (( r >= top && r <= bot )); then
-      [[ ${was[r][1,left-1]}${was[r][left+60,-1]} == ${now[r][1,left-1]}${now[r][left+60,-1]} ]] || { print "      row $r changed outside the peek"; return 1 }
+      [[ ${a[1,left-1]}${a[left+60,-1]} == ${b[1,left-1]}${b[left+60,-1]} ]] || { print "      row $r changed outside the peek"; return 1 }
     else
-      [[ $was[r] == $now[r] ]] || { print "      row $r changed outside the peek"; print -rl -- "      was: $was[r]" "      now: $now[r]"; return 1 }
+      [[ $a == $b ]] || { print "      row $r changed outside the peek"; print -rl -- "      was: $a" "      now: $b"; return 1 }
     fi
   done
 }
