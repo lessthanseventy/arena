@@ -312,6 +312,8 @@ pub const NotPlanned = struct {
 /// What babylon says the plan is: what is running, what comes next and why, how far each goal
 /// has got, what landed and what is not planned, each in the order to draw it.
 pub const Plan = struct {
+    /// The epic the human picked to drive towards.
+    driving: ?u32 = null,
     now: []NowItem = &.{},
     next: []Next = &.{},
     goals: []Goal = &.{},
@@ -451,6 +453,14 @@ pub const Board = struct {
     /// What is the human's move, in the order babylon gives it.
     pub fn needsYou(b: *const Board) []const Need {
         return b.parsed.value.needs_you;
+    }
+
+    /// The Your move item asking what goal to drive towards next, when babylon gives one.
+    pub fn driveNeed(b: *const Board) ?*const Need {
+        for (b.needsYou()) |*need| {
+            if (std.mem.eql(u8, need.kind, "drive")) return need;
+        }
+        return null;
     }
 
     /// The Your move item of ticket `id`'s open ask, when babylon gives one.

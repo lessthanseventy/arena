@@ -4756,6 +4756,10 @@ pub const App = struct {
             if (is(key, &.{"f"})) return app.openWhole(row.win);
         };
         if (is(key, &.{"+"})) return app.openGoal();
+        if (is(key, &.{"d"})) if (sheet.picked(view.plan_pick)) |row| {
+            if (row.kind == .goal or row.kind == .focal) return app.driveGoal(row.ticket.?);
+        };
+        if (key.len == 1 and key[0] >= '1' and key[0] <= '9') return app.driveAnswer(key[0] - '1');
         if (is(key, &.{"B"})) return app.toBoard();
         if (is(key, &.{ "J", "K", "x", "e" })) {
             const row = sheet.picked(view.plan_pick) orelse return;
@@ -4784,6 +4788,24 @@ pub const App = struct {
             view.focus = .orchestrator;
             if (app.sideDue()) app.normal = true;
         }
+    }
+
+    /// `babylon drive N`: the goal Plan drives towards.
+    fn driveGoal(app: *App, epic: u32) !void {
+        app.dirty = true;
+        try app.send(.ignore, captured("babylon drive {d}"), .{epic});
+    }
+
+    /// Button `at` under a landed goal: the drive item's action run as babylon gave it, or
+    /// `+ a new goal` one past them. Nothing when no goal has landed.
+    fn driveAnswer(app: *App, at: usize) !void {
+        const b = &app.board.?;
+        const need = sheets.driveLanded(b.plan().?, b) orelse return;
+        app.dirty = true;
+        if (at == need.actions.len) return app.openGoal();
+        if (at > need.actions.len) return;
+        const argv = need.actions[at].argv orelse return;
+        _ = try app.runNeed(need.id, argv);
     }
 
     /// `e` and `x` on an idea row: a kept idea's text edited in $EDITOR as a card's is, or the idea
@@ -4875,12 +4897,21 @@ pub const App = struct {
             if (hit.title) {
                 const head = app.goalHead();
                 if (view.whole != null) return;
+                if (hit.win == .driving) if (sheets.focalGoal(app.board.?.plan().?)) |at| {
+                    return app.driveGoal(app.board.?.plan().?.goals[at].epic);
+                };
                 if (hit.win == .goals and m.x >= head.x and m.x < head.x + head.w) return app.openGoal();
                 return app.togglePlanFold(hit.win);
             }
         }
         const at = app.planRowAt(&sheet, m.x, m.y) orelse return;
         const row = sheet.rows[at];
+        if (row.kind == .drove and row.part == 3) {
+            const b = &app.board.?;
+            const need = sheets.driveLanded(b.plan().?, b) orelse return;
+            const button = sheets.driveButtonAt(need, app.planRect(.driving).x, m.x) orelse return;
+            return app.driveAnswer(button);
+        }
         const pick = row.pick orelse return;
         const picked = view.plan_pick == pick;
         view.plan_pick = pick;
@@ -9748,6 +9779,36 @@ test "⏎ on an idea plans it, e and x edit and withdraw it, and ⏎ on the fold
     try eq(@as(u8, 1) << sheets.ideas_fold, view.unfolded);
     try std.testing.expect(app.planSheet(&sheet));
     try std.testing.expect(sheet.picked(view.plan_pick).?.kind == .idea);
+}
+
+test "d on a goal runs babylon drive, and 3 under a landed goal opens the new goal modal" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 40;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"plan":{"goals":[{"epic":326,"title":"board","landed":1,"total":2,"steps":[{"ticket":760,"state":"todo"}]}]}}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    try app.planKey("d");
+    var got: [1024]u8 = undefined;
+    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon drive 326") != null);
+
+    app.board.?.deinit();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"needs_you":[{"id":"drive:14","kind":"drive","ticket":14,"repo":"","text":"landed",
+        \\"actions":[{"key":"1","label":"a","argv":["babylon","drive","1"]},{"key":"2","label":"b","argv":["babylon","drive","2"]}]}],
+        \\"plan":{"driving":14,"goals":[]}}
+    );
+    try app.planKey("3");
+    try std.testing.expect(app.board_view.?.goal_open);
 }
 
 const draft_board =

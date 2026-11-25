@@ -2316,7 +2316,9 @@ fn windowCount(given: *const tickets.Plan, win: sheets.Window) ?usize {
         .now => building,
         .landing => given.now.len - building,
         .next => given.next.len,
-        .goals => given.goals.len,
+        .goals => given.goals.len - @intFromBool(for (given.goals) |goal| {
+            if (given.driving == goal.epic) break true;
+        } else false),
         .unplanned => given.not_planned.count,
         .landed => given.landed_today.count,
     };
@@ -2334,7 +2336,7 @@ fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet
     const mine = sheet.span(win);
     const picked_at = if (lit) sheet.rowOf(view.plan_pick) else null;
     const focused = !app.columnFocused() and (if (picked_at) |at| sheet.rows[at].win == win else false);
-    try bench.window(w, r, rect.x, rect.y, ww, rect.h - 1, win.title(), windowCount(given, win), focused);
+    try bench.window(w, r, rect.x, rect.y, ww, rect.h - 1, if (win == .driving) sheets.drivingTitle(given) else win.title(), windowCount(given, win), focused);
     const bar = if (focused) r.raised else r.tile;
     if (whole) {
         try bench.say(w, rect.x + ww - 10, rect.y, "q close", r.dim, bar, false);
@@ -2343,11 +2345,11 @@ fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet
         const head = app.goalHead();
         try bench.headButton(w, r, head.x, head.y, " + goal ", r.accent, false);
     }
-    if (win == .driving and !app.plan_shut.contains(win)) if (sheets.focalGoal(given.goals)) |at| {
+    if (win == .driving and !app.plan_shut.contains(win)) if (sheets.focalGoal(given)) |at| {
         const goal = given.goals[at];
         var buf: [160]u8 = undefined;
         const text = std.fmt.bufPrint(&buf, "epic #{d}{s}{s}", .{ goal.epic, if (goal.doc != null) " · " else "", goal.doc orelse "" }) catch "";
-        try bench.say(w, rect.x + 20, rect.y, clip(text, ww -| 24), r.dim, bar, false);
+        try bench.say(w, rect.x + 34, rect.y, clip(text, ww -| 38), r.dim, bar, false);
     };
     const top = if (lit) app.planWindowTop(sheet, win, body) else 0;
     for (0..body) |line| {
@@ -2448,6 +2450,27 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
                 }
             }
             try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
+        },
+        .drove => {
+            try bench.fill(w, x0, y, ww, bg);
+            try bench.say(w, x0 + 1, y, "▌", r.accent, bg, false);
+            switch (row.part) {
+                1 => {
+                    if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
+                    try bench.say(w, x0 + 2, y, clip(row.text, room), r.text, bg, true);
+                },
+                2 => try bench.say(w, x0 + 2, y, row.text, r.dim, bg, false),
+                else => {
+                    const need = sheets.driveLanded(given, b).?;
+                    var x = x0 + 2;
+                    for (0..need.actions.len + 1) |i| {
+                        var lbl: [96]u8 = undefined;
+                        const label = sheets.driveButton(&lbl, need, i);
+                        if (x + cellCount(label) + 2 > x0 + ww) break;
+                        x += try bench.chipInk(w, r, x, y, label, if (i == need.actions.len) r.accent else r.dim, r.text, false) + 1;
+                    }
+                },
+            }
         },
         .now => {
             const item = given.now[row.item];
@@ -3708,6 +3731,7 @@ const plan_keys = [_][2][]const u8{
     .{ "z, Z", "fold the picked window to its summary; fold all but it, and open all" },
     .{ "f", "the picked window whole, over the plan; q closes it" },
     .{ "+", "a new goal: plan it now, or just keep it" },
+    .{ "d", "drive towards the picked goal; 1…9 answer a landed goal's what next" },
     .{ "J K x e", "on next: move it down or up, take it out, edit its why" },
     .{ "x e", "on a kept idea: withdraw it, edit it" },
     .{ "B, b", "the board, and back to the plan" },
