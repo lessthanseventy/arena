@@ -4764,6 +4764,14 @@ pub const App = struct {
     }
 
     /// Where the `+ goal` button is on the goals window's title bar.
+    /// Where the `+ new` button is on not planned's title bar, none where the window is too
+    /// narrow to hold it beside its title.
+    pub fn newHead(app: *const App) ?struct { x: u16, y: u16, w: u16 } {
+        const rect = app.planSlot(.unplanned);
+        if (rect.w < 36) return null;
+        return .{ .x = rect.x + rect.w -| 13, .y = rect.y, .w = 7 };
+    }
+
     pub fn goalHead(app: *const App) struct { x: u16, y: u16, w: u16 } {
         const rect = app.planSlot(.goals);
         return .{ .x = rect.x + rect.w -| 13, .y = rect.y, .w = 8 };
@@ -5165,6 +5173,7 @@ pub const App = struct {
                     return app.driveGoal(app.board.?.plan().?.goals[at].epic);
                 };
                 if (hit.win == .goals and m.x >= head.x and m.x < head.x + head.w) return app.openGoal();
+                if (hit.win == .unplanned) if (app.newHead()) |new| if (m.x >= new.x and m.x < new.x + new.w) return app.newTicket();
                 return app.togglePlanFold(hit.win);
             }
         }
@@ -11062,4 +11071,29 @@ test "J K on a todo row move it in its repo, W adds it to next, + opens the new 
     try app.planKey("x");
     try std.testing.expect(app.prompt.?.what == .why);
     try std.testing.expectEqualStrings("close:6", app.prompt.?.item());
+}
+
+test "a click on not planned's + new button opens the new ticket window, and a window too narrow for it has none" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 300;
+    app.view_w = 200;
+    app.view_h = 40;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator, not_planned_plan);
+    defer app.board.?.deinit();
+    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    const head = app.newHead().?;
+    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = head.x + 1, .y = head.y, .release = false }));
+    var got: [1024]u8 = undefined;
+    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon new") != null);
+
+    app.term_w = 200;
+    app.view_w = 60;
+    try std.testing.expect(app.newHead() == null);
 }
