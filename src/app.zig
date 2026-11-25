@@ -4897,7 +4897,7 @@ pub const App = struct {
             if (hit.title) {
                 const head = app.goalHead();
                 if (view.whole != null) return;
-                if (hit.win == .driving) if (sheets.focalGoal(app.board.?.plan().?)) |at| {
+                if (hit.win == .driving and sheets.driveLanded(app.board.?.plan().?, &app.board.?) == null) if (sheets.focalGoal(app.board.?.plan().?)) |at| {
                     return app.driveGoal(app.board.?.plan().?.goals[at].epic);
                 };
                 if (hit.win == .goals and m.x >= head.x and m.x < head.x + head.w) return app.openGoal();
