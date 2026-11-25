@@ -5419,9 +5419,9 @@ test "Plan's windows keep their slots: another window's rows, a count or a fold 
         var board = try tickets.Board.parse(std.testing.allocator, shape.text);
         defer board.deinit();
         var app = homeApp(&board);
-        app.term_w = 200;
-        app.view_w = 200;
-        app.view_h = 40;
+        app.term_w = 80;
+        app.view_w = 80;
+        app.view_h = 23;
         app.roles = bench.roles();
         app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
         if (shape.fold) app.plan_shut.insert(.now);

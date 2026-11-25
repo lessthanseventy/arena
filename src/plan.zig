@@ -871,7 +871,7 @@ test "the focal goal is the first with a step being built, a card is five rows, 
     var s: Sheet = undefined;
     s.build(given, &b, 100, 0, 0, false, true, .empty);
     try std.testing.expectEqual(Kind.focal, s.rows[0].kind);
-    try std.testing.expectEqual(@as(usize, 0), s.rows[1].pick.?);
+    try std.testing.expectEqual(@as(usize, 0), s.rows[0].pick.?);
     var cards: usize = 0;
     for (s.rows[0..s.n]) |row| cards += @intFromBool(row.kind == .card_top);
     try std.testing.expectEqual(@as(usize, 2), cards);
