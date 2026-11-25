@@ -126,6 +126,10 @@ inner select-window -t alpha:one
 outer new-session -d -s o -x 121 -y 24 \
   "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 ARENA_LOOK_MS=2000 $bin -L $in alpha 2>$tmp/err; echo EXIT \$?; cat"
 outer set -s set-clipboard on
+# o is restarted below: with o its only session, the server would exit, and a new-session close
+# behind can land on it as it goes and be lost with it
+outer set -s exit-empty off
+outer_pid=$(outer display -p '#{pid}')
 # what arena writes, for what a picture of the screen does not show
 outer pipe-pane -t o "cat >$tmp/raw"
 
@@ -2468,6 +2472,7 @@ install_build() { cp $bin $tmp/arena-next && mv $tmp/arena-next $tmp/arena-copy 
 outer kill-session -t o
 outer new-session -d -s o -x 121 -y 24 \
   "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 $tmp/arena-copy -L $in alpha 2>$tmp/update-err; echo EXIT \$?; cat"
+check "the terminal's server outlives the session restarted in it" eval '[[ $(outer display -p "#{pid}") == $outer_pid ]]'
 see '^╭─ sessions'
 key M-b
 see ' every [0-9]+ +arena [0-9]+ '
