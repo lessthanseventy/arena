@@ -10,6 +10,7 @@ const tickets = @import("board.zig");
 const feed = @import("feed.zig");
 const sheets = @import("plan.zig");
 const goal_mod = @import("goal.zig");
+const win_landed = @import("win_landed.zig");
 const App = app_mod.App;
 const Session = app_mod.Session;
 const Window = app_mod.Window;
@@ -840,7 +841,7 @@ fn reviewInk(app: *const App, review: app_mod.Review) vt.Style {
     };
 }
 
-fn cellCount(text: []const u8) usize {
+pub fn cellCount(text: []const u8) usize {
     return std.unicode.utf8CountCodepoints(text) catch text.len;
 }
 
@@ -857,7 +858,7 @@ fn shortName(name: []const u8) []const u8 {
 }
 
 /// The first `max` characters of `text`.
-fn clip(text: []const u8, max: usize) []const u8 {
+pub fn clip(text: []const u8, max: usize) []const u8 {
     var it = std.unicode.Utf8View.initUnchecked(text).iterator();
     var n: usize = 0;
     while (n < max) : (n += 1) _ = it.nextCodepointSlice() orelse break;
@@ -2305,7 +2306,7 @@ fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet
     }
 }
 
-fn stepHue(r: theme.Roles, state: []const u8) struct { word: []const u8, lead: color.RGB, filled: bool } {
+pub fn stepHue(r: theme.Roles, state: []const u8) struct { word: []const u8, lead: color.RGB, filled: bool } {
     const eql = std.mem.eql;
     if (eql(u8, state, "building")) return .{ .word = "building", .lead = r.building, .filled = false };
     if (eql(u8, state, "landing")) return .{ .word = "landing", .lead = r.checking, .filled = false };
@@ -2316,14 +2317,14 @@ fn stepHue(r: theme.Roles, state: []const u8) struct { word: []const u8, lead: c
     return .{ .word = "todo", .lead = r.dim, .filled = false };
 }
 
-fn goalHue(b: *const tickets.Board, r: theme.Roles, goal: tickets.Goal) color.RGB {
+pub fn goalHue(b: *const tickets.Board, r: theme.Roles, goal: tickets.Goal) color.RGB {
     for (b.cards()) |card| if (card.id == goal.epic) return repoHue(r, card.repo).hue;
     for (goal.steps) |step| for (b.cards()) |card| if (card.id == step.ticket) return repoHue(r, card.repo).hue;
     return r.dim;
 }
 
 /// A step as a chip at (`x`, `y`): its number and where it is.
-fn stepChip(w: *Writer, r: theme.Roles, x: usize, y: usize, step: tickets.Step) !usize {
+pub fn stepChip(w: *Writer, r: theme.Roles, x: usize, y: usize, step: tickets.Step) !usize {
     const look = stepHue(r, step.state);
     var buf: [48]u8 = undefined;
     const label = std.fmt.bufPrint(&buf, "#{d} {s}", .{ step.ticket, look.word }) catch "";
@@ -2651,34 +2652,14 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
             try bench.say(w, title_x, y, clip(card.title, label_x -| title_x -| 1), if (dim) r.dim else r.text, bg, false);
             try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
         },
-        .landed => {
-            const id = row.ticket.?;
-            const card = for (b.cards()) |*card| {
-                if (card.id == id) break card;
-            } else null;
-            const repo = repoHue(r, if (card) |c| c.repo else null);
-            try bench.fill(w, x0, y, ww, bg);
-            if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
-            var idb: [16]u8 = undefined;
-            const text = std.fmt.bufPrint(&idb, "#{d}", .{id}) catch "";
-            try bench.say(w, x0 + 1, y, "▌", repo.hue, bg, false);
-            try bench.say(w, x0 + 2, y, "✓", r.landed, bg, false);
-            try bench.say(w, x0 + 4, y, text, repo.hue, bg, true);
-            var age: [16]u8 = undefined;
-            const how = sheets.ago(&age, if (card) |c| c.closed_at else null, app.epoch);
-            const title_x = x0 + 5 + cellCount(text);
-            const how_x = x0 + ww -| (cellCount(how) + 1);
-            if (how.len > 0 and how_x > title_x + 4) try bench.say(w, how_x, y, how, r.dim, bg, false);
-            const title_room = (if (how.len > 0) how_x else x0 + ww) -| title_x -| 1;
-            if (card) |c| try bench.say(w, title_x, y, clip(c.title, title_room), r.text, bg, false);
-        },
+        .landed => try win_landed.paint(app, w, r, sheet, at, y, x0, ww, lit),
     }
 }
 
 /// A goal whose steps are in more than one repo: a chip for each, right-aligned to `right`, with
 /// its landed and total steps there. The cells they take, with a gap; none for a goal of one
 /// repo, whose edge says it.
-fn goalChips(w: *Writer, r: theme.Roles, b: *const tickets.Board, goal: tickets.Goal, right: usize, y: u16) !usize {
+pub fn goalChips(w: *Writer, r: theme.Roles, b: *const tickets.Board, goal: tickets.Goal, right: usize, y: u16) !usize {
     var landed: [theme.Roles.repo_names.len]usize = @splat(0);
     var total: [theme.Roles.repo_names.len]usize = @splat(0);
     var repos: usize = 0;
@@ -2712,7 +2693,7 @@ fn goalChips(w: *Writer, r: theme.Roles, b: *const tickets.Board, goal: tickets.
 /// Nerd Font glyphs, one a repo, in `Roles.repo_names`' order.
 const repo_glyphs = [_][]const u8{ "\u{f120}", "\u{f1b3}", "\u{f013}", "\u{f0ad}", "\u{f015}" };
 
-fn repoHue(r: theme.Roles, repo: ?[]const u8) struct { glyph: []const u8, hue: color.RGB } {
+pub fn repoHue(r: theme.Roles, repo: ?[]const u8) struct { glyph: []const u8, hue: color.RGB } {
     for (theme.Roles.repo_names, 0..) |name, i| if (std.mem.eql(u8, name, repo orelse "")) return .{ .glyph = repo_glyphs[i], .hue = r.repo[i] };
     return .{ .glyph = "\u{f10c}", .hue = r.dim };
 }
