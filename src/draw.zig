@@ -3088,11 +3088,12 @@ fn draftLine(app: *const App, w: *Writer, rect: App.ModalRect, row: u16, text: [
 
 /// A ticket's whole detail over the board, as babylon gave it, its lines cut to the box's width
 /// and run on under one another, scrolled `scroll` rows down.
-fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
+fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
     if (app.board_view.?.gate) return gateBox(app, w, id, scroll);
     const rect = app.modalRect() orelse return;
     if (app.roles) |r| return benchDetail(app, w, r, id, rect, scroll);
     const inner = app_mod.detailWidth(app.boardW()).inner;
+    app.grab.window(.{ .x = rect.x + 2, .y = rect.y + 1, .w = inner, .h = rect.h -| 2 });
     const x = rect.x;
     const top = rect.y + 1;
     const bottom = rect.y + rect.h;
@@ -3117,7 +3118,7 @@ fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
     const text_end = bottom - note_rows - claude_rows;
 
     var y = top + 1;
-    for (head.lines[0..head.n], head.kinds[0..head.n]) |line, kind| {
+    for (head.lines[0..head.n], head.kinds[0..head.n], 0..) |line, kind, at| {
         if (y >= text_end) break;
         const style: vt.Style = switch (kind) {
             .plain, .options => .{},
@@ -3125,6 +3126,7 @@ fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
             .warn => ink(app, "amber", 4),
         };
         try boxLine(w, &pen, edge, style, x, y, line, inner);
+        if (kind != .options) try app.grab.row(app.gpa, x + 2, y - 1, clip(line, inner), head.joins[at]);
         y += 1;
     }
     const text = if (app.detail.items.len > 0) app.detail.items else "…";
@@ -3139,6 +3141,7 @@ fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
         while (lines.next()) |line| : (row += 1) {
             if (row < scroll or y >= text_end) continue;
             try boxLine(w, &pen, edge, part.style, x, y, line, inner);
+            try app.grab.row(app.gpa, x + 2, y - 1, line, lines.dropped);
             y += 1;
         }
     }
@@ -3152,7 +3155,11 @@ fn detailBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
         y += 1;
     };
     var noted = app_mod.DetailLines.init(note, inner);
-    while (y < bottom) : (y += 1) try boxLine(w, &pen, edge, dim, x, y, noted.next() orelse "", inner);
+    while (y < bottom) : (y += 1) {
+        const line = noted.next() orelse "";
+        try boxLine(w, &pen, edge, dim, x, y, line, inner);
+        try app.grab.row(app.gpa, x + 2, y - 1, line, noted.dropped);
+    }
     try modalFrame(app, w, rect, title, " j k scroll ");
 }
 
@@ -3259,10 +3266,11 @@ const spaces: [64]u8 = @splat(' ');
 /// The card's modal in Workbench's look: a window over the board with its shadow and `✕`, the
 /// title whole, the facts as chips, the open ask as a violet band with its options as buttons,
 /// the body, and the card's actions as buttons along the foot. Its rows are `modalButtons`'.
-fn benchDetail(app: *const App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRect, scroll: usize) !void {
+fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRect, scroll: usize) !void {
     const inner = app_mod.detailWidth(app.boardW()).inner;
     const x0 = rect.x + 2;
     const foot = rect.y + rect.h - 1;
+    app.grab.window(.{ .x = x0, .y = rect.y + 1, .w = inner, .h = rect.h -| 2 });
     var tbuf: [48]u8 = undefined;
     const card = app.modalCard();
     const title = std.fmt.bufPrint(&tbuf, "#{d} \u{b7} {s}", .{ id, if (card) |it| it.repo orelse "no repo" else "" }) catch "";
@@ -3292,15 +3300,23 @@ fn benchDetail(app: *const App, w: *Writer, r: theme.Roles, id: u32, rect: App.M
         const bg = if (band) r.tile else r.panel;
         if (band) try bench.fill(w, rect.x + 1, y, rect.w - 3, bg);
         switch (kind) {
-            .plain => try bench.say(w, x0, y, clip(line, inner), r.text, bg, true),
+            .plain => {
+                try bench.say(w, x0, y, clip(line, inner), r.text, bg, true);
+                try app.grab.row(app.gpa, x0, y, clip(line, inner), head.joins[at]);
+            },
             .dim => if (facts) {
                 try bench.say(w, x0, y, clip(line, inner), r.dim, bg, false);
+                try app.grab.row(app.gpa, x0, y, clip(line, inner), null);
             } else {
                 facts = true;
                 try benchFacts(app, w, r, card.?, x0, y, inner);
             },
-            .warn => try bench.say(w, x0, y, clip(line, inner), r.you, bg, true),
+            .warn => {
+                try bench.say(w, x0, y, clip(line, inner), r.you, bg, true);
+                try app.grab.row(app.gpa, x0, y, clip(line, inner), null);
+            },
             .check => {
+                try app.grab.row(app.gpa, x0, y, clip(line, inner), null);
                 const settled = card.?.checks[at - head.checks.?].result != null;
                 const lit = at - head.checks.? + 1 == @min(@max(app.board_view.?.check_pick, 1), card.?.checks.len);
                 try bench.say(w, x0, y, clip(line, inner), if (lit) r.accent else if (settled) r.dim else r.text, bg, lit);
@@ -3329,6 +3345,7 @@ fn benchDetail(app: *const App, w: *Writer, r: theme.Roles, id: u32, rect: App.M
         while (lines.next()) |line| : (row += 1) {
             if (row < scroll or y >= text_end) continue;
             try bench.say(w, x0, y, clip(line, inner), part.fg, r.panel, false);
+            try app.grab.row(app.gpa, x0, y, clip(line, inner), lines.dropped);
             y += 1;
         }
     }
@@ -3345,6 +3362,7 @@ fn benchDetail(app: *const App, w: *Writer, r: theme.Roles, id: u32, rect: App.M
     while (noted.next()) |line| {
         if (y >= foot - 1) break;
         try bench.say(w, x0, y, clip(line, inner), r.dim, r.panel, false);
+        try app.grab.row(app.gpa, x0, y, clip(line, inner), noted.dropped);
         y += 1;
     }
 
@@ -3405,9 +3423,10 @@ fn took(buf: []u8, secs: i64) []const u8 {
 /// The gate's modal: ticket `id`'s last run as a row a stage with its mark, its result and its
 /// time, then under a rule the output of the first stage that failed, else the review's verdict,
 /// and last what is queued behind it. `scroll` rows down the output.
-fn gateBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
+fn gateBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
     const rect = app.modalRect() orelse return;
     const inner = app_mod.detailWidth(app.boardW()).inner;
+    app.grab.window(.{ .x = rect.x + 2, .y = rect.y + 1, .w = inner, .h = rect.h -| 2 });
     const bottom = rect.y + rect.h;
     var title_buf: [32]u8 = undefined;
     const title = std.fmt.bufPrint(&title_buf, " gate · #{d} ", .{id}) catch " gate ";
@@ -3467,6 +3486,7 @@ fn gateBox(app: *const App, w: *Writer, id: u32, scroll: usize) !void {
             any = true;
             if (row_at < scroll or y >= last) continue;
             try boxLine(w, &pen, edge, .{}, rect.x, y, line, inner);
+            try app.grab.row(app.gpa, rect.x + 2, y - 1, line, wrapped.dropped);
             y += 1;
         }
         if (!any) {
@@ -4172,8 +4192,21 @@ fn reportSaid(app: *App, w: *Writer, text: []const u8) !void {
         for (cellCount(clip(text, room))..room) |_| try w.writeAll(" ");
         return;
     };
-    if (app.board_view != null and !app.planShown() and !app.feedFocused() and (cardActionsShown(app) or app.barRows() > 0)) return;
+    if (app.board_view != null and app.board_view.?.detail == null and !app.planShown() and !app.feedFocused() and (cardActionsShown(app) or app.barRows() > 0)) return;
     try w.print("\x1b[{d};{d}H{s}", .{ app.view_h, ox + 1, clip(text, app.view_w) });
+}
+
+/// The cells the mouse has picked, drawn inverted over what the frame drew.
+fn grabOverlay(app: *App, w: *Writer) !void {
+    const sel = app.grab.sel orelse return;
+    if (app.grab.area == null) {
+        app.grab.sel = null;
+        return;
+    }
+    var i: usize = 0;
+    while (app.grab.spans(sel, i)) |picked| : (i += 1) {
+        try w.print("\x1b[{d};{d}H\x1b[0;7m{s}\x1b[0m", .{ picked.y + 1, picked.x + 1, picked.text });
+    }
 }
 
 fn cardActionsShown(app: *const App) bool {
@@ -4186,6 +4219,7 @@ fn cardActionsShown(app: *const App) bool {
 /// overview in its place, the menu or prompt when open, and the cursor.
 pub fn frame(app: *App, w: *Writer, what: What) !void {
     app.settleLit();
+    app.grab.begin();
     try w.writeAll("\x1b[?2026h\x1b[?25l\x1b[0m");
     if (what == .all) {
         // Not 2J: erasing the whole display takes the terminal's kitty pictures with it.
@@ -4227,6 +4261,7 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
         try menuBox(app, w, open);
         cursor = null;
     }
+    try grabOverlay(app, w);
     if (app.report_said) |text| try reportSaid(app, w, text);
     const asking = if (app.prompt) |prompt| prompt.multiline() else false;
     if (asking != app.words_keys) {
@@ -5095,6 +5130,7 @@ test "babylon's refusal, said while the plan is shown, is on screen" {
 
 test "a card's popup in Workbench's look: a window with its ✕, the title whole, the ask's options as buttons and the facts as chips" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    defer app.grab.deinit(std.testing.allocator);
     app.term_w = 80;
     app.view_w = 80;
     app.view_h = 24;

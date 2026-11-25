@@ -13,6 +13,7 @@ const feed = @import("feed.zig");
 const autos = @import("auto.zig");
 const goal_modal = @import("goal.zig");
 const sheets = @import("plan.zig");
+const grab_mod = @import("grab.zig");
 const capture = @import("report.zig");
 const draw = @import("draw.zig");
 const build_options = @import("build_options");
@@ -598,6 +599,8 @@ pub const App = struct {
     /// Whether the terminal has been asked to send Shift+Enter as its own key, which an open
     /// words modal reads as a new line.
     words_keys: bool = false,
+    /// The text of the window drawn over the rest, and what the mouse has picked of it.
+    grab: grab_mod.Grab = .{},
     /// Where the mouse last was.
     pointer: struct { x: u16 = 0, y: u16 = 0 } = .{},
     /// The last input, for a report.
@@ -644,6 +647,7 @@ pub const App = struct {
         app.pending.deinit(app.gpa);
         app.block.deinit(app.gpa);
         app.detail.deinit(app.gpa);
+        app.grab.deinit(app.gpa);
         app.detail_asked.deinit(app.gpa);
         app.guard.deinit(app.gpa);
         app.out.deinit(app.gpa);
@@ -2263,6 +2267,8 @@ pub const App = struct {
             _ = app.pickCard(id);
             app.pickPlan(id);
             _ = try app.openDetail(id);
+        } else if (anyKey(key, &.{"Y"}) and try app.feedCopy(f.item(view.pick).?)) {
+            return true;
         } else return app.feedAct(f.item(view.pick).?, key);
         app.dirty = true;
         if (view.pick != was) if (f.item(view.pick).?.ticket) |id| {
@@ -2291,6 +2297,16 @@ pub const App = struct {
         }
         while (to > 0 and f.item(to - 1).?.need == f.item(to).?.need) to -= 1;
         return to;
+    }
+
+    /// Copies the picked check of a to-try tile, whole. Whether the pick was one.
+    fn feedCopy(app: *App, item: feed.Item) !bool {
+        const b = if (app.board) |*b| b else return false;
+        const need = b.needsYou()[item.need orelse return false];
+        const step = item.step orelse return false;
+        if (step >= need.steps.len) return false;
+        try app.copyText(need.steps[step].text);
+        return true;
     }
 
     fn feedAct(app: *App, item: feed.Item, key: []const u8) !bool {
@@ -3418,6 +3434,26 @@ pub const App = struct {
         const text = try screen.selectionString(app.gpa, .{ .sel = sel, .trim = true });
         defer app.gpa.free(text);
         if (text.len == 0) return;
+        try app.osc52(text);
+    }
+
+    /// Puts `text` on the clipboard and says how much, in the foot, for a moment.
+    fn copyText(app: *App, text: []const u8) !void {
+        if (text.len == 0) return;
+        try app.osc52(text);
+        var said: [32]u8 = undefined;
+        const line = std.fmt.bufPrint(&said, "copied {d} chars", .{cellCount(text)}) catch return;
+        app.clearReportSaid();
+        app.report_said = try app.gpa.dupe(u8, line);
+        app.report_failed = false;
+        app.report_until = app.now + copied_ms;
+        app.dirty = true;
+    }
+
+    /// How long the foot says what was copied.
+    const copied_ms = 1500;
+
+    fn osc52(app: *App, text: []const u8) !void {
         const encoder = std.base64.standard.Encoder;
         for ([_][]const u8{ "\x1b]52;c;", "\x1b]52;p;" }) |intro| {
             try app.out.appendSlice(app.gpa, intro);
@@ -5877,7 +5913,7 @@ pub const App = struct {
     };
 
     /// What a modal button does when pressed.
-    pub const ModalAction = union(enum) { close, card: CardAction, option: u8, words, claude, whole_log, ticket, bump, withdraw, tried_ok, tried_no };
+    pub const ModalAction = union(enum) { close, card: CardAction, option: u8, words, claude, whole_log, ticket, bump, withdraw, tried_ok, tried_no, copy_check };
 
     /// A button of the modal frame, where it is drawn and clicked: 0-based. It reads ` key label `.
     pub const ModalButton = struct {
@@ -5926,6 +5962,8 @@ pub const App = struct {
         used: usize = 0,
         lines: [64][]const u8 = undefined,
         kinds: [64]Kind = undefined,
+        /// Of a line arena wrapped from the one before it: the spaces the wrap took out.
+        joins: [64]?usize = @splat(null),
         n: usize = 0,
         /// The first of the lines of the open ask's options, a button each, and its words after.
         options: ?usize = null,
@@ -5949,6 +5987,7 @@ pub const App = struct {
                 if (n == rows or head.n == head.lines.len) return;
                 head.lines[head.n] = line;
                 head.kinds[head.n] = kind;
+                head.joins[head.n] = it.dropped;
                 head.n += 1;
             }
         }
@@ -6064,6 +6103,7 @@ pub const App = struct {
                 const tries = [_]ModalButton{
                     .{ .action = .tried_ok, .key = "y", .label = "✓ it works", .x = x, .y = foot },
                     .{ .action = .tried_no, .key = "n", .label = "✗ it failed", .x = x, .y = foot },
+                    .{ .action = .copy_check, .key = "Y", .label = "copy", .x = x, .y = foot },
                 };
                 for (tries) |item| {
                     var button = item;
@@ -6179,6 +6219,10 @@ pub const App = struct {
                 const n = std.fmt.bufPrint(&step, "{d}", .{check.n}) catch return;
                 _ = try app.runNeed("tried", &.{ "babylon", "tried", id, n, "ok" });
             },
+            .copy_check => {
+                const card = app.modalCard() orelse return;
+                try app.copyText((pickedCheck(card, view.check_pick) orelse return).text);
+            },
             .tried_no => {
                 const card = app.modalCard() orelse return;
                 const check = pickedCheck(card, view.check_pick) orelse return;
@@ -6225,6 +6269,7 @@ pub const App = struct {
             }
             if (is(key, &.{"y"})) return app.pressModal(.tried_ok);
             if (is(key, &.{"n"})) return app.pressModal(.tried_no);
+            if (is(key, &.{"Y"})) return app.pressModal(.copy_check);
         };
         if (is(key, &.{ "j", "\x1b[B", "\x1bOB" }) and view.detail_scroll + 1 < app.detailRows()) view.detail_scroll += 1;
         if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.detail_scroll -|= 1;
@@ -7231,10 +7276,67 @@ pub const App = struct {
         try app.focusBy(by);
     }
 
+    /// The mouse over the text of the window drawn over the rest: a drag selects, and copies on
+    /// let go; a second press on the same cell picks its word, a third its line. A first press is
+    /// still the press of what is under it. Whether the event was the selection's.
+    fn grabMouse(app: *App, m: keys.Mouse) !bool {
+        const g = &app.grab;
+        const area = g.area orelse {
+            g.pressed = null;
+            g.dragging = false;
+            return false;
+        };
+        const at: grab_mod.Point = .{ .x = m.x, .y = m.y };
+        if (g.dragging) {
+            if (m.release or m.hover()) {
+                g.dragging = false;
+                try app.copyPicked();
+            } else if (m.motion()) {
+                g.sel.?.to = area.clamp(at);
+            }
+            app.dirty = true;
+            return true;
+        }
+        if (m.leftPress()) {
+            g.pressed = null;
+            if (g.sel != null) {
+                g.sel = null;
+                app.dirty = true;
+            }
+            if (!area.contains(at)) return false;
+            const clicks = g.press(app.now, at);
+            if (clicks == 1) {
+                g.pressed = at;
+                return false;
+            }
+            g.sel = (if (clicks == 2) g.word(at) else g.wholeLine(at)) orelse return false;
+            try app.copyPicked();
+            app.dirty = true;
+            return true;
+        }
+        if (g.pressed) |from| {
+            if (m.release) g.pressed = null else if (m.motion() and !m.hover() and !m.wheel() and app.drag == .none and (at.x != from.x or at.y != from.y)) {
+                g.dragging = true;
+                g.pressed = null;
+                g.sel = .{ .from = from, .to = area.clamp(at) };
+                app.dirty = true;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn copyPicked(app: *App) !void {
+        const text = try app.grab.read(app.gpa, app.grab.sel orelse return);
+        defer app.gpa.free(text);
+        try app.copyText(text);
+    }
+
     /// A right click nothing else took opens the menu; with the menu open, a click picks from it
     /// or, outside it, closes it.
     fn onMouse(app: *App, m: keys.Mouse) !void {
         app.pointer = .{ .x = m.x, .y = m.y };
+        if (try app.grabMouse(m)) return;
         if (m.leftPress() and app.menu == null and app.prompt == null and app.overview == null) {
             // with the board open, where a click puts the keys is the board's to say: a click on
             // its chrome must not leave the focused column in normal mode, drawn as insert
@@ -8000,7 +8102,15 @@ pub const App = struct {
             rest = part.rest;
             app.trailText(part.text);
             // the terminal's answers to arena's own questions are no key of the human's
-            if (part.event == null or part.event.? != .osc) app.clearReportSaid();
+            if (part.event == null or part.event.? != .osc) {
+                // a notice that goes by itself outlasts the pointer moving
+                const moved = part.event != null and part.event.? == .mouse and app.report_until != 0;
+                if (!moved) app.clearReportSaid();
+            }
+            if (part.text.len > 0 and app.grab.sel != null) {
+                app.grab.sel = null;
+                app.dirty = true;
+            }
             const taken = part.text.len > 0 and try app.lookKey(part.text);
             if (!taken) {
                 if (app.typing()) try app.forward(part.text) else try app.menuKeys(part.text);
@@ -8344,18 +8454,24 @@ pub const DetailLines = struct {
     lines: std.mem.SplitIterator(u8, .scalar),
     rest: ?[]const u8 = null,
     inner: usize,
+    /// Of the line last returned: set when it runs on from the one before, to the spaces the wrap
+    /// took out between them.
+    dropped: ?usize = null,
+    gap: usize = 0,
 
     pub fn init(text: []const u8, inner: usize) DetailLines {
         return .{ .lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, text, "\n"), '\n'), .inner = inner };
     }
 
     pub fn next(it: *DetailLines) ?[]const u8 {
+        it.dropped = if (it.rest != null) it.gap else null;
         const rest = it.rest orelse it.lines.next() orelse return null;
         var cut = std.unicode.Utf8View.initUnchecked(rest).iterator();
         var n: usize = 0;
         while (n < it.inner) : (n += 1) _ = cut.nextCodepointSlice() orelse break;
         const line = rest[0..cut.i];
         const after = std.mem.trimStart(u8, rest[cut.i..], " ");
+        it.gap = rest.len - cut.i - after.len;
         it.rest = if (after.len > 0 and line.len > 0) after else null;
         return line;
     }
@@ -10303,6 +10419,75 @@ test "a to-try card's modal lists its checks, j and k pick one, y says it works 
     try std.testing.expect(app.prompt == null);
     len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'tried' '7' '2' 'no' 'late'") != null);
+}
+
+test "a drag over a wrapped line of the modal copies it as one line, inside the window, and Y copies a whole check" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.out.deinit(std.testing.allocator);
+    defer app.grab.deinit(std.testing.allocator);
+    defer app.detail.deinit(std.testing.allocator);
+    app.term_w = 140;
+    app.view_w = 140;
+    app.view_h = 30;
+    const long_check = "run systemctl --user show babylon -p Environment and read the path of the offer.conf it names, then say what is in it";
+    const json = try std.fmt.allocPrint(std.testing.allocator,
+        \\{{"tickets":[{{"id":7,"repo":"arena","title":"Lights","status":"try","stage":"landed",
+        \\"checks":[{{"n":1,"text":"it is told","result":null}},{{"n":2,"text":"{s}","result":null}}]}}]}}
+    , .{long_check});
+    defer std.testing.allocator.free(json);
+    app.board = try tickets.Board.parse(std.testing.allocator, json);
+    defer app.board.?.deinit();
+    const eql = std.testing.expectEqualStrings;
+    app.board_view = .{ .col = 3, .detail = 7 };
+    const inner = detailWidth(app.boardW()).inner;
+    var body: std.ArrayList(u8) = .empty;
+    defer body.deinit(std.testing.allocator);
+    for (0..60) |n| try body.print(std.testing.allocator, "word{d} ", .{n});
+    try app.detail.appendSlice(std.testing.allocator, body.items);
+
+    var shot: Writer.Allocating = .init(std.testing.allocator);
+    defer shot.deinit();
+    try draw.frame(&app, &shot.writer, .all);
+    const area = app.grab.area.?;
+    var wrapped: ?usize = null;
+    for (app.grab.rows.items, 0..) |r, at| if (r.dropped != null and wrapped == null) {
+        wrapped = at;
+    };
+    const second = app.grab.rows.items[wrapped.?];
+    const first = app.grab.rows.items[wrapped.? - 1];
+
+    // from the first cell of the row before the wrap to a cell of the one after, and then far
+    // past the window's edge
+    try std.testing.expect(try app.grabMouse(.{ .code = 0, .x = first.x, .y = first.y, .release = false }) == false);
+    try std.testing.expect(try app.grabMouse(.{ .code = 32, .x = second.x + 3, .y = second.y, .release = false }));
+    try std.testing.expect(app.grab.dragging);
+    try std.testing.expect(try app.grabMouse(.{ .code = 32, .x = 900, .y = second.y, .release = false }));
+    try std.testing.expectEqual(area.x + area.w - 1, app.grab.sel.?.to.x);
+    _ = try app.grabMouse(.{ .code = 0, .x = 900, .y = second.y, .release = true });
+    try std.testing.expect(!app.grab.dragging);
+    try std.testing.expect(std.mem.indexOf(u8, app.out.items, "\x1b]52;c;") != null);
+    const text = try app.grab.read(std.testing.allocator, app.grab.sel.?);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.indexOfScalar(u8, text, '\n') == null);
+    try std.testing.expect(std.mem.startsWith(u8, text, "word"));
+    try std.testing.expect(std.mem.indexOf(u8, body.items, text) != null);
+    try std.testing.expect(text.len > inner);
+    var said: [32]u8 = undefined;
+    try eql(try std.fmt.bufPrint(&said, "copied {d} chars", .{text.len}), app.report_said.?);
+
+    // Y: the picked check, whole, though the modal cut it
+    app.out.clearRetainingCapacity();
+    app.board_view.?.check_pick = 2;
+    try app.modalKey("Y");
+    var want: [256]u8 = undefined;
+    const encoded = std.base64.standard.Encoder.encode(&want, long_check);
+    try std.testing.expect(std.mem.indexOf(u8, app.out.items, encoded) != null);
+    app.clearReportSaid();
 }
 
 fn tryApp(sent: std.Io.File, tmp_board: []const u8) !App {

@@ -2387,6 +2387,22 @@ mouse 0 ${(z)$(spot '#930')} M
 mouse 35 80 24 M
 key ' '
 check "its modal lists its checks, a row each" await shows '· 2 it has buttons'
+clipped() { wrote_bytes $'\e]52;c;'$(print -rn -- "$1" | base64 -w0) }
+key Y
+check "Y copies the picked check through OSC 52" await clipped 'it is told'
+check "and the foot says how much" await wrote_bytes 'copied 10 chars'
+check_row=$(rowof '· 2 it has buttons')
+check_col=$(colof $check_row '· 2 it has buttons')
+mouse 0 $check_col $check_row M
+mouse 32 $(( check_col + 17 )) $check_row M
+mouse 0 $(( check_col + 17 )) $check_row m
+check "a drag over a check in the modal copies what it covers" await clipped '· 2 it has buttons'
+check "and the foot says how much" await wrote_bytes 'copied 18 chars'
+mouse 0 $(( check_col + 5 )) $check_row M
+mouse 0 $(( check_col + 5 )) $check_row m
+mouse 0 $(( check_col + 5 )) $check_row M
+mouse 0 $(( check_col + 5 )) $check_row m
+check "and a second press on a word copies the word" await clipped 'has'
 : >$tmp/babylon
 key j
 key y

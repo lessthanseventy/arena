@@ -679,6 +679,7 @@ test {
     _ = @import("auto.zig");
     _ = @import("plan.zig");
     _ = @import("keys.zig");
+    _ = @import("grab.zig");
     _ = @import("menu.zig");
     _ = @import("pass.zig");
     _ = @import("report.zig");
