@@ -4996,14 +4996,17 @@ pub const App = struct {
                     }
                 }
             },
-            .landed, .unplanned => {
+            .landed => if (row.ticket) |id| {
+                _ = try app.openDetail(id);
+            },
+            .unplanned => {
                 try app.toBoard();
                 const bv = &app.board_view.?;
                 bv.repo = 0;
                 bv.backlog = false;
                 bv.row = 0;
                 bv.lane = app.firstLane();
-                bv.col = if (row.kind == .landed) @min(3, app.boardCols() -| 1) else 0;
+                bv.col = 0;
             },
             else => {},
         }

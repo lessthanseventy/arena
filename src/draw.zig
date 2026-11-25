@@ -2679,25 +2679,25 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
             try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
         },
         .landed => {
-            const today = given.landed_today;
-            const face = bg;
-            try bench.fill(w, x0, y, ww, face);
-            if (picked) try bench.say(w, x0, y, "▌", mark, face, true);
-            var buf: [48]u8 = undefined;
-            const head = std.fmt.bufPrint(&buf, "✓ landed today {d}", .{today.count}) catch "";
-            try bench.say(w, x0 + 2, y, head, r.landed, face, true);
-            var x = x0 + 3 + cellCount(head);
-            for (today.newest[0..@min(today.newest.len, 5)]) |id| {
-                var idb: [16]u8 = undefined;
-                const text = std.fmt.bufPrint(&idb, "#{d}", .{id}) catch "";
-                if (x + cellCount(text) + 4 > x0 + ww) break;
-                try bench.say(w, x, y, "──", r.dim, face, false);
-                const hue = for (b.cards()) |card| {
-                    if (card.id == id) break repoHue(r, card.repo).hue;
-                } else r.dim;
-                try bench.say(w, x + 3, y, text, hue, face, true);
-                x += cellCount(text) + 4;
-            }
+            const id = row.ticket.?;
+            const card = for (b.cards()) |*card| {
+                if (card.id == id) break card;
+            } else null;
+            const repo = repoHue(r, if (card) |c| c.repo else null);
+            try bench.fill(w, x0, y, ww, bg);
+            if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
+            var idb: [16]u8 = undefined;
+            const text = std.fmt.bufPrint(&idb, "#{d}", .{id}) catch "";
+            try bench.say(w, x0 + 1, y, "▌", repo.hue, bg, false);
+            try bench.say(w, x0 + 2, y, "✓", r.landed, bg, false);
+            try bench.say(w, x0 + 4, y, text, repo.hue, bg, true);
+            var age: [16]u8 = undefined;
+            const how = sheets.ago(&age, if (card) |c| c.closed_at else null, app.epoch);
+            const title_x = x0 + 5 + cellCount(text);
+            const how_x = x0 + ww -| (cellCount(how) + 1);
+            if (how.len > 0 and how_x > title_x + 4) try bench.say(w, how_x, y, how, r.dim, bg, false);
+            const title_room = (if (how.len > 0) how_x else x0 + ww) -| title_x -| 1;
+            if (card) |c| try bench.say(w, title_x, y, clip(c.title, title_room), r.text, bg, false);
         },
     }
 }

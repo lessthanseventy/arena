@@ -41,7 +41,7 @@ drawing in `src/draw.zig`.
 | **drag** between columns (todo↔backlog, todo→done, done→todo) | dropped | the keys do the same thing (`t`, `>`, `<`). A drag across windows would have to aim at another window, and nothing on Plan lines up for that |
 | drag a card onto the `b plan` tab (to next) | dragging a not planned row onto **next** | |
 | epics along the top as slim bars | **goals**, as today | |
-| to-try cards top the done column, `y` / `n` in the modal (#842, #877) | **landed**: to-try rows pinned on top, `y` / `n` on the row and in the modal | |
+| to-try cards top the done column (#842, #877) | **Your move** only: its card has the checks and `y` / `n`; landed does not pin them | |
 | the ▲ proposed chip on a card, clicked to Your move | the row's `▲` chip, clicked to Your move | |
 | `arena board N` (opens the board on a ticket) | `arena plan N`: Plan with the pick on N, opening its window if it is folded. `arena board N` stays as an alias for one release, then is removed | |
 | `B`, the `b plan · B board` tabs (#811), `▤ board` at the top of the rail | **removed**. The rail's top row reads `◆ home`. The head's tabs become one title, `◆ plan` | |
@@ -78,7 +78,7 @@ is folded. A window holding more rows than fit scrolls inside itself. That is #8
 │ 2 ▌⌂  #612 Money: a safe-to-spend-per-day   ready │ │▌>_ #321 README still describes the old c… low │
 │        high, two days old, nothing blocks it      │ │▌>_ #322 A held card that asks or is sen…  med │
 │ 3 ▌>_ #346 Board 13: / finds cards        ← #760  │ │                                   ↓ 7 more   │
-│ 4 ▌☗  #590 Restarts become a Your move    ← #588  │ ├─ ◆ landed │ ▲ 1 to try · 23 today ──── ▾ ┤
+│ 4 ▌☗  #590 Restarts become a Your move    ← #588  │ ├─ ◆ landed │ 23 today ──────────────── ▾ ┤
 │ 5 ▌✎  #433 The bar says ▲ N and opens arena's…  ready│ │▌⌂ ▲ #825 house soak day · 3 checks   try it 2h│
 │                                                    │ │▌>_ ✓ #632 Plan's head reads auto once    29m │
 │                                                    │ │▌>_ ✓ #754 Folds survive a restart         50m │
@@ -131,7 +131,7 @@ window keeps its slot. Its body shows a one-line summary in place of its rows:
 | next | the numbers and the tickets, one line: `1 #761 · 2 #612 · 3 #346 …` |
 | goals | each goal's number and percentage |
 | not planned | its chip row |
-| landed | `▲ 1 to try · ✓ 23 today` |
+| landed | `✓ 23 today` |
 
 **Why a fold doesn't hand its rows to the next window:** #887's rule. If a fold gave its space away,
 every window under it would move. Folding is for quieting a window, not for making room. When a
@@ -259,7 +259,7 @@ except where noted.
    from them. After 2.
 5. **Not planned is the todo list (#901).** Chips, #849's folds, the rows, backlog, `J` `K`, `w` `W`, `+ new`
    (and `+` in that window), and dragging a row onto next. After 3.
-6. **Landed: to try and recent (#902).** To-try rows pinned, `y` `n` on the row, and recent with ages. After 3.
+6. **Landed: today's landings (#902).** A row to each, newest first, with how long ago; to try stays in Your move. After 3.
 7. **The board's tools on Plan (#903).** `/` find, `r` repo filter in the head, `h` `l` between windows,
    `g`, and `arena plan N`. After 3.
 8. **Workspace link and pane frames (#904).** The workspace chip, tying a session to a repo by its Claudes'

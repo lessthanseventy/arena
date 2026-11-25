@@ -361,7 +361,9 @@ pub const Sheet = struct {
         s.end("none");
         if (s.begin(.unplanned)) s.summaryRow(s.unplannedSummary(given)) else s.unplannedRow(given, width);
         s.end("none");
-        if (s.begin(.landed)) s.summaryRow(s.landedSummary(given, b)) else s.landedRow(given, b, width);
+        if (s.begin(.landed)) s.summaryRow(s.landedSummary(given)) else for (given.landed_today.newest, 0..) |id, at| {
+            s.add(.{ .kind = .landed, .pick = 0, .ticket = id, .item = at });
+        }
         s.end("none");
     }
 
@@ -423,10 +425,8 @@ pub const Sheet = struct {
         return s.buf[start..s.used];
     }
 
-    fn landedSummary(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board) []const u8 {
-        var trying: usize = 0;
-        for (b.cards()) |card| trying += @intFromBool(card.status == .@"try");
-        return s.print("▲ {d} to try · ✓ {d} today", .{ trying, given.landed_today.count });
+    fn landedSummary(s: *Sheet, given: *const tickets.Plan) []const u8 {
+        return s.print("✓ {d} today", .{given.landed_today.count});
     }
 
     fn headRow(s: *Sheet, name: []const u8, count: usize) void {
@@ -985,7 +985,7 @@ test "goals past what fits fold into one row, and landed and not planned keep th
     for (0..32) |i| {
         used += (try std.fmt.bufPrint(buf[used..], "{s}{{\"epic\":{d},\"title\":\"g{d}\",\"total\":2,\"landed\":1,\"steps\":[{{\"ticket\":1,\"state\":\"landed\"}},{{\"ticket\":2,\"state\":\"next\"}}]}}", .{ if (i > 0) "," else "", 100 + i, i })).len;
     }
-    used += (try std.fmt.bufPrint(buf[used..], "],\"landed_today\":{{\"count\":0,\"newest\":[]}},\"not_planned\":{{\"count\":0,\"follow_ups\":0,\"by_repo\":{{}}}}}}}}", .{})).len;
+    used += (try std.fmt.bufPrint(buf[used..], "],\"landed_today\":{{\"count\":1,\"newest\":[1]}},\"not_planned\":{{\"count\":0,\"follow_ups\":0,\"by_repo\":{{}}}}}}}}", .{})).len;
     var b = try tickets.Board.parse(std.testing.allocator, buf[0..used]);
     defer b.deinit();
     var s: Sheet = undefined;
@@ -1007,4 +1007,24 @@ test "a now row waiting on a ticket says so, with its own mark, and is not drawn
     try std.testing.expect(std.mem.indexOf(u8, row, "◷ #505") != null);
     try std.testing.expect(std.mem.endsWith(u8, row, "◷ waiting on #829"));
     try std.testing.expect(std.mem.indexOf(u8, row, "stalled") == null);
+}
+
+test "landed is a row to each of today's tickets, newest first, and folds to its count" {
+    var b = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":5,"title":"Five","status":"done"},{"id":6,"title":"Six","status":"done"}],"plan":{"now":[],"next":[],"goals":[],
+        \\"landed_today":{"count":23,"newest":[6,5]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer b.deinit();
+    var s: Sheet = undefined;
+    s.build(b.plan().?, &b, 100, 0, 0, false, true, .empty);
+    var tickets_seen: [2]u32 = undefined;
+    var n: usize = 0;
+    for (s.rows[0..s.n]) |row| if (row.kind == .landed) {
+        tickets_seen[n] = row.ticket.?;
+        n += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 2), n);
+    try std.testing.expectEqualSlices(u32, &.{ 6, 5 }, &tickets_seen);
+    s.build(b.plan().?, &b, 100, 0, 0, false, true, .initOne(.landed));
+    try std.testing.expectEqualStrings("✓ 23 today", rowText(&s, .summary, 0).?);
 }
