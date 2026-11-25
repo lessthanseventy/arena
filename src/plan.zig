@@ -1150,7 +1150,7 @@ test "a second line under each in-flight row whose pane is known, and no pick of
     );
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 100, 0, 0, false, true, .empty);
+    s.build(b.plan().?, &b, 100, 0, 0, false, true, .empty, .{});
     const before = s.n;
     const Known = struct {
         pub fn has(_: @This(), pane: u32) bool {
