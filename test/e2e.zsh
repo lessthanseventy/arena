@@ -786,6 +786,14 @@ for round in 1 2 3 4 5; do
   see '│ ◐ three '
 done
 check "a Claude cycling between working and done is no notice" [ $(wc -l <$tmp/notified) -eq $told ]
+claude alpha:three stopfailure '{"error": "rate_limit", "error_details": "$(touch '$tmp'/ran) \"q\" `x` #{pane_id}"}'
+see '│ ✖ three '
+hostile='$(touch '$tmp'/ran) "q" x #{pane_id}'
+stall_notice() { [[ $(tail -1 $tmp/notified) == "-a|arena|--hint=string:x-canonical-private-synchronous:arena-%"*"|--|three|$hostile|" ]] }
+check "a Claude out of view come to stall is a notice, its words as they are" await stall_notice
+check "run by no shell, nor by tmux" [ ! -e $tmp/ran ]
+claude alpha:three prompt
+see '│ ◐ three '
 claude alpha:three waiting '{"message": "Claude needs your permission to use Bash"}'
 see '│ ▲ three '
 key M-n
