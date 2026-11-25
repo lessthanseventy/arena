@@ -4671,7 +4671,7 @@ pub const App = struct {
         var backlog: usize = 0;
         for (b.backlog()) |*card| backlog += @intFromBool(!card.isEpic());
         const rect = app.planRect(.unplanned);
-        return sheets.chipsAt(given, backlog, rect.x + 2, rect.w -| 5, out);
+        return sheets.chipsAt(given, backlog, rect.x + 2, rect.w -| 4, out);
     }
 
     /// The card the keys and buttons act on: the plan's picked row's ticket while the plan is
