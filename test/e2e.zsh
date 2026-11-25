@@ -1028,8 +1028,8 @@ key l k
 check "l to a column its repo has no card in picks the first repo's that has" see '⏎ go +e edit '
 key h j
 check "and h back to its own, j off its group's end staying when none is below" see '⏎ start +a answer '
-# column and row from one settled picture: from two, one caught mid-frame, a click goes out with no row
-spot() { local at l p; at=$(settled | grep -n -m1 -- "$1") || return 1; l=${at#*:} p=${l%%"$1"*}; print $(( ${#p} + 2 )) ${at%%:*} }
+# column and row from one picture, taken again while it shows nothing (mid-frame): from two, a click goes out with no row
+spot() { local at l p i; for i in {1..30}; do at=$(screen | grep -n -m1 -- "$1") && break; zselect -t 100; done; [[ -n $at ]] || return 1; l=${at#*:} p=${l%%"$1"*}; print $(( ${#p} + 2 )) ${at%%:*} }
 mouse 0 ${(z)$(spot '#8 Board')} M
 check "a click on a card in a repo's group picks it" see '⏎ go +e edit '
 mouse 0 ${(z)$(spot '#7 Lights')} M
