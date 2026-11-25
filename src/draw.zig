@@ -5623,7 +5623,7 @@ test "a to-try tile is drawn: its chip, its age in the you colour at a week, the
     app.roles = @import("parts.zig").roles();
     const r = app.roles.?;
     var f: feed.Feed = undefined;
-    feed.buildPicked(&f, &b, &.{}, 56, 80, 1795262400, 0, .{}, 2);
+    feed.buildPicked(&f, &b, &.{}, &.{}, 56, 80, 1795262400, 0, .{}, 2);
     var buf: [2048]u8 = undefined;
     var want: [64]u8 = undefined;
     const Rows = struct {

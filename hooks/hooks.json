@@ -4,7 +4,8 @@
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/claude-state.sh\" prompt" }] }],
     "PreToolUse": [
       { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/claude-state.sh\" tool" }] },
-      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/tmux-guard.sh\"" }] }
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/tmux-guard.sh\"" }] },
+      { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/ask-gate.sh\"" }] }
     ],
     "PostToolUse": [
       {

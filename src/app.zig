@@ -1359,6 +1359,8 @@ pub const App = struct {
         options: [9][]const u8 = undefined,
         n: usize = 0,
         text: [6144]u8 = undefined,
+        /// Claude Code's `Enter to select · ↑/↓ to navigate` foot is on the screen: its own question box.
+        boxed: bool = false,
     };
 
     fn entryWindow(app: *const App, entry: RailPick) ?*Window {
@@ -2072,7 +2074,41 @@ pub const App = struct {
         const today = app.epoch - @mod(app.epoch + app.utc_offset, 86400);
         const lit: feed.View = if (app.board_view) |view| .{ .lit = view.tab, .scroll = view.tab_scroll } else .{};
         const pick = if (app.board_view) |view| view.pick else std.math.maxInt(usize);
-        feed.buildPicked(f, b, app.refusals.items, app.view_w -| 4, app.view_h -| 2, app.epoch, today, lit, pick);
+        var asks: [box_max]Asked = undefined;
+        var boxes: [box_max]feed.Box = undefined;
+        const n = app.questionBoxes(&asks, &boxes);
+        feed.buildPicked(f, b, app.refusals.items, boxes[0..n], app.view_w -| 4, app.view_h -| 2, app.epoch, today, lit, pick);
+        return true;
+    }
+
+    const box_max = 4;
+
+    /// The tickets of Your move whose holder's pane shows Claude Code's own question box, with the
+    /// options read off it.
+    fn questionBoxes(app: *const App, asks: *[box_max]Asked, boxes: *[box_max]feed.Box) usize {
+        const b = if (app.board) |*b| b else return 0;
+        var n: usize = 0;
+        for (b.needsYou()) |need| {
+            if (n == box_max) break;
+            const id = need.ticket orelse continue;
+            const pane = app.paneById((app.ticketCard(id) orelse continue).holder() orelse continue) orelse continue;
+            asks[n] = .{};
+            if (!screenAsk(pane, &asks[n]) or !asks[n].boxed) continue;
+            boxes[n] = .{ .ticket = id, .options = asks[n].options[0..asks[n].n] };
+            n += 1;
+        }
+        return n;
+    }
+
+    /// Sends option `key` of the question box on the pane of Your move item `need`'s ticket to it:
+    /// the human's own keypress, as if typed there. Whether it was one.
+    fn answerBox(app: *App, need: tickets.Need, key: []const u8) !bool {
+        if (key.len != 1 or key[0] < '1' or key[0] > '9') return false;
+        const id = need.ticket orelse return false;
+        const pane = app.paneById((app.ticketCard(id) orelse return false).holder() orelse return false) orelse return false;
+        var asked: Asked = .{};
+        if (!screenAsk(pane, &asked) or !asked.boxed or key[0] - '0' > asked.n) return false;
+        try app.sendKeys(pane, key);
         return true;
     }
 
@@ -2293,7 +2329,7 @@ pub const App = struct {
         } else null;
         // an action on a key is babylon's: opening the doc only has the keys it leaves
         if (need.doc != null and found == null and anyKey(key, &.{ "o", "\r" })) return app.openDoc(need);
-        const action = found orelse return false;
+        const action = found orelse return app.answerBox(need, key);
         if (action.needs) |needs| if (std.mem.eql(u8, needs, "words")) return app.openWords(need.id);
         if (action.argv) |argv| return app.runNeed(need.id, argv);
         const ticket = need.ticket orelse return true;
@@ -7879,6 +7915,7 @@ fn screenAsk(pane: *const Pane, out: *App.Asked) bool {
             used += std.unicode.utf8Encode(cp, out.text[used..]) catch 0;
         }
         const line = std.mem.trim(u8, out.text[start..used], " ");
+        if (std.mem.indexOf(u8, line, "Enter to select") != null) out.boxed = true;
         spans[n] = .{ .at = @intFromPtr(line.ptr) - @intFromPtr(&out.text), .len = line.len };
         n += 1;
     }

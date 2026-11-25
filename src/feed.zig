@@ -32,6 +32,9 @@ pub const View = struct { lit: Section = .next, scroll: usize = 0 };
 /// its buttons.
 pub const Refusal = struct { id: []const u8, text: []const u8 };
 
+/// The options of Claude Code's own question box on a ticket's pane, read off its screen.
+pub const Box = struct { ticket: u32, options: []const []const u8 };
+
 /// Something in the feed the pick can be on: a Your move item, its whole first line, a tab, or a
 /// ticket in the panel, `w` cells of its line from `at`.
 pub const Item = struct {
@@ -272,12 +275,12 @@ pub const Feed = struct {
 /// list of `view.lit`, from line `view.scroll` of it. An item babylon refused says why in place
 /// of its buttons.
 pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, width: usize, rows: usize, epoch: i64, today: i64, view: View) void {
-    buildPicked(f, board, refused, width, rows, epoch, today, view, std.math.maxInt(usize));
+    buildPicked(f, board, refused, &.{}, width, rows, epoch, today, view, std.math.maxInt(usize));
 }
 
 /// `build` with the pick known: the item `pick` of Your move, which a to-try tile shows its
 /// buttons under, and whose tile has its close untried button.
-pub fn buildPicked(f: *Feed, board: *const tickets.Board, refused: []const Refusal, width: usize, rows: usize, epoch: i64, today: i64, view: View, pick: usize) void {
+pub fn buildPicked(f: *Feed, board: *const tickets.Board, refused: []const Refusal, boxes: []const Box, width: usize, rows: usize, epoch: i64, today: i64, view: View, pick: usize) void {
     f.* = .{};
     const needs = board.needsYou();
     if (needs.len == 0) f.move.add(.quiet, false, "nothing needs you", .{});
@@ -332,6 +335,14 @@ pub fn buildPicked(f: *Feed, board: *const tickets.Board, refused: []const Refus
             chips[n] = std.fmt.bufPrint(&bufs[n], "{s} {s}", .{ action.key, action.label }) catch continue;
             n += 1;
         }
+        // a question box on the holder's pane: its options, answered by their number
+        if (need.ticket) |id| for (boxes) |box| if (box.ticket == id) {
+            for (box.options, 1..) |option, number| {
+                if (n == chips.len) break;
+                chips[n] = std.fmt.bufPrint(&bufs[n], "{d} {s}", .{ number, option }) catch continue;
+                n += 1;
+            }
+        };
         // reading a draft is arena's own too: its modal
         if (draft and n < chips.len) {
             chips[n] = "space read it";
@@ -1136,7 +1147,7 @@ test "only the picked check shows its buttons, and only its tile the close untri
     build(&f, &b, &.{}, 56, 80, now, 0, .{});
     try std.testing.expectEqual(@as(usize, 0), kindsOf(&f, .try_buttons));
 
-    buildPicked(&f, &b, &.{}, 56, 80, now, 0, .{}, 2);
+    buildPicked(&f, &b, &.{}, &.{}, 56, 80, now, 0, .{}, 2);
     try std.testing.expectEqual(@as(usize, 1), kindsOf(&f, .try_buttons));
     var row: usize = 0;
     while (f.line(row).kind != .try_buttons) row += 1;
@@ -1150,4 +1161,19 @@ test "only the picked check shows its buttons, and only its tile the close untri
         try std.testing.expectEqual(@as(?usize, 2), f.line(i).need);
     };
     try std.testing.expectEqual(@as(usize, 1), close);
+}
+
+test "a stopped session whose pane shows Claude Code's question box lists its options as buttons" {
+    var b = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"needs_you":[{"id":"stop:915","kind":"stopped","ticket":915,"repo":"arena","text":"stopped #915 29m","actions":[]}]}
+    );
+    defer b.deinit();
+    var f: Feed = undefined;
+    buildPicked(&f, &b, &.{}, &.{.{ .ticket = 915, .options = &.{ "Narrow", "Wide" } }}, 56, 80, now, 0, .{}, 0);
+    try std.testing.expectEqualStrings("stopped #915 29m", f.line(1).text);
+    try std.testing.expectEqualStrings("1 Narrow   2 Wide", f.line(2).text);
+    try std.testing.expectEqualStrings("1", chipKeyAt(f.line(2).text, 4, true).?);
+    try std.testing.expectEqualStrings("2", chipKeyAt(f.line(2).text, 20, true).?);
+    buildPicked(&f, &b, &.{}, &.{}, 56, 80, now, 0, .{}, 0);
+    try std.testing.expectEqual(@as(usize, 0), kindsOf(&f, .buttons));
 }
