@@ -100,6 +100,16 @@ is .state done "and keeps its state"
 ARENA_RETITLE=1 sh -c 'jq -nc "{session_id: \"s3\", cwd: \"/\"}" | sh $0/hooks/claude-state.sh start' $root
 claim "the retitle subprocess leaves no record" test ! -e $work/run/sessions/s3.json
 
+mkdir -p $work/gone
+print -r -- "{\"id\":\"ghost\",\"cwd\":\"$work/gone\",\"pane\":\"\"}" > $work/run/sessions/ghost.json
+print '{}' > $work/run/sessions/ghost.meter
+print -r -- "{\"id\":\"alive\",\"cwd\":\"$work/repo\",\"pane\":\"\"}" > $work/run/sessions/alive.json
+rmdir $work/gone
+send start '{source: "startup"}'
+claim "a start sweeps a record whose cwd is gone" test ! -e $work/run/sessions/ghost.json
+claim "and its meter" test ! -e $work/run/sessions/ghost.meter
+claim "but leaves one whose cwd exists" test -e $work/run/sessions/alive.json
+
 print '{"ctx":41,"model":"Opus 5.5"}' > $work/run/sessions/s1.meter
 send end '{}'
 claim "the end removes the record" test ! -e $rec

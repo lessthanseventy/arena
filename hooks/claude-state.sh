@@ -155,6 +155,15 @@ keep() {
 change() { printf '%s' "$json" | jq -c --argjson list "$(running)" "$1" 2>/dev/null; }
 case ${1:-} in
 start)
+	# a Claude killed before its SessionEnd leaves a record; one whose cwd is gone is provably dead
+	for f in "$sessions"/*.json; do
+		[ -e "$f" ] || continue
+		d=$(jq -r '.cwd // empty' "$f" 2>/dev/null)
+		{ [ -z "$d" ] || [ -d "$d" ]; } && continue
+		id=${f##*/}
+		id=${id%.json}
+		rm -f "$f" "$sessions/$id.meter" "$sessions/$id.nudged" "$sessions/.$id.lock"
+	done
 	if [ -e "$sessions/$sid.json" ]; then
 		# a resumed session is in a new pane, maybe on a new server: where it is changes, what it was doing does not
 		[ -n "$sid" ] && tmp=$(mktemp "$sessions/.$sid.XXXXXX") &&
