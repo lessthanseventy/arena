@@ -2576,6 +2576,22 @@ pub const App = struct {
         return true;
     }
 
+    /// meatcheck prints TOON: `comments[N]{cols}:` then a row per comment, a text with a comma,
+    /// colon or quote JSON-quoted, its newlines as `\n`. The columns are read from the header.
+    const toon_words =
+        "function parse(s, f,  n, i, L, c, v, d) { n = 0; i = 1; L = length(s); " ++
+        "while (i <= L + 1) { v = \"\"; " ++
+        "if (substr(s, i, 1) == q) { i++; while (i <= L) { c = substr(s, i, 1); " ++
+        "if (c == bs) { d = substr(s, i + 1, 1); v = v (d == \"n\" ? \" \" : d); i += 2 } " ++
+        "else if (c == q) { i++; break } else { v = v c; i++ } } } " ++
+        "else { while (i <= L && substr(s, i, 1) != \",\") { v = v substr(s, i, 1); i++ } } " ++
+        "f[++n] = v; i++ } return n } " ++
+        "BEGIN { q = sprintf(\"%c\", 34); bs = sprintf(\"%c\", 92) } " ++
+        "NR == 1 { s = $0; sub(/^[^{]*\\{/, \"\", s); sub(/\\}:.*$/, \"\", s); n = parse(s, h); for (k = 1; k <= n; k++) col[h[k]] = k } " ++
+        "NR > 1 && /^ / { s = $0; sub(/^ +/, \"\", s); parse(s, r); " ++
+        "a = r[col[\"start_line\"]]; b = r[col[\"end_line\"]]; " ++
+        "printf \"%s:%s: %s\\n\", r[col[\"path\"]], (a == b ? a : a \"-\" b), r[col[\"text\"]] }";
+
     /// `o` on a check to look at the diff: meatcheck on the landed change, in a window of its own
     /// so no Claude waits on it, its comments back as the ✗'s words, none as ✓.
     fn lookAtDiff(app: *App, need: tickets.Need, step: tickets.TryStep) !bool {
@@ -2583,10 +2599,10 @@ pub const App = struct {
         if (!plainName(need.repo)) return true;
         const script =
             "cd \"$HOME/projects/$1\" || exit; " ++
-            "out=$(meatcheck --diff \"$2\" --prompt \"$3\") || { echo \"meatcheck failed\"; read _; exit; }; " ++
-            "if [ -z \"$out\" ]; then babylon tried \"$4\" \"$5\" ok; else " ++
-            "words=$(printf '%s\\n' \"$out\" | awk -F, '{t=$4; for (i=5;i<=NF;i++) t=t \",\" $i; l=($2==$3)?$2:$2 \"-\" $3; printf \"%s:%s: %s\\n\",$1,l,t}'); " ++
-            "babylon tried \"$4\" \"$5\" no \"$words\"; fi";
+            "d=$(mktemp) && git diff \"$2\" >\"$d\" && out=$(meatcheck --diff \"$d\" --prompt \"$3\"); rc=$?; rm -f \"$d\"; " ++
+            "[ $rc -eq 0 ] || { echo \"meatcheck failed\"; read _; exit; }; " ++
+            "words=$(printf '%s\\n' \"$out\" | awk '" ++ toon_words ++ "'); " ++
+            "if [ -z \"$words\" ]; then babylon tried \"$4\" \"$5\" ok; else babylon tried \"$4\" \"$5\" no \"$words\"; fi";
         var id: [12]u8 = undefined;
         var n: [12]u8 = undefined;
         var cmd: Writer.Allocating = .init(app.gpa);

@@ -27,6 +27,8 @@ chmod +x $tmp/bin/babylon
 # stands in for meatcheck: it records what it was asked and prints the comments it was given
 print -r -- $'#!/bin/sh\necho "$@" >>'$tmp$'/meatcheck\n[ -e '$tmp$'/comments ] && cat '$tmp$'/comments\nexit 0' >$tmp/bin/meatcheck
 chmod +x $tmp/bin/meatcheck
+print -r -- $'#!/bin/sh\n[ "$1" = diff ] || exec /usr/bin/git "$@"\necho "$@" >>'$tmp$'/git' >$tmp/bin/git
+chmod +x $tmp/bin/git
 mkdir -p $tmp/projects/arena
 export PATH=$tmp/bin:$PATH
 
@@ -2181,12 +2183,12 @@ see 'o look'
 key ']'
 : >$tmp/babylon
 key o
-check "o on a look check runs meatcheck on the landed range, with the check's words" await eval '[[ -f $tmp/meatcheck ]] && grep -q -- "--diff abc123^..abc123 --prompt look at the change: is the retry bounded" $tmp/meatcheck'
+check "o on a look check runs meatcheck on the landed range, with the check's words" await eval '[[ -f $tmp/meatcheck ]] && grep -q -- "--prompt look at the change: is the retry bounded" $tmp/meatcheck && grep -q -- "diff abc123^..abc123" $tmp/git'
 check "and no comments is a ✓, through babylon" await last 'tried 932 1 ok'
-print -r -- $'src/a.zig,12,12,loop never ends\nsrc/b.zig,3,5,why, here' >$tmp/comments
+print -r -- $'comments[2]{end_line,id,path,"side,omitempty",start_line,text}:\n  12,1,src/a.zig,"",12,loop never ends\n  5,2,src/b.zig,"",3,"why, \\"here\\"\\nsecond"' >$tmp/comments
 : >$tmp/babylon
 key o
-check "and its comments are the ✗'s words, an anchored line each" await eval '[[ $(<$tmp/babylon) == *"tried 932 1 no src/a.zig:12: loop never ends"* && $(<$tmp/babylon) == *"src/b.zig:3-5: why, here"* ]]'
+check "and its comments are the ✗'s words, an anchored line each" await eval '[[ $(<$tmp/babylon) == *"tried 932 1 no src/a.zig:12: loop never ends"* && $(<$tmp/babylon) == *"src/b.zig:3-5: why, \"here\" second"* ]]'
 rm -f $tmp/comments
 key M-b
 cp $tmp/board.nolook $tmp/run/babylon/board.json
