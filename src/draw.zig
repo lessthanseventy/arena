@@ -724,7 +724,6 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
     for (filled..inner) |_| try w.writeAll(" ");
 }
 
-/// A repo's colour, one of the terminal's own, the same for the same name.
 /// `repo`'s colour in Workbench's look, for the `▌` that starts its rows; none for a repo it has
 /// no colour for, or without a palette.
 fn repoEdge(app: *const App, repo: []const u8) ?vt.Style {
@@ -733,6 +732,7 @@ fn repoEdge(app: *const App, repo: []const u8) ?vt.Style {
     return null;
 }
 
+/// A repo's colour, one of the terminal's own, the same for the same name.
 fn repoStyle(repo: []const u8) vt.Style {
     return .{ .fg_color = .palette(@intCast(2 + std.hash.Wyhash.hash(0, repo) % 5)) };
 }
