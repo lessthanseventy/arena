@@ -2709,7 +2709,9 @@ pub const App = struct {
         defer cmd.deinit();
         var ticket_buf: [16]u8 = undefined;
         const ticket = if (need.ticket) |t| std.fmt.bufPrint(&ticket_buf, "{d}", .{t}) catch "" else "";
-        try cmd.writer.writeAll("new-window -a -n doc sh -c ");
+        try cmd.writer.writeAll("new-window -a -n ");
+        try writeDocWindow(&cmd.writer, need.id);
+        try cmd.writer.writeAll(" sh -c ");
         for ([_][]const u8{ script, "_", need.repo, doc, ticket }, 0..) |arg, i| {
             if (i > 0) try cmd.writer.writeAll(" ");
             try tmuxQuote(&cmd.writer, arg);
@@ -3580,8 +3582,12 @@ pub const App = struct {
     /// The board file's text as read now: the board it holds takes the place of the one before;
     /// there is none when there is no file or it does not parse.
     pub fn setBoard(app: *App, text: ?[]const u8) !void {
-        if (app.board) |*b| b.deinit();
+        var old = app.board;
         app.board = if (text) |t| tickets.Board.parse(app.gpa, t) catch null else null;
+        if (old) |*b| {
+            try app.closeGoneDocs(b);
+            b.deinit();
+        }
         if (app.board == null) try app.closeBoard();
         app.settleAuto();
         // the feed's height may change, and the orchestrator's window with it
@@ -3607,6 +3613,31 @@ pub const App = struct {
             view.lane = @min(view.lane, app.laneRepos(&repos) -| 1);
         }
         app.dirty = true;
+    }
+
+    /// The doc window of each ask in `old` that the board now shown no longer holds, answered or
+    /// withdrawn, closed.
+    fn closeGoneDocs(app: *App, old: *const tickets.Board) !void {
+        const now = if (app.board) |*b| b.needsYou() else &.{};
+        for (old.needsYou()) |need| {
+            if (need.doc == null) continue;
+            const still = for (now) |n| {
+                if (std.mem.eql(u8, n.id, need.id)) break true;
+            } else false;
+            if (still) continue;
+            var cmd: Writer.Allocating = .init(app.gpa);
+            defer cmd.deinit();
+            try cmd.writer.writeAll("kill-window -t =");
+            try writeDocWindow(&cmd.writer, need.id);
+            try app.send(.ignore, "{s}", .{cmd.written()});
+        }
+    }
+
+    /// The name of the window that shows the doc of the ask `id`; tmux reads a `:` in a target as
+    /// a session's end, so it is a `-`.
+    fn writeDocWindow(w: *Writer, id: []const u8) !void {
+        try w.writeAll("doc-");
+        for (id) |c| try w.writeByte(if (c == ':') '-' else c);
     }
 
     fn toggleBoard(app: *App) !void {
@@ -9780,6 +9811,29 @@ test "in Workbench's look a click on a popup's option answers the ask and one on
     app.board_view.?.detail = 4;
     try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = rect.x + rect.w - 4, .y = rect.y, .release = false }));
     try eq(@as(?u32, null), app.board_view.?.detail);
+}
+
+test "a look's doc window is closed when its ask is answered or withdrawn, and one still asked is left" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    defer if (app.board) |*b| b.deinit();
+    try app.setBoard(
+        \\{"tickets":[],"needs_you":[
+        \\{"id":"ask:6","kind":"look","ticket":307,"repo":"tlon","text":"look","doc":"a.md","actions":[]},
+        \\{"id":"ask:7","kind":"look","ticket":308,"repo":"tlon","text":"look","doc":"b.md","actions":[]},
+        \\{"id":"ask:8","kind":"ask","ticket":309,"repo":"tlon","text":"which?","doc":null,"actions":[]}]}
+    );
+    try app.setBoard(
+        \\{"tickets":[],"needs_you":[
+        \\{"id":"ask:7","kind":"look","ticket":308,"repo":"tlon","text":"look","doc":"b.md","actions":[]}]}
+    );
+    var got: [512]u8 = undefined;
+    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expectEqualStrings("kill-window -t =doc-ask-6\n", got[0..len]);
 }
 
 test "the plan's pick lights its ticket's Your move item dim in the feed, and the feed's pick moves the plan's" {
