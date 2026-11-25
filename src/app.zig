@@ -405,6 +405,10 @@ pub const BoardView = struct {
     plan: bool = false,
     /// The plan's pick among its rows that can be picked, and the stages unfolded, a bit each.
     plan_pick: usize = 0,
+    /// Not planned's chip the pick is on, by its place on the chip row, and whether the backlog's
+    /// chip is open, its cards in the rows' place.
+    plan_chip: usize = 0,
+    plan_backlog: bool = false,
     unfolded: u8 = 0,
     /// Workbench's plan window shown whole, as a modal over the plan.
     whole: ?sheets.Window = null,
@@ -423,7 +427,7 @@ pub const max_cards = 256;
 const max_ask_options = 9;
 /// The Claudes a card can be given to, each picked by its number.
 pub const give_rows = 9;
-const max_repos = 32;
+pub const max_repos = 32;
 /// The orchestrator's column's width beside the board, kept to 2/5 of what the rail leaves.
 pub const side_w = 60;
 
@@ -588,6 +592,11 @@ pub const App = struct {
             from: usize,
             /// The press was on the picked row, which a let go without a move goes to.
             opens: bool,
+            moved: bool = false,
+        },
+        /// A todo row of not planned by its ticket, to join next where it is let go.
+        todo_row: struct {
+            id: u32,
             moved: bool = false,
         },
     } = .none,
@@ -2616,6 +2625,13 @@ pub const App = struct {
     fn sendWhy(app: *App, prompt: menu.Prompt) !void {
         app.endWords();
         if (prompt.len == 0) return;
+        if (std.mem.startsWith(u8, prompt.item(), "close:")) {
+            const id = prompt.item()["close:".len..];
+            var said: [40]u8 = undefined;
+            const refusal = std.fmt.bufPrint(&said, "close:{s}", .{id}) catch return;
+            _ = try app.runNeed(refusal, &.{ "babylon", "update", id, "--status", "done", "--why", prompt.text() });
+            return;
+        }
         var said: [40]u8 = undefined;
         const refusal = std.fmt.bufPrint(&said, "next:{s}", .{prompt.item()}) catch return;
         _ = try app.runNeed(refusal, &.{ "babylon", "next", prompt.item(), "--why", prompt.text() });
@@ -4633,12 +4649,29 @@ pub const App = struct {
         const view = app.board_view.?;
         var shut = app.plan_shut;
         if (view.whole) |win| shut.remove(win);
-        sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.halfHome(), app.workbench(), shut);
+        var repos: [max_repos][]const u8 = undefined;
+        sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.halfHome(), app.workbench(), shut, app.planSee(&repos));
         if (app.workbench()) {
             sheet.withButtons(app.plan_open);
             sheet.withHeld(b.plan().?, KnownPanes{ .app = app });
         }
         return true;
+    }
+
+    /// What not planned shows: the repos folded, held in `out`, and the backlog's chip open or not.
+    pub fn planSee(app: *const App, out: *[max_repos][]const u8) sheets.See {
+        for (0..app.fold_n) |i| out[i] = app.folds[i][0..app.fold_lens[i]];
+        return .{ .repos_shut = out[0..app.fold_n], .backlog = if (app.board_view) |view| view.plan_backlog else false };
+    }
+
+    /// Not planned's chips where they are drawn and clicked, on the screen.
+    pub fn chipsOf(app: *const App, out: []sheets.Chip) []sheets.Chip {
+        const b = if (app.board) |*b| b else return out[0..0];
+        const given = b.plan() orelse return out[0..0];
+        var backlog: usize = 0;
+        for (b.backlog()) |*card| backlog += @intFromBool(!card.isEpic());
+        const rect = app.planRect(.unplanned);
+        return sheets.chipsAt(given, backlog, rect.x + 2, rect.w -| 5, out);
     }
 
     /// The card the keys and buttons act on: the plan's picked row's ticket while the plan is
@@ -4649,7 +4682,7 @@ pub const App = struct {
         var sheet: sheets.Sheet = undefined;
         if (!app.planSheet(&sheet)) return null;
         const row = sheet.picked(view.plan_pick) orelse return null;
-        if (row.kind != .now and row.kind != .next and row.kind != .landed) return null;
+        if (row.kind != .now and row.kind != .next and row.kind != .landed and row.kind != .todo and row.kind != .backlog) return null;
         return app.cardById(row.ticket orelse return null);
     }
 
@@ -4665,8 +4698,9 @@ pub const App = struct {
         const body = rect.h -| sheets.window_chrome;
         const top = app.planWindowTop(sheet, row.win, body);
         const line = at - sheet.span(row.win).start;
-        if (line < top or line >= top + body) return out[0..0];
-        const y = rect.y + 1 + @as(u16, @intCast(line - top));
+        const pin = planPinned(row.win);
+        if (line < top or line >= top + body -| pin) return out[0..0];
+        const y = rect.y + 1 + @as(u16, @intCast(pin + line - top));
         var have: [12]CardAction = undefined;
         const actions = cardActions(card, &have);
         const order = [_]CardAction{ .go, .open, .give, .handoff, .edit, .priority, .close, .reopen, .to_todo, .to_next };
@@ -4702,7 +4736,7 @@ pub const App = struct {
 
     /// Whether a click or space on `row` opens it in place: the rows that are one ticket.
     fn opensInPlace(row: *const sheets.Row) bool {
-        return row.ticket != null and (row.kind == .now or row.kind == .next);
+        return row.ticket != null and (row.kind == .now or row.kind == .next or row.kind == .todo or row.kind == .backlog);
     }
 
     /// The plan's windows are laid out on this: the cells under the head's rule to the last row.
@@ -4738,11 +4772,24 @@ pub const App = struct {
     /// The first row of `win` drawn in a body of `body` rows: the picked row kept in view when
     /// it is the window's, else the window's first.
     pub fn planWindowTop(app: *const App, sheet: *const sheets.Sheet, win: sheets.Window, body: usize) usize {
-        const view = app.board_view orelse return 0;
-        const at = sheet.rowOf(view.plan_pick) orelse return 0;
-        if (sheet.rows[at].win != win) return 0;
+        const pin = planPinned(win);
+        const view = app.board_view orelse return pin;
+        const at = sheet.rowOf(view.plan_pick) orelse return pin;
+        if (sheet.rows[at].win != win) return pin;
         const span = sheet.span(win);
-        return sheets.windowTop(at - span.start, span.len, body);
+        if (at - span.start < pin) return pin;
+        return pin + sheets.windowTop(at - span.start - pin, span.len -| pin, body -| pin);
+    }
+
+    /// The rows a window keeps on its first lines whatever it scrolls to: not planned's chips.
+    pub fn planPinned(win: sheets.Window) usize {
+        return if (win == .unplanned) 1 else 0;
+    }
+
+    /// The row of `win` (from 0) drawn on body line `line`.
+    pub fn planRowOnLine(app: *const App, sheet: *const sheets.Sheet, win: sheets.Window, body: usize, line: usize) usize {
+        const pin = planPinned(win);
+        return if (line < pin) line else app.planWindowTop(sheet, win, body) + line - pin;
     }
 
     pub const PlanHit = struct { win: sheets.Window, row: ?usize = null, title: bool = false };
@@ -4760,7 +4807,7 @@ pub const App = struct {
         if (y == rect.y) return .{ .win = win, .title = true };
         const body = rect.h - sheets.window_chrome;
         const span = sheet.span(win);
-        const line = app.planWindowTop(sheet, win, body) + (y - rect.y - 1);
+        const line = app.planRowOnLine(sheet, win, body, y - rect.y - 1);
         return .{ .win = win, .row = if (line < span.len) span.start + line else null };
     }
 
@@ -4881,11 +4928,15 @@ pub const App = struct {
         if (view.whole != null and is(key, &.{ "\x1b", "q" })) return app.closeWhole();
         if (view.whole != null and !is(key, &.{ "J", "K", "x", "e", "\r", " ", "t", "o", "p", ">", "<", "G", "w", "W", "H" })) return;
         if (app.workbench()) if (sheet.picked(view.plan_pick)) |row| {
+            if (row.kind == .chips and try app.chipKey(key)) return;
             if (is(key, &.{"z"})) return app.togglePlanFold(row.win);
             if (is(key, &.{"Z"})) return app.foldPlanAll(row.win);
             if (is(key, &.{"f"})) return app.openWhole(row.win);
         };
-        if (is(key, &.{"+"})) return app.openGoal();
+        if (is(key, &.{"+"})) {
+            const in_unplanned = if (sheet.picked(view.plan_pick)) |row| row.win == .unplanned else false;
+            return if (in_unplanned and app.workbench()) app.newTicket() else app.openGoal();
+        }
         if (is(key, &.{"d"})) if (sheet.picked(view.plan_pick)) |row| {
             if (row.kind == .goal or row.kind == .focal) return app.driveGoal(row.ticket.?);
         };
@@ -4895,6 +4946,8 @@ pub const App = struct {
         if (is(key, &.{ "J", "K", "x", "e" })) {
             const row = sheet.picked(view.plan_pick) orelse return;
             if (row.kind == .idea) return app.ideaKey(row, key);
+            if (row.kind == .todo and is(key, &.{ "J", "K" })) return app.moveTodo(&sheet, row, is(key, &.{"J"}));
+            if (row.kind == .backlog and is(key, &.{"x"})) return app.openClose(row.ticket orelse return);
             if (row.kind != .next) {
                 if (is(key, &.{"e"})) try app.act(.edit);
                 return;
@@ -4931,6 +4984,68 @@ pub const App = struct {
             view.focus = .orchestrator;
             if (app.sideDue()) app.normal = true;
         }
+    }
+
+    /// The chip row's own keys: `h` `l` from chip to chip, `Z` opening only the chip's repo. False
+    /// for the rest, and past the first or last chip, for the window beside to take.
+    fn chipKey(app: *App, key: []const u8) !bool {
+        const view = &app.board_view.?;
+        var chips: [sheets.max_chips]sheets.Chip = undefined;
+        const all = app.chipsOf(&chips);
+        if (all.len == 0) return false;
+        view.plan_chip = @min(view.plan_chip, all.len - 1);
+        if (anyKey(key, &.{ "l", "\x1b[C", "\x1bOC" })) {
+            if (view.plan_chip + 1 == all.len) return false;
+            view.plan_chip += 1;
+            app.dirty = true;
+            return true;
+        }
+        if (anyKey(key, &.{ "h", "\x1b[D", "\x1bOD" })) {
+            if (view.plan_chip == 0) return false;
+            view.plan_chip -= 1;
+            app.dirty = true;
+            return true;
+        }
+        if (!anyKey(key, &.{"Z"})) return false;
+        if (all[view.plan_chip].repo) |repo| try app.focusFold(repo) else try app.toggleChip(view.plan_chip);
+        return true;
+    }
+
+    /// Chip `at` of not planned's row folded or opened: a repo's through #849's fold, the backlog's
+    /// its cards in the rows' place.
+    fn toggleChip(app: *App, at: usize) !void {
+        const view = &app.board_view.?;
+        var chips: [sheets.max_chips]sheets.Chip = undefined;
+        const all = app.chipsOf(&chips);
+        if (at >= all.len) return;
+        view.plan_chip = at;
+        if (all[at].repo) |repo| return app.toggleRepoFold(repo);
+        view.plan_backlog = !view.plan_backlog;
+        app.dirty = true;
+    }
+
+    /// `J` `K` on a todo row: it moves down or up its repo's order, `babylon move N down|up --repo R`,
+    /// and the pick goes with it while the next row is a todo one.
+    fn moveTodo(app: *App, sheet: *const sheets.Sheet, row: *const sheets.Row, down: bool) !void {
+        const view = &app.board_view.?;
+        const card = app.cardById(row.ticket orelse return) orelse return;
+        const repo = card.repo orelse return;
+        if (!plainName(repo)) return;
+        try app.send(.ignore, captured("babylon move {d} {s} --repo {s}"), .{ card.id, if (down) "down" else "up", repo });
+        const to = if (down) view.plan_pick + 1 else view.plan_pick -| 1;
+        if (sheet.picked(to)) |near| if (near.kind == .todo) {
+            view.plan_pick = to;
+        };
+    }
+
+    /// `x` on a backlog row: a line for why it is closed, which Enter sends with the close.
+    fn openClose(app: *App, id: u32) void {
+        var prompt: menu.Prompt = .{ .what = .why };
+        const said = std.fmt.bufPrint(&prompt.target, "close:{d}", .{id}) catch return;
+        prompt.target_len = said.len;
+        app.prompt = prompt;
+        app.normal = false;
+        app.dirty = true;
     }
 
     /// `babylon drive N`: the goal Plan drives towards.
@@ -4997,6 +5112,8 @@ pub const App = struct {
                 if (!std.mem.eql(u8, item.state, "building")) try app.openGate(id);
             },
             .next => if (row.ticket) |id| try app.send(.ignore, captured("babylon start {d}"), .{id}),
+            .chips => try app.toggleChip(view.plan_chip),
+            .todo => try app.act(.go),
             .goals_more => try app.toBoard(),
             .goal, .focal => {
                 try app.toBoard();
@@ -5067,7 +5184,14 @@ pub const App = struct {
         const pick = row.pick orelse return;
         const picked = view.plan_pick == pick;
         view.plan_pick = pick;
-        if (row.kind == .next) {
+        if (row.kind == .chips) {
+            var chips: [sheets.max_chips]sheets.Chip = undefined;
+            for (app.chipsOf(&chips), 0..) |c, i| if (m.x >= c.x and m.x < c.x + c.w) return app.toggleChip(i);
+            return;
+        }
+        if (row.kind == .todo) {
+            app.drag = .{ .todo_row = .{ .id = row.ticket orelse return } };
+        } else if (row.kind == .next) {
             app.drag = .{ .next_row = .{ .from = nextPlace(&sheet, at), .opens = true } };
         } else if (opensInPlace(&row)) {
             try app.togglePlanOpen(&row);
@@ -5103,6 +5227,39 @@ pub const App = struct {
         var place: usize = 0;
         for (sheet.rows[0..at]) |row| place += @intFromBool(row.kind == .next);
         return place;
+    }
+
+    /// The held todo row moved to `m`, or let go: over next it joins next at the place it is let
+    /// go on, `babylon next N --at K`, or at the bottom over the window's empty rows; let go where
+    /// it was pressed it opens in place, as a click does.
+    fn dragTodoRow(app: *App, m: keys.Mouse) !void {
+        const held = &app.drag.todo_row;
+        app.dirty = true;
+        if (!m.release and m.motion() and !m.hover()) {
+            held.moved = true;
+            return;
+        }
+        const row = held.*;
+        app.drag = .none;
+        if (!m.release) return;
+        var sheet: sheets.Sheet = undefined;
+        if (m.y < 2 or !app.planSheet(&sheet)) return;
+        const hit = app.planHit(&sheet, m.x, m.y) orelse return;
+        if (hit.win == .unplanned) {
+            if (row.moved) return;
+            const at = hit.row orelse return;
+            if (sheet.rows[at].ticket == row.id) try app.togglePlanOpen(&sheet.rows[at]);
+            return;
+        }
+        if (hit.win != .next or hit.title) return;
+        const place = if (hit.row) |at| nextPlace(&sheet, at) + 1 else app.board.?.next().len + 1;
+        var id: [12]u8 = undefined;
+        var here: [12]u8 = undefined;
+        var said: [24]u8 = undefined;
+        const number = std.fmt.bufPrint(&id, "{d}", .{row.id}) catch return;
+        const at_place = std.fmt.bufPrint(&here, "{d}", .{place}) catch return;
+        const refusal = std.fmt.bufPrint(&said, "next:{d}", .{row.id}) catch return;
+        _ = try app.runNeed(refusal, &.{ "babylon", "next", number, "--at", at_place });
     }
 
     /// The held button moved to `m`, or let go, with a row of next in it: let go on another row
@@ -6630,7 +6787,7 @@ pub const App = struct {
     /// focus, and the wheel, or anything once it is focused, is the column's.
     fn boardMouse(app: *App, m: keys.Mouse) !bool {
         // a card's let go that never came: a new press ends that drag unseen
-        if ((app.drag == .card or app.drag == .next_row) and m.leftPress()) app.drag = .none;
+        if ((app.drag == .card or app.drag == .next_row or app.drag == .todo_row) and m.leftPress()) app.drag = .none;
         if (app.drag != .none) return false;
         if (m.x < app.boardX()) {
             if (m.leftPress() and m.y != 1) try app.closeBoard();
@@ -6963,6 +7120,7 @@ pub const App = struct {
     fn dragTo(app: *App, m: keys.Mouse) !void {
         if (app.drag == .card) return app.dragCard(m);
         if (app.drag == .next_row) return app.dragNextRow(m);
+        if (app.drag == .todo_row) return app.dragTodoRow(m);
         const s = app.cur() orelse {
             app.drag = .none;
             return;
@@ -6982,7 +7140,7 @@ pub const App = struct {
         const ox: i32 = app.term_w - app.view_w;
         switch (app.drag) {
             .none, .thumb, .focus => {},
-            .card, .next_row => {},
+            .card, .next_row, .todo_row => {},
             // Past the pane's top or bottom the history scrolls under the pointer.
             .select => |from| {
                 const pane = app.paneById(from.pane) orelse return;
@@ -10800,4 +10958,108 @@ test "a session's repo is where its Claudes' panes are, a worktree's included, n
     app.sessions = .fromOwnedSlice(&sessions);
     try eq("arena", app.workspaceRepo(0));
     try eq("babylon", app.workspaceRepo(1));
+}
+
+fn chipsPick(app: *App) !usize {
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    for (sheet.rows[0..sheet.n]) |row| if (row.kind == .chips) return row.pick.?;
+    return error.NoChips;
+}
+
+fn unplannedKinds(app: *App, kind: sheets.Kind) !usize {
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    var n: usize = 0;
+    for (sheet.rows[0..sheet.n]) |row| n += @intFromBool(row.kind == kind);
+    return n;
+}
+
+const not_planned_plan =
+    \\{"tickets":[
+    \\{"id":1,"repo":"arena","title":"blocked","status":"todo","blocked_by":[9]},
+    \\{"id":2,"repo":"arena","title":"free","status":"todo"},
+    \\{"id":3,"repo":"tlon","title":"other","status":"todo"}],
+    \\"backlog":[{"id":6,"repo":"arena","title":"later","status":"backlog"}],
+    \\"plan":{"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},
+    \\"not_planned":{"count":3,"follow_ups":0,"by_repo":{"arena":2,"tlon":1}}}}
+;
+
+test "on not planned's chips ⏎ folds a repo's rows, h l walk the chips, Z opens only one repo, and the backlog chip shows its cards" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 40;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator, not_planned_plan);
+    defer app.board.?.deinit();
+    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    const eq = std.testing.expectEqual;
+    const view = &app.board_view.?;
+    view.plan_pick = try chipsPick(&app);
+
+    try eq(@as(usize, 3), try unplannedKinds(&app, .todo));
+    try app.planKey("\r");
+    try std.testing.expect(app.folded("arena"));
+    try eq(@as(usize, 1), try unplannedKinds(&app, .todo));
+    try app.planKey("l");
+    try eq(@as(usize, 1), view.plan_chip);
+    try app.planKey("\r");
+    try eq(@as(usize, 0), try unplannedKinds(&app, .todo));
+    try app.planKey("Z");
+    try eq(@as(usize, 0), app.fold_n);
+    try app.planKey("Z");
+    try std.testing.expect(app.folded("arena") and !app.folded("tlon"));
+    try app.planKey("l");
+    try app.planKey("\r");
+    try std.testing.expect(view.plan_backlog);
+    try eq(@as(usize, 1), try unplannedKinds(&app, .backlog));
+    try eq(@as(usize, 0), try unplannedKinds(&app, .todo));
+}
+
+test "J K on a todo row move it in its repo, W adds it to next, + opens the new ticket window, x on a backlog row asks why, and a todo row dragged onto next joins it there" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 40;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator, not_planned_plan);
+    defer app.board.?.deinit();
+    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    const eq = std.testing.expectEqual;
+    const view = &app.board_view.?;
+    var got: [2048]u8 = undefined;
+    view.plan_pick = (try chipsPick(&app)) + 1;
+
+    try app.planKey("J");
+    var len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon move 2 down --repo arena") != null);
+    try eq((try chipsPick(&app)) + 2, view.plan_pick);
+
+    view.plan_pick = (try chipsPick(&app)) + 1;
+    try app.planKey("W");
+    len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon next 2 --at 1") != null);
+
+    app.drag = .{ .todo_row = .{ .id = 3, .moved = true } };
+    const next = app.planRect(.next);
+    try app.dragTo(.{ .code = 0, .x = next.x + 3, .y = next.y + 1, .release = true });
+    len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'next' '3' '--at' '1'") != null);
+
+    view.plan_pick = try chipsPick(&app);
+    try app.planKey("+");
+    len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon new") != null);
+
+    app.board_view = .{ .home = true, .plan = true, .focus = .board, .plan_backlog = true };
+    app.board_view.?.plan_pick = (try chipsPick(&app)) + 1;
+    try app.planKey("x");
+    try std.testing.expect(app.prompt.?.what == .why);
+    try std.testing.expectEqualStrings("close:6", app.prompt.?.item());
 }

@@ -2216,8 +2216,9 @@ fn benchPlan(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
         return;
     }
     var behind: sheets.Sheet = undefined;
+    var repos: [app_mod.max_repos][]const u8 = undefined;
     const b = &app.board.?;
-    behind.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.halfHome(), true, app.plan_shut);
+    behind.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.halfHome(), true, app.plan_shut, app.planSee(&repos));
     for (std.enums.values(sheets.Window)) |win| try benchWindow(app, w, r, &behind, view, win, false);
     try benchWindow(app, w, r, sheet, view, view.whole.?, true);
 }
@@ -2262,10 +2263,10 @@ fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet
         const text = std.fmt.bufPrint(&buf, "epic #{d}{s}{s}", .{ goal.epic, if (goal.doc != null) " · " else "", goal.doc orelse "" }) catch "";
         try bench.say(w, rect.x + 34, rect.y, clip(text, ww -| 38), r.dim, bar, false);
     };
-    const top = if (lit) app.planWindowTop(sheet, win, body) else 0;
     for (0..body) |line| {
-        if (top + line >= mine.len) break;
-        try benchPlanRow(app, w, r, sheet, mine.start + top + line, rect.y + 1 + @as(u16, @intCast(line)), rect.x, ww, lit);
+        const at = if (lit) app.planRowOnLine(sheet, win, body, line) else line;
+        if (at >= mine.len) break;
+        try benchPlanRow(app, w, r, sheet, mine.start + at, rect.y + 1 + @as(u16, @intCast(line)), rect.x, ww, lit);
     }
 }
 
@@ -2562,6 +2563,57 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
             var buf: [32]u8 = undefined;
             const follow = std.fmt.bufPrint(&buf, "· {d} follow-ups", .{not.follow_ups}) catch "";
             if (x + cellCount(follow) < x0 + ww) try bench.say(w, x, y, follow, r.dim, bg, false);
+            try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
+        },
+        .chips => {
+            try bench.fill(w, x0, y, ww, bg);
+            if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
+            var chips_buf: [sheets.max_chips]sheets.Chip = undefined;
+            const view = app.board_view.?;
+            const chips_n = app.chipsOf(&chips_buf).len;
+            for (chips_buf[0..chips_n], 0..) |c, i| {
+                var buf: [64]u8 = undefined;
+                const name = c.repo orelse "backlog";
+                const look = repoHue(r, c.repo);
+                const label = if (c.repo != null)
+                    std.fmt.bufPrint(&buf, "{s} {s} {d}", .{ look.glyph, name, c.n }) catch ""
+                else
+                    std.fmt.bufPrint(&buf, "{s} {d}", .{ name, c.n }) catch "";
+                const open = if (c.repo) |repo| !app.folded(repo) else view.plan_backlog;
+                const hue = if (c.repo == null) r.accent else look.hue;
+                _ = try bench.chipInk(w, r, c.x, y, label, if (open) hue else r.dim, if (open) r.on_accent else r.dim, open);
+                if (picked and view.plan_chip == i) try bench.say(w, c.x + c.w, y, "◂", mark, bg, true);
+            }
+            var buf: [32]u8 = undefined;
+            const follow = std.fmt.bufPrint(&buf, "· {d} follow-ups", .{given.not_planned.follow_ups}) catch "";
+            const after = x0 + ww -| cellCount(follow) -| 1;
+            const used = for (0..chips_n) |i| {
+                if (i + 1 == chips_n) break chips_buf[i].x + chips_buf[i].w + 2;
+            } else x0 + 2;
+            if (after > used) try bench.say(w, after, y, follow, r.dim, bg, false);
+            try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
+        },
+        .todo, .backlog => {
+            const card = app.cardById(row.ticket orelse return) orelse return;
+            try bench.fill(w, x0, y, ww, bg);
+            if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
+            const repo = repoHue(r, card.repo);
+            var idb: [16]u8 = undefined;
+            const id = std.fmt.bufPrint(&idb, "#{d}", .{card.id}) catch "";
+            try bench.say(w, x0 + 1, y, "▌", repo.hue, bg, false);
+            try bench.say(w, x0 + 2, y, repo.glyph, repo.hue, bg, false);
+            try bench.say(w, x0 + 4, y, id, repo.hue, bg, true);
+            var lbuf: [64]u8 = undefined;
+            var age: [16]u8 = undefined;
+            const how = sheets.ago(&age, card.inserted_at, app.epoch);
+            const label = if (card.blocked_by.len > 0)
+                std.fmt.bufPrint(&lbuf, "{s}  ← #{d}", .{ card.priority, card.blocked_by[0] }) catch card.priority
+            else if (row.kind == .backlog and how.len > 0) std.fmt.bufPrint(&lbuf, "{s}  {s}", .{ card.priority, how }) catch card.priority else card.priority;
+            const label_x = x0 + ww -| (cellCount(label) + 1);
+            const title_x = x0 + 5 + cellCount(id);
+            const dim = card.blocked_by.len > 0;
+            try bench.say(w, label_x, y, label, if (dim) r.dim else if (std.mem.eql(u8, card.priority, "high")) r.you else r.dim, bg, false);
+            try bench.say(w, title_x, y, clip(card.title, label_x -| title_x -| 1), if (dim) r.dim else r.text, bg, false);
             try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
         },
         .landed => {

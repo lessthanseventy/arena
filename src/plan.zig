@@ -22,7 +22,7 @@ const ideas_shown = 3;
 /// The bit of `unfolded` that holds the ideas open.
 pub const ideas_fold: u3 = 0;
 
-pub const Kind = enum { head, blank, now, next, why, more, goals_more, goal, landed, unplanned, focal, drove, card_top, goal_bar, goal_next, goal_block, idea, ideas_more, summary, note, buttons, held };
+pub const Kind = enum { head, blank, now, next, why, more, goals_more, goal, landed, unplanned, chips, todo, backlog, focal, drove, card_top, goal_bar, goal_next, goal_block, idea, ideas_more, summary, note, buttons, held };
 pub const Style = enum { normal, dim, heading, attention };
 
 /// Workbench's plan is six windows, each a fixed slot of the screen.
@@ -179,6 +179,45 @@ pub fn goalBlock(goal: tickets.Goal) ?struct { step: u32, on: u32 } {
     return null;
 }
 
+/// What not planned shows: the repos folded to their chips, and the backlog in the rows' place.
+pub const See = struct {
+    repos_shut: []const []const u8 = &.{},
+    backlog: bool = false,
+};
+
+pub const max_chips = 16;
+
+/// A chip of not planned's top row: a repo's with its count of todo tickets, or the backlog's.
+pub const Chip = struct { x: usize, w: usize, repo: ?[]const u8, n: usize };
+
+/// The chips of not planned's top row, from `x0`, as many as fit in `width` cells: a repo's each,
+/// then the backlog's.
+pub fn chipsAt(given: *const tickets.Plan, backlog_n: usize, x0: usize, width: usize, out: []Chip) []Chip {
+    var n: usize = 0;
+    var x = x0;
+    const not = given.not_planned;
+    for (not.by_repo.map.keys(), not.by_repo.map.values()) |name, count| {
+        const w = chipWidth(name, count);
+        if (n == out.len or x + w > x0 + width) return out[0..n];
+        out[n] = .{ .x = x, .w = w, .repo = name, .n = count };
+        n += 1;
+        x += w + 1;
+    }
+    const w = chipWidth("backlog", backlog_n) - 2;
+    if (n < out.len and x + w <= x0 + width) {
+        out[n] = .{ .x = x, .w = w, .repo = null, .n = backlog_n };
+        n += 1;
+    }
+    return out[0..n];
+}
+
+/// A chip's cells: its icon and name and count, and the chip's own two.
+fn chipWidth(name: []const u8, count: usize) usize {
+    var digits: [12]u8 = undefined;
+    const n = std.fmt.bufPrint(&digits, "{d}", .{count}) catch "";
+    return 2 + text_mod.cells(name) + 1 + n.len + 2;
+}
+
 pub const Sheet = struct {
     rows: [max_rows]Row = undefined,
     n: usize = 0,
@@ -212,7 +251,7 @@ pub const Sheet = struct {
         var extra: usize = 0;
         for (s.rows[0..s.n], 0..) |row, i| {
             const owner = if (row.kind == .why and i > 0 and s.rows[i - 1].kind == .next) s.rows[i - 1] else row;
-            if (owner.kind != .now and owner.kind != .next) continue;
+            if (owner.kind != .now and owner.kind != .next and owner.kind != .todo and owner.kind != .backlog) continue;
             const ticket = owner.ticket orelse continue;
             if (open.get(owner.win) != ticket) continue;
             const why_follows = owner.kind == .next and row.kind != .why and i + 1 < s.n and s.rows[i + 1].kind == .why;
@@ -330,14 +369,14 @@ pub const Sheet = struct {
 
     /// The plan as rows `width` cells wide, `epoch` the time now, the stages in `unfolded` shown
     /// a row to a ticket.
-    pub fn build(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64, unfolded: u8, narrow: bool, bench: bool, shut: Shut) void {
+    pub fn build(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64, unfolded: u8, narrow: bool, bench: bool, shut: Shut, see: See) void {
         s.narrow = narrow;
         s.bench = bench;
         s.shut = shut;
         s.n = 0;
         s.picks = 0;
         s.used = 0;
-        if (bench) return s.windowRows(given, b, width, epoch);
+        if (bench) return s.windowRows(given, b, width, epoch, see);
         s.nowRows(given, width, epoch);
         s.nextRows(given, width);
         s.goalRows(given, width);
@@ -364,7 +403,7 @@ pub const Sheet = struct {
     }
 
     /// Workbench's plan: each window's rows, in the order the pick walks them.
-    fn windowRows(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64) void {
+    fn windowRows(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64, see: See) void {
         if (s.begin(.driving)) s.summaryRow(s.drivingSummary(given, b)) else if (driveLanded(given, b)) |need| {
             const title = drivenTitle(b, need, given.driving.?);
             s.add(.{ .kind = .drove, .part = 1, .pick = 0, .ticket = given.driving, .text = s.print("✓ #{d} {s}", .{ given.driving.?, title }) });
@@ -388,7 +427,7 @@ pub const Sheet = struct {
             s.ideaRows(given, width, epoch, 0);
         }
         s.end("none");
-        if (s.begin(.unplanned)) s.summaryRow(s.unplannedSummary(given)) else s.unplannedRow(given, width);
+        if (s.begin(.unplanned)) s.summaryRow(s.unplannedSummary(given)) else s.unplannedRows(given, b, width, epoch, see);
         s.end("none");
         if (s.begin(.landed)) s.summaryRow(s.landedSummary(given)) else for (given.landed_today.newest, 0..) |id, at| {
             s.add(.{ .kind = .landed, .pick = 0, .ticket = id, .item = at });
@@ -737,6 +776,50 @@ pub const Sheet = struct {
         s.add(.{ .kind = .landed, .pick = 0, .text = s.clipped(width, s.buf[start..s.used]) });
     }
 
+    fn inNext(given: *const tickets.Plan, id: u32) bool {
+        for (given.next) |item| if (item.ticket == id) return true;
+        return false;
+    }
+
+    fn repoShut(see: See, repo: ?[]const u8) bool {
+        for (see.repos_shut) |name| if (std.mem.eql(u8, name, repo orelse "")) return true;
+        return false;
+    }
+
+    /// Not planned's rows: the chip row, then the open repos' todo tickets that are not in next in
+    /// babylon's order (those that can start before those that wait), or the backlog's in their place.
+    fn unplannedRows(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64, see: See) void {
+        s.add(.{ .kind = .chips, .pick = 0, .count = given.not_planned.count });
+        const rows_from = s.n;
+        if (see.backlog) {
+            for (b.backlog()) |*card| if (!card.isEpic()) s.ticketRow(.backlog, card, width, epoch);
+            if (s.n == rows_from) s.add(.{ .kind = .note, .style = .dim, .text = "the backlog is empty" });
+            return;
+        }
+        for ([_]bool{ false, true }) |waiting| for (b.cards()) |*card| {
+            if (card.status != .todo or card.isEpic() or (card.blocked_by.len > 0) != waiting) continue;
+            if (repoShut(see, card.repo) or inNext(given, card.id)) continue;
+            s.ticketRow(.todo, card, width, epoch);
+        };
+        if (s.n != rows_from) return;
+        const repos = given.not_planned.by_repo.map.count();
+        const text = if (repos > 0 and see.repos_shut.len >= repos) "every repo is folded: ⏎ on a chip opens it" else "nothing to do in the open repos";
+        s.add(.{ .kind = .note, .style = .dim, .text = text });
+    }
+
+    /// A todo or backlog ticket's row: its number and title, and on the right its priority and
+    /// what it waits on, or in the backlog its age.
+    fn ticketRow(s: *Sheet, kind: Kind, card: *const tickets.Card, width: usize, epoch: i64) void {
+        var age: [16]u8 = undefined;
+        const how = ago(&age, card.inserted_at, epoch);
+        const right = if (card.blocked_by.len > 0)
+            s.print("{s}  ← #{d}", .{ card.priority, card.blocked_by[0] })
+        else if (kind == .backlog and how.len > 0) s.print("{s}  {s}", .{ card.priority, how }) else s.print("{s}", .{card.priority});
+        const left = s.print(" #{d} {s}", .{ card.id, card.title });
+        const both = s.spread(width, left, right);
+        s.add(.{ .kind = kind, .pick = 0, .ticket = card.id, .text = both.text, .tail_at = both.tail_at, .tail_style = .dim });
+    }
+
     fn unplannedRow(s: *Sheet, given: *const tickets.Plan, width: usize) void {
         const not = given.not_planned;
         const start = s.used;
@@ -809,7 +892,7 @@ test "in flight: building first, then the pipeline a row to a ticket, landing be
     defer b.deinit();
     var s: Sheet = undefined;
     const epoch = tickets.epochOf("2026-11-23T07:10:00Z").?;
-    s.build(b.plan().?, &b, 100, epoch, 0, false, false, .empty);
+    s.build(b.plan().?, &b, 100, epoch, 0, false, false, .empty, .{});
     const eq = std.testing.expectEqualStrings;
     const ok = std.testing.expect;
     try eq("in flight 7", rowText(&s, .head, 0).?);
@@ -839,7 +922,7 @@ test "a landing ticket is listed before reviewing, verifying and queued, whateve
     );
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 100, 0, 0, false, true, .empty);
+    s.build(b.plan().?, &b, 100, 0, 0, false, true, .empty, .{});
     const want = [_]u32{ 6, 3, 5, 2, 4, 1 };
     var at: usize = 0;
     for (s.rows[0..s.n]) |row| if (row.kind == .now) {
@@ -863,7 +946,7 @@ test "next says what each waits on and why, goals their steps, and the picks run
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 100, 0, 0, false, false, .empty);
+    s.build(b.plan().?, &b, 100, 0, 0, false, false, .empty, .{});
     const has = std.mem.indexOf;
     const ok = std.testing.expect;
     try ok(std.mem.endsWith(u8, rowText(&s, .next, 0).?, "← after #588 lands: one babylon"));
@@ -892,7 +975,7 @@ test "ideas draw a row each under their rule, one in each state, and fold past t
     var b = given;
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 80, tickets.epochOf("2026-11-24T20:04:00Z").?, 0, false, false, .empty);
+    s.build(b.plan().?, &b, 80, tickets.epochOf("2026-11-24T20:04:00Z").?, 0, false, false, .empty, .{});
     try ok(std.mem.eql(u8, rowText(&s, .head, 3).?, "ideas 3"));
     const planning = rowText(&s, .idea, 0).?;
     try ok(std.mem.indexOf(u8, planning, "◐ #830 money") != null);
@@ -908,10 +991,10 @@ test "ideas draw a row each under their rule, one in each state, and fold past t
         \\{"epic":1,"title":"a"},{"epic":2,"title":"b"},{"epic":3,"title":"c"},{"epic":4,"title":"d"}]}}
     );
     defer four.deinit();
-    s.build(four.plan().?, &four, 80, 0, 0, false, false, .empty);
+    s.build(four.plan().?, &four, 80, 0, 0, false, false, .empty, .{});
     try ok(rowText(&s, .idea, 0) == null);
     try ok(std.mem.eql(u8, rowText(&s, .ideas_more, 0).?, " +4 ideas"));
-    s.build(four.plan().?, &four, 80, 0, @as(u8, 1) << ideas_fold, false, false, .empty);
+    s.build(four.plan().?, &four, 80, 0, @as(u8, 1) << ideas_fold, false, false, .empty, .{});
     try ok(rowText(&s, .ideas_more, 0) == null);
     try ok(rowText(&s, .idea, 3) != null);
 }
@@ -924,7 +1007,7 @@ test "a goal with a step to try reads ▲ N to try, and the step is neither next
     );
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 100, 0, 0, false, false, .empty);
+    s.build(b.plan().?, &b, 100, 0, 0, false, false, .empty, .{});
     try std.testing.expect(std.mem.indexOf(u8, rowText(&s, .goal, 0).?, "1 of 2  ○ #2  ▲ 1 to try") != null);
     try std.testing.expectEqual(@as(u32, 2), goalNext(b.plan().?.goals[0]).?.ticket);
 }
@@ -933,7 +1016,7 @@ test "a row too wide is cut, its right side kept" {
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 40, 0, 0, false, false, .empty);
+    s.build(b.plan().?, &b, 40, 0, 0, false, false, .empty, .{});
     for (s.rows[0..s.n]) |row| try std.testing.expect(text_mod.cells(row.text) <= 40);
     try std.testing.expect(std.mem.endsWith(u8, rowText(&s, .now, 0).?, "building · now"));
 }
@@ -947,7 +1030,7 @@ test "the focal goal is the first with a step being built, a card is five rows, 
     try std.testing.expectEqual(@as(u32, 454), goalBlock(given.goals[0]).?.step);
     try std.testing.expectEqual(@as(u32, 453), goalBlock(given.goals[0]).?.on);
     var s: Sheet = undefined;
-    s.build(given, &b, 100, 0, 0, false, true, .empty);
+    s.build(given, &b, 100, 0, 0, false, true, .empty, .{});
     try std.testing.expectEqual(Kind.focal, s.rows[0].kind);
     try std.testing.expectEqual(@as(usize, 0), s.rows[0].pick.?);
     var cards: usize = 0;
@@ -980,7 +1063,7 @@ test "the focal window follows plan.driving, says whose pick it is, and asks wha
         try std.testing.expectEqual(@as(?u32, case.epic), given.goals[focalGoal(given).?].epic);
         try std.testing.expectEqualStrings(case.title, drivingTitle(given, &b));
         try std.testing.expect(driveLanded(given, &b) == null);
-        s.build(given, &b, 100, 0, 0, false, true, .empty);
+        s.build(given, &b, 100, 0, 0, false, true, .empty, .{});
         var cards: usize = 0;
         for (s.rows[0..s.n]) |row| cards += @intFromBool(row.kind == .card_top);
         try std.testing.expectEqual(@as(usize, if (case.driving.len == 0) 2 else 1), cards);
@@ -992,7 +1075,7 @@ test "the focal window follows plan.driving, says whose pick it is, and asks wha
     defer b.deinit();
     const given = b.plan().?;
     const need = driveLanded(given, &b).?;
-    s.build(given, &b, 100, 0, 0, false, true, .empty);
+    s.build(given, &b, 100, 0, 0, false, true, .empty, .{});
     try std.testing.expectEqualStrings("✓ #14 The house", s.rows[0].text);
     try std.testing.expectEqualStrings("landed. what next?", s.rows[1].text);
 
@@ -1004,7 +1087,7 @@ test "the focal window follows plan.driving, says whose pick it is, and asks wha
     try std.testing.expectEqual(@as(?usize, 1), driveButtonAt(need, 10, 12 + "1 the board".len + 3));
     try std.testing.expectEqual(@as(?usize, null), driveButtonAt(need, 10, 10));
     try std.testing.expectEqualStrings("driving towards · landed", drivingTitle(given, &b));
-    s.build(given, &b, 100, 0, 0, false, true, Shut.initOne(.driving));
+    s.build(given, &b, 100, 0, 0, false, true, Shut.initOne(.driving), .{});
     try std.testing.expectEqualStrings("✓ #14 The house  1/1 · landed. what next?", s.rows[0].text);
 }
 
@@ -1018,9 +1101,9 @@ test "goals past what fits fold into one row, and landed and not planned keep th
     var b = try tickets.Board.parse(std.testing.allocator, buf[0..used]);
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 100, 0, 0, false, true, .empty);
+    s.build(b.plan().?, &b, 100, 0, 0, false, true, .empty, .{});
     try std.testing.expect(rowText(&s, .landed, 0) != null);
-    try std.testing.expect(rowText(&s, .unplanned, 0) != null);
+    try std.testing.expect(rowText(&s, .chips, 0) != null);
     try std.testing.expect(std.mem.indexOf(u8, rowText(&s, .goals_more, 0).?, "more goals") != null);
 }
 
@@ -1031,7 +1114,7 @@ test "a now row waiting on a ticket says so, with its own mark, and is not drawn
     );
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 100, tickets.epochOf("2026-11-23T07:10:00Z").?, 0, false, false, .empty);
+    s.build(b.plan().?, &b, 100, tickets.epochOf("2026-11-23T07:10:00Z").?, 0, false, false, .empty, .{});
     const row = rowText(&s, .now, 0).?;
     try std.testing.expect(std.mem.indexOf(u8, row, "◷ #505") != null);
     try std.testing.expect(std.mem.endsWith(u8, row, "◷ waiting on #829"));
@@ -1045,7 +1128,7 @@ test "landed is a row to each of today's tickets, newest first, and folds to its
     );
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 100, 0, 0, false, true, .empty);
+    s.build(b.plan().?, &b, 100, 0, 0, false, true, .empty, .{});
     var tickets_seen: [2]u32 = undefined;
     var n: usize = 0;
     for (s.rows[0..s.n]) |row| if (row.kind == .landed) {
@@ -1054,7 +1137,7 @@ test "landed is a row to each of today's tickets, newest first, and folds to its
     };
     try std.testing.expectEqual(@as(usize, 2), n);
     try std.testing.expectEqualSlices(u32, &.{ 6, 5 }, &tickets_seen);
-    s.build(b.plan().?, &b, 100, 0, 0, false, true, .initOne(.landed));
+    s.build(b.plan().?, &b, 100, 0, 0, false, true, .initOne(.landed), .{});
     try std.testing.expectEqualStrings("✓ 23 today", rowText(&s, .summary, 0).?);
 }
 
@@ -1082,4 +1165,38 @@ test "a second line under each in-flight row whose pane is known, and no pick of
         try std.testing.expectEqual(@as(?u32, 1), s.rows[i - 1].ticket);
         try std.testing.expectEqual(@as(?usize, null), row.pick);
     };
+}
+
+test "not planned's rows are the open repos' todo tickets that are not in next, startable first; the backlog chip shows the backlog" {
+    var b = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"repo":"arena","title":"blocked","status":"todo","blocked_by":[9]},
+        \\{"id":2,"repo":"arena","title":"free","status":"todo","priority":"high"},
+        \\{"id":3,"repo":"tlon","title":"folded repo","status":"todo"},
+        \\{"id":4,"repo":"arena","title":"in next","status":"todo"},
+        \\{"id":5,"repo":"arena","title":"doing","status":"doing"}],
+        \\"backlog":[{"id":6,"repo":"arena","title":"later","status":"backlog","kind":"ticket"},{"id":7,"title":"an idea","status":"backlog","kind":"epic"}],
+        \\"plan":{"next":[{"ticket":4,"repo":"arena","title":"in next","why":""}],
+        \\"not_planned":{"count":3,"follow_ups":0,"by_repo":{"arena":2,"tlon":1}}}}
+    );
+    defer b.deinit();
+    var s: Sheet = undefined;
+    const shut = [_][]const u8{"tlon"};
+    s.build(b.plan().?, &b, 100, 0, 0, false, true, .empty, .{ .repos_shut = &shut });
+    const win = s.span(.unplanned);
+    try std.testing.expectEqual(Kind.chips, s.rows[win.start].kind);
+    try std.testing.expectEqual(@as(usize, 3), win.len);
+    try std.testing.expectEqual(@as(?u32, 2), s.rows[win.start + 1].ticket);
+    try std.testing.expectEqual(@as(?u32, 1), s.rows[win.start + 2].ticket);
+    try std.testing.expect(std.mem.endsWith(u8, s.rows[win.start + 2].text, "med  ← #9"));
+    s.build(b.plan().?, &b, 100, 0, 0, false, true, .empty, .{ .backlog = true });
+    const back = s.span(.unplanned);
+    try std.testing.expectEqual(@as(usize, 2), back.len);
+    try std.testing.expectEqual(Kind.backlog, s.rows[back.start + 1].kind);
+    try std.testing.expectEqual(@as(?u32, 6), s.rows[back.start + 1].ticket);
+    var chips: [max_chips]Chip = undefined;
+    const got = chipsAt(b.plan().?, 1, 10, 80, &chips);
+    try std.testing.expectEqual(@as(usize, 3), got.len);
+    try std.testing.expect(got[2].repo == null);
+    try std.testing.expect(got[1].x == got[0].x + got[0].w + 1);
 }

@@ -2143,6 +2143,29 @@ key e
 check "e on a now row edits its ticket" await last 'edit 701'
 normal
 key b
+print -r -- '{"tickets":[{"id":801,"repo":"a1","title":"Alpha","kind":"ticket","status":"todo","priority":"high","blocked_by":[]},{"id":802,"repo":"b2","title":"Beta","kind":"ticket","status":"todo","priority":"med","blocked_by":[]}],"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":2,"follow_ups":0,"by_repo":{"a1":1,"b2":1}}}}' >$tmp/run/babylon/board.json
+check "not planned lists the open repos' todo tickets under its chips" await shows 'Alpha'
+check "with a chip for every repo" see 'a1 1.*b2 1'
+chip_click() { local row=$(screen | grep -n "$1" | head -1 | cut -d: -f1); local line=$(screen | sed -n "${row}p"); mouse 0 $(( ${#${line%%$1*}} + 2 )) $row M; mouse 0 $(( ${#${line%%$1*}} + 2 )) $row m }
+chip_click 'a1 1'
+check "a click on a repo's chip folds its rows" await gone 'Alpha'
+check "and the other repo's rows are the ones left" see 'Beta'
+check "the fold is kept with the repo folds" await eval 'grep -qx a1 $folded_file'
+chip_click 'a1 1'
+check "a click on the chip again opens them" await shows 'Alpha'
+: >$tmp/babylon
+mouse 0 $(( ${#${$(screen | grep 'Alpha' | head -1)%%Alpha*}} + 2 )) $(screen | grep -n 'Alpha' | head -1 | cut -d: -f1) M
+mouse 0 $(( ${#${$(screen | grep 'Alpha' | head -1)%%Alpha*}} + 2 )) $(screen | grep -n 'Alpha' | head -1 | cut -d: -f1) m
+key w
+check "w on a not planned row asks why it goes to next" see '❯'
+key -l 'it is next'
+key Enter
+check "and Enter adds it to next, through babylon" await last 'next 801 --why it is next'
+: >$tmp/babylon
+key +
+check "+ in not planned opens the new ticket window" await last 'new'
+normal
+key b
 key Escape
 key h
 print -r -- '' >$tmp/.config/ficciones/theme/palette.sh
