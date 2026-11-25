@@ -1414,10 +1414,10 @@ key -l 'qecho kept-after-q'
 kept_after() { inner capture-pane -p -t alpha:one | grep -qF 'echo kept-after-q' }
 check "what is typed in one read after the q closing the board is the pane's" await kept_after
 key C-u
-inner new-session -d -s babylon -n gate sh
+inner new-session -d -s babylon-gate -n gate sh
 key M-b
 check "with babylon's gate session there, the board offers it" see '◒'
-check "and the rail does not list it" gone '│ babylon '
+check "and the rail does not list it" gone '│ babyl'
 key g
 check "g on the board shows the gate" see '╭─ 1 gate '
 cp $tmp/run/babylon/board.json $tmp/board.kept
