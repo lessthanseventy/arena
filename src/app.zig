@@ -382,6 +382,11 @@ pub const BoardView = struct {
     auto_pick: ?usize = null,
     /// The `+ goal` modal is over the plan; what it holds is `App.goal`.
     goal_open: bool = false,
+    /// A draft's modal is over the board: its epic, the step picked, and whether the keys were in
+    /// the orchestrator's column when it opened.
+    draft: ?u32 = null,
+    draft_pick: usize = 0,
+    draft_from_column: bool = false,
     /// The keys were in the orchestrator's column when it opened, and go back there.
     auto_from_column: bool = false,
     auto_normal: bool = false,
@@ -403,7 +408,7 @@ pub const BoardView = struct {
 
     /// Whether a box lies over the board, the keys its own.
     pub fn boxed(view: BoardView) bool {
-        return view.help or view.detail != null or view.answering or view.giving != null or view.auto_pick != null or view.goal_open;
+        return view.help or view.detail != null or view.answering or view.giving != null or view.auto_pick != null or view.goal_open or view.draft != null;
     }
 };
 
@@ -2172,6 +2177,10 @@ pub const App = struct {
             if (moves > 0) view.pick = prevTile(&f, view.pick, moves);
         } else if (anyKey(key, &.{" "})) {
             const id = f.item(view.pick).?.ticket orelse return true;
+            if (f.item(view.pick).?.need) |at| if (std.mem.eql(u8, app.board.?.needsYou()[at].kind, "draft")) {
+                app.openDraft(id);
+                return true;
+            };
             _ = app.pickCard(id);
             app.pickPlan(id);
             _ = try app.openDetail(id);
@@ -2256,6 +2265,10 @@ pub const App = struct {
             return true;
         };
         const need = b.needsYou()[at];
+        if (std.mem.eql(u8, need.kind, "draft") and anyKey(key, &.{" "})) {
+            app.openDraft(need.ticket orelse return true);
+            return true;
+        }
         if (item.step) |s| if (s < need.steps.len) {
             if (anyKey(key, &.{"o"}) and feed.isLook(need.steps[s])) return app.lookAtDiff(need, need.steps[s]);
         };
@@ -4523,6 +4536,7 @@ pub const App = struct {
         const view = &app.board_view.?;
         const given = app.board.?.plan().?;
         app.dirty = true;
+        if (row.kind == .idea and sheets.Sheet.ideaState(given.ideas[row.item]) == .draft) return app.openDraft(given.ideas[row.item].epic);
         if (!std.mem.eql(u8, key, "\r")) {
             if (row.ticket) |id| _ = try app.openDetail(id);
             return;
@@ -4536,7 +4550,7 @@ pub const App = struct {
                 switch (sheets.Sheet.ideaState(idea)) {
                     .idea => try app.send(.ignore, captured("babylon idea {d} --plan"), .{idea.epic}),
                     .planning => if (idea.holder()) |held| if (app.paneWindow(held) != null) return app.showPane(held),
-                    .draft => _ = try app.openDetail(idea.epic),
+                    .draft => unreachable,
                 }
             },
             .now => {
@@ -4713,6 +4727,7 @@ pub const App = struct {
         const view = &app.board_view.?;
         const is = anyKey;
         if (view.goal_open) return app.goalKey(key);
+        if (view.draft != null) return app.draftKey(key);
         if (view.auto_pick != null) return app.autoKey(key);
         if (view.answering) return app.answerKey(key);
         if (view.giving != null) return app.giveKey(key);
@@ -4900,6 +4915,111 @@ pub const App = struct {
         for (0..app.autoRepos()) |i| name_w = @max(name_w, cellCount((app.autoRepo(i) orelse continue).name));
         const minus = rect.x + 2 + @as(u16, @intCast(name_w)) + 2;
         return .{ .minus = minus, .plus = minus + 6 };
+    }
+
+    /// The most steps a draft's modal lists.
+    pub const draft_max = 24;
+
+    /// The backlog tickets filed under epic `epic`: a draft's steps, in the order babylon gives them.
+    pub fn draftSteps(app: *const App, epic: u32, out: *[draft_max]*const tickets.Card) []*const tickets.Card {
+        const b = if (app.board) |*b| b else return out[0..0];
+        var n: usize = 0;
+        for (b.backlog()) |*card| {
+            if (card.epic_id != epic or n == out.len) continue;
+            out[n] = card;
+            n += 1;
+        }
+        return out[0..n];
+    }
+
+    /// The epic's title: the outcome the draft promises.
+    pub fn draftTitle(app: *const App, epic: u32) []const u8 {
+        const b = if (app.board) |*b| b else return "";
+        for ([_][]const tickets.Card{ b.cards(), b.backlog() }) |list| for (list) |card| {
+            if (card.id == epic) return card.title;
+        };
+        return "";
+    }
+
+    /// The Your move item of epic `epic`'s look, when babylon gives one.
+    fn draftNeed(app: *const App, epic: u32) ?*const tickets.Need {
+        const b = if (app.board) |*b| b else return null;
+        for (b.needsYou()) |*need| {
+            if (std.mem.eql(u8, need.kind, "draft") and need.ticket == epic) return need;
+        }
+        return null;
+    }
+
+    /// A draft's modal over the board: a title bar, the outcome, a line of its count, a row for
+    /// each step, a blank one and the foot.
+    pub fn draftRect(app: *const App) ?ModalRect {
+        const view = app.board_view orelse return null;
+        const epic = view.draft orelse return null;
+        var steps: [draft_max]*const tickets.Card = undefined;
+        const n = app.draftSteps(epic, &steps).len;
+        const width: u16 = @min(app.boardW() -| 4, 84);
+        const bottom = app.view_h -| 2;
+        if (width < 40 or bottom < first_line + 7) return null;
+        const h: u16 = @intCast(@min(6 + n, bottom - first_line + 1));
+        return .{ .x = app.boardX() + (app.boardW() -| width) / 2, .y = first_line, .w = width, .h = h };
+    }
+
+    fn openDraft(app: *App, epic: u32) void {
+        const view = &app.board_view.?;
+        view.draft = epic;
+        view.draft_pick = 0;
+        if (app.draftRect() == null) {
+            view.draft = null;
+            return;
+        }
+        view.draft_from_column = view.focus == .orchestrator;
+        view.focus = .board;
+        app.dirty = true;
+    }
+
+    fn closeDraft(app: *App) void {
+        const view = &app.board_view.?;
+        view.draft = null;
+        if (view.draft_from_column) view.focus = .orchestrator;
+        app.dirty = true;
+    }
+
+    /// A key in a draft's modal: `j` `k` pick a step, space opens its ticket, `e` edits it, `y`
+    /// goes (`babylon adopt`), `r` replies with changes on the line at the foot, `q` closes.
+    fn draftKey(app: *App, key: []const u8) !void {
+        const view = &app.board_view.?;
+        const is = anyKey;
+        const epic = view.draft.?;
+        app.dirty = true;
+        var steps: [draft_max]*const tickets.Card = undefined;
+        const list = app.draftSteps(epic, &steps);
+        if (is(key, &.{ "\x1b", "q" })) return app.closeDraft();
+        if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) view.draft_pick = @min(view.draft_pick + 1, list.len -| 1);
+        if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.draft_pick -|= 1;
+        if (is(key, &.{"y"})) {
+            var number: [12]u8 = undefined;
+            var named: [16]u8 = undefined;
+            const id = std.fmt.bufPrint(&number, "{d}", .{epic}) catch return;
+            const refusal = if (app.draftNeed(epic)) |need| need.id else std.fmt.bufPrint(&named, "draft:{d}", .{epic}) catch return;
+            app.closeDraft();
+            _ = try app.runNeed(refusal, &.{ "babylon", "adopt", id });
+            return;
+        }
+        if (is(key, &.{"r"})) {
+            const need = app.draftNeed(epic) orelse return;
+            app.closeDraft();
+            _ = app.openWords(need.id);
+            return;
+        }
+        if (list.len == 0) return;
+        const step = list[@min(view.draft_pick, list.len - 1)];
+        if (is(key, &.{" "})) {
+            app.closeDraft();
+            _ = try app.openDetail(step.id);
+        } else if (is(key, &.{"e"})) {
+            app.closeDraft();
+            try app.ticketWindow("babylon edit {d}", .{step.id});
+        }
     }
 
     /// Opens auto's modal, with the keys on the board.
@@ -6050,6 +6170,10 @@ pub const App = struct {
         if (open.boxed()) {
             if (open.goal_open) {
                 try app.goalClick(m);
+                return true;
+            }
+            if (open.draft != null) {
+                app.closeDraft();
                 return true;
             }
             if (open.auto_pick != null) {
@@ -9335,6 +9459,79 @@ test "⏎ on an idea plans it, e and x edit and withdraw it, and ⏎ on the fold
     try eq(@as(u8, 1) << sheets.ideas_fold, view.unfolded);
     try std.testing.expect(app.planSheet(&sheet));
     try std.testing.expect(sheet.picked(view.plan_pick).?.kind == .idea);
+}
+
+const draft_board =
+    \\{"tickets":[],"backlog":[
+    \\{"id":830,"repo":"tlon","kind":"epic","title":"The bar shows what is safe to spend","status":"backlog"},
+    \\{"id":832,"repo":"tlon","model":"claude-sonnet-5-5","title":"safe-to-spend as a file","status":"backlog","epic_id":830},
+    \\{"id":833,"repo":"ficciones","model":"claude-haiku-5-5","title":"the bar reads it","status":"backlog","epic_id":830,"blocked_by":[832]}],
+    \\"needs_you":[
+    \\{"id":"ask:61","kind":"draft","ticket":830,"repo":"","text":"#830 The bar\n2 steps in 2 repos: tlon 1, ficciones 1","doc":null,
+    \\ "actions":[{"key":"y","label":"go","argv":["babylon","adopt","830"]},{"key":"r","label":"reply","argv":["babylon","answer","61","--words"],"needs":"words"}]}],
+    \\"plan":{"ideas":[{"epic":830,"title":"The bar","state":"draft","steps":2}]}}
+;
+
+test "space on a draft's tile opens its modal, j picks a step, y runs adopt and closes it, r opens the reply line" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.clearReportSaid();
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 40;
+    app.board = try tickets.Board.parse(std.testing.allocator, draft_board);
+    defer app.board.?.deinit();
+    app.board_view = .{ .home = true, .plan = true, .focus = .orchestrator };
+    app.normal = true;
+    const eq = std.testing.expectEqual;
+    const view = &app.board_view.?;
+
+    try std.testing.expect(try app.feedKey(" "));
+    try eq(@as(?u32, 830), view.draft);
+    try eq(@as(@TypeOf(view.focus), .board), view.focus);
+    try app.boardKey("j");
+    try eq(@as(usize, 1), view.draft_pick);
+    try app.boardKey("j");
+    try eq(@as(usize, 1), view.draft_pick);
+
+    try app.boardKey("y");
+    try eq(@as(?u32, null), view.draft);
+    var got: [1024]u8 = undefined;
+    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'adopt' '830'") != null);
+
+    app.openDraft(830);
+    try app.boardKey("r");
+    try eq(@as(?u32, null), view.draft);
+    try std.testing.expect(app.prompt.?.what == .words);
+    try std.testing.expectEqualStrings("ask:61", app.prompt.?.item());
+}
+
+test "⏎ on a draft's row on Plan opens the draft modal, and e edits the step picked" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 40;
+    app.board = try tickets.Board.parse(std.testing.allocator, draft_board);
+    defer app.board.?.deinit();
+    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    const view = &app.board_view.?;
+    try app.planKey("\r");
+    try std.testing.expectEqual(@as(?u32, 830), view.draft);
+    try app.boardKey("j");
+    try app.boardKey("e");
+    var got: [1024]u8 = undefined;
+    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon edit 833") != null);
 }
 
 test "an item of any kind runs its action's argv: ⏎ on a digest with no ticket and no repo" {

@@ -2045,6 +2045,7 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     if (view.detail) |id| try detailBox(app, w, id, view.detail_scroll);
     try autoBox(app, w);
     if (view.goal_open) try goalBox(app, w);
+    try draftBox(app, w);
     if (view.help) try helpBox(app, w);
 }
 
@@ -2817,7 +2818,80 @@ fn benchOver(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     if (view.giving) |picked| if (app.boardCard(view.col, view.row)) |card| try giveBox(app, w, card.id, picked);
     if (view.detail) |id| try detailBox(app, w, id, view.detail_scroll);
     try autoBox(app, w);
+    try draftBox(app, w);
     if (view.help) try helpBox(app, w);
+}
+
+const DraftTone = enum { plain, dim, pick };
+
+/// A draft's modal: the epic's outcome, its steps one a row with repo, model and what each waits
+/// on, the pick marked, and the foot's keys.
+fn draftBox(app: *const App, w: *Writer) !void {
+    const rect = app.draftRect() orelse return;
+    const view = app.board_view.?;
+    const epic = view.draft.?;
+    var list: [App.draft_max]*const tickets.Card = undefined;
+    const steps = app.draftSteps(epic, &list);
+    var head: [32]u8 = undefined;
+    const title = std.fmt.bufPrint(&head, "☐ draft #{d}", .{epic}) catch "draft";
+    if (app.roles) |r| {
+        try bench.window(w, r, rect.x, rect.y, rect.w - 1, rect.h, title, null, true);
+        try bench.say(w, rect.x + rect.w - 4, rect.y, "✕", r.text, r.raised, true);
+    } else {
+        const edge = ink(app, "amber", 4);
+        var pen: Pen = .{};
+        try pen.set(w, edge, null);
+        try w.print("\x1b[{d};{d}H╭─ ", .{ rect.y + 1, rect.x + 1 });
+        try pen.set(w, heading(app), null);
+        try w.writeAll(title);
+        try pen.set(w, edge, null);
+        try w.writeAll(" ");
+        for (cellCount(title) + 4..rect.w -| 1) |_| try w.writeAll("─");
+        try w.writeAll("╮");
+        try w.print("\x1b[{d};{d}H╰", .{ rect.y + rect.h, rect.x + 1 });
+        for (2..rect.w) |_| try w.writeAll("─");
+        try w.writeAll("╯");
+    }
+    try draftLine(app, w, rect, 1, app.draftTitle(epic), .plain);
+    var count: [32]u8 = undefined;
+    try draftLine(app, w, rect, 2, std.fmt.bufPrint(&count, "{d} steps", .{steps.len}) catch "", .dim);
+    const shown = @min(steps.len, rect.h -| 6);
+    for (steps[0..shown], 0..) |step, i| {
+        var row: [200]u8 = undefined;
+        var waits: [48]u8 = undefined;
+        const wait: []const u8 = if (step.blocked_by.len == 0) "free" else std.fmt.bufPrint(&waits, "← #{d}{s}", .{ step.blocked_by[0], if (step.blocked_by.len > 1) " …" else "" }) catch "";
+        const model = step.model orelse "";
+        const short = if (std.mem.startsWith(u8, model, "claude-")) model["claude-".len..] else model;
+        const word = short[0 .. std.mem.indexOfScalar(u8, short, '-') orelse short.len];
+        var lead: [64]u8 = undefined;
+        const front = std.fmt.bufPrint(&lead, "{d} #{d} {s: <10} {s: <7} ", .{ i + 1, step.id, clip(step.repo orelse "", 10), word }) catch "";
+        const room = (rect.w -| 5) -| cellCount(front) -| cellCount(wait) -| 2;
+        const named = clip(step.title, room);
+        const text = std.fmt.bufPrint(&row, "{s}{s}  {s}", .{ front, named, wait }) catch "";
+        try draftLine(app, w, rect, @intCast(3 + i), text, if (i == view.draft_pick) .pick else .plain);
+    }
+    try draftLine(app, w, rect, rect.h - 2, "y go   r reply with changes   e edit a step   space its ticket   q close", .dim);
+}
+
+fn draftLine(app: *const App, w: *Writer, rect: App.ModalRect, row: u16, text: []const u8, tone: DraftTone) !void {
+    const inner: u16 = rect.w - 5;
+    if (app.roles) |r| {
+        const y = rect.y + row;
+        const ink_of = switch (tone) {
+            .plain, .pick => r.text,
+            .dim => r.dim,
+        };
+        if (tone == .pick) try bench.say(w, rect.x + 1, y, "▌", r.accent, r.panel, true);
+        try bench.say(w, rect.x + 2, y, clip(text, inner), ink_of, r.panel, tone == .pick);
+        return;
+    }
+    var pen: Pen = .{};
+    const style: vt.Style = switch (tone) {
+        .plain => .{},
+        .dim => ink(app, "dim", 8),
+        .pick => heading(app),
+    };
+    try boxLine(w, &pen, ink(app, "amber", 4), style, rect.x, rect.y + 1 + row, text, inner);
 }
 
 /// A ticket's whole detail over the board, as babylon gave it, its lines cut to the box's width
@@ -4674,6 +4748,34 @@ test "a frame of a board of five repos and 362 cards walks the cards under 3000 
         out.clearRetainingCapacity();
         try frame(&app, &out.writer, .all);
         try std.testing.expect(tickets.passes < 3000);
+    }
+}
+
+test "a draft's modal draws the outcome, a row to each step with what it waits on, the pick, and the keys" {
+    const gpa = std.testing.allocator;
+    var board = try tickets.Board.parse(gpa,
+        \\{"tickets":[],"backlog":[
+        \\{"id":830,"repo":"tlon","kind":"epic","title":"The bar shows what is safe to spend","status":"backlog"},
+        \\{"id":832,"repo":"tlon","model":"claude-sonnet-5-5","title":"safe-to-spend as a file","status":"backlog","epic_id":830},
+        \\{"id":833,"repo":"ficciones","model":"claude-haiku-5-5","title":"the bar reads it","status":"backlog","epic_id":830,"blocked_by":[832]}],
+        \\"plan":{"ideas":[{"epic":830,"title":"The bar","state":"draft","steps":2}]}}
+    );
+    defer board.deinit();
+    var app: App = .{ .gpa = gpa, .io = std.testing.io, .tmux_in = undefined };
+    app.term_w = 160;
+    app.view_w = 100;
+    app.view_h = 40;
+    app.board = board;
+    app.board_view = .{ .home = true, .plan = true, .draft = 830, .draft_pick = 1 };
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    try frame(&app, &out.writer, .all);
+    const drawn = out.written();
+    for ([_][]const u8{ "draft #830", "The bar shows what is safe to spend", "2 steps", "1 #832 tlon", "sonnet", "free", "2 #833 ficciones", "haiku", "← #832", "y go   r reply with changes" }) |want| {
+        std.testing.expect(std.mem.indexOf(u8, drawn, want) != null) catch |err| {
+            std.debug.print("missing {s}\n", .{want});
+            return err;
+        };
     }
 }
 

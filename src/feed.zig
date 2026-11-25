@@ -312,7 +312,8 @@ pub fn buildPicked(f: *Feed, board: *const tickets.Board, refused: []const Refus
         f.move.items += 1;
         // a look's text already names its doc; any other row with one wears a mark
         const marked = need.doc != null and !std.mem.eql(u8, need.kind, "look");
-        f.move.add(.item, failed, "{s}{s}", .{ need.text, if (marked) " ¶" else "" });
+        const draft = std.mem.eql(u8, need.kind, "draft");
+        f.move.add(.item, failed, "{s}{s}{s}", .{ if (draft) "draft · " else "", need.text, if (marked) " ¶" else "" });
         f.move.lines[f.move.n - 1].need = need_at;
         if (refusalOf(refused, need.id)) |why| {
             f.move.add(.refused, failed, "{s}", .{why});
@@ -329,6 +330,11 @@ pub fn buildPicked(f: *Feed, board: *const tickets.Board, refused: []const Refus
         for (need.actions) |action| {
             if (n == chips.len) break;
             chips[n] = std.fmt.bufPrint(&bufs[n], "{s} {s}", .{ action.key, action.label }) catch continue;
+            n += 1;
+        }
+        // reading a draft is arena's own too: its modal
+        if (draft and n < chips.len) {
+            chips[n] = "space read it";
             n += 1;
         }
         const before = f.move.n;
@@ -1020,6 +1026,21 @@ test "a decision that names a doc keeps its place, wears a mark and says o opens
     try std.testing.expectEqualStrings("o open   1 A", got[2]);
     try std.testing.expectEqualStrings("#308 tlon  asks: C or D?", got[3]);
     try std.testing.expectEqualStrings("1 C", got[4]);
+}
+
+test "a draft is a tile with a draft chip, babylon's go and reply, and space to read it" {
+    var b = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"needs_you":[
+        \\{"id":"ask:61","kind":"draft","ticket":830,"repo":"","text":"#830 money on the desktop bar\n7 steps in 3 repos: tlon 3, ficciones 3, babylon 1","doc":null,
+        \\ "actions":[{"key":"y","label":"go","argv":["babylon","adopt","830"]},{"key":"r","label":"reply","argv":["babylon","answer","61","--words"],"needs":"words"}]}]}
+    );
+    defer b.deinit();
+    var f: Feed = undefined;
+    build(&f, &b, &.{}, 90, 80, now, 0, .{});
+    var out: [64][]const u8 = undefined;
+    const got = texts(&f, &out);
+    try std.testing.expectEqualStrings("draft · #830 money on the desktop bar 7 steps in 3 repos: tlon 3, ficciones 3, babylon 1", got[1]);
+    try std.testing.expectEqualStrings("y go   r reply   space read it", got[2]);
 }
 
 test "a look at says it can be opened, then babylon's own actions, and names its doc" {
