@@ -9,13 +9,13 @@ const RGB = color.RGB;
 const Card = tickets.Card;
 const posix = std.posix;
 
-const usage = "usage: arena-mock phosphor|workbench|neon home|board|popup|orch BOARD.json PALETTE.sh [COLSxROWS OUT.html]\n";
+const usage = "usage: arena-mock phosphor|workbench|neon home|board|popup|orch|alone BOARD.json PALETTE.sh [COLSxROWS OUT.html]\n";
 
 /// The moment the fixture is seen at: every age is counted from here.
 const now_at = "2026-11-24T05:00:00Z";
 
 pub const Direction = enum { phosphor, workbench, neon };
-pub const Screen = enum { home, board, popup, orch };
+pub const Screen = enum { home, board, popup, orch, alone };
 
 const Ink = struct {
     fg: RGB,
@@ -98,7 +98,7 @@ pub const Canvas = struct {
             \\<!doctype html><meta charset="utf-8"><style>
             \\body{{margin:0;padding:22px;background:{s};}}
             \\.r{{display:flex;height:18.333px;}}
-            \\.r span{{flex:0 0 8.073px;height:18.333px;line-height:18.333px;font:14.667px "ComicShannsMono Nerd Font",monospace;
+            \\.r span{{flex:0 0 8.073px;min-width:0;height:18.333px;line-height:18.333px;font:14.667px "ComicShannsMono Nerd Font",monospace;
             \\white-space:pre;text-align:left;overflow:visible;font-variant-ligatures:none;}}
             \\</style><body>
         , .{&hex(ground)});
@@ -156,6 +156,8 @@ pub const Canvas = struct {
         if (cell.bold) try w.writeAll(";font-weight:bold");
         if (cell.italic) try w.writeAll(";font-style:italic");
         if (cell.under) try w.writeAll(";text-decoration:underline");
+        // a glyph the font draws wider than its cell overflows over the next, not under it
+        if (cell.cp > 0x7f) try w.writeAll(";position:relative;z-index:1");
         try w.writeAll("\">");
         switch (cell.cp) {
             '<' => try w.writeAll("&lt;"),
@@ -808,12 +810,20 @@ fn rail(sc: *Scene, screen: Screen) void {
     c.fill(1, y0 + 1, l.rail - 2, 1, home_bg);
     _ = c.print(2, y0 + 1, if (screen == .board or screen == .popup) " \u{f0db} " else " \u{f015} ", .{ .fg = if (s.dir == .workbench) s.accent else s.on_accent, .bg = home_bg, .bold = true }, 3);
     var y = y0 + 3;
-    const sessions = [_]struct { []const u8, []const u8, bool }{
+    const Ses = struct { []const u8, []const u8, bool };
+    const with_board = [_]Ses{
         .{ "arena", "◐◐", true },
         .{ "babylon", "◐", false },
         .{ "menard", "", false },
         .{ "tlon", "◐", false },
     };
+    const alone_sessions = [_]Ses{
+        .{ "arena", "◐▲◉", true },
+        .{ "ficciones", "◉◐", false },
+        .{ "menard", "◐✗◉", false },
+        .{ "tlon", "▲◔◉", true },
+    };
+    const sessions: []const Ses = if (screen == .alone) &alone_sessions else &with_board;
     for (sessions) |ses| {
         const ink = s.repoInk(ses[0]);
         _ = c.print(2, y, repo_glyphs[repoIndex(ses[0])], .{ .fg = ink }, 1);
@@ -838,6 +848,7 @@ fn footBar(sc: *Scene, screen: Screen) void {
         .board => &.{ .{ "⏎", "go" }, .{ "space", "open" }, .{ "G", "give" }, .{ "e", "edit" }, .{ "p", "priority" }, .{ "/", "find" }, .{ "b", "home" }, .{ "?", "keys" } },
         .popup => &.{ .{ "1-3", "answer" }, .{ "⏎", "go to its Claude" }, .{ "G", "give" }, .{ "e", "edit" }, .{ "j k", "scroll" }, .{ "q", "close" } },
         .orch => &.{ .{ "1-3", "answer" }, .{ "c", "in words" }, .{ "⏎", "go" }, .{ "x", "no" }, .{ "j k", "pick" }, .{ "i", "tell it" }, .{ "h", "back to the plan" } },
+        .alone => &.{ .{ "⏎", "go" }, .{ "1-3", "answer" }, .{ "space", "open" }, .{ "j k", "pick" }, .{ "] [", "next needing you" }, .{ "z", "fold" }, .{ "o", "overview" }, .{ "?", "keys" } },
     };
     const bg = switch (s.dir) {
         .phosphor => s.raised,
@@ -1316,10 +1327,211 @@ fn popup(sc: *Scene) void {
     }
 }
 
+// ---- arena alone: home with no board, from the Claudes' own state ----
+
+const Mark = enum { waiting, stalled, done, working, background, seen };
+
+/// One Claude as arena knows it without a board: its pane's options, set by the state hook.
+const Claude = struct {
+    mark: Mark,
+    session: []const u8,
+    window: u8,
+    title: []const u8,
+    line: []const u8,
+    branch: []const u8,
+    age: []const u8,
+    ctx: ?u8 = null,
+    options: []const []const u8 = &.{},
+};
+
+const your_move = [_]Claude{
+    .{ .mark = .stalled, .session = "menard", .window = 3, .title = "zig test runs through menard's run test", .line = "its turn ended on an API error: 529 overloaded", .branch = "zig-test", .age = "4m", .ctx = 33 },
+    .{ .mark = .waiting, .session = "arena", .window = 2, .title = "Visual redesign: a GUI in the TUI, retro", .line = "asks: Which visual direction should the board and Home take?", .branch = "visual-redesign", .age = "6m", .ctx = 61, .options = &.{ "Phosphor", "Workbench", "Neon tiles" } },
+    .{ .mark = .waiting, .session = "tlon", .window = 1, .title = "Money: a safe-to-spend-per-day figure", .line = "wants to run: nix flake update", .branch = "safe-to-spend", .age = "2m", .ctx = 18, .options = &.{ "Yes", "Yes, don't ask again", "No" } },
+    .{ .mark = .done, .session = "ficciones", .window = 1, .title = "The house soak day", .line = "The soak ran six hours clean; the diff is on the branch.", .branch = "soak-day", .age = "12m", .ctx = 52 },
+    .{ .mark = .done, .session = "menard", .window = 2, .title = "outline lists a module's guards", .line = "Added guards to outline, with tests. Committed as 4fe1c2a.", .branch = "outline-guards", .age = "25m", .ctx = 40 },
+};
+
+const working = [_]Claude{
+    .{ .mark = .working, .session = "arena", .window = 1, .title = "README leads with arena alone", .line = "Edit README.md", .branch = "readme-alone", .age = "3m", .ctx = 22 },
+    .{ .mark = .working, .session = "menard", .window = 1, .title = "rename across umbrella apps", .line = "Bash mix test apps/core · 2 subagents", .branch = "umbrella-rename", .age = "18m", .ctx = 47 },
+    .{ .mark = .background, .session = "tlon", .window = 2, .title = "garden sensor import", .line = "its shell: mix ecto.migrate", .branch = "sensor-import", .age = "9m", .ctx = 30 },
+    .{ .mark = .working, .session = "ficciones", .window = 2, .title = "nixos module for the bar", .line = "Read bar.nix", .branch = "bar-module", .age = "1m", .ctx = 9 },
+};
+
+const quiet = [_]Claude{
+    .{ .mark = .seen, .session = "arena", .window = 3, .title = "arena crashes with integer overflow in feedRows", .line = "Fixed and tested; committed as 9c1e2b0.", .branch = "feedrows-overflow", .age = "1h", .ctx = 38 },
+    .{ .mark = .seen, .session = "tlon", .window = 3, .title = "plant watering schedule", .line = "Here are three ways to schedule it, cheapest first.", .branch = "main", .age = "3h", .ctx = 12 },
+    .{ .mark = .seen, .session = "menard", .window = 4, .title = "why does credo flag this pipe", .line = "It's Credo.Check.Readability.SinglePipe; the fix is…", .branch = "main", .age = "1d" },
+};
+
+fn markGlyph(m: Mark) []const u8 {
+    return switch (m) {
+        .waiting => "▲",
+        .stalled => "✗",
+        .done => "◉",
+        .working => "◐",
+        .background => "◔",
+        .seen => "○",
+    };
+}
+
+fn markInk(s: Skin, m: Mark) RGB {
+    return switch (m) {
+        .waiting => s.you,
+        .stalled => s.failed,
+        .done => s.accent,
+        .working => s.building,
+        .background, .seen => s.dim,
+    };
+}
+
+/// The head with no board: what home is, then how many Claudes are in each state.
+fn aloneTitle(sc: *Scene) void {
+    const s = sc.skin;
+    const c = sc.c;
+    c.fill(0, 0, c.w, 1, s.raised);
+    _ = c.print(1, 0, "◆ arena", .{ .fg = s.accent, .bg = s.raised, .bold = true }, 10);
+    _ = c.print(10, 0, "— home · your Claudes", .{ .fg = s.dim, .bg = s.raised }, 40);
+    const clock = "05:00  ─ ▫ ✕ ";
+    _ = c.print(c.w - text_mod.cells(clock), 0, clock, .{ .fg = s.dim, .bg = s.raised }, 20);
+    var waits: usize = 0;
+    var stalls: usize = 0;
+    var dones: usize = 0;
+    for (your_move) |cl| switch (cl.mark) {
+        .waiting => waits += 1,
+        .stalled => stalls += 1,
+        .done => dones += 1,
+        else => {},
+    };
+    var rx: usize = c.w - 2;
+    const items = [_]struct { []const u8, RGB, bool }{
+        .{ sc.fmt("○ {d} quiet", .{quiet.len}), s.dim, false },
+        .{ sc.fmt("◐ {d} working", .{working.len}), s.building, false },
+        .{ sc.fmt("◉ {d} done", .{dones}), s.accent, false },
+        .{ sc.fmt("✗ {d} stalled", .{stalls}), s.failed, false },
+        .{ sc.fmt("▲ {d} need you", .{waits}), s.you, true },
+    };
+    for (items) |item| {
+        const n = text_mod.cells(item[0]) + 2;
+        rx -= n + 1;
+        _ = sc.chip(rx, 1, item[0], item[1], item[2]);
+    }
+}
+
+/// One Claude's row: its mark, where it is, what it is about, then on a second row what it
+/// does, waits for or last said. The picked one has its options and its buttons on a third.
+fn claudeRow(sc: *Scene, x: usize, y: usize, w: usize, cl: Claude, picked: bool) usize {
+    const s = sc.skin;
+    const c = sc.c;
+    const rows: usize = if (picked) 3 else 2;
+    if (picked) c.fill(x, y, w, rows, s.raised);
+    const dim_row = cl.mark == .seen;
+    var at = x + 2;
+    _ = c.print(at, y, markGlyph(cl.mark), .{ .fg = markInk(s, cl.mark), .bold = true }, 1);
+    at += 2;
+    at += sc.chip(at, y, sc.fmt("{s} {s}:{d}", .{ repo_glyphs[repoIndex(cl.session)], cl.session, cl.window }), s.repoInk(cl.session), false) + 1;
+    const tail = sc.fmt("{s}", .{cl.branch});
+    const tail_w: usize = 34;
+    _ = c.print(at, y, cl.title, .{ .fg = if (dim_row) s.dim else s.text, .bold = !dim_row }, x + w - at - tail_w - 1);
+    var tx = x + w - tail_w;
+    tx += c.print(tx, y, "\u{e725} ", .{ .fg = s.dim }, 2);
+    _ = c.print(tx, y, tail, .{ .fg = s.dim }, 18);
+    if (cl.ctx) |pct| _ = c.print(x + w - 14, y, sc.fmt("ctx {d}%", .{pct}), .{ .fg = s.dim }, 8);
+    _ = c.print(x + w - 5, y, cl.age, .{ .fg = if (cl.mark == .waiting) s.you else s.dim }, 4);
+    const line_ink: RGB = switch (cl.mark) {
+        .waiting => s.you,
+        .stalled => s.failed,
+        else => s.dim,
+    };
+    _ = c.print(x + 6, y + 1, cl.line, .{ .fg = line_ink, .italic = cl.mark == .done or cl.mark == .seen }, w - 10);
+    if (picked) {
+        var bx = x + 6;
+        for (cl.options, 0..) |opt, i| bx += sc.button(bx, y + 2, sc.fmt("{d}", .{i + 1}), opt, false) + 1;
+        bx += 1;
+        bx += sc.button(bx, y + 2, "⏎", "go", true) + 1;
+        _ = sc.button(bx, y + 2, "space", "open", false);
+        sc.raise(x, y, w, rows, true);
+    }
+    return rows;
+}
+
+fn aloneHome(sc: *Scene) void {
+    const c = sc.c;
+    const l: Layout = .{};
+    const x0 = l.mainX() + 1;
+    const W = l.mainW(c.w) - 1;
+    var y = l.top + 1;
+
+    const move_h = 3 + your_move.len * 2 + 3;
+    var ry = sc.panel(x0, y, W, move_h, "your move", your_move.len, true);
+    for (your_move, 0..) |cl, i| ry += claudeRow(sc, x0 + 1, ry, W - 2, cl, i == 1) + @intFromBool(i == 1);
+    y += move_h + 2;
+
+    const work_h = 3 + working.len * 2;
+    ry = sc.panel(x0, y, W, work_h, "working", working.len, false);
+    for (working) |cl| ry += claudeRow(sc, x0 + 1, ry, W - 2, cl, false);
+    y += work_h + 2;
+
+    const quiet_h = c.h - l.foot - 2 - y;
+    ry = sc.panel(x0, y, W, quiet_h, "quiet", quiet.len, false);
+    for (quiet) |cl| ry += claudeRow(sc, x0 + 1, ry, W - 2, cl, false);
+}
+
+/// The picked Claude's pane, live and read-only, where the orchestrator's column is on Plan.
+fn peekColumn(sc: *Scene) void {
+    const s = sc.skin;
+    const c = sc.c;
+    const l: Layout = .{};
+    const x = l.colX(c.w);
+    const w = l.column;
+    const y0 = l.top;
+    const h = c.h - y0 - l.foot - 1;
+    var y = sc.panel(x, y0, w, h, "arena:2 · Visual redesign", null, false);
+    _ = c.print(x + w - 22, y0, "▲ waits 6m · ctx 61%", .{ .fg = s.you }, 20);
+    const ix = x + 2;
+    const iw = w - 4;
+    c.fill(x + 1, y, w - 2, h - 3, s.well);
+    const pane = [_][]const u8{
+        "● Update(docs/redesign/README.md)",
+        "  ⎿ Updated with 12 additions",
+        "",
+        "● The three directions are drawn: each has Home,",
+        "  the board, a card's popup and the column, at",
+        "  220×51, the size of your Ghostty.",
+        "",
+        "  Workbench does the most for \"a GUI in the TUI\":",
+        "  windows, tabs, bevels, a real switch, and a hue",
+        "  a repo. I'd pick it.",
+        "",
+        "╭──────────────────────────────────────────────────╮",
+        "│ Which visual direction should the board and Home │",
+        "│ take?                                            │",
+        "│                                                  │",
+        "│ ❯ 1. Phosphor                                    │",
+        "│   2. Workbench                                   │",
+        "│   3. Neon tiles                                  │",
+        "│   4. Type something                              │",
+        "╰──────────────────────────────────────────────────╯",
+    };
+    y += 1;
+    for (pane) |line| {
+        const box = std.mem.startsWith(u8, line, "│") or std.mem.startsWith(u8, line, "╭") or std.mem.startsWith(u8, line, "╰");
+        _ = c.print(ix, y, line, .{ .fg = if (box) s.you else s.text, .bg = s.well }, iw);
+        if (std.mem.startsWith(u8, line, "●")) c.put(ix, y, '●', .{ .fg = s.accent, .bg = s.well });
+        y += 1;
+    }
+    const fy = c.h - l.foot - 3;
+    _ = c.print(ix, fy, "live · read-only", .{ .fg = s.dim, .italic = true }, 20);
+    var bx = ix + 18;
+    bx += sc.button(bx, fy, "⏎", "go to it", true) + 1;
+    _ = sc.button(bx, fy, "space", "whole", false);
+}
+
 pub fn draw(c: *Canvas, board: *const tickets.Board, p: Palette, dir: Direction, screen: Screen) void {
     var sc: Scene = .{ .board = board, .skin = Skin.of(dir, p), .c = c, .now = tickets.epochOf(now_at).? };
     c.fill(0, 0, c.w, c.h, sc.skin.ground);
-    titleBar(&sc, screen);
+    if (screen != .alone) titleBar(&sc, screen);
     rail(&sc, screen);
     switch (screen) {
         .home => {
@@ -1333,6 +1545,11 @@ pub fn draw(c: *Canvas, board: *const tickets.Board, p: Palette, dir: Direction,
         .board => {
             boardView(&sc, true);
             column(&sc, false, 0);
+        },
+        .alone => {
+            aloneHome(&sc);
+            aloneTitle(&sc);
+            peekColumn(&sc);
         },
         .popup => {
             boardView(&sc, true);
