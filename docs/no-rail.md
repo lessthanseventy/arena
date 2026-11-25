@@ -23,7 +23,7 @@ no column, Plan has the whole screen.
 The rail is `rail`, `railRow` and `agentRow` in `src/draw.zig`, and `railList`, `railPicks`,
 `railKey`, `railDwell`, `railW` and their mouse handling in `src/app.zig`.
 
-| the rail's | goes to | |
+| the rail's | goes to | note |
 | --- | --- | --- |
 | **the agents list**: each Claude with its mark, ticket, title, age | **in flight**, a row per ticket being built or in the pipeline, as today | the row and its hover card show it; nothing new |
 | a Claude's second and third lines: what it is doing or said, `quiet 12m`, branch, review mark, context | the **hover card** (`lookBox`), as today | the card gains a row per subagent and shell; it shows only their count today |
@@ -34,7 +34,7 @@ The rail is `rail`, `railRow` and `agentRow` in `src/draw.zig`, and `railList`, 
 | the **narrow rail's folds** (`· 4`, #427, #528) and its wide peek on hover | **dropped** | nothing is narrow any more |
 | **the sessions list**: each session, its window count, the current one lit | the pane view's **foot row** names the session and its windows; the **switcher** lists every session | |
 | a click on a session goes there; `j` `k` `⏎` the rail pick | the **switcher**: `s`, `j` `k`, `⏎`. In a pane view, `j` `k` in normal mode step to the session below or above | |
-| `J` `K` move the session along the rail; dragging a session | `J` `K` move it in the switcher's order, the tmux order kept as today; dragging is **dropped** | the overview (`o`) still drags windows between sessions |
+| `J` `K` move the session along the rail; dragging a session | `J` `K` move it in the switcher's order, the tmux order kept as today; dragging is **dropped** | the overview (`O`, see [Keys](#keys)) still drags windows between sessions |
 | dragging a column's title onto a session | the **overview**: dragging a window's picture onto another session | the overview already does this |
 | middle-click a session to close it | `x` on a session row in the switcher, after asking | |
 | the wheel over the rail steps through sessions | **dropped** | `j` `k` do it |
@@ -179,6 +179,16 @@ three fifths (132 cells), and goals, not planned and landed share the rest.
 `o` draws the drawer over the right 60 cells, covering goals, not planned and landed and the edge
 of in flight. Plan under it stays as drawn.
 
+### Keys
+
+`o` has one job: the drawer, from any view. Today it has three: the overview in a pane view
+(`openOverview`), the orchestrator on Plan (`toOrchestrator`, or the `o`/`p` swap at half width),
+and an alias of `space` on Plan's picked row (`act(.open)`). So:
+
+- **`o`** opens and closes the orchestrator's drawer, in every view.
+- **`O`** opens the overview, in every view. No view binds `O` today.
+- Plan's `o` as an alias of `space` goes: `space` opens the picked row, as on every other list.
+
 ## Home at half width (110 × 51)
 
 #905's one column of fixed slots, with Your move first: Your move (three rows), driving towards
@@ -274,8 +284,9 @@ before the new one is in.
 6. **Remove the rail:** `rail`, `railRow`, `agentRow`, the rail's picks, folds, dwell and peek,
    `agent_sort`, `w` and the menu's rail entry, the rail's mouse handling, its e2e checks and the
    README's rail text. Plan and the strip take the whole width. After 1 to 5.
-7. **The orchestrator as a drawer:** `o` opens and closes it over Plan, Plan takes the whole
+7. **The orchestrator as a drawer:** `o` opens and closes it in every view, Plan takes the whole
    width, `≡` and the orchestrator's state in Plan's head, the `o`/`p` half-width swap removed.
+   The overview moves to `O`, and Plan's `o` alias of `space` goes ([Keys](#keys)).
    After 1 (Your move has left the column) and #940.
 8. **Docs and screenshots:** the README's rail and column sections, `docs/screenshots/strip.png`
    and `plan.png` taken again, and a line atop docs/orchestrator.md's "The rail, narrow":
