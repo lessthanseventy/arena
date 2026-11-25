@@ -5,7 +5,8 @@ work=$(mktemp -d)
 trap 'rm -rf $work' EXIT
 mkdir -p $work/bin $work/run $work/repo/lib
 git -C $work/repo init -q
-print -r -- '#!/bin/sh' > $work/bin/tmux
+print -r -- '#!/bin/sh
+case "$*" in *%dead*) exit 1 ;; esac' > $work/bin/tmux
 chmod +x $work/bin/tmux
 export PATH=$work/bin:$PATH XDG_RUNTIME_DIR=$work/run TMUX=/tmp/tmux-1000/default,1,0 TMUX_PANE=%7
 rec=$work/run/sessions/s1.json
@@ -109,6 +110,14 @@ send start '{source: "startup"}'
 claim "a start sweeps a record whose cwd is gone" test ! -e $work/run/sessions/ghost.json
 claim "and its meter" test ! -e $work/run/sessions/ghost.meter
 claim "but leaves one whose cwd exists" test -e $work/run/sessions/alive.json
+
+mkdir -p $work/gone2
+print -r -- "{\"id\":\"moved\",\"cwd\":\"$work/gone2\",\"pane\":\"%3\",\"socket\":\"/x\"}" > $work/run/sessions/moved.json
+print -r -- "{\"id\":\"deadpane\",\"cwd\":\"$work/gone2\",\"pane\":\"%dead\",\"socket\":\"/x\"}" > $work/run/sessions/deadpane.json
+rmdir $work/gone2
+send start '{source: "startup"}'
+claim "a missing cwd with a live pane is kept" test -e $work/run/sessions/moved.json
+claim "a missing cwd with a pane that is gone is swept" test ! -e $work/run/sessions/deadpane.json
 
 print '{"ctx":41,"model":"Opus 5.5"}' > $work/run/sessions/s1.meter
 send end '{}'

@@ -155,14 +155,26 @@ keep() {
 change() { printf '%s' "$json" | jq -c --argjson list "$(running)" "$1" 2>/dev/null; }
 case ${1:-} in
 start)
-	# a Claude killed before its SessionEnd leaves a record; one whose cwd is gone is provably dead
+	# A Claude killed before its SessionEnd (no hook runs) leaves a record. One whose cwd is gone and
+	# whose pane is empty or no longer there is provably dead; a live pane keeps it, its next event
+	# rewrites it.
 	for f in "$sessions"/*.json; do
 		[ -e "$f" ] || continue
-		d=$(jq -r '.cwd // empty' "$f" 2>/dev/null)
+		{ read -r d && read -r p && read -r s; } <<EOF
+$(jq -r '.cwd // "", .pane // "", .socket // ""' "$f" 2>/dev/null)
+EOF
 		{ [ -z "$d" ] || [ -d "$d" ]; } && continue
+		if [ -n "$p" ]; then
+			if [ -n "$s" ]; then
+				command tmux -S "$s" display-message -p -t "$p" '' >/dev/null 2>&1 && continue
+			else command tmux display-message -p -t "$p" '' >/dev/null 2>&1 && continue; fi
+		fi
 		id=${f##*/}
 		id=${id%.json}
-		rm -f "$f" "$sessions/$id.meter" "$sessions/$id.nudged" "$sessions/.$id.lock"
+		(
+			exec 9>"$sessions/.$id.lock" && flock -w 2 9 2>/dev/null
+			rm -f "$f" "$sessions/$id.meter" "$sessions/$id.nudged" "$sessions/.$id.lock"
+		)
 	done
 	if [ -e "$sessions/$sid.json" ]; then
 		# a resumed session is in a new pane, maybe on a new server: where it is changes, what it was doing does not
