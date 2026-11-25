@@ -384,6 +384,8 @@ pub const BoardView = struct {
     ask_pick: u8 = 1,
     /// The check of the modal's to-try ticket that `y` and `n` act on, from 1.
     check_pick: u8 = 1,
+    /// The subagent of the modal's Claude that ⏎ shows, from 1; 0 while none is picked and ⏎ goes there.
+    sub_pick: u8 = 0,
     /// The open modal is that ticket's gate run, not its detail; and `W` has asked whether to
     /// withdraw it.
     gate: bool = false,
@@ -3812,6 +3814,7 @@ pub const App = struct {
         view.detail_scroll = 0;
         view.ask_pick = 1;
         view.check_pick = 1;
+        view.sub_pick = 0;
         view.gate = gate;
         view.withdrawing = false;
         app.detail.clearRetainingCapacity();
@@ -6211,7 +6214,7 @@ pub const App = struct {
     };
 
     /// What a modal button does when pressed.
-    pub const ModalAction = union(enum) { close, card: CardAction, option: u8, words, claude, whole_log, ticket, bump, withdraw, tried_ok, tried_no, copy_check };
+    pub const ModalAction = union(enum) { close, card: CardAction, option: u8, sub: u8, words, claude, whole_log, ticket, bump, withdraw, tried_ok, tried_no, copy_check };
 
     /// A button of the modal frame, where it is drawn and clicked: 0-based. It reads ` key label `.
     pub const ModalButton = struct {
@@ -6255,7 +6258,7 @@ pub const App = struct {
 
     /// What a card's modal says of it above its body, a line each.
     pub const CardHead = struct {
-        pub const Kind = enum { plain, dim, warn, options, check };
+        pub const Kind = enum { plain, dim, warn, options, check, sub, shell };
         buf: [1024]u8 = undefined,
         used: usize = 0,
         lines: [64][]const u8 = undefined,
@@ -6267,6 +6270,9 @@ pub const App = struct {
         options: ?usize = null,
         /// The first of a to-try ticket's check lines, one each.
         checks: ?usize = null,
+        /// The first of its Claude's subagent lines, one each, and how many.
+        subs: ?usize = null,
+        subs_n: usize = 0,
 
         fn add(head: *CardHead, kind: Kind, comptime fmt: []const u8, args: anytype) void {
             if (head.n == head.lines.len) return;
@@ -6341,6 +6347,17 @@ pub const App = struct {
         }
     }
 
+    /// The most subagents a Claude's rows list, in its card and its modal.
+    pub const max_sub_rows = 4;
+
+    /// Adds to `head` a line for each of `win`'s subagents, then one for its shell.
+    pub fn claudeHead(win: *const Window, head: *CardHead) void {
+        head.subs = head.n;
+        head.subs_n = @min(win.subs(), max_sub_rows);
+        for (0..head.subs_n) |i| head.add(.sub, "◔ {s}", .{win.sub(i)});
+        if (win.text(.background).len > 0) head.add(.shell, "◔ {s}", .{win.text(.background)});
+    }
+
     /// The buttons of the open modal, in the order they are drawn: the open ask's options, then
     /// in its foot the card's actions that apply, its Claude's popup and close. Only close for
     /// a ticket the board's pick is not on.
@@ -6350,6 +6367,7 @@ pub const App = struct {
         const right = rect.x + rect.w -| 2;
         var n: usize = 0;
         var x = rect.x + 2;
+        var subs: ?struct { win: *const Window, line: usize, n: usize } = null;
         if (app.board_view.?.gate) {
             const all = [_]ModalButton{
                 .{ .action = .whole_log, .key = "L", .label = "whole log", .x = 0, .y = foot },
@@ -6372,6 +6390,10 @@ pub const App = struct {
             var head: CardHead = undefined;
             const words = app.askWords(card);
             cardHead(card, detailWidth(app.boardW()).inner, app.epoch, words != null, &head);
+            if (app.claudeOf(card)) |win| {
+                claudeHead(win, &head);
+                if (head.subs_n > 0) subs = .{ .win = win, .line = head.subs.?, .n = head.subs_n };
+            }
             var shown: usize = 0;
             if (head.options) |line| if (card.ask) |ask| {
                 shown = @min(ask.options.len, max_ask_options);
@@ -6446,6 +6468,12 @@ pub const App = struct {
             out[n] = close;
             n += 1;
         }
+        if (subs) |s| for (0..s.n) |i| {
+            const y = rect.y + 1 + @as(u16, @intCast(s.line + i));
+            if (y >= foot or n == out.len) break;
+            out[n] = .{ .action = .{ .sub = @intCast(i) }, .key = "◔", .label = @import("text.zig").clip(s.win.sub(i), 60), .x = rect.x + 2, .y = y };
+            n += 1;
+        };
         return out[0..n];
     }
 
@@ -6540,6 +6568,12 @@ pub const App = struct {
             } else {
                 view.withdrawing = true;
             },
+            .sub => |i| {
+                const win = app.claudeOf(app.modalCard() orelse return) orelse return;
+                const a = app.agentById(win.id) orelse return;
+                try app.closeBoard();
+                try app.goSub(.{ .agent = a, .index = i });
+            },
             .claude => {
                 const win = app.claudeOf(app.modalCard() orelse return) orelse return;
                 try app.closeBoard();
@@ -6586,6 +6620,11 @@ pub const App = struct {
         if (is(key, &.{"x"}) and (app.modalCard() orelse return).proposal != null) return app.pressModal(.{ .card = .no });
         const card = app.modalCard() orelse return;
         if (key.len == 1 and key[0] >= '1' and key[0] <= '9') return app.pressModal(.{ .option = key[0] - '0' });
+        if (card.ask == null or card.ask.?.options.len == 0) if (app.claudeOf(card)) |win| if (win.subs() > 0) {
+            const n: u8 = @intCast(@min(win.subs(), max_sub_rows));
+            if (is(key, &.{"\t"})) view.sub_pick = if (view.sub_pick < n) view.sub_pick + 1 else 0;
+            if (is(key, &.{"\r"}) and view.sub_pick > 0) return app.pressModal(.{ .sub = view.sub_pick - 1 });
+        };
         if (card.ask) |ask| if (ask.options.len > 0) {
             if (is(key, &.{"\t"})) view.ask_pick = if (view.ask_pick < @min(ask.options.len, max_ask_options)) view.ask_pick + 1 else 1;
             if (is(key, &.{"\r"})) return app.pressModal(.{ .option = @min(view.ask_pick, @as(u8, @intCast(@min(ask.options.len, max_ask_options)))) });

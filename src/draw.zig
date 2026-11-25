@@ -3012,6 +3012,7 @@ fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
     var head: App.CardHead = .{};
     if (card) |it| App.cardHead(it, inner, app.epoch, app.askWords(it) != null, &head);
     const win = if (card) |it| app.claudeOf(it) else null;
+    if (win) |it| App.claudeHead(it, &head);
     const claude_rows: u16 = if (win != null and bottom - top - 2 > note_rows + head.n + 1) 1 else 0;
     const text_end = bottom - note_rows - claude_rows;
 
@@ -3020,8 +3021,9 @@ fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
         if (y >= text_end) break;
         const style: vt.Style = switch (kind) {
             .plain, .options => .{},
-            .dim, .check => dim,
+            .dim, .check, .shell => dim,
             .warn => ink(app, "amber", 4),
+            .sub => if (at - head.subs.? + 1 == app.board_view.?.sub_pick) ink(app, "amber", 4) else .{},
         };
         try boxLine(w, &pen, edge, style, x, y, line, inner);
         if (kind != .options) try app.grab.row(app.gpa, x + 2, y - 1, clip(line, inner), head.joins[at]);
@@ -3177,6 +3179,7 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
 
     var head: App.CardHead = .{};
     if (card) |it| App.cardHead(it, inner, app.epoch, app.askWords(it) != null, &head);
+    if (card) |it| if (app.claudeOf(it)) |claude| App.claudeHead(claude, &head);
     const note = doneNote(app, id);
     var note_rows: u16 = 0;
     var counted = app_mod.DetailLines.init(note, inner);
@@ -3218,6 +3221,15 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
                 const settled = card.?.checks[at - head.checks.?].result != null;
                 const lit = at - head.checks.? + 1 == @min(@max(app.board_view.?.check_pick, 1), card.?.checks.len);
                 try bench.say(w, x0, y, clip(line, inner), if (lit) r.accent else if (settled) r.dim else r.text, bg, lit);
+            },
+            .sub => {
+                const lit = at - head.subs.? + 1 == app.board_view.?.sub_pick;
+                try app.grab.row(app.gpa, x0, y, clip(line, inner), null);
+                try bench.say(w, x0, y, clip(line, inner), if (lit) r.accent else r.text, bg, lit);
+            },
+            .shell => {
+                try app.grab.row(app.gpa, x0, y, clip(line, inner), null);
+                try bench.say(w, x0, y, clip(line, inner), r.dim, bg, false);
             },
             .options => for (modal) |button| if ((button.action == .option or button.action == .words) and button.y == y) {
                 const lit = button.action == .option and button.action.option == app.board_view.?.ask_pick;
@@ -3267,7 +3279,7 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
     var end = x0;
     var primary = true;
     for (modal) |button| {
-        if ((button.action == .option or button.action == .words) and button.y != foot) continue;
+        if ((button.action == .option or button.action == .words or button.action == .sub) and button.y != foot) continue;
         _ = try bench.button(w, r, button.x, button.y, button.key, button.label, primary and button.action != .close, r.ground);
         if (button.action != .close) primary = false;
         end = button.x + button.width() + 1;
@@ -5214,9 +5226,11 @@ fn lookBox(app: *App, w: *Writer, look: App.Look) !void {
         var extra: [80]u8 = undefined;
         var ew: Writer = .fixed(&extra);
         if (win.ctx > 0) ew.print(" · {d}% context", .{@min(win.ctx, 999)}) catch {};
-        if (win.text(.background).len > 0) ew.print(" · {s}", .{win.text(.background)}) catch {};
-        if (win.subs() > 0) ew.print(" · {d} agent{s}", .{ win.subs(), if (win.subs() == 1) "" else "s" }) catch {};
         p.add(.plain, "{u} {s}{s}", .{ agentGlyph(app, win), @tagName(win.claude), ew.buffered() });
+        const shown = @min(win.subs(), App.max_sub_rows);
+        for (0..shown) |i| p.add(.dim, "◔ {s}", .{win.sub(i)});
+        if (win.subs() > shown) p.add(.dim, "◔ {d} more agents", .{win.subs() - shown});
+        if (win.text(.background).len > 0) p.add(.dim, "◔ {s}", .{win.text(.background)});
         const doing = win.text(.doing);
         const said = std.mem.sliceTo(win.text(.said), '\n');
         if (doing.len > 0) p.add(.plain, "doing: {s}", .{doing});
