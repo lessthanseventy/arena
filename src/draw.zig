@@ -11,6 +11,7 @@ const feed = @import("feed.zig");
 const sheets = @import("plan.zig");
 const goal_mod = @import("goal.zig");
 const win_landed = @import("win_landed.zig");
+const win_now = @import("win_now.zig");
 const win_next = @import("win_next.zig");
 const win_goals = @import("win_goals.zig");
 const win_unplanned = @import("win_unplanned.zig");
@@ -2440,35 +2441,7 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
                 },
             }
         },
-        .now => {
-            const item = given.now[row.item];
-            try bench.fill(w, x0, y, ww, bg);
-            if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
-            const repo = repoHue(r, item.repo);
-            var idb: [16]u8 = undefined;
-            const id = std.fmt.bufPrint(&idb, "#{d}", .{item.ticket}) catch "";
-            try bench.say(w, x0 + 1, y, "▌", repo.hue, bg, false);
-            try bench.say(w, x0 + 2, y, repo.glyph, repo.hue, bg, false);
-            try bench.say(w, x0 + 4, y, id, repo.hue, bg, true);
-            var age: [16]u8 = undefined;
-            var lbuf: [64]u8 = undefined;
-            const how = sheets.ago(&age, item.since, app.epoch);
-            const state = item.stage orelse item.state;
-            var said: [24]u8 = undefined;
-            var th: [16]u8 = undefined;
-            const shown = if (item.place) |n| (if (std.mem.eql(u8, state, "queued")) (std.fmt.bufPrint(&said, "queued {s}", .{sheets.place(n, &th)}) catch state) else state) else state;
-            const label = if (item.stalled) |why|
-                std.fmt.bufPrint(&lbuf, "stalled · {s}", .{why}) catch "stalled"
-            else if (item.waiting_on) |wait| wait.say(&lbuf) else if (how.len > 0) std.fmt.bufPrint(&lbuf, "{s} · {s}", .{ shown, how }) catch shown else shown;
-            const lead = if (item.stalled != null) r.failed else if (item.waiting_on != null) r.dim else stepHue(r, state).lead;
-            const chip_w = cellCount(label) + 2;
-            const chip_x = x0 + ww -| (chip_w + 1);
-            const title_x = x0 + 5 + cellCount(id);
-            if (chip_x > title_x + 4) {
-                _ = try bench.chipInk(w, r, chip_x, y, label, lead, if (item.stalled != null) r.on_accent else r.text, item.stalled != null);
-                try bench.say(w, title_x, y, clip(item.title, chip_x - title_x - 1), if (row.dim) r.dim else r.text, bg, false);
-            } else try bench.say(w, title_x, y, clip(item.title, x0 + ww -| title_x -| 1), if (row.dim) r.dim else r.text, bg, false);
-        },
+        .now => try win_now.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .next => try win_next.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .idea, .ideas_more, .card_top, .goal, .goal_bar, .goal_next, .goal_block => try win_goals.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .why, .more, .goals_more => {
