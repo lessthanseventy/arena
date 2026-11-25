@@ -27,7 +27,7 @@ chmod +x $tmp/bin/babylon
 # stands in for meatcheck: it records what it was asked and prints the comments it was given
 print -r -- $'#!/bin/sh\necho "$@" >>'$tmp$'/meatcheck\n[ -e '$tmp$'/comments ] && cat '$tmp$'/comments\nexit 0' >$tmp/bin/meatcheck
 chmod +x $tmp/bin/meatcheck
-print -r -- $'#!/bin/sh\n[ "$1" = diff ] || exec /usr/bin/git "$@"\necho "$@" >>'$tmp$'/git' >$tmp/bin/git
+print -r -- $'#!/bin/sh\n[ "$1" = diff ] || exec '${commands[git]}$' "$@"\necho "$@" >>'$tmp$'/git' >$tmp/bin/git
 chmod +x $tmp/bin/git
 mkdir -p $tmp/projects/arena
 export PATH=$tmp/bin:$PATH

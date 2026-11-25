@@ -2582,7 +2582,7 @@ pub const App = struct {
         "function parse(s, f,  n, i, L, c, v, d) { n = 0; i = 1; L = length(s); " ++
         "while (i <= L + 1) { v = \"\"; " ++
         "if (substr(s, i, 1) == q) { i++; while (i <= L) { c = substr(s, i, 1); " ++
-        "if (c == bs) { d = substr(s, i + 1, 1); v = v (d == \"n\" ? \" \" : d); i += 2 } " ++
+        "if (c == bs) { d = substr(s, i + 1, 1); v = v (d ~ /^[nrt]$/ ? \" \" : d); i += 2 } " ++
         "else if (c == q) { i++; break } else { v = v c; i++ } } } " ++
         "else { while (i <= L && substr(s, i, 1) != \",\") { v = v substr(s, i, 1); i++ } } " ++
         "f[++n] = v; i++ } return n } " ++
