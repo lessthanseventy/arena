@@ -110,3 +110,11 @@ pub fn act(app: *App, row: *const sheets.Row) !void {
         else => {},
     }
 }
+
+/// A click on the title bar: on `+ new`, a new ticket.
+pub fn titleClick(app: *App, x: u16) !bool {
+    const new = app.newHead() orelse return false;
+    if (x < new.x or x >= new.x + new.w) return false;
+    try app.newTicket();
+    return true;
+}

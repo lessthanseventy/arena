@@ -91,3 +91,12 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
         else => {},
     }
 }
+
+/// A click on the title bar: with a goal in focus and none landed, drives it.
+pub fn titleClick(app: *App) !bool {
+    const given = app.board.?.plan().?;
+    if (sheets.driveLanded(given, &app.board.?) != null) return false;
+    const at = sheets.focalGoal(given) orelse return false;
+    try app.driveGoal(given.goals[at].epic);
+    return true;
+}

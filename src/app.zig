@@ -16,6 +16,7 @@ const sheets = @import("plan.zig");
 const grab_mod = @import("grab.zig");
 const capture = @import("report.zig");
 const draw = @import("draw.zig");
+const win_driving = @import("win_driving.zig");
 const win_goals = @import("win_goals.zig");
 const win_landed = @import("win_landed.zig");
 const win_next = @import("win_next.zig");
@@ -5202,7 +5203,7 @@ pub const App = struct {
     }
 
     /// `babylon drive N`: the goal Plan drives towards.
-    fn driveGoal(app: *App, epic: u32) !void {
+    pub fn driveGoal(app: *App, epic: u32) !void {
         app.dirty = true;
         try app.send(.ignore, captured("babylon drive {d}"), .{epic});
     }
@@ -5281,13 +5282,14 @@ pub const App = struct {
         if (app.workbench()) {
             const hit = app.planHit(&sheet, m.x, m.y) orelse return app.closeWhole();
             if (hit.title) {
-                const head = app.goalHead();
                 if (view.whole != null) return;
-                if (hit.win == .driving and sheets.driveLanded(app.board.?.plan().?, &app.board.?) == null) if (sheets.focalGoal(app.board.?.plan().?)) |at| {
-                    return app.driveGoal(app.board.?.plan().?.goals[at].epic);
+                const pressed = switch (hit.win) {
+                    .driving => try win_driving.titleClick(app),
+                    .goals => try win_goals.titleClick(app, m.x),
+                    .unplanned => try win_unplanned.titleClick(app, m.x),
+                    else => false,
                 };
-                if (hit.win == .goals and m.x >= head.x and m.x < head.x + head.w) return app.openGoal();
-                if (hit.win == .unplanned) if (app.newHead()) |new| if (m.x >= new.x and m.x < new.x + new.w) return app.newTicket();
+                if (pressed) return;
                 return app.togglePlanFold(hit.win);
             }
         }
@@ -5875,7 +5877,7 @@ pub const App = struct {
         return out;
     }
 
-    fn openGoal(app: *App) !void {
+    pub fn openGoal(app: *App) !void {
         const view = &app.board_view.?;
         if (app.goalRect() == null) return;
         app.goal = .{};
@@ -6043,7 +6045,7 @@ pub const App = struct {
         try app.send(.ignore, captured("babylon next {d} --at 1"), .{id});
     }
 
-    fn newTicket(app: *App) !void {
+    pub fn newTicket(app: *App) !void {
         var buf: [80]u8 = undefined;
         const narrowed = if (app.boardRepo()) |r| (if (plainName(r)) std.fmt.bufPrint(&buf, " --repo {s}", .{r}) catch "" else "") else "";
         try app.ticketWindow("babylon new{s}", .{narrowed});

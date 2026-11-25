@@ -142,3 +142,11 @@ pub fn act(app: *App, row: *const sheets.Row) !void {
         else => {},
     }
 }
+
+/// A click on the title bar: on `+ goal`, a new goal.
+pub fn titleClick(app: *App, x: u16) !bool {
+    const head = app.goalHead();
+    if (x < head.x or x >= head.x + head.w) return false;
+    try app.openGoal();
+    return true;
+}
