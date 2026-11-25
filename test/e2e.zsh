@@ -2138,12 +2138,11 @@ chip_click 'q 1'
 check "a click on the chip again opens them" await shows 'Alp'
 chip_click 'q 1'
 await gone 'Alp'
-outer resize-window -t o -y 40
 plan_said=$($bin -L $in plan 801 2>&1; print exit $?)
 check "arena plan N tells the running arena" test "$plan_said" = 'exit 0'
 check "arena plan N on a ticket in a shut repo chip opens the chip" await shows 'Alp'
 check "and the fold file no longer holds the repo" await eval '! grep -qx q $folded_file'
-outer resize-window -t o -y 24
+check "and its row is in view in the small window" see 'Alp'
 : >$tmp/babylon
 click ${(z)$(spot Alp)}
 key w

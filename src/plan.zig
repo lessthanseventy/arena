@@ -88,9 +88,17 @@ pub fn slot(win: Window, w: u16, h: u16, move_rows: u16) Rect {
 }
 
 /// The first of `len` rows a window of `body` rows shows, the row at `at` kept in view with the
-/// rest of its card (two rows) below it.
+/// rest of its card (two rows) below it; a body too short for both keeps the row itself.
 pub fn windowTop(at: usize, len: usize, body: usize) usize {
-    return @min((at + 3) -| body, len -| body);
+    return @min((at + 3) -| body, at, len -| body);
+}
+
+test "windowTop keeps the picked row in view, with its card below it when the body has room" {
+    try std.testing.expectEqual(@as(usize, 0), windowTop(0, 10, 5));
+    try std.testing.expectEqual(@as(usize, 3), windowTop(5, 10, 5));
+    try std.testing.expectEqual(@as(usize, 5), windowTop(5, 10, 1));
+    try std.testing.expectEqual(@as(usize, 5), windowTop(5, 10, 2));
+    try std.testing.expectEqual(@as(usize, 4), windowTop(9, 10, 6));
 }
 
 pub const Row = struct {
