@@ -4177,6 +4177,7 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
     }
     try grabOverlay(app, w);
     if (app.report_said) |text| try reportSaid(app, w, text);
+    if (app.start_refused) |text| if (app.planShown()) try reportSaid(app, w, text);
     const asking = if (app.prompt) |prompt| prompt.multiline() else false;
     if (asking != app.words_keys) {
         // modifyOtherKeys 1: a terminal sends Shift+Enter as its own key, not as Enter
