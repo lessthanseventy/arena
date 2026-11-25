@@ -2019,7 +2019,7 @@ outer new-window -t o \
 check "with no arena running, arena plan and an id starts one with the plan's pick on that ticket" see '▌ 1 #7 tlon'
 untold() { ! grep -q 'arena plan' $tmp/other-out }
 check "and a control-mode client that is no arena is told nothing" untold
-key Escape Escape M-q
+key Escape M-q
 check "which leaves as any other" see 'EXIT 0'
 none() { $bin -L $in "$@" 2>/dev/null; [[ $? == 3 ]] }
 check "with no arena running, arena show exits 3" none show %0
@@ -2189,8 +2189,7 @@ key -l 'echo restarted-jkdufltb'
 key Enter
 check "a click on the row under the column leaves it the keys, in insert: a sentence reaches its pane whole" await said orchestrator:orch restarted-jkdufltb
 key M-b
-see '╭─ 1 one ─'
-key C-c
+gone ' every [0-9]+ +[a-z]'
 key -l 'echo worker-jkdufltb'
 key Enter
 check "and the board closed, a worker's pane gets it whole too" await said alpha: worker-jkdufltb
