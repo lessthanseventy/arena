@@ -149,8 +149,8 @@ The binary is `zig-out/bin/arena`. Put it on your path however you like.
 
 The marks on windows running Claude Code come from its hooks, which the checkout is a plugin of:
 `claude --plugin-dir /path/to/arena`, or the path in `CLAUDE_CODE_PLUGIN_DIRS` (a `:` list) for
-every session. The plugin also gives each session [babylon](https://github.com/lessthanseventy/babylon)'s tickets, shared
-by every Claude on the machine, over MCP.
+every session. babylon's own plugin gives each session its tickets, shared
+by every Claude on the machine, over MCP, and its hooks; arena's plugin keeps only the marks and the tmux guard.
 
 ## Use
 

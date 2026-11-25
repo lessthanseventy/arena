@@ -25,15 +25,8 @@ depends = ["build"]
 run = ["zsh test/e2e.zsh", "zsh test/e2e-cleanup.zsh"]
 
 [tasks.hooks]
-description = "babylon's inbox hook against a fake babylon, and the tmux guard on Bash calls, and the ask reminder"
-run = [
-  "zsh test/inbox-hook.zsh",
-  "zsh test/tmux-guard.zsh",
-  "zsh test/ask-reminder.zsh",
-  "zsh test/ask-gate.zsh",
-  "zsh test/session-record.zsh",
-  "zsh test/handoff-nudge.zsh",
-]
+description = "the tmux guard on Bash calls, and the session record"
+run = ["zsh test/tmux-guard.zsh", "zsh test/session-record.zsh"]
 
 [tasks.plugin]
 description = "the plugin's manifest and hooks"
