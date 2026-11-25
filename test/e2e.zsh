@@ -2102,13 +2102,7 @@ check "the pick starts on the first window's row" see '▌▌. #701 First buildi
 key /
 key -l Light
 key Enter
-check "/ with part of a title leaves the pick off the rows that miss it" await gone '▌▌. #70[12]'
-for round in 1 2 3 4; do
-  shows '▌▌1 . #7 Lights' && break
-  key j
-  zselect -t 30
-done
-check "and the pick reaches the row that holds it" await shows '▌▌1 . #7 Lights'
+check "/ with part of a title keeps the rows that hold it, and the pick skips the rest, a Claude with no ticket too" await shows '▌▌1 . #7 Lights'
 check "the rows that miss it stay, dimmed" see '#701 First building'
 key Escape
 check "and Escape clears it" gone '/ Light'

@@ -424,6 +424,7 @@ pub const Sheet = struct {
             .next => .{ given.next[row.item].ticket, given.next[row.item].title, given.next[row.item].repo, std.mem.eql(u8, given.next[row.item].repo, repo) },
             .goal, .card_top, .goal_bar, .goal_next, .goal_block => .{ given.goals[row.item].epic, given.goals[row.item].title, "", goalIn(b, given.goals[row.item], repo) },
             .idea => .{ given.ideas[row.item].epic, given.ideas[row.item].title, "", true },
+            .other => return if (find.len > 0) .dim else .keep,
             else => return .keep,
         };
         if (repo.len > 0 and !in_repo) return .hide;
