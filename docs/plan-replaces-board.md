@@ -127,8 +127,7 @@ window keeps its slot. Its body shows a one-line summary in place of its rows:
 | window | its summary |
 | --- | --- |
 | driving towards | the title and the bar |
-| now | `◐ 3 building · ◇ 1 stalled` |
-| landing | `◒ verifying 1 · reviewing 1 · queued 2` |
+| in flight | `◐ 3 building · ◒ verifying 1 · reviewing 1 · queued 2` |
 | next | the numbers and the tickets, one line: `1 #761 · 2 #612 · 3 #346 …` |
 | goals | each goal's number and percentage |
 | not planned | its chip row |
@@ -204,8 +203,8 @@ workspace and window hold its Claude:
 ## At half the screen (105 cells)
 
 Home shows Plan or the column, swapped with `o` / `p` (#527). Plan at 105 cells is one column of
-windows: driving towards, now, landing, next, not planned, landed, goals. Each slot gets a fixed
-share of the height: now, landing and landed get 4 rows each, and next and not planned split the
+windows: driving towards, in flight, next, not planned, landed, goals. Each slot gets a fixed
+share of the height: in flight and landed get 4 rows each, and next and not planned split the
 rest. Fold, scroll and the modal work as above. This is the same set of windows stacked
 differently, with no second design to keep.
 
@@ -256,7 +255,7 @@ except where noted.
    `folded`. Free.
 3. **Rows are cards (#899).** `cardActions` on every ticket row, the buttons on the picked row's second line,
    the foot bar, and the hover peek. After 2.
-4. **Landing as its own window (#900).** Pipeline rows out of now and into landing, and the gate's modal
+4. **In flight (#900).** Now and landing as one window, a row to each pipeline stage, and the gate's modal
    from them. After 2.
 5. **Not planned is the todo list (#901).** Chips, #849's folds, the rows, backlog, `J` `K`, `w` `W`, `+ new`
    (and `+` in that window), and dragging a row onto next. After 3.
