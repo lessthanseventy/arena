@@ -8050,8 +8050,6 @@ pub const App = struct {
         try app.sendKeys(pane, bytes);
     }
 
-    /// tmux answers a program's question for its foreground and background with what the client
-    /// reported for the pane, and a control client that reported nothing gets black for both.
     /// The repo colour of the ticket claimed by the Claude in `pane`, if one is.
     fn frameOf(app: *const App, pane: u32) ?color.RGB {
         const r = app.roles orelse return null;
@@ -8080,6 +8078,8 @@ pub const App = struct {
         };
     }
 
+    /// tmux answers a program's question for its foreground and background with what the client
+    /// reported for the pane, and a control client that reported nothing gets black for both.
     fn tellColors(app: *App) !void {
         if (app.colors_known == 0) return;
         const fg = app.palette.fg;
