@@ -56,30 +56,75 @@ test "step always arrives" {
     try std.testing.expectEqual(@as(i32, -1), step(0, -1));
 }
 
-/// Which window's dot sits at cell `cx` of the row under a strip `view_w` wide, if one does: the
-/// dots are centred, one cell each with a space between. Null too when the row cannot fit them.
-pub fn dotAt(view_w: u16, count: usize, cx: usize) ?usize {
-    const start = dotsStart(view_w, count) orelse return null;
-    if (cx <= start or cx >= start + count * 2 + 1 or (cx - start) % 2 == 0) return null;
-    return (cx - start) / 2;
+/// The foot row of a pane view, `view_w` cells wide with `count` windows: where each part starts.
+/// Wide, a window is its dot and number; narrow, the dots alone. Null when even that cannot fit.
+pub const Foot = struct {
+    wide: bool,
+    session: usize,
+    name_w: usize,
+    dots: usize,
+    /// Cells from one window's dot to the next's.
+    step: usize,
+    go: usize,
+    menu: usize,
+    /// The first cell after the last part, where the mode may start.
+    end: usize,
+
+    pub const home = 1;
+    pub const home_w = 6;
+    pub const needs = 8;
+    pub const needs_w = 4;
+    pub const go_w = 7;
+    pub const wide_from = 140;
+    pub const mode_w = 13;
+};
+
+pub fn foot(view_w: u16, count: usize) ?Foot {
+    const wide = view_w >= Foot.wide_from;
+    const sep: usize = if (wide) 5 else 3;
+    const name_w: usize = if (wide) 12 else 8;
+    const digits: usize = if (count >= 100) 3 else if (count >= 10) 2 else 1;
+    const stride: usize = if (wide) 3 + digits else 1;
+    const dots_w = if (count == 0) 0 else (count - 1) * stride + (if (wide) 2 + digits else 1);
+    const session = 12 + sep;
+    const dots = session + 4 + name_w + (if (wide) @as(usize, 2) else 1);
+    const go = dots + dots_w + sep;
+    const menu = go + Foot.go_w + 2;
+    if (menu + 2 > view_w) return null;
+    return .{ .wide = wide, .session = session, .name_w = name_w, .dots = dots, .step = stride, .go = go, .menu = menu, .end = menu + 2 };
 }
 
-/// The cell before the first dot, whose window's dot is at this plus 1, the next at plus 3.
-pub fn dotsStart(view_w: u16, count: usize) ?usize {
-    const span = count * 2 + 1;
-    if (count < 2 or span + 4 > view_w) return null;
-    return (view_w - span) / 2;
+pub const FootHit = union(enum) { home, go, menu, window: usize };
+
+/// What is at cell `cx` of the foot row: a window by the cells of its dot and number.
+pub fn footAt(view_w: u16, count: usize, cx: usize) ?FootHit {
+    const f = foot(view_w, count) orelse return null;
+    if (cx >= Foot.home and cx < Foot.home + Foot.home_w) return .home;
+    if (cx >= f.go and cx < f.go + Foot.go_w) return .go;
+    if (cx == f.menu) return .menu;
+    if (cx < f.dots) return null;
+    const at = (cx - f.dots) / f.step;
+    const within = (cx - f.dots) % f.step;
+    if (at >= count or within >= (if (f.wide) f.step - 1 else 1)) return null;
+    return .{ .window = at };
 }
 
-test "dots are centred, one per window, with spaces between" {
-    // 3 windows in 21 cells: span 7 from cell 7, dots at 8, 10 and 12
-    try std.testing.expectEqual(@as(?usize, null), dotAt(21, 3, 7));
-    try std.testing.expectEqual(@as(?usize, 0), dotAt(21, 3, 8));
-    try std.testing.expectEqual(@as(?usize, null), dotAt(21, 3, 9));
-    try std.testing.expectEqual(@as(?usize, 2), dotAt(21, 3, 12));
+test "the foot row's parts keep their cells: wide, a window is its dot and number; narrow, the dot alone" {
+    const wide = foot(220, 3).?;
+    try std.testing.expect(wide.wide);
+    try std.testing.expectEqual(@as(usize, 4), wide.step);
+    try std.testing.expectEqual(FootHit.home, footAt(220, 3, 1).?);
+    try std.testing.expectEqual(@as(?FootHit, null), footAt(220, 3, 7));
+    try std.testing.expectEqual(FootHit{ .window = 1 }, footAt(220, 3, wide.dots + 4).?);
+    try std.testing.expectEqual(@as(?FootHit, null), footAt(220, 3, wide.dots + 3));
+    try std.testing.expectEqual(FootHit.go, footAt(220, 3, wide.go).?);
+    try std.testing.expectEqual(FootHit.menu, footAt(220, 3, wide.menu).?);
 
-    try std.testing.expectEqual(@as(?usize, null), dotAt(21, 1, 10));
-    try std.testing.expectEqual(@as(?usize, null), dotAt(8, 3, 4));
+    const half = foot(110, 4).?;
+    try std.testing.expect(!half.wide);
+    try std.testing.expectEqual(FootHit{ .window = 2 }, footAt(110, 4, half.dots + 2).?);
+    try std.testing.expectEqual(@as(?FootHit, null), footAt(110, 4, half.dots + 4));
+    try std.testing.expectEqual(@as(?Foot, null), foot(30, 4));
 }
 
 /// The first cell of tabs `widths` cells wide with two between, centred in `view_w`; null for

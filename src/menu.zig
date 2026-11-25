@@ -114,8 +114,9 @@ pub const Menu = struct {
     }
 };
 
-/// The windows a jump prompt lists under its text.
-pub const jump_rows = 8;
+/// The rows a jump prompt (the switcher) lists under its text, and its box's width.
+pub const jump_rows = 10;
+pub const switcher_w = 72;
 
 /// A line of text being typed: a new name, or part of the name of a window to jump to.
 pub const Prompt = struct {
@@ -130,6 +131,8 @@ pub const Prompt = struct {
     selected: usize = 0,
     /// The last search found nothing.
     missed: bool = false,
+    /// Of the switcher: the keys type into the filter even while it is empty.
+    filtering: bool = false,
 
     pub const What = enum { window, session, jump, search, report, words, why, find, tried };
     pub const Result = enum { none, cancel, commit, up, down };
@@ -140,6 +143,11 @@ pub const Prompt = struct {
     }
 
     pub const list_row = 6;
+
+    /// The first of a jump prompt's rows shown: the box scrolls to keep the picked one in it.
+    pub fn top(p: *const Prompt) usize {
+        return p.selected +| 1 -| jump_rows;
+    }
 
     pub fn text(p: *const Prompt) []const u8 {
         return p.buf[0..p.len];

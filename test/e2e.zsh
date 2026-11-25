@@ -136,42 +136,42 @@ outer pipe-pane -t o "cat >$tmp/raw"
 check "the strip shows, the first column flush against the rail" see '^╭─ sessions ─+╮ ╭─ 1 one '
 foot() { local s=$(screen); [[ $(sed -n 3p <<<$s) == '│ alpha '* && $(sed -n 4p <<<$s) == '│ beta '* && $(sed -n 20p <<<$s) == ├─*┤* && $(sed -n 21p <<<$s) == '│ + new '* && $(sed -n 22p <<<$s) == '│ ≡ menu '* ]] }
 check "the rail keeps + new and the menu at its foot" await foot
-dots() { local s=$(screen); [[ $(sed -n 23p <<<$s) == ╰* && $(sed -n 24p <<<$s) =~ "^ {76}$1 *\$" ]] }
-check "a row of its own under the strip has a dot per window, centred on it" await dots '● ○ ○'
+dots() { local s=$(screen); [[ $(sed -n 23p <<<$s) == ╰* && $(sed -n 24p <<<$s) =~ "[^ ]+ +$1 │ s go to  ≡" ]] }
+check "a row of its own under the strip has a dot per window, centred on it" await dots '●○○'
 # the column, from 1, where $1 starts on the screen's last row
 col() { local l=$(screen | sed -n 24p); local pre=${l%%$1*}; print $(( ${#pre} + 1 )) }
-mouse 35 60 24 M
+mouse 35 100 24 M
 check "the pointer on it has each window's number and name in place of its dot" see '^ +1 one +2 two +3 three *$'
 x=$(col '2 two')
 mouse 0 $x 24 M
 mouse 0 $x 24 m
 key -l i
 mouse 35 60 10 M
-check "a click on a name goes to its window, and away from the row it is dots again" await dots '○ ● ○'
-mouse 35 60 24 M
+check "a click on a name goes to its window, and away from the row it is dots again" await dots '○●○'
+mouse 35 100 24 M
 see '1 one'
-mouse 65 60 24 M
+mouse 65 100 24 M
 mouse 35 60 10 M
-check "the wheel down on it goes to the next window" await dots '○ ○ ●'
+check "the wheel down on it goes to the next window" await dots '○○●'
 zselect -t 50
-mouse 35 60 24 M
-mouse 65 60 24 M
+mouse 35 100 24 M
+mouse 65 100 24 M
 mouse 35 60 10 M
-check "and stops at the last" await dots '○ ○ ●'
-mouse 35 60 24 M
+check "and stops at the last" await dots '○○●'
+mouse 35 100 24 M
 see '1 one'
 zselect -t 30
-mouse 64 60 24 M
+mouse 64 100 24 M
 mouse 35 60 10 M
-check "the wheel up, the one before" await dots '○ ● ○'
-mouse 35 60 24 M
+check "the wheel up, the one before" await dots '○●○'
+mouse 35 100 24 M
 see '1 one'
 x=$(col '1 one')
 mouse 0 $x 24 M
 mouse 0 $x 24 m
 key -l i
 mouse 35 60 10 M
-await dots '● ○ ○'
+await dots '●○○'
 
 # insert and normal: every key of a sentence is the pane's, or none is
 typed() { [[ $(screen | grep -c -- "$1") -ge $2 ]] }
@@ -202,27 +202,39 @@ mouse 0 5 3 m
 check "a click on the rail is normal" see '^NORMAL'
 key -l i
 
-# the rail's pick in normal mode: it moves, the strip does not, and Enter goes
-strip() { screen | sed -n '1,22s/^.\{22\}//p' }
+# j and k in normal mode step to the session below and above, and stay in normal
 key C-Space
 see '^NORMAL'
-before=$(strip)
 key -l j
-check "in normal mode j puts the pick on the next session, and the keys are written under the strip" await shows '^│▌beta '
-check "and the key bar replaces the dots" await shows '^NORMAL .*j k pick'
+check "in normal mode j goes to the next session" await shows '^│[ ▌]beta'
+check "and the keys are written under the strip" await shows '^NORMAL .*j k session'
 key -l k
-check "k moves it back" await shows '^│▌alpha '
+check "k goes back" await shows '^│[ ▌]alpha'
+
+# the switcher: s lists the Claudes, the sessions and + new session; Enter on a session goes there
+key -l s
+check "s opens the switcher" see '→ Go to'
+check "it lists the sessions in tmux's order, then + new session" see "alpha +[0-9]+ windows?"
 key -l j
-see '^│▌beta '
-check "the strip's text is unchanged" eval '[[ $(strip) == "$before" ]]'
 key Enter
-check "Enter goes to the pick, in insert" await shows '^│ beta'
-check "and into insert" gone '^NORMAL'
+check "Enter on a session goes there, in insert" await shows '^│[ ▌]beta'
+check "and the switcher is closed" gone '→ Go to'
+key C-Space
+see '^NORMAL'
+key -l s
+see '→ Go to'
+key Escape
+check "esc closes it" gone '→ Go to'
+key C-Space
+see '^NORMAL'
+key -l /
+check "/ in a pane view opens it too" see '→ Go to'
+key Escape
 key C-Space
 see '^NORMAL'
 key -l k
-key Enter
-see '^│ alpha'
+await shows '^│[ ▌]alpha'
+key -l i
 
 # A tmux with the pixels patch gives arena's terminal cells of 9x19 pixels, as a real one has.
 mkfifo $tmp/sizer
@@ -312,7 +324,7 @@ mouse 0 $two 6 M
 mouse 0 $two 6 m
 current() { [[ $(inner display -p -t alpha '#{window_name}') == $1 ]] }
 check "the click on window two makes it the current window" await current two
-check "and the strip comes to rest on it" await dots '○ ● ○'
+check "and the strip comes to rest on it" await dots '○●○'
 zselect -t 50
 untouched() { ! inner capture-pane -pJ -t alpha:two | grep -qF '[<0;' }
 check "a click on a window out of focus focuses it, and its program is not clicked" untouched
@@ -383,14 +395,14 @@ key M-l
 check "Alt+l focuses the next window, its neighbour peeking" see '─╮ ╭─ 2 two ─'
 key 'echo e2e-$((6*7))' Enter
 check "typing reaches the focused pane" see 'e2e-42'
-normal; key j Enter
-check "normal j then Enter goes to the next session" see '╭─ 1 solo '
+normal; key j; key -l i
+check "normal j goes to the next session" see '╭─ 1 solo '
 key M-k
 check "Alt+k comes back, to the window left" see '╭─ 2 two '
 inner new-window -d -t beta: -n second sh
 server=$(inner display -p '#{pid}')
 kill -STOP $server
-normal; key j Enter M-2
+normal; key j M-2
 zselect -t 50
 kill -CONT $server
 beta_at() { [[ $(inner display -p -t beta: '#{window_name}') == $1 ]] }
@@ -417,7 +429,7 @@ key M-l
 see '╭─ 2 two '
 
 inner send-keys -t beta:solo "clear; printf '%%end 1 1 1\\n%%begin 1 1 1\\n'" Enter
-normal; key j Enter
+normal; key j; key -l i
 see '╭─ 1 solo '
 check "a pane showing lines like tmux's own replies is drawn whole" see '│%begin 1 1 1 '
 key M-k
@@ -474,7 +486,7 @@ key Enter
 check "in insert, Alt+p reaches the pane: Claude Code's model picker is its own" see '\^\[p'
 key C-c
 normal; key /
-check "in normal mode, / opens the jump prompt" see 'Jump to window'
+check "in normal mode, / opens the jump prompt" see '→ Go to'
 key 'sol'
 check "and finds a Claude's window by its name" see '› solo'
 key 'o' Enter
@@ -1173,16 +1185,16 @@ key Escape
 gone ' every [0-9]+ +[a-z]'
 two=$(inner list-panes -s -t alpha -F '#{pane_id}' | sed -n 2p)
 $bin -L $in show $two
-check "arena show and a pane puts its window in front" await dots '○ ● ○'
+check "arena show and a pane puts its window in front" await dots '○●○'
 $bin -L $in show "#8"
-check "arena show and a held ticket's number does the same for its Claude's pane" await dots '● ○ ○'
+check "arena show and a held ticket's number does the same for its Claude's pane" await dots '●○○'
 $bin -L $in inbox
 check "arena inbox opens home" see '╭─ ○ orchestrator · off '
 $bin -L $in show $two
-check "and a show with the board open puts it away for the pane" await dots '○ ● ○'
+check "and a show with the board open puts it away for the pane" await dots '○●○'
 $bin -L $in show "#7"
 zselect -t 10
-check "a show of a ticket nobody holds changes nothing" dots '○ ● ○'
+check "a show of a ticket nobody holds changes nothing" dots '○●○'
 shows '^NORMAL' || key C-Space
 see '^NORMAL'
 key -l '#'
@@ -1414,6 +1426,14 @@ mouse 0 3 2 M
 check "another click stays home" shows ' every [0-9]+ +[a-z]'
 key q
 check "and q there closes it" gone ' every [0-9]+ +[a-z]'
+key -l i
+see 'INSERT|◆ home'
+x=$(col '◆ home')
+mouse 0 $x 24 M
+mouse 0 $x 24 m
+check "a click on ◆ home in the foot row goes home" see ' every [0-9]+ +[a-z]'
+key q
+check "and q closes it again" gone ' every [0-9]+ +[a-z]'
 # the colour the board's row atop the rail, unlit with the board closed, names the orchestrator in
 rail_orch_ink() { [[ $(outer capture-pane -ep -t o) =~ $'▤ board((\e\\[[0-9;]*m)*) orch' && $match[1] == *"38;5;$1m" ]] }
 cp $tmp/run/babylon/board.json $tmp/board.closed
@@ -1773,7 +1793,7 @@ check "a repo with only done cards has no group" gone ' menard ─'
 tabline() { local l; for l in "${(@f)$(outer capture-pane -ep -t o)}"; [[ $l == *' every '[0-9]* ]] && print -r -- $l }
 tab_dim() { [[ $(tabline) == *$'\e[38;5;8m '$1' '* ]] }
 tab_lit() { ! tab_dim $1 }
-mouse 35 60 24 M
+mouse 35 100 24 M
 check "and its tab is dim" tab_dim menard
 check "where one with work is not" tab_lit arena
 cp $tmp/run/babylon/board.json $tmp/board.lanes

@@ -204,8 +204,9 @@ const Column = struct {
     }
 };
 
-/// Under the strip, centred on it, a dot per window of the session: the filled one is the window
-/// in view, and any other with something to say shows its mark.
+/// Under the strip, the foot row: `◆ home ▲ N`, the session with a dot per window (the filled one
+/// is the window in view, any other with something to say shows its mark), `s go to` and `≡`,
+/// the mode at its right end. Every part keeps its cells.
 fn dots(app: *const App, w: *Writer, s: *const Session) !void {
     const ox = app.term_w - app.view_w;
     var pen: Pen = .{};
@@ -215,18 +216,62 @@ fn dots(app: *const App, w: *Writer, s: *const Session) !void {
     try modeCorner(app, w, &pen);
     if (app.normal) return normalKeys(app, w, &pen);
     if (app.over_dots) if (try tabs(app, w, &pen, s)) return;
-    const start = layout.dotsStart(app.view_w, s.wins.items.len) orelse return;
+    const f = layout.foot(app.view_w, s.wins.items.len) orelse return;
+    const dim = ink(app, "dim", 8);
+    if (app.board != null) {
+        try footAt(app, w, layout.Foot.home);
+        try pen.set(w, ink(app, "amber", 4), null);
+        try w.writeAll("◆ home");
+        if (app.needsCount() > 0) {
+            try footAt(app, w, layout.Foot.needs);
+            try pen.set(w, heading(app), null);
+            try w.print("▲ {d}", .{@min(app.needsCount(), 99)});
+        }
+    }
+    try pen.set(w, dim, null);
+    try footAt(app, w, f.session - (if (f.wide) @as(usize, 3) else 2));
+    try w.writeAll("│");
+    try footAt(app, w, f.session);
+    const repo = app.sessionRepo(app.sessionIndex(s.id) orelse 0);
+    if (repoEdge(app, repo)) |edge| {
+        try pen.set(w, edge, null);
+        try w.writeAll("▌");
+        try w.writeAll(repoIcon(app, repo) orelse "  ");
+    }
+    try footAt(app, w, f.session + 4);
+    try pen.set(w, .{}, null);
+    try fitted(w, s.name, f.name_w);
     for (s.wins.items, 0..) |win, i| {
         const here = i == s.focus;
         const mark = app.mark(s, win);
-        try w.print("\x1b[{d};{d}H", .{ app.view_h + 1, ox + start + 2 * i + 2 });
-        try pen.set(w, if (here or mark != .none) ink(app, "amber", 4) else ink(app, "dim", 8), null);
+        try footAt(app, w, f.dots + f.step * i);
+        try pen.set(w, if (here or mark != .none) ink(app, "amber", 4) else dim, null);
         try put(w, if (here) '●' else if (mark != .none) glyph(app, mark) else if (win.alert != .none) alertGlyph(win.alert) else '○');
+        if (f.wide) {
+            try pen.set(w, dim, null);
+            try w.print(" {d}", .{i + 1});
+        }
+    }
+    try pen.set(w, dim, null);
+    try footAt(app, w, f.go - (if (f.wide) @as(usize, 3) else 2));
+    try w.writeAll("│");
+    try footAt(app, w, f.go);
+    try w.writeAll("s go to");
+    try footAt(app, w, f.menu);
+    try w.writeAll("≡");
+    if (f.wide and f.end + layout.Foot.mode_w + 1 <= app.view_w) {
+        try footAt(app, w, app.view_w - layout.Foot.mode_w - 1);
+        try w.writeAll("INSERT ^space");
     }
 }
 
+/// Moves the cursor to cell `x` of the foot row.
+fn footAt(app: *const App, w: *Writer, x: usize) !void {
+    try w.print("\x1b[{d};{d}H", .{ app.view_h + 1, app.term_w - app.view_w + x + 1 });
+}
+
 const normal_label = "NORMAL";
-const normal_keys = "j k pick  ] [ next waiting  ⏎ go  b home  B board  i insert";
+const normal_keys = "j k session  ] [ next waiting  ⏎ go  s go to  b home  B board  i insert";
 
 /// The first cell of a rail row: the pick's bar in the accent, else a space.
 fn pickBar(app: *const App, w: *Writer, pen: *Pen, picked: bool, base: vt.Style) !void {
@@ -886,6 +931,7 @@ const Box = struct {
     y: u16,
     pen: Pen = .{},
     row: u16 = 0,
+    width: u16 = menu.width,
 
     /// False for a row the terminal is too short to show.
     fn begin(b: *Box) !bool {
@@ -899,7 +945,7 @@ const Box = struct {
     fn edge(b: *Box, left: []const u8, right: []const u8) !void {
         if (!try b.begin()) return;
         try b.w.writeAll(left);
-        for (0..menu.width - 2) |_| try b.w.writeAll("─");
+        for (0..b.width - 2) |_| try b.w.writeAll("─");
         try b.w.writeAll(right);
     }
 
@@ -912,7 +958,7 @@ const Box = struct {
         try b.w.writeAll(" ");
         try b.pen.set(b.w, left_style, null);
         try b.w.writeAll(left);
-        for (0..(menu.width - 4) -| (cellCount(left) + cellCount(right))) |_| try b.w.writeAll(" ");
+        for (0..(b.width - 4) -| (cellCount(left) + cellCount(right))) |_| try b.w.writeAll(" ");
         try b.pen.set(b.w, right_style, null);
         try b.w.writeAll(right);
         try b.pen.set(b.w, .{}, null);
@@ -984,7 +1030,7 @@ fn menuBox(app: *const App, w: *Writer, open: menu.Menu) !void {
 /// it matches listed under it. Returns where its cursor goes.
 fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
     const at = app.box(prompt.height());
-    var b: Box = .{ .app = app, .w = w, .x = at.x, .y = at.y };
+    var b: Box = .{ .app = app, .w = w, .x = at.x, .y = at.y, .width = if (prompt.what == .jump) app.switcherW() else menu.width };
     const dim = ink(app, "dim", 8);
     var buf: [96]u8 = undefined;
     const session = app.cur();
@@ -1001,7 +1047,7 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
         switch (prompt.what) {
             .window => "  ✎ Rename window",
             .session => "  ✎ Rename session",
-            .jump => "  → Jump to window",
+            .jump => "  → Go to",
             .search => "  / Search history",
             .report => "  ! What's wrong?",
             .words, .why, .find, .tried => "",
@@ -1010,34 +1056,23 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
         std.fmt.bufPrint(&buf, "{s}  ", .{clip(was, 12)}) catch "",
     );
     try b.blank();
-    const shown = lastCells(prompt.text(), menu.width - 10);
+    const shown = lastCells(prompt.text(), b.width - 10);
     try b.line(.{}, std.fmt.bufPrint(&buf, "  › {s}", .{shown}) catch "", .{}, "");
     try b.blank();
     if (prompt.what == .jump) {
-        var hits: [menu.jump_rows]App.Hit = undefined;
-        const n = app.jumpHits(prompt.text(), &hits);
+        var rows: [App.max_rows]App.Row = undefined;
+        const n = app.switcherRows(prompt.text(), &rows);
         for (0..menu.jump_rows) |i| {
-            if (i >= n) {
+            const at_row = prompt.top() + i;
+            if (at_row >= n) {
                 try b.blank();
                 continue;
             }
-            const style: vt.Style = if (i == prompt.selected) chip(app) else .{};
-            const s, const win = switch (hits[i]) {
-                .window => |found| .{ found.session, found.session.wins.items[found.index] },
-                .ticket => |card| {
-                    const row = std.fmt.bufPrint(&buf, "  #{d} › {s}", .{ card.id, clip(card.title, 28) }) catch "";
-                    try b.line(style, row, style, "");
-                    continue;
-                },
-            };
-            const left = std.fmt.bufPrint(&buf, "  {s} › {s}", .{ clip(s.name, 12), clip(win.name, 14) }) catch "";
-            var mark: [8]u8 = undefined;
-            const mark_len = std.unicode.utf8Encode(glyph(app, app.mark(s, win)), &mark) catch 0;
-            @memcpy(mark[mark_len..][0..2], "  ");
-            try b.line(style, left, if (i == prompt.selected) style else ink(app, "amber", 4), mark[0 .. mark_len + 2]);
+            try switcherRow(&b, rows[at_row], at_row == prompt.selected);
         }
         try b.blank();
-        try b.line(dim, "  ↑↓ move   ⏎ go   esc close", dim, "");
+        const asking = prompt.len == 0 and !prompt.filtering;
+        try b.line(dim, if (asking) "  j k move  ⏎ go  space card  J K order  x close  / find  esc" else "  ↑↓ move   ⏎ go   esc close", dim, "");
     } else if (prompt.what == .search) {
         try b.line(dim, if (prompt.missed) "  no match" else "  ⏎ older match   esc close", dim, "");
     } else if (prompt.what == .report) {
@@ -1045,6 +1080,77 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
     } else try b.line(dim, "  ⏎ rename   esc cancel", dim, "");
     try b.edge("╰", "╯");
     return .{ .x = at.x + 6 + @as(i32, @intCast(cellCount(shown))), .y = at.y + 4 };
+}
+
+/// One row of the switcher: a Claude's mark, repo and ticket with its place and age at the right,
+/// a session with its windows, the row that makes one, or a window or ticket the query found.
+fn switcherRow(b: *Box, row: App.Row, picked: bool) !void {
+    const app = b.app;
+    var label_buf: [200]u8 = undefined;
+    var right_buf: [48]u8 = undefined;
+    var age: [8]u8 = undefined;
+    var mark: u21 = ' ';
+    var repo: ?[]const u8 = null;
+    var label: []const u8 = "";
+    var right: []const u8 = "";
+    switch (row) {
+        .claude => |a| {
+            mark = agentGlyph(app, a.win);
+            repo = app.sessionRepo(a.session);
+            label = app.claudeLabel(&label_buf, a);
+            right = std.fmt.bufPrint(&right_buf, "{s}:{d} {s:>4}", .{ clip(app.sessions.items[a.session].name, 12), a.win.index, ago(&age, app.epoch, a.win.since) }) catch "";
+        },
+        .session => |si| {
+            const s = app.sessions.items[si];
+            repo = app.sessionRepo(si);
+            label = s.name;
+            right = std.fmt.bufPrint(&right_buf, "{d} window{s}", .{ s.wins.items.len, if (s.wins.items.len == 1) "" else "s" }) catch "";
+        },
+        .new => label = "+ new session",
+        .hit => |hit| switch (hit) {
+            .window => |found| {
+                const win = found.session.wins.items[found.index];
+                mark = glyph(app, app.mark(found.session, win));
+                label = std.fmt.bufPrint(&label_buf, "{s} › {s}", .{ found.session.name, win.name }) catch "";
+            },
+            .ticket => |card| label = std.fmt.bufPrint(&label_buf, "#{d} › {s}", .{ card.id, card.title }) catch "",
+        },
+    }
+    if (!try b.begin()) return;
+    const base: vt.Style = if (picked) chip(app) else .{};
+    const inner: usize = b.width - 4;
+    try b.w.writeAll("│");
+    try b.pen.set(b.w, .{}, null);
+    try b.w.writeAll(" ");
+    try b.pen.set(b.w, base, null);
+    if (mark != ' ') try b.pen.set(b.w, if (picked) base else ink(app, "amber", 4), null);
+    try put(b.w, mark);
+    try b.pen.set(b.w, base, null);
+    try b.w.writeAll(" ");
+    var lead: usize = 2;
+    if (repo) |name| {
+        lead += 4;
+        if (repoEdge(app, name)) |edge| {
+            var e = edge;
+            e.bg_color = base.bg_color;
+            try b.pen.set(b.w, e, null);
+            try b.w.writeAll("▌");
+            try b.w.writeAll(repoIcon(app, name) orelse "  ");
+            try b.pen.set(b.w, base, null);
+            try b.w.writeAll(" ");
+        } else try b.w.writeAll("    ");
+    }
+    const tail = clip(right, inner -| lead -| 2);
+    const room = inner -| lead -| cellCount(tail) -| 1;
+    try fitted(b.w, label, room);
+    try b.w.writeAll(" ");
+    try b.pen.set(b.w, if (picked) base else ink(app, "dim", 8), null);
+    try b.w.writeAll(tail);
+    for (lead + room + 1 + cellCount(tail)..inner) |_| try b.w.writeAll(" ");
+    try b.pen.set(b.w, .{}, null);
+    try b.w.writeAll(" ");
+    try b.pen.set(b.w, ink(app, "amber", 4), null);
+    try b.w.writeAll("│");
 }
 
 /// The line a ticket's why is typed into, at the board's foot. Returns where its cursor goes.
@@ -5503,4 +5609,104 @@ test "an in-flight row with a Claude says its session, window and pane on a seco
     try planView(&app, &out, app.board_view.?);
     const drawn = out.buffered();
     try std.testing.expect(std.mem.indexOf(u8, drawn, "babylon-work:2 · %5") != null);
+}
+
+/// The `y`th row of `frame` drawn on a terminal `cols` wide, without its trailing spaces.
+fn screenRow(frame_bytes: []const u8, cols: u16, y: usize, buf: []u8) ![]const u8 {
+    const gpa = std.testing.allocator;
+    var term: vt.Terminal = try .init(std.testing.io, gpa, .{ .cols = cols, .rows = 30, .max_scrollback_bytes = 0 });
+    defer term.deinit(gpa);
+    var stream = term.vtStream();
+    defer stream.deinit();
+    stream.nextSlice(frame_bytes);
+    const text = try term.plainString(gpa);
+    defer gpa.free(text);
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    var at: usize = 0;
+    while (lines.next()) |line| : (at += 1) {
+        if (at != y) continue;
+        const trimmed = std.mem.trimEnd(u8, line, " ");
+        @memcpy(buf[0..trimmed.len], trimmed);
+        return buf[0..trimmed.len];
+    }
+    return buf[0..0];
+}
+
+fn footApp(board: *tickets.Board, term_w: u16, s: *Session) App {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.board = board.*;
+    app.term_w = term_w;
+    app.view_w = term_w;
+    app.view_h = 24;
+    app.current = s.id;
+    return app;
+}
+
+test "the foot row has home, the session with a dot and number per window, go to and the menu at 220 cells, and the dots alone at 110" {
+    var board = try tickets.Board.parse(std.testing.allocator, "{\"tickets\":[]}");
+    defer board.deinit();
+    var s: Session = .{ .id = 2, .name = @constCast("arena") };
+    var a: Window = .{ .id = 1, .name = @constCast("a") };
+    var b: Window = .{ .id = 2, .name = @constCast("b"), .claude = .done, .since = 1 };
+    var c: Window = .{ .id = 3, .name = @constCast("c") };
+    var wins = [_]*Window{ &a, &b, &c };
+    s.wins = .fromOwnedSlice(&wins);
+    var sessions = [_]*Session{&s};
+    var buf: [65536]u8 = undefined;
+    var row: [512]u8 = undefined;
+
+    var wide = footApp(&board, 220, &s);
+    wide.sessions = .fromOwnedSlice(&sessions);
+    var out: Writer = .fixed(&buf);
+    try dots(&wide, &out, &s);
+    const long = try screenRow(out.buffered(), 220, 24, &row);
+    try std.testing.expect(std.mem.indexOf(u8, long, " ◆ home") != null);
+    try std.testing.expect(std.mem.indexOf(u8, long, "arena         ● 1 ◉ 2 ○ 3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, long, "│  s go to  ≡") != null);
+    try std.testing.expect(std.mem.endsWith(u8, long, "INSERT ^space"));
+
+    var half = footApp(&board, 110, &s);
+    half.sessions = .fromOwnedSlice(&sessions);
+    out = .fixed(&buf);
+    try dots(&half, &out, &s);
+    const short = try screenRow(out.buffered(), 110, 24, &row);
+    try std.testing.expect(std.mem.indexOf(u8, short, " ◆ home") != null);
+    try std.testing.expect(std.mem.indexOf(u8, short, "arena    ●◉○ │ s go to  ≡") != null);
+    try std.testing.expect(std.mem.indexOf(u8, short, "INSERT") == null);
+}
+
+test "the empty switcher lists Claudes by urgency, then sessions in tmux's order, then + new session" {
+    var board = try tickets.Board.parse(std.testing.allocator, "{\"tickets\":[]}");
+    defer board.deinit();
+    var first: Session = .{ .id = 2, .name = @constCast("alpha") };
+    var second: Session = .{ .id = 3, .name = @constCast("beta") };
+    var work: Window = .{ .id = 1, .name = @constCast("work-w"), .claude = .working, .since = 1 };
+    var wait: Window = .{ .id = 2, .name = @constCast("wait-w"), .claude = .waiting, .since = 1 };
+    var done: Window = .{ .id = 3, .name = @constCast("done-w"), .claude = .done, .since = 1 };
+    var wa = [_]*Window{ &work, &wait };
+    var wb = [_]*Window{&done};
+    first.wins = .fromOwnedSlice(&wa);
+    second.wins = .fromOwnedSlice(&wb);
+    var sessions = [_]*Session{ &first, &second };
+    var app = footApp(&board, 80, &first);
+    app.sessions = .fromOwnedSlice(&sessions);
+    app.prompt = .{ .what = .jump };
+    var buf: [65536]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    _ = try promptBox(&app, &out, &app.prompt.?);
+    const drawn = out.buffered();
+    var row: [512]u8 = undefined;
+    const expected = [_][]const u8{ "wait-w", "done-w", "work-w", "alpha", "beta", "+ new session" };
+    var from: usize = 0;
+    for (expected) |want| {
+        var found = false;
+        for (from..24) |y| {
+            const text = try screenRow(drawn, 80, y, &row);
+            if (std.mem.indexOf(u8, text, want) == null) continue;
+            from = y + 1;
+            found = true;
+            break;
+        }
+        try std.testing.expect(found);
+    }
 }

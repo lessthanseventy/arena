@@ -709,7 +709,7 @@ pub const App = struct {
         return app.sessionById(app.current);
     }
 
-    fn sessionIndex(app: *const App, id: ?u32) ?usize {
+    pub fn sessionIndex(app: *const App, id: ?u32) ?usize {
         for (app.sessions.items, 0..) |s, i| if (s.id == id) return i;
         return null;
     }
@@ -1650,11 +1650,18 @@ pub const App = struct {
         }
     }
 
-    /// A key on the rail's pick, in normal mode over the strip: `j` `k` step it through the rail,
+    /// A key on the rail's pick, in normal mode over the strip: `j` `k` step to the session below or
+    /// above while nothing is picked, else the pick through the rail,
     /// `]` `[` to the next or previous Claude waiting or done, and Enter goes to it, into insert.
     /// Moving it changes nothing in the strip. Whether the key was the pick's.
     fn railKey(app: *App, key: []const u8) !bool {
         if (app.board_view != null) return false;
+        const down = anyKey(key, &.{ "j", "\x1b[B", "\x1bOB" });
+        const up = anyKey(key, &.{ "k", "\x1b[A", "\x1bOA" });
+        if ((down or up) and app.rail_pick == null) {
+            try app.sessionBy(if (down) 1 else -1);
+            return true;
+        }
         var list: [96]RailPick = undefined;
         const n = app.railPicks(&list);
         if (n == 0) return false;
@@ -1662,9 +1669,9 @@ pub const App = struct {
         const at = for (list[0..n], 0..) |entry, i| {
             if (here != null and std.meta.eql(entry, here.?)) break i;
         } else null;
-        if (anyKey(key, &.{ "j", "\x1b[B", "\x1bOB" })) {
+        if (down) {
             app.rail_pick = list[if (at) |i| @min(i + 1, n - 1) else 0];
-        } else if (anyKey(key, &.{ "k", "\x1b[A", "\x1bOA" })) {
+        } else if (up) {
             app.rail_pick = list[if (at) |i| i -| 1 else n - 1];
         } else if (anyKey(key, &.{ "]", "[" })) {
             var found: [64]Agent = undefined;
@@ -5512,6 +5519,7 @@ pub const App = struct {
             return;
         }
         if (view.detail != null) return app.modalKey(key);
+        if (is(key, &.{"s"})) return app.openSwitcher();
         if (app.columnFocused()) return app.columnKey(key);
         if (app.planShown()) return app.planKey(key);
         if (is(key, &.{"b"}) and app.hasPlan()) return app.goHome();
@@ -7233,6 +7241,160 @@ pub const App = struct {
         }
     }
 
+    /// A row of the switcher: a Claude, a session by its place in tmux's order, the row that makes
+    /// a session, or what a typed query finds as the jump prompt does.
+    pub const Row = union(enum) { claude: Agent, session: usize, new, hit: Hit };
+    pub const max_rows = 128;
+
+    /// The sooner a Claude wants looking at, the lower: waiting, stalled, done, working, the rest.
+    fn claudeRank(win: *const Window) u8 {
+        return switch (win.claude) {
+            .waiting => 0,
+            .stalled => 1,
+            .done => 2,
+            .working => 3,
+            .background, .none => 4,
+        };
+    }
+
+    fn claudeBefore(_: void, a: Agent, b: Agent) bool {
+        const ra = claudeRank(a.win);
+        const rb = claudeRank(b.win);
+        return ra < rb or (ra == rb and urgency(a.win) > urgency(b.win));
+    }
+
+    /// A Claude as the switcher words it: its ticket and title, else its window and what it is doing.
+    pub fn claudeLabel(app: *const App, buf: []u8, a: Agent) []const u8 {
+        const win = a.win;
+        const card = if (app.ticketKey(win)) |key| app.ticketCard(key.id) else null;
+        return (if (card) |c|
+            std.fmt.bufPrint(buf, "#{d} {s}", .{ c.id, c.title })
+        else if (win.detail().len > 0)
+            std.fmt.bufPrint(buf, "{s} · {s}", .{ win.name, win.detail() })
+        else
+            std.fmt.bufPrint(buf, "{s}", .{win.name})) catch "";
+    }
+
+    /// What the switcher is for: every Claude, urgency first, then every session in tmux's order
+    /// and `+ new session`; with a query typed, the Claudes and sessions it matches and then the
+    /// windows and tickets the jump prompt finds. Into `out`; how many.
+    pub fn switcherRows(app: *const App, query: []const u8, out: []Row) usize {
+        var found: [max_rows]Agent = undefined;
+        var count: usize = 0;
+        const sessions = app.railSessions();
+        for (app.sessions.items[0..sessions], 0..) |s, si| for (s.wins.items) |win| {
+            if (!win.agent() or count == found.len) continue;
+            found[count] = .{ .session = si, .win = win };
+            count += 1;
+        };
+        std.sort.insertion(Agent, found[0..count], {}, claudeBefore);
+        var n: usize = 0;
+        for ([_]u1{ 0, 1 }) |rank| for (found[0..count]) |a| {
+            if (n == out.len) return n;
+            var label: [200]u8 = undefined;
+            var text: [400]u8 = undefined;
+            const s = app.sessions.items[a.session];
+            const joined = std.fmt.bufPrint(&text, "{s} {s} {s} {s}", .{ app.claudeLabel(&label, a), s.name, a.win.name, a.win.text(.branch) }) catch continue;
+            if (menu.fuzzy(query, joined) == rank) {
+                out[n] = .{ .claude = a };
+                n += 1;
+            }
+        };
+        for ([_]u1{ 0, 1 }) |rank| for (app.sessions.items[0..sessions], 0..) |s, si| {
+            if (n == out.len) return n;
+            if (menu.fuzzy(query, s.name) == rank) {
+                out[n] = .{ .session = si };
+                n += 1;
+            }
+        };
+        if (query.len == 0) {
+            if (n < out.len) {
+                out[n] = .new;
+                n += 1;
+            }
+            return n;
+        }
+        var hits: [64]Hit = undefined;
+        for (hits[0..app.jumpHits(query, &hits)]) |hit| {
+            if (n == out.len) return n;
+            if (hit == .window and hit.window.session.wins.items[hit.window.index].agent()) continue;
+            out[n] = .{ .hit = hit };
+            n += 1;
+        }
+        return n;
+    }
+
+    /// Opens the switcher over any view.
+    fn openSwitcher(app: *App) void {
+        app.menu = null;
+        app.prompt = .{ .what = .jump };
+        app.dirty = true;
+    }
+
+    /// Goes where a row of the switcher is.
+    fn goRow(app: *App, row: Row) !void {
+        if (app.board_view != null) try app.closeBoard();
+        switch (row) {
+            .claude => |a| try app.goAgent(a),
+            .session => |si| try app.sessionTo(si),
+            .new => try app.send(.ignore, "new-session", .{}),
+            .hit => |hit| try app.jumpHit(hit),
+        }
+    }
+
+    /// A key in the switcher while nothing is typed: `j` `k` move, `space` opens a Claude's card,
+    /// `J` `K` move a session in tmux's order, `x` closes one after asking and `/` begins a filter.
+    /// Whether the key was one of them; any other is typed.
+    fn switcherKey(app: *App, prompt: *menu.Prompt, key: []const u8) !bool {
+        if (prompt.what != .jump or prompt.len > 0 or prompt.filtering or key.len != 1) return false;
+        var rows: [max_rows]Row = undefined;
+        const n = app.switcherRows("", &rows);
+        const row: ?Row = if (prompt.selected < n) rows[prompt.selected] else null;
+        switch (key[0]) {
+            'j' => prompt.selected = @min(prompt.selected + 1, n -| 1),
+            'k' => prompt.selected -|= 1,
+            '/' => prompt.filtering = true,
+            ' ' => if (row) |r| if (r == .claude) {
+                app.prompt = null;
+                app.normal = true;
+                app.openPopup(.{ .agent = r.claude.win.id });
+            },
+            'J', 'K' => if (row) |r| if (r == .session) {
+                const to = if (key[0] == 'J') r.session + 1 else r.session -| 1;
+                if (to < app.railSessions() and to != r.session) {
+                    try app.moveSession(r.session, to);
+                    prompt.selected = if (key[0] == 'J') prompt.selected + 1 else prompt.selected - 1;
+                }
+            },
+            'x' => if (row) |r| if (r == .session) {
+                app.doomed = app.sessions.items[r.session].id;
+                app.prompt = null;
+                app.openMenu(&menu.confirm_session);
+            },
+            else => return false,
+        }
+        return true;
+    }
+
+    /// Whether the pointer at cell `cx` of the foot row is on its windows, which then show their
+    /// names: on a tab once they are shown, else anywhere but a button.
+    fn overDots(app: *const App, cx: usize) bool {
+        const s = app.cur() orelse return false;
+        var widths: [max_tabs]usize = undefined;
+        const tabs = tabWidths(s, &widths);
+        if (app.over_dots and tabs.len > 0 and layout.tabAt(app.view_w, tabs, cx) != null) return true;
+        return switch (app.footPart(cx) orelse layout.FootHit{ .window = 0 }) {
+            .home, .go, .menu => false,
+            .window => true,
+        };
+    }
+
+    /// What of the foot row is at its cell `cx`: a button, or a window's dot.
+    fn footPart(app: *const App, cx: usize) ?layout.FootHit {
+        const s = app.cur() orelse return null;
+        return layout.footAt(app.view_w, s.wins.items.len, cx);
+    }
+
     /// Goes to a window of any session.
     fn jumpTo(app: *App, s: *Session, index: usize) !void {
         if (s.id == app.current) return app.focusTo(index);
@@ -7644,7 +7806,7 @@ pub const App = struct {
             app.lookAway();
             app.key_typed = false;
         }
-        const over_dots = m.y == app.view_h and m.x >= app.term_w - app.view_w;
+        const over_dots = m.y == app.view_h and m.x >= app.term_w - app.view_w and app.overDots(m.x - (app.term_w - app.view_w));
         if (over_dots != app.over_dots) {
             app.over_dots = over_dots;
             app.dirty = true;
@@ -7660,7 +7822,8 @@ pub const App = struct {
             app.dirty = true;
             const at = app.box(prompt.height());
             const first = at.y + menu.Prompt.list_row;
-            const listed = prompt.what == .jump and m.leftPress() and m.x > at.x and m.x + 1 < at.x + menu.width and
+            const wide = app.switcherW();
+            const listed = prompt.what == .jump and m.leftPress() and m.x > at.x and m.x + 1 < at.x + wide and
                 m.y >= first and m.y < first + menu.jump_rows;
             if (!listed) {
                 if (prompt.what == .words or prompt.what == .why or prompt.what == .tried) app.endWords() else {
@@ -7668,7 +7831,7 @@ pub const App = struct {
                 }
                 return;
             }
-            prompt.selected = m.y - first;
+            prompt.selected = prompt.top() + m.y - first;
             return app.commit();
         }
         if (app.menu) |open| {
@@ -7769,10 +7932,16 @@ pub const App = struct {
             }
             var widths: [max_tabs]usize = undefined;
             const tabs = tabWidths(s, &widths);
-            const at = (if (tabs.len > 0) layout.tabAt(app.view_w, tabs, m.x - ox) else null) orelse
-                layout.dotAt(app.view_w, s.wins.items.len, m.x - ox) orelse return false;
-            if (m.leftPress()) try app.focusTo(at);
-            return m.leftPress();
+            const tab = if (app.over_dots and tabs.len > 0) layout.tabAt(app.view_w, tabs, m.x - ox) else null;
+            const part = if (tab) |at| layout.FootHit{ .window = at } else app.footPart(m.x - ox) orelse return false;
+            if (!m.leftPress()) return false;
+            switch (part) {
+                .home => try app.goHome(),
+                .go => app.openSwitcher(),
+                .menu => app.openMenu(&menu.main),
+                .window => |at| try app.focusTo(at),
+            }
+            return true;
         }
         if (m.sideways()) {
             try app.swipe(if (m.code & 1 == 0) -1 else 1);
@@ -7902,10 +8071,16 @@ pub const App = struct {
 
     /// Where the top left corner of a menu or prompt `height` rows tall is: centred over the strip.
     pub fn box(app: *const App, height: u16) struct { x: u16, y: u16 } {
+        const width = if (app.prompt) |p| (if (p.what == .jump) app.switcherW() else menu.width) else menu.width;
         return .{
-            .x = app.term_w - app.view_w + (app.view_w -| menu.width) / 2,
+            .x = app.term_w - app.view_w + (app.view_w -| width) / 2,
             .y = (app.view_h -| height) / 2,
         };
+    }
+
+    /// The switcher's box, wide enough for a Claude's ticket, session and age on a row.
+    pub fn switcherW(app: *const App) u16 {
+        return @min(menu.switcher_w, app.view_w);
     }
 
     /// Whether what is typed is the focused pane's: nothing lies over the strip, or the board
@@ -7962,10 +8137,7 @@ pub const App = struct {
             'o' => app.openOverview(),
             'w' => app.toggleRail(),
             'm' => app.openMenu(&menu.main),
-            '/' => {
-                app.prompt = .{ .what = .jump };
-                app.dirty = true;
-            },
+            '/', 's' => app.openSwitcher(),
             'n' => try app.showInbox(),
             '?' => {
                 app.strip_help = true;
@@ -8041,6 +8213,7 @@ pub const App = struct {
                 try app.boardKey(key);
             } else if (app.prompt) |*prompt| {
                 app.dirty = true;
+                if (try app.switcherKey(prompt, key)) continue;
                 switch (prompt.press(key)) {
                     .none => if (prompt.what == .find) app.refind(),
                     .cancel => if (prompt.what == .find) app.clearFind() else if (prompt.what == .words or prompt.what == .why or prompt.what == .tried) app.endWords() else {
@@ -8049,8 +8222,8 @@ pub const App = struct {
                     .commit => try app.commit(),
                     .up => prompt.selected -|= 1,
                     .down => {
-                        var hits: [menu.jump_rows]Hit = undefined;
-                        if (prompt.selected + 1 < app.jumpHits(prompt.text(), &hits)) prompt.selected += 1;
+                        var rows: [max_rows]Row = undefined;
+                        if (prompt.selected + 1 < app.switcherRows(prompt.text(), &rows)) prompt.selected += 1;
                     },
                 }
             } else if (app.menu) |*open| try app.menuResult(open.press(key)) else unreachable;
@@ -8073,9 +8246,9 @@ pub const App = struct {
         defer cmd.deinit();
         switch (prompt.what) {
             .jump => {
-                var hits: [menu.jump_rows]Hit = undefined;
-                const n = app.jumpHits(prompt.text(), &hits);
-                if (prompt.selected < n) try app.jumpHit(hits[prompt.selected]);
+                var rows: [max_rows]Row = undefined;
+                const n = app.switcherRows(prompt.text(), &rows);
+                if (prompt.selected < n) try app.goRow(rows[prompt.selected]);
                 return;
             },
             .search, .report, .words, .why, .find, .tried => return,
@@ -8113,7 +8286,7 @@ pub const App = struct {
                     .move_left => try app.swapBy(-1),
                     .move_right => try app.swapBy(1),
                     .full_width => app.toggleFull(),
-                    .jump => app.prompt = .{ .what = .jump },
+                    .jump => app.openSwitcher(),
                     .overview => app.openOverview(),
                     .board => try app.toggleBoard(),
                     .rail_width => app.toggleRail(),
@@ -9746,6 +9919,33 @@ test "the jump prompt finds a ticket by its number or its title as well as a win
     try std.testing.expectEqual(@as(u32, 317), hits[0].ticket.id);
     try std.testing.expectEqual(@as(usize, 1), app.jumpHits("lights", &hits));
     try std.testing.expectEqual(@as(u32, 8), hits[0].ticket.id);
+}
+
+test "the switcher: s opens it, j k move, J K move a session, x asks, a typed key filters" {
+    var one: Session = .{ .id = 2, .name = @constCast("alpha") };
+    var two: Session = .{ .id = 3, .name = @constCast("beta") };
+    var sessions = [_]*Session{ &one, &two };
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.sessions = .fromOwnedSlice(&sessions);
+    app.normal = true;
+    try app.menuKeys("s");
+    try std.testing.expectEqual(menu.Prompt.What.jump, app.prompt.?.what);
+    var rows: [App.max_rows]App.Row = undefined;
+    try std.testing.expectEqual(@as(usize, 3), app.switcherRows("", &rows));
+    try std.testing.expectEqual(@as(usize, 0), rows[0].session);
+    try std.testing.expect(rows[2] == .new);
+    try app.menuKeys("j");
+    try std.testing.expectEqual(@as(usize, 1), app.prompt.?.selected);
+    try app.menuKeys("k");
+    try std.testing.expectEqual(@as(usize, 0), app.prompt.?.selected);
+    try app.menuKeys("b");
+    try std.testing.expectEqualStrings("b", app.prompt.?.text());
+    try std.testing.expectEqual(@as(usize, 1), app.switcherRows("b", &rows));
+    app.prompt = .{ .what = .jump };
+    try app.menuKeys("jx");
+    try std.testing.expect(app.prompt == null);
+    try std.testing.expectEqual(@as(u32, 3), app.doomed);
+    try std.testing.expect(app.menu != null);
 }
 
 test "a gate modal's scroll stops at the last line of the output it scrolls" {
