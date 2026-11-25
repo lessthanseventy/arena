@@ -120,7 +120,7 @@ pub const jump_rows = 8;
 /// A line of text being typed: a new name, or part of the name of a window to jump to.
 pub const Prompt = struct {
     what: What,
-    buf: [200]u8 = undefined,
+    buf: [600]u8 = undefined,
     len: usize = 0,
     /// Of a words prompt: the id of the Your move item it answers; of a why prompt: the ticket's
     /// number; of a tried prompt: the ticket's number, a colon and the check's.
@@ -149,9 +149,29 @@ pub const Prompt = struct {
         return p.target[0..p.target_len];
     }
 
+    /// Whether the text runs over several lines: what answers something is written in a modal.
+    pub fn multiline(p: *const Prompt) bool {
+        return p.what == .words or p.what == .tried;
+    }
+
+    /// Shift+Enter, as a terminal with the kitty keyboard protocol or modifyOtherKeys sends it,
+    /// and Ctrl+J, which every terminal can.
+    fn isNewline(key: []const u8) bool {
+        for ([_][]const u8{ "\n", "\x1b[13;2u", "\x1b[27;2;13~" }) |new| if (std.mem.eql(u8, key, new)) return true;
+        return false;
+    }
+
     /// One key press: Enter commits, Escape cancels, Backspace takes a character back, and the
-    /// arrows, Tab, Ctrl+N and Ctrl+P are `up` and `down`, for a list under the text.
+    /// arrows, Tab, Ctrl+N and Ctrl+P are `up` and `down`, for a list under the text. Of a
+    /// multiline prompt, Shift+Enter and Ctrl+J add a line.
     pub fn press(p: *Prompt, key: []const u8) Result {
+        if (p.multiline() and isNewline(key)) {
+            if (p.len < p.buf.len - 4) {
+                p.buf[p.len] = '\n';
+                p.len += 1;
+            }
+            return .none;
+        }
         if (std.mem.eql(u8, key, "\r")) return .commit;
         if (std.mem.eql(u8, key, "\x1b")) return .cancel;
         for ([_][]const u8{ "\x1b[A", "\x1bOA", "\x10" }) |up| if (std.mem.eql(u8, key, up)) return .up;
@@ -233,8 +253,23 @@ test "a prompt takes text, whole characters back, and no more than fits" {
     try std.testing.expectEqual(Prompt.Result.up, p.press("\x1b[A"));
     try std.testing.expectEqual(Prompt.Result.down, p.press("\t"));
     try std.testing.expectEqual(Prompt.Result.none, p.press("\x1b[C"));
-    for (0..300) |_| _ = p.press("a");
-    try std.testing.expectEqual(@as(usize, 196), p.len);
+    for (0..700) |_| _ = p.press("a");
+    try std.testing.expectEqual(@as(usize, 596), p.len);
     try std.testing.expectEqual(Prompt.Result.commit, p.press("\r"));
     try std.testing.expectEqual(Prompt.Result.cancel, p.press("\x1b"));
+}
+
+test "a words prompt takes Shift+Enter and Ctrl+J as a new line, and ⏎ sends; a name takes neither" {
+    var p: Prompt = .{ .what = .words };
+    for ("one") |byte| _ = p.press(&.{byte});
+    try std.testing.expectEqual(Prompt.Result.none, p.press("\x1b[13;2u"));
+    for ("two") |byte| _ = p.press(&.{byte});
+    _ = p.press("\x1b[27;2;13~");
+    _ = p.press("\n");
+    try std.testing.expectEqualStrings("one\ntwo\n\n", p.text());
+    try std.testing.expectEqual(Prompt.Result.commit, p.press("\r"));
+
+    var name: Prompt = .{ .what = .window };
+    _ = name.press("\n");
+    try std.testing.expectEqualStrings("", name.text());
 }

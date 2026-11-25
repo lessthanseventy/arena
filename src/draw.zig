@@ -1017,15 +1017,13 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
     return .{ .x = at.x + 6 + @as(i32, @intCast(cellCount(shown))), .y = at.y + 4 };
 }
 
-/// The line the human's words are typed into, at the foot of the orchestrator's column, over its
-/// last row; a ticket's why is typed at the board's foot. Returns where its cursor goes.
+/// The line a ticket's why is typed into, at the board's foot. Returns where its cursor goes.
 fn wordsLine(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
-    const why = prompt.what == .why or prompt.what == .tried;
-    const x = if (why) app.boardX() else app.term_w - app.view_w;
+    const x = app.boardX();
     const y = app.view_h -| 2;
-    const inner = (if (why) app.boardW() else app.view_w) -| 4;
+    const inner = app.boardW() -| 4;
     var buf: [256]u8 = undefined;
-    const hint = if (prompt.what == .tried or App.stepWords(prompt.*)) App.back_hint else if (why) "  ⏎ save  esc drop" else "  ⏎ send  esc drop";
+    const hint = "  ⏎ save  esc drop";
     const room = inner -| 2 -| cellCount(hint);
     const text = prompt.text();
     var shown = text;
@@ -1046,6 +1044,94 @@ fn wordsLine(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
 }
 
 const Cursor = struct { x: i32, y: i32 };
+
+/// `text` run on over lines of `inner` cells: a newline ends a line, and one at the end leaves an
+/// empty line to type on. The lines from `from` are put in `out`; the count of all is returned.
+fn wrapLines(text: []const u8, inner: usize, from: usize, out: [][]const u8) usize {
+    var n: usize = 0;
+    var segments = std.mem.splitScalar(u8, text, '\n');
+    while (segments.next()) |segment| {
+        var rest = segment;
+        while (true) {
+            var cut = std.unicode.Utf8View.initUnchecked(rest).iterator();
+            var cells: usize = 0;
+            while (cells < inner) : (cells += 1) _ = cut.nextCodepointSlice() orelse break;
+            if (n >= from and n - from < out.len) out[n - from] = rest[0..cut.i];
+            n += 1;
+            rest = rest[cut.i..];
+            if (rest.len == 0) break;
+        }
+    }
+    return n;
+}
+
+/// The modal the human's words are written in: over the orchestrator's column, with what it
+/// answers quoted above a box that grows to a fixed height and then scrolls, and send and cancel
+/// in its foot. Returns where its cursor goes.
+fn wordsModal(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
+    const rect = app.wordsRect();
+    const inner: u16 = rect.w -| 4;
+    const edge = ink(app, "amber", 4);
+    const dim: vt.Style = ink(app, "dim", 8);
+    var pen: Pen = .{};
+    var scratch: [1024]u8 = undefined;
+    const about = app.wordsAbout(prompt.*, &scratch);
+
+    try pen.set(w, edge, null);
+    try w.print("\x1b[{d};{d}H╭─", .{ rect.y + 1, rect.x + 1 });
+    try pen.set(w, heading(app), null);
+    const title = clip(about.title, inner -| 2);
+    try w.print(" {s} ", .{title});
+    try pen.set(w, edge, null);
+    for (cellCount(title) + 4..rect.w -| 1) |_| try w.writeAll("─");
+    try w.writeAll("╮");
+
+    var row: u16 = 1;
+    var quoted = app_mod.DetailLines.init(about.quote, inner);
+    while (quoted.next()) |line| : (row += 1) {
+        if (row > App.words_quote_rows) break;
+        try boxLine(w, &pen, edge, dim, rect.x, rect.y + row + 1, line, inner);
+    }
+    if (row > 1) {
+        try boxLine(w, &pen, edge, .{}, rect.x, rect.y + row + 1, "", inner);
+        row += 1;
+    }
+
+    // the last row of the box says its keys: the foot's edge has no room for them in a narrow column
+    const room = rect.h -| 2 -| row;
+    const text_w = inner -| 2;
+    const total = wrapLines(prompt.text(), text_w, 0, &.{});
+    const start = total -| room;
+    var lines: [32][]const u8 = undefined;
+    const shown = lines[0..@min(room, lines.len)];
+    _ = wrapLines(prompt.text(), text_w, start, shown);
+    var last: []const u8 = "";
+    for (0..room) |i| {
+        var buf: [512]u8 = undefined;
+        const at = start + i;
+        const line: []const u8 = if (at < total and i < shown.len) shown[i] else "";
+        if (at + 1 == total) last = line;
+        const lead: []const u8 = if (at == 0) "❯ " else "  ";
+        try boxLine(w, &pen, edge, .{}, rect.x, rect.y + row + 1 + @as(u16, @intCast(i)), std.fmt.bufPrint(&buf, "{s}{s}", .{ lead, line }) catch "", inner);
+    }
+    const cursor_row: u16 = @intCast(@min(total -| 1 -| start, room -| 1));
+    try boxLine(w, &pen, edge, dim, rect.x, rect.y + row + 1 + room, "  shift+⏎ new line", inner);
+
+    const foot = rect.y + rect.h;
+    try pen.set(w, edge, null);
+    try w.print("\x1b[{d};{d}H╰─", .{ foot, rect.x + 1 });
+    for (3..rect.w) |_| try w.writeAll("─");
+    try w.writeAll("╯");
+    var buttons: [2]App.ModalButton = undefined;
+    for (app.wordsButtons(prompt.*, &buttons)) |button| {
+        var style = edge;
+        style.flags.inverse = true;
+        try pen.set(w, style, null);
+        try w.print("\x1b[{d};{d}H {s} {s} ", .{ button.y + 1, button.x + 1, button.key, button.label });
+    }
+    try pen.set(w, .{}, null);
+    return .{ .x = @as(i32, rect.x) + 2 + 2 + @as(i32, @intCast(@min(cellCount(last), text_w))), .y = @as(i32, rect.y) + row + @as(i32, cursor_row) };
+}
 
 /// What the board is narrowed to, after its title in the header: while it is typed, with its
 /// cursor and what Enter and Escape do; once kept, with Escape's. Returns where the cursor goes.
@@ -4179,12 +4265,18 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
         cursor = null;
     }
     if (app.prompt) |*prompt| {
-        cursor = if (prompt.what == .words or prompt.what == .why or prompt.what == .tried) try wordsLine(app, w, prompt) else if (prompt.what == .find) try findLine(app, w) else try promptBox(app, w, prompt);
+        cursor = if (prompt.multiline()) try wordsModal(app, w, prompt) else if (prompt.what == .why) try wordsLine(app, w, prompt) else if (prompt.what == .find) try findLine(app, w) else try promptBox(app, w, prompt);
     } else if (app.menu) |open| {
         try menuBox(app, w, open);
         cursor = null;
     }
     if (app.report_said) |text| try reportSaid(app, w, text);
+    const asking = if (app.prompt) |prompt| prompt.multiline() else false;
+    if (asking != app.words_keys) {
+        // modifyOtherKeys 1: a terminal sends Shift+Enter as its own key, not as Enter
+        try w.writeAll(if (asking) "\x1b[>4;1m" else "\x1b[>4;0m");
+        app.words_keys = asking;
+    }
     try w.writeAll("\x1b[0m");
     if (cursor) |at| try w.print("\x1b[{d};{d}H\x1b[?25h", .{ at.y + 1, at.x + 1 });
     if (app.shape_due) try w.print("\x1b]22;{s}\x1b\\", .{app.shape});
@@ -4922,6 +5014,88 @@ test "a draft's modal draws the outcome, a row to each step with what it waits o
             return err;
         };
     }
+}
+
+fn wordsFrame(gpa: std.mem.Allocator, json: []const u8, prompt: menu.Prompt, out: *std.Io.Writer.Allocating) !App {
+    var app: App = .{ .gpa = gpa, .io = std.testing.io, .tmux_in = undefined };
+    app.term_w = 160;
+    app.view_w = 60;
+    app.view_h = 40;
+    app.board = try tickets.Board.parse(gpa, json);
+    app.board_view = .{ .home = true, .plan = true, .focus = .orchestrator };
+    app.prompt = prompt;
+    try frame(&app, &out.writer, .all);
+    return app;
+}
+
+test "a ✗'s words are a modal over the column: its title, the check quoted, the box, send and cancel, and no line at the column's foot" {
+    const gpa = std.testing.allocator;
+    var prompt: menu.Prompt = .{ .what = .words };
+    const item = "try:825#3";
+    @memcpy(prompt.target[0..item.len], item);
+    prompt.target_len = item.len;
+    for ("it never answers") |byte| _ = prompt.press(&.{byte});
+    _ = prompt.press("\n");
+    for ("not even once") |byte| _ = prompt.press(&.{byte});
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    var app = try wordsFrame(gpa, feed.try_sample, prompt, &out);
+    defer app.board.?.deinit();
+    const drawn = out.written();
+    for ([_][]const u8{ "✗ What went wrong?", "check 3: add a to-do from the phone", "❯ it never answers", "  not even once", " ⏎ send it back ", " esc cancel ", "shift+⏎ new line" }) |want| {
+        std.testing.expect(std.mem.indexOf(u8, drawn, want) != null) catch |err| {
+            std.debug.print("missing {s}\n", .{want});
+            return err;
+        };
+    }
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "esc not ✗") == null);
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "\x1b[>4;1m") != null);
+}
+
+test "an ask's own words are a modal with the question and its options quoted; the frame is the same size for one line and for a long text, which scrolls to its end" {
+    const gpa = std.testing.allocator;
+    const json =
+        \\{"tickets":[],"needs_you":[{"id":"ask:6","kind":"ask","ticket":307,"repo":"tlon","text":"#307 tlon  asks: Blue or green?",
+        \\ "actions":[{"key":"1","label":"Blue","argv":["babylon","answer","6","1"]},{"key":"c","label":"in my own words","argv":["babylon","answer","6","--words"],"needs":"words"}]}]}
+    ;
+    var short: menu.Prompt = .{ .what = .words };
+    @memcpy(short.target[0..5], "ask:6");
+    short.target_len = 5;
+    _ = short.press("a");
+    var long = short;
+    for (0..30) |i| {
+        var line: [16]u8 = undefined;
+        for (std.fmt.bufPrint(&line, "line {d}", .{i}) catch "") |byte| _ = long.press(&.{byte});
+        _ = long.press("\n");
+    }
+    var one: std.Io.Writer.Allocating = .init(gpa);
+    defer one.deinit();
+    var app_one = try wordsFrame(gpa, json, short, &one);
+    defer app_one.board.?.deinit();
+    var many: std.Io.Writer.Allocating = .init(gpa);
+    defer many.deinit();
+    var app_many = try wordsFrame(gpa, json, long, &many);
+    defer app_many.board.?.deinit();
+
+    const has = std.mem.indexOf;
+    for ([_][]const u8{ "✎ in my own words", "#307 tlon  asks: Blue or green?", "1 Blue", " ⏎ send ", " esc cancel " }) |want| {
+        std.testing.expect(has(u8, one.written(), want) != null) catch |err| {
+            std.debug.print("missing {s}\n", .{want});
+            return err;
+        };
+    }
+    // the frame's top and foot edges are drawn at the same place whatever is typed
+    const rect = app_one.wordsRect();
+    var top: [32]u8 = undefined;
+    const edge = try std.fmt.bufPrint(&top, "\x1b[{d};{d}H╭─", .{ rect.y + 1, rect.x + 1 });
+    try std.testing.expect(has(u8, one.written(), edge) != null);
+    try std.testing.expect(has(u8, many.written(), edge) != null);
+    var foot: [32]u8 = undefined;
+    const base = try std.fmt.bufPrint(&foot, "\x1b[{d};{d}H╰─", .{ rect.y + rect.h, rect.x + 1 });
+    try std.testing.expect(has(u8, many.written(), base) != null);
+    // a box of a fixed height scrolls: the last lines are shown, the first are not
+    try std.testing.expect(has(u8, many.written(), "line 29") != null);
+    try std.testing.expect(has(u8, many.written(), "line 0 ") == null);
 }
 
 /// An epic with seven children, three done, one doing and three todo, its goal's own count wrong

@@ -29,7 +29,7 @@ fn onWinch(_: posix.SIG) callconv(.c) void {
     winch.store(true, .release);
 }
 
-const tty_restore = "\x1b[>0s\x1b[?2004l\x1b[?1006l\x1b[?1003l\x1b]22;default\x1b\\\x1b[0m\x1b[?25h\x1b[?1049l";
+const tty_restore = "\x1b[>4;0m\x1b[>0s\x1b[?2004l\x1b[?1006l\x1b[?1003l\x1b]22;default\x1b\\\x1b[0m\x1b[?25h\x1b[?1049l";
 
 /// The terminal as it was, set once arena has taken it over: what a panic gives back, as a clean
 /// quit does, so a crash leaves no mouse reports typed into the shell.

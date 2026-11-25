@@ -47,3 +47,9 @@ A review of a design or a UI change checks it against them.
     fixed width and shortens rather than wraps. Only what the human must act on (Your move) may
     grow, and if it ever needs a cap, it gets the same fixed size and scroll. Content that moves
     on its own works against WCAG 3.2 (Predictable).
+11. **The human's words are taken in a modal, by default.** Words the human writes to answer
+    something (a ✗, an ask, a reply, a no) go in a modal over the column: titled for what it is
+    for, the thing answered quoted above a box of several lines that wraps, grows to a fixed
+    height and then scrolls, with `⏎` send, `shift+⏎` a new line and `esc` cancel, each also a
+    button. A short, single-purpose field can stay inline where a modal would be heavier than the
+    thing (a find line, a filter, the chat input itself).

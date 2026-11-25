@@ -94,15 +94,18 @@ then its checks, one row each.
   short as its list.
 - **`y` ✓** settles the picked check and moves the pick to the next open one. The row keeps a dim
   `✓` on its right.
-- **`n` ✗** opens one line under the check, in insert mode, for what went wrong. `⏎` sends it, and
-  `esc` takes the `✗` back:
+- **`n` ✗** opens a modal over the column for what went wrong, the check quoted above its box.
+  `⏎` sends it, `shift+⏎` starts a new line and `esc` takes the `✗` back:
 
 ```
- │ ▌1 remind me in two minutes: it is told, with buttons    │
- │ ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖  │
- │ ▐ what went wrong? it came at 09:02, two minutes late█ ▌  │
- │ ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘  │
- INSERT  ⏎ send it back  esc not ✗
+ ╭─ ✗ What went wrong? ─────────────────╮
+ │ #930 Lights                          │
+ │ check 1: remind me in two minutes    │
+ │                                      │
+ │ ❯ it came at 09:02, two minutes late │
+ │                                      │
+ │   shift+⏎ new line                   │
+ ╰─ ⏎ send it back ─ esc cancel ────────╯
 ```
 
 - **`space`** opens the ticket's modal, with its body, so the human can read what the change was

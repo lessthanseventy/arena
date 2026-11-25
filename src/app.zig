@@ -593,6 +593,9 @@ pub const App = struct {
     /// The pointer's shape, and whether the next frame is to tell the terminal of it.
     shape: []const u8 = "default",
     shape_due: bool = false,
+    /// Whether the terminal has been asked to send Shift+Enter as its own key, which an open
+    /// words modal reads as a new line.
+    words_keys: bool = false,
     /// Where the mouse last was.
     pointer: struct { x: u16 = 0, y: u16 = 0 } = .{},
     /// The last input, for a report.
@@ -2363,23 +2366,94 @@ pub const App = struct {
         return true;
     }
 
-    /// What the line of the words of a to-try check says after them: the question, and the keys.
-    pub const back_hint = "  what went wrong?  ⏎ send it back  esc not ✗";
-    const send_back = "⏎ send it back";
-
     /// Whether `prompt` is the words of a to-try check that failed.
     pub fn stepWords(prompt: menu.Prompt) bool {
         return prompt.what == .words and std.mem.indexOfScalar(u8, prompt.item(), '#') != null;
     }
 
-    /// Whether the click `m` is on `send it back`, at the right end of the line of the words of a
-    /// failed check at the column's foot.
-    fn onSendBack(app: *const App, m: keys.Mouse) bool {
-        const inner = app.view_w -| 4;
-        if (m.y != app.view_h -| 2 or inner < cellCount(back_hint)) return false;
-        const hint = (app.term_w - app.view_w) + 1 + (inner - cellCount(back_hint));
-        const from = hint + cellCount(back_hint[0..std.mem.indexOf(u8, back_hint, send_back).?]);
-        return m.x >= from and m.x < from + cellCount(send_back);
+    /// The frame of the modal the human's words are written in: over the orchestrator's column, a
+    /// fixed size, whatever is typed.
+    pub fn wordsRect(app: *const App) ModalRect {
+        const wide: u16 = if (app.view_w >= 30) app.view_w - 2 else app.view_w;
+        const h = @min(app.view_h, words_rows);
+        return .{ .x = app.term_w - app.view_w + (app.view_w - wide) / 2, .y = (app.view_h - h) / 2, .w = wide, .h = h };
+    }
+
+    pub const words_rows: u16 = 16;
+    /// Rows of what is being answered, quoted above the box, at most.
+    pub const words_quote_rows = 5;
+
+    /// The buttons in the foot of the words modal: send, then cancel.
+    pub fn wordsButtons(app: *const App, prompt: menu.Prompt, out: *[2]ModalButton) []ModalButton {
+        const rect = app.wordsRect();
+        var scratch: [1024]u8 = undefined;
+        const about = app.wordsAbout(prompt, &scratch);
+        const foot = rect.y + rect.h - 1;
+        out[0] = .{ .action = .words, .key = "⏎", .label = about.send, .x = rect.x + 2, .y = foot };
+        out[1] = .{ .action = .close, .key = "esc", .label = "cancel", .x = out[0].x + out[0].width() + 1, .y = foot };
+        return out[0..2];
+    }
+
+    /// A click with the words modal open: send and cancel are its buttons; nothing else in it or
+    /// behind it answers, so a stray click does not lose what was written.
+    fn wordsClick(app: *App, prompt: menu.Prompt, m: keys.Mouse) !void {
+        var buttons: [2]ModalButton = undefined;
+        for (app.wordsButtons(prompt, &buttons)) |button| {
+            if (!button.hit(m.x, m.y)) continue;
+            app.dirty = true;
+            switch (button.action) {
+                .words => try app.commit(),
+                else => app.endWords(),
+            }
+            return;
+        }
+    }
+
+    /// What a words modal says of what it answers: its title, the thing quoted above the box and
+    /// what its send button says, all in `buf`.
+    pub const WordsAbout = struct { title: []const u8, quote: []const u8, send: []const u8 };
+
+    pub fn wordsAbout(app: *const App, prompt: menu.Prompt, buf: []u8) WordsAbout {
+        var w: Writer = .fixed(buf);
+        const failed: WordsAbout = .{ .title = "✗ What went wrong?", .quote = "", .send = "send it back" };
+        const item = prompt.item();
+        const b = if (app.board) |*b| b else return .{ .title = "✎ Your words", .quote = "", .send = "send" };
+        if (prompt.what == .tried) {
+            const colon = std.mem.indexOfScalar(u8, item, ':') orelse return failed;
+            const id = std.fmt.parseInt(u32, item[0..colon], 10) catch return failed;
+            const n = std.fmt.parseInt(u32, item[colon + 1 ..], 10) catch return failed;
+            for (b.cards()) |card| {
+                if (card.id != id) continue;
+                w.print("#{d} {s}", .{ card.id, card.title }) catch {};
+                for (card.checks) |check| if (check.n == n) w.print("\ncheck {d}: {s}", .{ n, check.text }) catch {};
+            }
+            return .{ .title = failed.title, .quote = w.buffered(), .send = failed.send };
+        }
+        const hash = std.mem.indexOfScalar(u8, item, '#');
+        const need = for (b.needsYou()) |need| {
+            if (std.mem.eql(u8, need.id, if (hash) |at| item[0..at] else item)) break need;
+        } else return .{ .title = "✎ Your words", .quote = "", .send = "send" };
+        w.print("{s}", .{need.text}) catch {};
+        if (hash) |at| {
+            const n = std.fmt.parseInt(u32, item[at + 1 ..], 10) catch return failed;
+            for (need.steps) |step| if (step.n == n) w.print("\ncheck {d}: {s}", .{ n, step.text }) catch {};
+            return .{ .title = failed.title, .quote = w.buffered(), .send = failed.send };
+        }
+        var lead: []const u8 = "\n";
+        for (need.actions) |action| {
+            if (action.needs != null) continue;
+            w.print("{s}{s} {s}", .{ lead, action.key, action.label }) catch {};
+            lead = "   ";
+        }
+        const quote = w.buffered();
+        var title: []const u8 = "✎ Your words";
+        for (need.actions) |action| {
+            const needs = action.needs orelse continue;
+            if (!std.mem.eql(u8, needs, "words")) continue;
+            title = std.fmt.bufPrint(w.buffer[quote.len..], "✎ {s}", .{action.label}) catch title;
+            break;
+        }
+        return .{ .title = title, .quote = quote, .send = "send" };
     }
 
     fn isTryRow(kind: feed.Kind) bool {
@@ -6962,8 +7036,8 @@ pub const App = struct {
             app.dirty = true;
         }
         if (app.overview != null) return app.overviewMouse(m);
-        if (app.prompt) |prompt| if (stepWords(prompt)) {
-            if (m.leftPress() and app.onSendBack(m)) try app.sendWords(prompt);
+        if (app.prompt) |prompt| if (prompt.multiline()) {
+            if (m.leftPress()) try app.wordsClick(prompt, m);
             return;
         };
         if (app.board_view != null) if (try app.boardMouse(m)) return;
@@ -7292,9 +7366,16 @@ pub const App = struct {
         }
     }
 
-    /// An arrow is ESC, `[` or `O`, and one more byte; anything else, a bare Esc included, is a byte.
+    /// An arrow is ESC, `[` or `O`, and one more byte; a key with a modifier is ESC, `[`, digits
+    /// and semicolons, and `u` or `~`; anything else, a bare Esc included, is a byte.
     fn keyLen(text: []const u8) usize {
-        return if (text.len >= 3 and text[0] == 0x1b and (text[1] == '[' or text[1] == 'O')) 3 else 1;
+        if (text.len < 3 or text[0] != 0x1b or (text[1] != '[' and text[1] != 'O')) return 1;
+        if (text[1] == '[' and std.ascii.isDigit(text[2])) {
+            var n: usize = 2;
+            while (n < text.len and (std.ascii.isDigit(text[n]) or text[n] == ';')) n += 1;
+            if (n < text.len and (text[n] == 'u' or text[n] == '~')) return n + 1;
+        }
+        return 3;
     }
 
     fn menuKeys(app: *App, text: []const u8) !void {
@@ -10042,7 +10123,7 @@ test "a click on a to-try tile picks a check, settles it with ✓, fails it with
     try std.testing.expect(try app.boardMouse(feedPoint(&app, buttons, 3)));
     try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'tried' '825' '3' 'ok'") != null);
 
-    // a click on ✗ is n: the line for the words opens, a click outside it does nothing to it
+    // a click on ✗ is n: the modal for the words opens, a click outside its buttons does nothing to it
     try std.testing.expect(try app.boardMouse(feedPoint(&app, buttons, 10)));
     try std.testing.expect(App.stepWords(app.prompt.?));
     for ("late") |byte| _ = app.prompt.?.press(&.{byte});
@@ -10050,10 +10131,9 @@ test "a click on a to-try tile picks a check, settles it with ✓, fails it with
     try std.testing.expect(app.prompt != null);
 
     // and one on `send it back` sends it with the words
-    const inner: usize = app.view_w - 4;
-    const hint = (app.term_w - app.view_w) + 1 + (inner - cellCount(App.back_hint));
-    const at = std.mem.indexOf(u8, App.back_hint, "⏎ send it back").?;
-    try app.onMouse(.{ .code = 0, .x = @intCast(hint + cellCount(App.back_hint[0..at]) + 3), .y = app.view_h - 2, .release = false });
+    var modal_buttons: [2]App.ModalButton = undefined;
+    const send = app.wordsButtons(app.prompt.?, &modal_buttons)[0];
+    try app.onMouse(.{ .code = 0, .x = send.x + 2, .y = send.y, .release = false });
     try std.testing.expect(app.prompt == null);
     try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'tried' '825' '3' 'no' 'late'") != null);
 

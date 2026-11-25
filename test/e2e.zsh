@@ -1695,11 +1695,13 @@ gone ' give #7 to '
 key k
 check "and closing them gives the feed back its keys" await feed_lit '#8 arena  asks'
 key c
-check "c on an ask opens a line at the column's foot" see '❯ .*⏎ send  esc drop'
-key 'never mind'
+check "c on an ask opens a modal over the column, the ask quoted in it" see '✎ in words'
+see '#8 arena  asks: Blue or gre'
+check "with send and cancel in its foot" see '⏎ send .*esc cancel'
+key -l 'never mind'
 key Escape
 check "Escape drops it, and the feed has its keys again" await feed_lit '#8 arena  asks'
-gone '⏎ send  esc drop'
+gone 'esc cancel'
 : >$tmp/babylon
 key c
 key 'in words'
@@ -2384,10 +2386,17 @@ key j
 key y
 check "j picks a check and y says it works, through babylon" await last 'tried 930 2 ok'
 key n
-check "n asks what went wrong" see 'what went wrong\?'
+check "n opens a modal asking what went wrong, the check quoted in it" see 'What went wrong\?'
+check "with send and cancel in its foot" see '⏎ send it back .*esc cancel'
+check "and its new line key in the box" see 'shift\+⏎ new line'
+see 'check 2: it has buttons'
 key -l 'too late'
+key -l $'\e[27;2;13~'
+key -l 'by a day'
+check "shift+⏎ starts a new line, both lines in the box" see '  by a day'
 key Enter
-check "and ⏎ sends it back with those words, through babylon" await last 'tried 930 2 no too late'
+check "and ⏎ sends it back with the words as written, the new line in them, through babylon" await eval 'grep -qx "tried 930 2 no too late" $tmp/babylon && [[ $(tail -1 $tmp/babylon) == "by a day" ]]'
+check "and the modal is gone" gone 'What went wrong\?'
 key Escape
 key M-b
 key M-q
