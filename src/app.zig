@@ -3330,16 +3330,24 @@ pub const App = struct {
         app.dirty = true;
     }
 
-    /// A desktop notification for each Claude come to wait on an answer or done since the list
+    /// Whether a Claude's change of state is a notice: it came to wait on the human's answer or
+    /// to stall. A finished turn is not, nor is a worker on its own background shell.
+    pub fn notifies(was: Mark, now: Mark) bool {
+        return now != was and (now == .waiting or now == .stalled);
+    }
+
+    /// A desktop notification for each Claude come to wait on an answer or stall since the list
     /// before, other than the one in view: notify-send, where there is one, run by tmux, which
-    /// quotes the hook's text for the shell itself.
+    /// quotes the hook's text for the shell itself. One notice a pane: a later one replaces it.
     fn notify(app: *App) !void {
         for (app.sessions.items) |s| for (s.wins.items) |win| {
             const was = win.was orelse continue;
-            if (win.claude == was or (win.claude != .waiting and win.claude != .done and win.claude != .stalled)) continue;
+            if (!notifies(was, win.claude)) continue;
             if (s.id == app.current and s.focused() == win) continue;
-            try app.send(.ignore, "run-shell -b -t %{d} \"command -v notify-send >/dev/null && notify-send -a arena -- " ++
+            try app.send(.ignore, "run-shell -b -t %{d} \"command -v notify-send >/dev/null && notify-send -a arena " ++
+                "--hint=string:x-canonical-private-synchronous:arena-%{d} -- " ++
                 "#{{?@arena_claude_title,#{{q:@arena_claude_title}},#{{q:window_name}}}} {s}\"", .{
+                win.agent_pane,
                 win.agent_pane,
                 if (win.claude == .waiting) "#{q:@arena_claude_doing}" else "#{q:@arena_claude_said}",
             });
@@ -11275,4 +11283,13 @@ test "on Plan r narrows every window to one repo and back, / dims what misses th
     try std.testing.expect(!app.plan_shut.contains(.next));
     try std.testing.expect(app.planSheet(&sheet));
     try eq(@as(u32, 11), sheet.picked(view.plan_pick).?.ticket.?);
+}
+
+test "only a Claude come to wait or stall is a notice" {
+    try std.testing.expect(!App.notifies(.working, .done));
+    try std.testing.expect(!App.notifies(.done, .working));
+    try std.testing.expect(!App.notifies(.working, .background));
+    try std.testing.expect(App.notifies(.working, .waiting));
+    try std.testing.expect(App.notifies(.done, .stalled));
+    try std.testing.expect(!App.notifies(.waiting, .waiting));
 }

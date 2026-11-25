@@ -749,14 +749,19 @@ see '│.◐ solo '
 claude alpha:three waiting '{"message": "Claude needs your permission to use Bash"}'
 see '│ ▲ three '
 notified() { [[ $(tail -1 $tmp/notified 2>/dev/null) == $1 ]] }
-check "a Claude out of view come to wait is a desktop notification" await notified '-a|arena|--|three|allow Bash|'
+check "a Claude out of view come to wait is a desktop notification" await eval '[[ $(tail -1 $tmp/notified 2>/dev/null) == "-a|arena|--hint=string:x-canonical-private-synchronous:arena-%"*"|--|three|allow Bash|" ]]'
 told=$(wc -l <$tmp/notified)
 claude beta:solo stop '{"last_assistant_message": "All done"}'
 see '│.○ solo '
 check "and the one in view is not" [ $(wc -l <$tmp/notified) -eq $told ]
-claude alpha:three stop '{"last_assistant_message": "$(touch '$tmp'/ran) \"q\" `x` #{pane_id}"}'
-check "one done too, its words as they are, run by no shell" await notified '-a|arena|--|three|$(touch '$tmp'/ran) "q" x #{pane_id}|'
-check "nor by tmux" [ ! -e $tmp/ran ]
+told=$(wc -l <$tmp/notified)
+for round in 1 2 3 4 5; do
+  claude alpha:three stop '{"last_assistant_message": "$(touch '$tmp'/ran) \"q\" `x` #{pane_id}"}'
+  see '│ ◉ three '
+  claude alpha:three prompt
+  see '│ ◐ three '
+done
+check "a Claude cycling between working and done is no notice" [ $(wc -l <$tmp/notified) -eq $told ]
 claude alpha:three waiting '{"message": "Claude needs your permission to use Bash"}'
 see '│ ▲ three '
 key M-n
