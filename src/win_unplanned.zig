@@ -118,3 +118,9 @@ pub fn titleClick(app: *App, x: u16) !bool {
     try app.newTicket();
     return true;
 }
+
+/// The not planned window's title-bar extra: its `+ new` button.
+pub fn frame(app: *App, w: *Writer, r: theme.Roles) !void {
+    const head = app.newHead() orelse return;
+    try bench.headButton(w, r, head.x, head.y, " + new ", r.accent, false);
+}

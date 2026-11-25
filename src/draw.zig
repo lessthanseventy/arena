@@ -2291,13 +2291,8 @@ fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet
     if (whole) {
         try bench.say(w, rect.x + ww - 10, rect.y, "q close", r.dim, bar, false);
     } else try bench.say(w, rect.x + ww - 3, rect.y, if (app.plan_shut.contains(win)) "▸" else "▾", r.dim, bar, false);
-    if (win == .unplanned and !whole) if (app.newHead()) |head| {
-        try bench.headButton(w, r, head.x, head.y, " + new ", r.accent, false);
-    };
-    if (win == .goals and !whole) {
-        const head = app.goalHead();
-        try bench.headButton(w, r, head.x, head.y, " + goal ", r.accent, false);
-    }
+    if (win == .unplanned and !whole) try win_unplanned.frame(app, w, r);
+    if (win == .goals and !whole) try win_goals.frame(app, w, r);
     if (win == .driving) try win_driving.frame(app, w, r, rect, ww, bar);
     for (0..body) |line| {
         const at = if (lit) app.planRowOnLine(sheet, win, body, line) else line;

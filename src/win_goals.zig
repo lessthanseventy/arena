@@ -150,3 +150,9 @@ pub fn titleClick(app: *App, x: u16) !bool {
     try app.openGoal();
     return true;
 }
+
+/// The goals window's title-bar extra: its `+ goal` button.
+pub fn frame(app: *App, w: *Writer, r: theme.Roles) !void {
+    const head = app.goalHead();
+    try bench.headButton(w, r, head.x, head.y, " + goal ", r.accent, false);
+}
