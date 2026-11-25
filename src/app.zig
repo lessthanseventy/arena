@@ -2570,8 +2570,8 @@ pub const App = struct {
         };
     }
 
-    /// The doc of a row, opened: a link by `xdg-open`, a file of the ticket's repo in a
-    /// window of its own, in `glow` else `less`.
+    /// The doc of a row, opened: a link by `xdg-open`, a file of the ticket's worktree (its repo's
+    /// checkout when it has none) in a window of its own, in `glow` else `less`.
     fn openDoc(app: *App, need: tickets.Need) !bool {
         const doc = need.doc orelse return true;
         if (std.mem.startsWith(u8, doc, "http://") or std.mem.startsWith(u8, doc, "https://")) {
@@ -2579,12 +2579,16 @@ pub const App = struct {
         }
         if (!plainName(need.repo)) return true;
         const script =
-            "f=\"$HOME/projects/$1/$2\"; if [ ! -f \"$f\" ]; then echo \"no such file: $f\"; read _; exit; fi; " ++
+            "f=\"$HOME/projects/$1/$2\"; " ++
+            "if [ -n \"$3\" ]; then for d in \"$HOME/projects/$1/.worktrees/t$3-\"*/; do [ -f \"$d$2\" ] && f=\"$d$2\" && break; done; fi; " ++
+            "if [ ! -f \"$f\" ]; then echo \"no such file: $f\"; read _; exit; fi; " ++
             "if command -v glow >/dev/null 2>&1; then glow -p \"$f\"; else less \"$f\"; fi";
         var cmd: Writer.Allocating = .init(app.gpa);
         defer cmd.deinit();
+        var ticket_buf: [16]u8 = undefined;
+        const ticket = if (need.ticket) |t| std.fmt.bufPrint(&ticket_buf, "{d}", .{t}) catch "" else "";
         try cmd.writer.writeAll("new-window -a -n doc sh -c ");
-        for ([_][]const u8{ script, "_", need.repo, doc }, 0..) |arg, i| {
+        for ([_][]const u8{ script, "_", need.repo, doc, ticket }, 0..) |arg, i| {
             if (i > 0) try cmd.writer.writeAll(" ");
             try tmuxQuote(&cmd.writer, arg);
         }
