@@ -318,7 +318,7 @@ pub const Session = struct {
     /// babylon's own session, where its pipeline runs gates: kept last, off the rail and the
     /// agents, and reached from the board.
     pub fn gate(s: *const Session) bool {
-        return std.mem.eql(u8, s.name, "babylon");
+        return std.mem.eql(u8, s.name, "babylon-gate");
     }
 
     /// The orchestrator's session (`babylon orchestrator` starts it): kept off the rail with the gate.
@@ -8869,8 +8869,9 @@ test "babylon's own session, sorted last, is off the list and lists no agents" {
     var mine: Window = .{ .id = 2, .claude = .working };
     var gates = [_]*Window{&gate};
     var mines = [_]*Window{&mine};
-    var babylon: Session = .{ .id = 1, .name = @constCast("babylon") };
+    var babylon: Session = .{ .id = 1, .name = @constCast("babylon-gate") };
     babylon.wins = .fromOwnedSlice(&gates);
+    try std.testing.expect(!(Session{ .id = 9, .name = @constCast("babylon") }).gate());
     var work: Session = .{ .id = 2, .name = @constCast("work") };
     work.wins = .fromOwnedSlice(&mines);
     var sessions = [_]*Session{ &work, &babylon };

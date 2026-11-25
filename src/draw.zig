@@ -801,7 +801,6 @@ fn cellCount(text: []const u8) usize {
 fn shortName(name: []const u8) []const u8 {
     const short = [_][2][]const u8{
         .{ "ficciones", "ficc" },
-        .{ "babylon-work", "bab-w" },
         .{ "silliest_of_gooses", "goose" },
         .{ "menard", "menrd" },
     };
