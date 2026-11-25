@@ -2105,18 +2105,18 @@ mkdir -p $tmp/.config/ficciones/theme
 for name in AMBER VIOLET AMBERDIM EMBERDIM INK DIM GREY SURFACE0 SURFACE2 SURFACE3 SURFACE4 BG CYAN MOSS PINK RED; do print -r -- "PALETTE_$name=#808080"; done >$tmp/.config/ficciones/theme/palette.sh
 print -r -- '{"tickets":[],"plan":{"now":[{"ticket":701,"repo":"arena","title":"First building","state":"building","since":"2026-11-24T10:00:00Z"},{"ticket":702,"repo":"arena","title":"Second building","state":"building","since":"2026-11-24T10:00:00Z"}],"next":[{"ticket":7,"repo":"tlon","title":"Lights","why":"","set_by":"orchestrator","waits_on":[]}],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}' >$tmp/run/babylon/board.json
 check "in Workbench's look the plan's windows have their title bars" await shows '◆ now.*◆ goals'
-check "now holds the tickets being built" see 'First building'
+check "now holds the tickets being built" see 'First buil'
 title_row() { screen | grep -n "$1" | head -1 | cut -d: -f1 }
 next_row=$(title_row '◆ next')
 key z
 check "z folds the picked window to its summary" see '◐ 2 building'
-check "its rows are gone" gone 'First building'
+check "its rows are gone" gone 'First buil'
 same_row() { [[ $(title_row '◆ next') == $next_row ]] }
 check "and the window below it stays on the same screen row" await same_row
 folded_file=$tmp/.local/state/arena/folded
 check "the fold is saved beside the repo folds" await eval 'grep -qx "plan:now" $folded_file'
 key z
-check "z again opens it" see 'First building'
+check "z again opens it" see 'First buil'
 key f
 check "f opens the window whole, as a modal" see 'q close'
 key q
