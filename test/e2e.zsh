@@ -2243,12 +2243,13 @@ check "a list longer than the rail says how many Claudes are scrolled above" see
 check "and the one in view is still in it" see '^│▌◐ 918 *│'
 
 # resting on a card shows a peek of its ticket and its Claude, over the board; leaving takes it
-# away and the board is as it was
+# away and the board is as it was. Claimed days ago: an age chip that ticks over from 9s to 10s
+# changes the board's text between the two captures.
 g6=$(inner display -p -t gamma:g6 '#{pane_id}')
 inner send-keys -t gamma:g6 'echo peek-pane-line' Enter
 claude gamma:g6 tool '{"tool_name": "Read", "tool_input": {"file_path": "/a/peekme.zig"}}'
 print -r -- '{"tickets":[{"id":920,"repo":"arena","title":"Peek me","kind":"ticket","status":"doing","priority":"med","claimed_by":"'$g6'",'\
-'"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[]}]}' >$tmp/run/babylon/board.json
+'"claimed_at":"'$(date -u -d '2 days ago' +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[]}]}' >$tmp/run/babylon/board.json
 key M-b
 see ' every [0-9]+ +arena'
 see '#920 Peek me'
@@ -2258,7 +2259,13 @@ base=$(settled)
 mouse 35 ${(z)$(spot '#920 Peek')} M
 check "a pointer resting on a card opens a peek with its ticket, its Claude's doing and a line of its pane" await eval 'shows "esc away" && shows "doing: Read" && shows "peek-pane-line" && [[ $(screen | grep -c "#920 Peek me") -ge 2 ]]'
 mouse 35 80 24 M
-check "and leaving it takes the peek away, the board as it was" await eval '[[ $(settled) == $base ]]'
+as_base() { [[ $(settled) == $base ]] }
+back_to_base() {
+  poll as_base && return 0
+  diff <(print -r -- $base) <(settled) | sed 's/^/      /'
+  return 1
+}
+check "and leaving it takes the peek away, the board as it was" back_to_base
 mouse 35 ${(z)$(spot '#920 Peek')} M
 await shows "esc away"
 key Escape
