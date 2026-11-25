@@ -3011,6 +3011,11 @@ pub const App = struct {
             if (i > 0) try cmd.writer.writeAll(" ");
             try tmuxQuote(&cmd.writer, arg);
         }
+        for ([_][]const u8{ "rc", "pane", "out" }) |name| {
+            var path: [std.fs.max_path_bytes]u8 = undefined;
+            const at = std.fmt.bufPrint(&path, "{s}/{s}", .{ dir, name }) catch continue;
+            std.Io.Dir.cwd().deleteFile(app.io, at) catch {};
+        }
         try app.send(.ignore, "{s}", .{cmd.written()});
         for (app.check_runs.items, 0..) |run, i| if (run.ticket == ask.ticket and run.n == ask.n) {
             _ = app.check_runs.orderedRemove(i);
@@ -9271,8 +9276,6 @@ pub fn branchTicket(branch: []const u8) ?[]const u8 {
     return branch[1..n];
 }
 
-/// `arg` as one argument of a tmux command: in double quotes, with `\`, `"` and `$` escaped and
-/// `#` doubled, which tmux would read as a format.
 /// The last `n` lines of `text`, each cut to 100 characters, in `buf`.
 fn lastLines(text: []const u8, n: usize, buf: []u8) []const u8 {
     const body = std.mem.trimEnd(u8, text, " \r\n");
@@ -9304,6 +9307,8 @@ test lastLines {
     try std.testing.expectEqualStrings("", lastLines("", 5, &buf));
 }
 
+/// `arg` as one argument of a tmux command: in double quotes, with `\`, `"` and `$` escaped and
+/// `#` doubled, which tmux would read as a format.
 fn tmuxQuote(w: *Writer, arg: []const u8) !void {
     try w.writeByte('"');
     for (arg) |c| switch (c) {
