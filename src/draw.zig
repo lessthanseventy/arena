@@ -494,7 +494,7 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
         const picked = if (app.railPicked()) |pick| pick == .session and pick.session == s.id else false;
         if (!wide) {
             const name = shortName(s.name);
-            try pickBar(app, w, pen, picked, if (here) chip(app) else .{});
+            try repoBar(app, w, pen, app.sessionRepo(index), picked, if (here) chip(app) else .{});
             try w.writeAll(name);
             for (0..inner - 3 - cellCount(name)) |_| try w.writeAll(" ");
             try pen.set(w, if (here) chip(app) else ink(app, "amber", 4), null);
@@ -505,13 +505,25 @@ fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: boo
         } else {
             const review = App.sessionReview(s);
             const many = App.sessionMark(s) != .none and App.sessionCount(s) > 1;
-            const room = inner - 6 - @intFromBool(review != .none) - @intFromBool(many);
+            const repo = app.sessionRepo(index);
+            const icon = repoIcon(app, repo);
+            const lead = if (icon != null) @as(usize, 2) else 0;
+            const room = inner - 6 - lead - @intFromBool(review != .none) - @intFromBool(many);
             const cut = cellCount(s.name) > room;
             const name = clip(s.name, room - @intFromBool(cut));
-            try pickBar(app, w, pen, picked, if (here) chip(app) else .{});
+            const base = if (here) chip(app) else vt.Style{};
+            try repoBar(app, w, pen, repo, picked, base);
+            if (icon) |mark| {
+                var hue = repoEdge(app, repo).?;
+                if (here) hue.bg_color = chip(app).bg_color;
+                try pen.set(w, hue, null);
+                try w.writeAll(mark);
+                try pen.set(w, base, null);
+                try w.writeAll(" ");
+            }
             try w.writeAll(name);
             if (cut) try w.writeAll("…");
-            for (0..inner - 5 - @intFromBool(review != .none) - @intFromBool(many) - cellCount(name) - @intFromBool(cut)) |_| try w.writeAll(" ");
+            for (0..inner - 5 - lead - @intFromBool(review != .none) - @intFromBool(many) - cellCount(name) - @intFromBool(cut)) |_| try w.writeAll(" ");
             if (review != .none) {
                 try pen.set(w, if (here) chip(app) else reviewInk(app, review), null);
                 try put(w, reviewGlyph(review));
@@ -557,14 +569,20 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
             const base = if (lit) heading(app) else if (!wide and repo.len > 0) repoStyle(repo) else dim;
             try pen.set(w, base, null);
             if (wide) {
-                const name = clip(s.name, inner - 2);
+                const icon = repoIcon(app, repo);
+                const lead: usize = if (icon != null) 2 else 0;
+                const name = clip(s.name, inner - 2 - lead);
                 if (repoEdge(app, repo)) |edge| {
                     try pen.set(w, edge, null);
                     try w.writeAll("▌");
-                    try pen.set(w, base, null);
+                    if (icon) |mark| {
+                        try w.writeAll(mark);
+                        try pen.set(w, base, null);
+                        try w.writeAll(" ");
+                    } else try pen.set(w, base, null);
                 } else try w.writeAll(" ");
                 try w.writeAll(name);
-                filled = 1 + cellCount(name);
+                filled = 1 + lead + cellCount(name);
             } else {
                 // a rule with the name in it, so it does not read as an entry
                 const name = shortName(s.name);
@@ -579,12 +597,7 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
             var buf: [8]u8 = undefined;
             const time = ago(&buf, app.epoch, win.since);
             const picked = if (app.railPicked()) |pick| pick == .agent and pick.agent == win.id else false;
-            if (repoEdge(app, app.sessionRepo(a.session))) |edge| {
-                if (picked) try pickBar(app, w, pen, true, dim) else {
-                    try pen.set(w, edge, null);
-                    try w.writeAll("▌");
-                }
-            } else try pickBar(app, w, pen, picked, if (win.claude == .none) dim else ink(app, "amber", 4));
+            try repoBar(app, w, pen, app.sessionRepo(a.session), picked, if (win.claude == .none) dim else ink(app, "amber", 4));
             try pen.set(w, if (win.claude == .none) dim else ink(app, "amber", 4), null);
             try put(w, agentGlyph(app, win));
             filled = 2;
@@ -618,6 +631,7 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
         },
         .detail => |a| {
             const win = a.win;
+            try repoBar(app, w, pen, app.sessionRepo(a.session), false, dim);
             // at the right: how long a quiet one has said nothing, or how long a done one worked
             var buf: [16]u8 = undefined;
             var since: [8]u8 = undefined;
@@ -629,7 +643,7 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
             else
                 "";
             try pen.set(w, dim, null);
-            try w.writeAll("   ");
+            try w.writeAll("  ");
             try fitted(w, win.detail(), inner - 4 - if (right.len > 0) right.len + 1 else 0);
             if (right.len > 0) {
                 try pen.set(w, if (quiet) ink(app, "emberdim", 1) else dim, null);
@@ -640,8 +654,9 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
         },
         .sub => |sub| {
             const win = sub.agent.win;
+            try repoBar(app, w, pen, app.sessionRepo(sub.agent.session), false, dim);
             try pen.set(w, dim, null);
-            try w.writeAll("   ");
+            try w.writeAll("  ");
             try pen.set(w, ink(app, "amber", 4), null);
             try put(w, if (win.stirring) glyph(app, .working) else '◔');
             // lit as its Claude's title is in view, while that Claude shows it
@@ -651,8 +666,9 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
             filled = inner - 1;
         },
         .background => |a| {
+            try repoBar(app, w, pen, app.sessionRepo(a.session), false, dim);
             try pen.set(w, dim, null);
-            try w.writeAll("   ");
+            try w.writeAll("  ");
             try pen.set(w, ink(app, "amber", 4), null);
             // its subagents' rows spin for them; with none listed, this row is a subagent's
             try put(w, if (a.win.stirring and a.win.subs() == 0) glyph(app, .working) else '◔');
@@ -663,8 +679,9 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
         },
         .meta => |a| {
             const win = a.win;
+            try repoBar(app, w, pen, app.sessionRepo(a.session), false, dim);
             try pen.set(w, dim, null);
-            try w.writeAll("   ");
+            try w.writeAll("  ");
             var count: [8]u8 = undefined;
             // the share of its budget, when its status line says, else the tokens
             const tokens = if (win.ctx > 0)
@@ -708,7 +725,7 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
         },
         .pipeline => |fold| {
             const picked = if (app.railPicked()) |pick| pick == .fold and pick.fold == app.foldKey(fold) else false;
-            try pickBar(app, w, pen, picked, dim);
+            try repoBar(app, w, pen, if (fold.session) |si| app.sessionRepo(si) else fold.repo, picked, dim);
             try pen.set(w, dim, null);
             var buf: [96]u8 = undefined;
             const text = if (fold.session != null)
@@ -739,6 +756,30 @@ fn repoEdge(app: *const App, repo: []const u8) ?vt.Style {
 }
 
 /// A repo's colour, one of the terminal's own, the same for the same name.
+/// The rail's first cell of a row: the picked mark, else `repo`'s `▌`, else a space in `base`.
+fn repoBar(app: *const App, w: *Writer, pen: *Pen, repo: []const u8, picked: bool, base: vt.Style) !void {
+    if (!picked) if (repoEdge(app, repo)) |edge| {
+        // a selected Claude's bar keeps its ground under the edge, not its ink
+        const over = pen.over;
+        pen.over = null;
+        var drawn = edge;
+        drawn.bg_color = (over orelse base).bg_color;
+        try pen.set(w, drawn, null);
+        try w.writeAll("▌");
+        pen.over = over;
+        try pen.set(w, base, null);
+        return;
+    };
+    try pickBar(app, w, pen, picked, base);
+}
+
+/// `repo`'s icon, none where `repoEdge` has no colour for it.
+fn repoIcon(app: *const App, repo: []const u8) ?[]const u8 {
+    if (repoEdge(app, repo) == null) return null;
+    for (theme.Roles.repo_names, 0..) |name, i| if (std.mem.eql(u8, name, repo)) return repo_glyphs[i];
+    return null;
+}
+
 fn repoStyle(repo: []const u8) vt.Style {
     return .{ .fg_color = .palette(@intCast(2 + std.hash.Wyhash.hash(0, repo) % 5)) };
 }
@@ -5781,4 +5822,63 @@ test "Plan's rows start with a ▌ in their repo's colour, and a goal's card has
         try eq(@as(u21, '▌'), mark.cp);
         try eq(r.repo[0], mark.fg);
     }
+}
+
+test "the rail's sessions and Claudes wear their repo's ▌ and icon, one repo's colour to a row" {
+    const eq = std.testing.expectEqual;
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":701,"repo":"arena","status":"doing","title":"A"},
+        \\{"id":702,"repo":"babylon","status":"doing","title":"B"}]}
+    );
+    defer board.deinit();
+    var first: Session = .{ .id = 2, .name = @constCast("alpha") };
+    var second: Session = .{ .id = 3, .name = @constCast("beta") };
+    var a: Window = .{ .id = 1, .name = @constCast("a"), .claude = .working, .since = 1, .info = @constCast("\t\t\t\tt701-x") };
+    var b: Window = .{ .id = 2, .name = @constCast("b"), .claude = .working, .since = 1, .info = @constCast("\t\t\t\tt702-y") };
+    var wa = [_]*Window{&a};
+    var wb = [_]*Window{&b};
+    first.wins = .fromOwnedSlice(&wa);
+    second.wins = .fromOwnedSlice(&wb);
+    var sessions = [_]*Session{ &first, &second };
+    var app = homeApp(&board);
+    app.board_view = null;
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 24;
+    app.sessions = .fromOwnedSlice(&sessions);
+    app.current = 2;
+    app.roles = bench.roles();
+    const r = bench.roles();
+    var buf: [65536]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try rail(&app, &out);
+    const drawn = out.buffered();
+
+    for (0..2) |i| {
+        const edge = try bench.probe(drawn, 1, 2 + i);
+        try eq(@as(u21, '▌'), edge.cp);
+        try eq(r.repo[i], edge.fg);
+        const icon = try bench.probe(drawn, 2, 2 + i);
+        try eq(try std.unicode.utf8Decode(repo_glyphs[i]), icon.cp);
+        try eq(r.repo[i], icon.fg);
+    }
+
+    var lines: [64]App.AgentLine = undefined;
+    const n = app.railAgents(&lines);
+    var seen: usize = 0;
+    for (lines[0..n], 0..) |line, at| {
+        const si = switch (line) {
+            .session => |si| si,
+            .agent, .detail, .meta, .background => |ag| ag.session,
+            .sub => |sub| sub.agent.session,
+            else => continue,
+        };
+        const y = app.railAgentsRow() + 1 + at;
+        const edge = try bench.probe(drawn, 1, y);
+        try eq(@as(u21, '▌'), edge.cp);
+        try eq(r.repo[si], edge.fg);
+        seen += 1;
+    }
+    try std.testing.expect(seen >= 4);
 }
