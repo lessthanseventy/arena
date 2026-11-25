@@ -5301,7 +5301,9 @@ pub const App = struct {
         if (row.kind == .other) {
             const a = app.otherAt(row.item) orelse return;
             try app.closeBoard();
-            return app.goAgent(a);
+            if (std.mem.eql(u8, key, "\r")) return app.goAgent(a);
+            app.normal = true;
+            return app.openPopup(.{ .agent = a.win.id });
         }
         if (row.kind == .idea and sheets.Sheet.ideaState(given.ideas[row.item]) == .draft) return app.openDraft(given.ideas[row.item].epic);
         if (!std.mem.eql(u8, key, "\r")) {
@@ -11689,7 +11691,7 @@ test "Your move is a fixed slot whatever it holds, the picked item opens to its 
     }
 }
 
-test "⏎ on a Claude with no ticket in in flight's foot closes the board and shows its window, and its peek is its window" {
+test "⏎ on a Claude with no ticket in in flight's foot shows its window, space opens its popup, and its peek is its window" {
     var board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[],"plan":{"now":[],"next":[],"goals":[],
         \\"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
@@ -11705,6 +11707,11 @@ test "⏎ on a Claude with no ticket in in flight's foot closes the board and sh
     defer devnull.close(std.testing.io);
     var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = devnull, .board = board, .current = 3 };
     defer app.pending.deinit(app.gpa);
+    const pane = try Pane.create(&app, 7, 20, 5);
+    defer pane.destroy(app.gpa);
+    var panes = [_]*Pane{pane};
+    asks.panes = .fromOwnedSlice(&panes);
+    asks.agent_pane = 7;
     app.sessions = .fromOwnedSlice(&sessions);
     app.term_w = 200;
     app.view_w = 60;
@@ -11724,7 +11731,14 @@ test "⏎ on a Claude with no ticket in in flight's foot closes the board and sh
     app.board_view.?.plan_pick = first.pick.?;
     try std.testing.expect(app.peekOf(.{ .window = 2 }).?.win == &asks);
 
+    try app.planKey(" ");
+    try eq(@as(?BoardView, null), app.board_view);
+    try std.testing.expect(app.popup != null and app.popup.?.entry == .agent and app.popup.?.entry.agent == 2);
+    app.closePopup();
+
+    app.board_view = .{ .home = true, .plan = true, .focus = .board, .plan_pick = first.pick.? };
     try app.planKey("\r");
     try eq(@as(?BoardView, null), app.board_view);
+    try std.testing.expect(app.popup == null);
     try eq(@as(usize, 1), session.focus);
 }
