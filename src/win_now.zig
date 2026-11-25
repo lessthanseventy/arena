@@ -52,3 +52,17 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
         else => {},
     }
 }
+
+/// Enter on an in flight row: to the Claude building it, or with none and nothing moving it,
+/// starts one; to the gate for a ticket in the pipeline.
+pub fn act(app: *App, row: *const sheets.Row) !void {
+    const given = app.board.?.plan().?;
+    const id = row.ticket orelse return;
+    const item = for (given.now) |item| {
+        if (item.ticket == id) break item;
+    } else return;
+    const pane = if (item.holder()) |held| (if (app.paneWindow(held) != null) held else null) else null;
+    if (pane) |held| return app.showPane(held);
+    if (item.stalled != null) return app.send(.ignore, app_mod.captured("babylon start {d}"), .{id});
+    if (!std.mem.eql(u8, item.state, "building")) try app.openGate(id);
+}

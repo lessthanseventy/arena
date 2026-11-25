@@ -114,3 +114,31 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
         else => {},
     }
 }
+
+/// Enter on an idea: plans it, or goes to the Claude planning it. On a goal: the board on its
+/// first step that has not landed.
+pub fn act(app: *App, row: *const sheets.Row) !void {
+    const given = app.board.?.plan().?;
+    switch (row.kind) {
+        .idea => {
+            const idea = given.ideas[row.item];
+            switch (sheets.Sheet.ideaState(idea)) {
+                .idea => try app.send(.ignore, app_mod.captured("babylon idea {d} --plan"), .{idea.epic}),
+                .planning => if (idea.holder()) |held| if (app.paneWindow(held) != null) return app.showPane(held),
+                .draft => unreachable,
+            }
+        },
+        .goal, .focal => {
+            try app.toBoard();
+            for (given.goals) |goal| {
+                if (goal.epic != row.ticket) continue;
+                for (goal.steps) |step| {
+                    if (std.mem.eql(u8, step.state, "landed")) continue;
+                    _ = app.pickCard(step.ticket);
+                    return;
+                }
+            }
+        },
+        else => {},
+    }
+}

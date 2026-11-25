@@ -16,6 +16,11 @@ const sheets = @import("plan.zig");
 const grab_mod = @import("grab.zig");
 const capture = @import("report.zig");
 const draw = @import("draw.zig");
+const win_goals = @import("win_goals.zig");
+const win_landed = @import("win_landed.zig");
+const win_next = @import("win_next.zig");
+const win_now = @import("win_now.zig");
+const win_unplanned = @import("win_unplanned.zig");
 const build_options = @import("build_options");
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
@@ -34,7 +39,7 @@ const quiet_s = 600;
 const stir_s = 60;
 /// A tmux `run-shell -b` of `cmd` whose output tmux never shows: it would open view mode on a pane,
 /// which swallows every key typed to it. What it prints, a refusal, goes to a notification.
-fn captured(comptime cmd: []const u8) []const u8 {
+pub fn captured(comptime cmd: []const u8) []const u8 {
     return "run-shell -b \"out=\\$(" ++ cmd ++ " 2>&1) || " ++
         "{{ command -v notify-send >/dev/null && notify-send -a arena -- \\\"\\$out\\\"; }}\"";
 }
@@ -3762,12 +3767,12 @@ pub const App = struct {
 
     /// Ticket `id`'s whole detail asked of babylon and shown over the open board. False with
     /// nowhere for babylon to write it.
-    fn openDetail(app: *App, id: u32) !bool {
+    pub fn openDetail(app: *App, id: u32) !bool {
         return app.openText(id, "detail", false);
     }
 
     /// Ticket `id`'s gate run, the run in progress's when it has one, in the modal frame.
-    fn openGate(app: *App, id: u32) !void {
+    pub fn openGate(app: *App, id: u32) !void {
         _ = try app.openText(id, "gate", true);
     }
 
@@ -3801,7 +3806,7 @@ pub const App = struct {
     /// The open board's pick put on ticket `id`: in the every view where it shows there, else
     /// in its repo's own columns, else in the backlog. False when the board shows it nowhere,
     /// the board then as it opens.
-    fn pickCard(app: *App, id: u32) bool {
+    pub fn pickCard(app: *App, id: u32) bool {
         const view = &app.board_view.?;
         var repos: [max_repos][]const u8 = undefined;
         const n = if (app.board) |*b| b.repos(&repos) else 0;
@@ -4196,7 +4201,7 @@ pub const App = struct {
     }
 
     /// The lane the every view opens on: the first with a card in its first column.
-    fn firstLane(app: *const App) usize {
+    pub fn firstLane(app: *const App) usize {
         var repos: [max_repos + 1][]const u8 = undefined;
         for (0..app.laneRepos(&repos)) |k| if (app.laneCard(k, 0, 0) != null) return k;
         return 0;
@@ -5135,7 +5140,7 @@ pub const App = struct {
 
     /// Chip `at` of not planned's row folded or opened: a repo's through #849's fold, the backlog's
     /// its cards in the rows' place.
-    fn toggleChip(app: *App, at: usize) !void {
+    pub fn toggleChip(app: *App, at: usize) !void {
         const view = &app.board_view.?;
         var chips: [sheets.max_chips]sheets.Chip = undefined;
         const all = app.chipsOf(&chips);
@@ -5241,51 +5246,12 @@ pub const App = struct {
             .ideas_more => if (row.fold) |bit| {
                 view.unfolded ^= @as(u8, 1) << bit;
             },
-            .idea => {
-                const idea = given.ideas[row.item];
-                switch (sheets.Sheet.ideaState(idea)) {
-                    .idea => try app.send(.ignore, captured("babylon idea {d} --plan"), .{idea.epic}),
-                    .planning => if (idea.holder()) |held| if (app.paneWindow(held) != null) return app.showPane(held),
-                    .draft => unreachable,
-                }
-            },
-            .now => {
-                const id = row.ticket orelse return;
-                const item = for (given.now) |item| {
-                    if (item.ticket == id) break item;
-                } else return;
-                const pane = if (item.holder()) |held| (if (app.paneWindow(held) != null) held else null) else null;
-                if (pane) |held| return app.showPane(held);
-                if (item.stalled != null) return app.send(.ignore, captured("babylon start {d}"), .{id});
-                if (!std.mem.eql(u8, item.state, "building")) try app.openGate(id);
-            },
-            .next => if (row.ticket) |id| try app.send(.ignore, captured("babylon start {d}"), .{id}),
-            .chips => try app.toggleChip(view.plan_chip),
-            .todo => try app.act(.go),
+            .idea, .goal, .focal => try win_goals.act(app, row),
+            .now => try win_now.act(app, row),
+            .next => try win_next.act(app, row),
+            .chips, .todo, .unplanned => try win_unplanned.act(app, row),
             .goals_more => try app.toBoard(),
-            .goal, .focal => {
-                try app.toBoard();
-                for (given.goals) |goal| {
-                    if (goal.epic != row.ticket) continue;
-                    for (goal.steps) |step| {
-                        if (std.mem.eql(u8, step.state, "landed")) continue;
-                        _ = app.pickCard(step.ticket);
-                        return;
-                    }
-                }
-            },
-            .landed => if (row.ticket) |id| {
-                _ = try app.openDetail(id);
-            },
-            .unplanned => {
-                try app.toBoard();
-                const bv = &app.board_view.?;
-                bv.repo = 0;
-                bv.backlog = false;
-                bv.row = 0;
-                bv.lane = app.firstLane();
-                bv.col = 0;
-            },
+            .landed => try win_landed.act(app, row),
             else => {},
         }
     }
@@ -6167,7 +6133,7 @@ pub const App = struct {
     /// close and reopen move a ticket between to do and done, the columns between being a claim's
     /// and the pipeline's; up and down move it along its column, the pick going with it. Each
     /// through babylon's command line. An action the picked card has not does nothing.
-    fn act(app: *App, action: CardAction) !void {
+    pub fn act(app: *App, action: CardAction) !void {
         const view = if (app.board_view) |*open| open else return;
         const card = app.pickedCard() orelse return;
         if (action == .open) {

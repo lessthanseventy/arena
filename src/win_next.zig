@@ -48,3 +48,8 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
         else => {},
     }
 }
+
+/// Enter on a row of next: starts its ticket.
+pub fn act(app: *App, row: *const sheets.Row) !void {
+    if (row.ticket) |id| try app.send(.ignore, app_mod.captured("babylon start {d}"), .{id});
+}
