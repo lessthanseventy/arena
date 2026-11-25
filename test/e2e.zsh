@@ -2015,9 +2015,9 @@ exec {other}>$tmp/other
 other_there() { [[ $(inner list-clients -F '#{client_control_mode}') == 1 ]] }
 check "a control-mode client that is no arena is on the server" await other_there
 outer new-window -t o \
-  "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 $bin -L $in board 7; echo EXIT \$?; cat"
-check "with no arena running, arena board and an id starts one with the board on that ticket" see '│ Which colour\? +│'
-untold() { ! grep -q 'arena board' $tmp/other-out }
+  "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 $bin -L $in plan 7; echo EXIT \$?; cat"
+check "with no arena running, arena plan and an id starts one with the plan's pick on that ticket" see '▌ 1 #7 tlon'
+untold() { ! grep -q 'arena plan' $tmp/other-out }
 check "and a control-mode client that is no arena is told nothing" untold
 key Escape Escape M-q
 check "which leaves as any other" see 'EXIT 0'
@@ -2189,7 +2189,8 @@ key -l 'echo restarted-jkdufltb'
 key Enter
 check "a click on the row under the column leaves it the keys, in insert: a sentence reaches its pane whole" await said orchestrator:orch restarted-jkdufltb
 key M-b
-gone ' every [0-9]+ +[a-z]'
+see '╭─ 1 one ─'
+key C-c
 key -l 'echo worker-jkdufltb'
 key Enter
 check "and the board closed, a worker's pane gets it whole too" await said alpha: worker-jkdufltb

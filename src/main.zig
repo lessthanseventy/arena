@@ -265,11 +265,12 @@ const clients_option = "@arena_clients";
 const usage =
     \\usage: arena [-L socket] [session]
     \\       arena --version
-    \\       arena [-L socket] board <ticket>         the board on that ticket
+    \\       arena [-L socket] plan <ticket>          the plan with its pick on that ticket
+    \\       arena [-L socket] board <ticket>         the same: board is its old name
     \\       arena [-L socket] show <%pane|#ticket>   that pane, or the Claude holding that ticket, in front
     \\       arena [-L socket] inbox                  home, with what needs you
     \\
-    \\board, show and inbox tell the arena that is running; with none, board starts one,
+    \\plan, board, show and inbox tell the arena that is running; with none, plan starts one,
     \\and show and inbox exit 3.
     \\
 ;
@@ -284,14 +285,14 @@ fn showTarget(target: []const u8) bool {
 
 /// Whether `arg` is one of arena's verbs, which are reserved: never a session's name.
 fn isVerb(arg: []const u8) bool {
-    return std.mem.eql(u8, arg, "board") or std.mem.eql(u8, arg, "show") or std.mem.eql(u8, arg, "inbox");
+    return std.mem.eql(u8, arg, "plan") or std.mem.eql(u8, arg, "board") or std.mem.eql(u8, arg, "show") or std.mem.eql(u8, arg, "inbox");
 }
 
 /// Whether `verb` is given what it takes as its next argument, `next` (null at the end).
 fn verbArgOk(verb: []const u8, next: ?[]const u8) bool {
     if (std.mem.eql(u8, verb, "inbox")) return next == null;
     const arg = next orelse return false;
-    if (std.mem.eql(u8, verb, "board")) return ticketId(arg) != null;
+    if (std.mem.eql(u8, verb, "plan") or std.mem.eql(u8, verb, "board")) return ticketId(arg) != null;
     return showTarget(arg);
 }
 
@@ -306,6 +307,7 @@ test showTarget {
 }
 
 test isVerb {
+    try std.testing.expect(isVerb("plan"));
     try std.testing.expect(isVerb("board"));
     try std.testing.expect(isVerb("show"));
     try std.testing.expect(isVerb("inbox"));
@@ -316,6 +318,8 @@ test isVerb {
 test verbArgOk {
     try std.testing.expect(verbArgOk("inbox", null));
     try std.testing.expect(!verbArgOk("inbox", "foo"));
+    try std.testing.expect(verbArgOk("plan", "12"));
+    try std.testing.expect(!verbArgOk("plan", null));
     try std.testing.expect(verbArgOk("board", "12"));
     try std.testing.expect(!verbArgOk("board", "foo"));
     try std.testing.expect(!verbArgOk("board", null));
@@ -385,7 +389,7 @@ fn run(init: std.process.Init, exe: ?[]const u8) !Ended {
                 try std.Io.File.stderr().writeStreamingAll(io, usage);
                 std.process.exit(2);
             }
-            if (std.mem.eql(u8, args[i], "board")) {
+            if (std.mem.eql(u8, args[i], "plan") or std.mem.eql(u8, args[i], "board")) {
                 card = ticketId(next.?);
                 i += 1;
             } else if (std.mem.eql(u8, args[i], "show")) {
@@ -575,7 +579,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
         if (app.listed and open_wanted != .as_is) {
             switch (open_wanted) {
                 .as_is => {},
-                .card => |id| try app.showCard(id),
+                .card => |id| try app.showPlan(id),
                 .home => try app.goHome(),
                 .kept => |was| try app.restore(was),
             }

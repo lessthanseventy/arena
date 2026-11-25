@@ -158,7 +158,7 @@ by every Claude on the machine, over MCP, and its hooks; arena's plugin keeps on
 arena             # home: the plan and the orchestrator's column; with no board, the most recent session
 arena work        # the session called work, made if it is not there
 arena -L socket   # a tmux server other than the default one
-arena board 240   # the board on ticket 240, in the arena that is running
+arena plan 240    # the plan with its pick on ticket 240, in the arena that is running (`arena board 240` is the same)
 arena show %290   # pane 290 in front: its session and window, picked in the rail
 arena show '#324' # the pane of the Claude holding ticket 324
 arena inbox       # home, with what needs you atop the orchestrator's column

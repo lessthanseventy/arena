@@ -17,7 +17,7 @@ pub const Event = union(enum) {
     window_selected: u32,
     /// This client is now on the session with this id.
     session_changed: u32,
-    /// `arena board <id>` run elsewhere asks this arena for the board on that ticket.
+    /// `arena plan <id>` run elsewhere asks this arena for the plan with its pick on that ticket.
     card: u32,
     /// `arena show %<id>` run elsewhere asks this arena to put that pane in front.
     pane: u32,
@@ -29,13 +29,13 @@ pub const Event = union(enum) {
     other,
 };
 
-/// What `arena board <id>` has tmux say to a running arena, the id after it: display-message
+/// What `arena plan <id>` has tmux say to a running arena, the id after it: display-message
 /// to a control client comes to it as a `%message` line.
-pub const card_message = "arena board ";
+pub const card_message = "arena plan ";
 pub const show_message = "arena show ";
 pub const inbox_message = "arena inbox";
 
-/// Whether `line` is what `arena board`, `show` or `inbox` had tmux say to a running arena.
+/// Whether `line` is what `arena plan`, `show` or `inbox` had tmux say to a running arena.
 pub fn told(line: []const u8) bool {
     return switch (parse(line, null)) {
         .card, .pane, .holder, .inbox => true,
@@ -156,8 +156,8 @@ test "anything that changes the tree asks for a relist" {
 }
 
 test "a message for the board says which ticket, and any other message is not arena's" {
-    try std.testing.expectEqual(@as(u32, 240), parse("%message arena board 240", null).card);
-    try std.testing.expectEqual(Event.other, parse("%message arena board lights", null));
+    try std.testing.expectEqual(@as(u32, 240), parse("%message arena plan 240", null).card);
+    try std.testing.expectEqual(Event.other, parse("%message arena plan lights", null));
     try std.testing.expectEqual(Event.other, parse("%message hello", null));
 }
 
@@ -170,7 +170,7 @@ test "a message to show says which pane or whose ticket's, and the inbox is aske
 }
 
 test "what arena board, show and inbox say is told apart from tmux's own lines" {
-    try std.testing.expect(told("%message arena board 240"));
+    try std.testing.expect(told("%message arena plan 240"));
     try std.testing.expect(told("%message arena show %290"));
     try std.testing.expect(told("%message arena inbox"));
     try std.testing.expect(!told("%message hello"));

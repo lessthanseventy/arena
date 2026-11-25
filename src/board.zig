@@ -24,6 +24,18 @@ pub const Check = struct {
     result: ?[]const u8 = null,
 };
 
+/// Whether a ticket's number, title or repo holds `query`, letter case aside; a leading `#` is
+/// the number's. Everything holds an empty query.
+pub fn holds(query: []const u8, id: u32, title: []const u8, repo: []const u8) bool {
+    const q = if (query.len > 0 and query[0] == '#') query[1..] else query;
+    if (q.len == 0) return true;
+    var number: [12]u8 = undefined;
+    const digits = std.fmt.bufPrint(&number, "{d}", .{id}) catch "";
+    return std.mem.indexOf(u8, digits, q) != null or
+        std.ascii.findIgnoreCase(title, q) != null or
+        std.ascii.findIgnoreCase(repo, q) != null;
+}
+
 pub const Card = struct {
     id: u32,
     repo: ?[]const u8 = null,
@@ -91,13 +103,7 @@ pub const Card = struct {
     /// Whether its number, title or repo holds `query`, letter case aside; a leading `#` is the
     /// number's. Everything holds an empty query.
     pub fn finds(card: *const Card, query: []const u8) bool {
-        const q = if (query.len > 0 and query[0] == '#') query[1..] else query;
-        if (q.len == 0) return true;
-        var id: [12]u8 = undefined;
-        const number = std.fmt.bufPrint(&id, "{d}", .{card.id}) catch "";
-        return std.mem.indexOf(u8, number, q) != null or
-            std.ascii.findIgnoreCase(card.title, q) != null or
-            std.ascii.findIgnoreCase(card.repo orelse "", q) != null;
+        return holds(query, card.id, card.title, card.repo orelse "");
     }
 
     /// The id of the pane holding it, if one does.

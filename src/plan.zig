@@ -97,6 +97,8 @@ pub const Row = struct {
     count: usize = 0,
     /// Workbench's window the row is in.
     win: Window = .now,
+    /// A row `narrow` left in place but that does not hold what is found: drawn dim, never picked.
+    dim: bool = false,
 };
 
 /// The goal Home puts in the focal window: the one the human picked to drive towards; with no
@@ -301,6 +303,76 @@ pub const Sheet = struct {
             }
         }
         s.n += extra;
+    }
+
+    /// Workbench's rows narrowed to the repo `repo` (none for every one) and to what `find` holds.
+    /// Another repo's rows are left out of their windows; a row that does not hold `find` stays,
+    /// dim and out of the picks, so nothing moves. A window left with no row says so.
+    pub fn narrowTo(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, repo: []const u8, find: []const u8) void {
+        if (!s.bench or (repo.len == 0 and find.len == 0)) return;
+        var rows: [max_rows]Row = undefined;
+        var n: usize = 0;
+        var in_win: ?Window = null;
+        var had: bool = false;
+        var kept_in_win: bool = false;
+        var last: Verdict = .keep;
+        for (s.rows[0..s.n]) |row| {
+            if (in_win != row.win) {
+                if (in_win) |win| if (had and !kept_in_win and n < rows.len) {
+                    rows[n] = .{ .kind = .note, .style = .dim, .text = "no match", .win = win };
+                    n += 1;
+                };
+                in_win = row.win;
+                had = false;
+                kept_in_win = false;
+            }
+            had = true;
+            const verdict: Verdict = if (row.kind == .why) last else s.verdictOf(given, b, row, repo, find);
+            last = verdict;
+            if (verdict == .hide or n == rows.len) continue;
+            rows[n] = row;
+            if (verdict == .dim) {
+                rows[n].dim = true;
+                rows[n].pick = null;
+            }
+            kept_in_win = true;
+            n += 1;
+        }
+        if (in_win) |win| if (had and !kept_in_win and n < rows.len) {
+            rows[n] = .{ .kind = .note, .style = .dim, .text = "no match", .win = win };
+            n += 1;
+        };
+        s.picks = 0;
+        for (rows[0..n]) |*row| if (row.pick != null) {
+            row.pick = s.picks;
+            s.picks += 1;
+        };
+        @memcpy(s.rows[0..n], rows[0..n]);
+        s.n = n;
+    }
+
+    const Verdict = enum { keep, dim, hide };
+
+    fn verdictOf(s: *const Sheet, given: *const tickets.Plan, b: *const tickets.Board, row: Row, repo: []const u8, find: []const u8) Verdict {
+        _ = s;
+        const id, const title, const repo_of, const in_repo = switch (row.kind) {
+            .now => .{ given.now[row.item].ticket, given.now[row.item].title, given.now[row.item].repo, std.mem.eql(u8, given.now[row.item].repo, repo) },
+            .next => .{ given.next[row.item].ticket, given.next[row.item].title, given.next[row.item].repo, std.mem.eql(u8, given.next[row.item].repo, repo) },
+            .goal, .card_top, .goal_bar, .goal_next, .goal_block => .{ given.goals[row.item].epic, given.goals[row.item].title, "", goalIn(b, given.goals[row.item], repo) },
+            .idea => .{ given.ideas[row.item].epic, given.ideas[row.item].title, "", true },
+            else => return .keep,
+        };
+        if (repo.len > 0 and !in_repo) return .hide;
+        return if (tickets.holds(find, id, title, repo_of)) .keep else .dim;
+    }
+
+    /// Whether a step of `goal` is a ticket of `repo`.
+    fn goalIn(b: *const tickets.Board, goal: tickets.Goal, repo: []const u8) bool {
+        if (repo.len == 0) return true;
+        for (goal.steps) |step| for (b.cards()) |card| {
+            if (card.id == step.ticket and std.mem.eql(u8, card.repo orelse "", repo)) return true;
+        };
+        return false;
     }
 
     /// The picks of `win`: the first and how many.

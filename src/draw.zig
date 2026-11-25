@@ -1164,7 +1164,8 @@ fn findLine(app: *const App, w: *Writer) !?Cursor {
     const text = app.findText();
     if (!typing and text.len == 0) return null;
     var pen: Pen = .{};
-    const x: usize = app.boardX() + cellCount(App.board_title) + 2;
+    var slots: [33]App.RepoTab = undefined;
+    const x: usize = if (app.planShown()) app.planRepoTabs(&slots).end + 2 else app.boardX() + cellCount(App.board_title) + 2;
     const hint = if (typing) "  ⏎ keep  esc clear" else "  esc clear";
     if (app.roles) |r| return benchFind(app, w, r, x, text, hint, typing);
     const room = @as(usize, app.boardW()) -| cellCount(App.board_title) -| 3;
@@ -1189,7 +1190,7 @@ fn findLine(app: *const App, w: *Writer) !?Cursor {
 fn benchFind(app: *const App, w: *Writer, r: theme.Roles, x: usize, text: []const u8, hint: []const u8, typing: bool) !?Cursor {
     var heads: [48]App.Button = undefined;
     var right: usize = app.boardX() + app.boardW();
-    for (heads[0..app.header(&heads).n]) |b| {
+    if (app.planShown()) right = app.boardX() + planHeadStart(app) else for (heads[0..app.header(&heads).n]) |b| {
         if (b.y == 0) right = @min(right, b.x);
     }
     const room = right -| x -| 1;
@@ -2023,6 +2024,13 @@ fn planHead(app: *const App, bufs: *PlanHeadBufs) PlanHead {
     return head;
 }
 
+/// The first cell of Plan's right group in the head, from the board's left edge: what lies
+/// left of it is the repo filter's and the find line's.
+pub fn planHeadStart(app: *const App) usize {
+    var bufs: PlanHeadBufs = undefined;
+    return planHead(app, &bufs).start;
+}
+
 /// Where Plan's auto switch is on the top row: its first cell and its width; none where the head
 /// has no room for it.
 pub fn planAutoSwitch(app: *const App) ?struct { x: u16, w: u16 } {
@@ -2030,6 +2038,25 @@ pub fn planAutoSwitch(app: *const App) ?struct { x: u16, w: u16 } {
     const head = planHead(app, &bufs);
     if (head.start <= head.left_w) return null;
     return .{ .x = app.boardX() + @as(u16, @intCast(head.start)), .w = @intCast(cellCount(head.pieces[0].text)) };
+}
+
+/// The repo filter in the plan's head: `every` and each repo, the one the plan is narrowed to lit.
+fn repoTabs(app: *App, w: *Writer, view: app_mod.BoardView) !void {
+    var slots: [33]App.RepoTab = undefined;
+    const found = app.planRepoTabs(&slots);
+    var repos: [32][]const u8 = undefined;
+    _ = app.board.?.repos(&repos);
+    var pen: Pen = .{};
+    for (slots[0..found.n], 0..) |tab, i| {
+        try w.print("\x1b[1;{d}H", .{tab.x + 1});
+        try pen.set(w, if (view.plan_repo == tab.repo) heading(app) else ink(app, "dim", 8), null);
+        try w.writeAll(if (tab.repo == 0) "every" else repos[tab.repo - 1]);
+        if (i + 1 < found.n) {
+            try pen.set(w, ink(app, "dim", 8), null);
+            try w.writeAll(" · ");
+        }
+    }
+    try pen.set(w, .{}, null);
 }
 
 /// Home's plan in the board's place: its head, a rule, then its rows from the one the pick keeps
@@ -2070,6 +2097,10 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
             try w.writeAll("   ");
         }
     } else for (head.left_w..width) |_| try w.writeAll(" ");
+    if (app.workbench()) {
+        try repoTabs(app, w, view);
+        _ = try findLine(app, w);
+    }
 
     try w.print("\x1b[2;{d}H", .{ox + 1});
     try pen.set(w, dim, null);
@@ -2219,6 +2250,7 @@ fn benchPlan(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
     var repos: [app_mod.max_repos][]const u8 = undefined;
     const b = &app.board.?;
     behind.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.halfHome(), true, app.plan_shut, app.planSee(&repos));
+    app.narrowPlan(&behind);
     for (std.enums.values(sheets.Window)) |win| try benchWindow(app, w, r, &behind, view, win, false);
     try benchWindow(app, w, r, sheet, view, view.whole.?, true);
 }
@@ -2430,8 +2462,8 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
             const title_x = x0 + 5 + cellCount(id);
             if (chip_x > title_x + 4) {
                 _ = try bench.chipInk(w, r, chip_x, y, label, lead, if (item.stalled != null) r.on_accent else r.text, item.stalled != null);
-                try bench.say(w, title_x, y, clip(item.title, chip_x - title_x - 1), r.text, bg, false);
-            } else try bench.say(w, title_x, y, clip(item.title, x0 + ww -| title_x -| 1), r.text, bg, false);
+                try bench.say(w, title_x, y, clip(item.title, chip_x - title_x - 1), if (row.dim) r.dim else r.text, bg, false);
+            } else try bench.say(w, title_x, y, clip(item.title, x0 + ww -| title_x -| 1), if (row.dim) r.dim else r.text, bg, false);
         },
         .next => {
             const item = given.next[row.item];
@@ -2456,7 +2488,7 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
             const pin_w: usize = if (item.pinned()) 2 else 0;
             _ = try bench.chipInk(w, r, chip_x, y, label, if (first == null) r.landed else r.dim, if (first == null) r.text else r.dim, false);
             if (item.pinned()) try bench.say(w, chip_x -| 2, y, "\u{f08d}", r.accent, bg, false);
-            try bench.say(w, title_x, y, clip(item.title, chip_x -| title_x -| 1 -| pin_w), r.text, bg, false);
+            try bench.say(w, title_x, y, clip(item.title, chip_x -| title_x -| 1 -| pin_w), if (row.dim) r.dim else r.text, bg, false);
             try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
         },
         .idea => {
@@ -2483,8 +2515,8 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
             if (asks) try bench.say(w, right -| cellCount(ask_text), y, ask_text, r.you, bg, true);
             if (chip_x > title_x + 4) {
                 _ = try bench.chipInk(w, r, chip_x, y, label, lead, r.text, false);
-                try bench.say(w, title_x, y, clip(idea.title, chip_x - title_x - 1), r.text, bg, false);
-            } else try bench.say(w, title_x, y, clip(idea.title, right -| title_x), r.text, bg, false);
+                try bench.say(w, title_x, y, clip(idea.title, chip_x - title_x - 1), if (row.dim) r.dim else r.text, bg, false);
+            } else try bench.say(w, title_x, y, clip(idea.title, right -| title_x), if (row.dim) r.dim else r.text, bg, false);
         },
         .ideas_more => {
             try bench.fill(w, x0, y, ww, bg);
@@ -2520,7 +2552,7 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
                     const hue = goalHue(b, r, goal);
                     const shares = try goalChips(w, r, b, goal, cx + cw, y);
                     try bench.say(w, cx + 2, y, id, hue, face, true);
-                    try bench.say(w, cx + 2 + cellCount(id), y, clip(goal.title, cw -| 4 -| cellCount(id) -| shares), r.text, face, true);
+                    try bench.say(w, cx + 2 + cellCount(id), y, clip(goal.title, cw -| 4 -| cellCount(id) -| shares), if (row.dim) r.dim else r.text, face, true);
                 },
                 .goal_bar => {
                     try bench.fill(w, cx, y, cw, face);

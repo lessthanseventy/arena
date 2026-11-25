@@ -409,6 +409,9 @@ pub const BoardView = struct {
     /// chip is open, its cards in the rows' place.
     plan_chip: usize = 0,
     plan_backlog: bool = false,
+    /// The repo every window of the plan is narrowed to: 0 for every one, else its place in the
+    /// board's repos from 1.
+    plan_repo: usize = 0,
     unfolded: u8 = 0,
     /// Workbench's plan window shown whole, as a modal over the plan.
     whole: ?sheets.Window = null,
@@ -2669,6 +2672,7 @@ pub const App = struct {
     fn refind(app: *App) void {
         app.dirty = true;
         const view = if (app.board_view) |*open| open else return;
+        view.plan_pick = 0;
         view.row = 0;
         view.lane = app.firstLane();
     }
@@ -3083,7 +3087,7 @@ pub const App = struct {
                 app.want_list = true;
             },
             .session_changed => |id| app.onSessionChanged(id),
-            .card => |id| try app.showCard(id),
+            .card => |id| try app.showPlan(id),
             .pane => |id| try app.showPane(id),
             .holder => |id| try app.showHolder(id),
             .inbox => try app.showInbox(),
@@ -3696,6 +3700,64 @@ pub const App = struct {
         view.answering = picked and app.boardCard(view.col, view.row).?.ask != null;
         if (!picked) _ = try app.openDetail(id);
         try app.toSide();
+    }
+
+    /// Home's plan opened with the pick on ticket `id`: what `arena plan <id>` asks for. The find
+    /// line and the repo filter are cleared, and a window folded over the ticket is opened. A
+    /// ticket the plan shows in no window opens its detail instead; with no plan, the board
+    /// opens on it.
+    pub fn showPlan(app: *App, id: u32) !void {
+        if (!app.hasPlan()) return app.showCard(id);
+        app.menu = null;
+        app.prompt = null;
+        app.overview = null;
+        app.orchestrating = false;
+        app.normal = false;
+        app.dirty = true;
+        app.find_len = 0;
+        if (app.board_view == null) app.board_view = .{};
+        const view = &app.board_view.?;
+        view.help = false;
+        view.detail = null;
+        view.giving = null;
+        view.answering = false;
+        view.whole = null;
+        view.plan_repo = 0;
+        view.home = true;
+        view.plan = true;
+        view.alone = false;
+        view.focus = .board;
+        if (!try app.pickPlanTicket(id)) _ = try app.openDetail(id);
+        app.reflow();
+        try app.toSide();
+    }
+
+    /// The plan's pick put on ticket `id`, the window it is in opened first when it is folded.
+    /// False when no window of the plan holds it.
+    fn pickPlanTicket(app: *App, id: u32) !bool {
+        const view = &app.board_view.?;
+        var sheet: sheets.Sheet = undefined;
+        if (!app.planSheet(&sheet)) return false;
+        if (planPickOf(&sheet, id)) |pick| {
+            view.plan_pick = pick;
+            return true;
+        }
+        for (std.enums.values(sheets.Window)) |win| {
+            if (!app.plan_shut.contains(win)) continue;
+            app.plan_shut.remove(win);
+            if (app.planSheet(&sheet)) if (planPickOf(&sheet, id)) |pick| {
+                view.plan_pick = pick;
+                try app.saveFolds();
+                return true;
+            };
+            app.plan_shut.insert(win);
+        }
+        return false;
+    }
+
+    fn planPickOf(sheet: *const sheets.Sheet, id: u32) ?usize {
+        for (sheet.rows[0..sheet.n]) |row| if (row.ticket == id) if (row.pick) |pick| return pick;
+        return null;
     }
 
     /// Ticket `id`'s whole detail asked of babylon and shown over the open board. False with
@@ -4651,6 +4713,7 @@ pub const App = struct {
         if (view.whole) |win| shut.remove(win);
         var repos: [max_repos][]const u8 = undefined;
         sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.halfHome(), app.workbench(), shut, app.planSee(&repos));
+        app.narrowPlan(sheet);
         if (app.workbench()) {
             sheet.withButtons(app.plan_open);
             sheet.withHeld(b.plan().?, KnownPanes{ .app = app });
@@ -4672,6 +4735,44 @@ pub const App = struct {
         for (b.backlog()) |*card| backlog += @intFromBool(!card.isEpic());
         const rect = app.planRect(.unplanned);
         return sheets.chipsAt(given, backlog, rect.x + 2, rect.w -| 4, out);
+    }
+
+    /// `sheet` narrowed to the plan's repo and to what the find line holds.
+    pub fn narrowPlan(app: *const App, sheet: *sheets.Sheet) void {
+        const b = &app.board.?;
+        sheet.narrowTo(b.plan().?, b, app.planRepo() orelse "", app.findText());
+    }
+
+    /// The repo the plan is narrowed to; null for every one.
+    pub fn planRepo(app: *const App) ?[]const u8 {
+        const view = app.board_view orelse return null;
+        const b = if (app.board) |*b| b else return null;
+        var repos: [max_repos][]const u8 = undefined;
+        const n = b.repos(&repos);
+        return if (view.plan_repo >= 1 and view.plan_repo <= n) repos[view.plan_repo - 1] else null;
+    }
+
+    pub const RepoTab = struct { repo: usize, x: u16, w: u16 };
+
+    /// Where the head draws and clicks the repo filter, `every` and then each repo, that fit
+    /// before the right group; and the first cell after them.
+    pub fn planRepoTabs(app: *const App, out: []RepoTab) struct { n: usize, end: u16 } {
+        const b = if (app.board) |*b| b else return .{ .n = 0, .end = 0 };
+        var repos: [max_repos][]const u8 = undefined;
+        const count = b.repos(&repos);
+        const orch: usize = if (app.halfHome()) cellCount(orch_link) + 2 else 0;
+        var x: u16 = app.boardX() + @as(u16, @intCast(cellCount(plan_title) + orch)) + 3;
+        const limit: u16 = app.boardX() + @as(u16, @intCast(draw.planHeadStart(app) -| 1));
+        var n: usize = 0;
+        for (0..count + 1) |i| {
+            if (n == out.len) break;
+            const w: u16 = @intCast(cellCount(if (i == 0) "every" else repos[i - 1]));
+            if (x + w >= limit) break;
+            out[n] = .{ .repo = i, .x = x, .w = w };
+            n += 1;
+            x += w + 3;
+        }
+        return .{ .n = n, .end = if (n == 0) x else x - 3 };
     }
 
     /// The card the keys and buttons act on: the plan's picked row's ticket while the plan is
@@ -4945,6 +5046,19 @@ pub const App = struct {
             const in_unplanned = if (sheet.picked(view.plan_pick)) |row| row.win == .unplanned else false;
             return if (in_unplanned and app.workbench()) app.newTicket() else app.openGoal();
         }
+        if (app.workbench() and view.whole == null) {
+            if (is(key, &.{"/"})) return app.openFind();
+            if (is(key, &.{"\x1b"}) and app.find_len > 0) return app.clearFind();
+            if (is(key, &.{"r"})) return app.cyclePlanRepo();
+            if (is(key, &.{ "l", "\x1b[C", "\x1bOC" })) if (app.planBeside(&sheet, true)) |to| {
+                view.plan_pick = to;
+                return;
+            };
+            if (is(key, &.{ "h", "\x1b[D", "\x1bOD" })) {
+                if (app.planBeside(&sheet, false)) |to| view.plan_pick = to;
+                return;
+            }
+        }
         if (is(key, &.{"d"})) if (sheet.picked(view.plan_pick)) |row| {
             if (row.kind == .goal or row.kind == .focal) return app.driveGoal(row.ticket.?);
         };
@@ -4983,7 +5097,7 @@ pub const App = struct {
         }
         if (is(key, &.{ "\x1b", "q" })) return app.closeBoard();
         if (is(key, &.{"`"})) return app.foldSide();
-        if (is(key, &.{"g"})) return app.toGate();
+        if (is(key, &.{"g"})) return app.gateModal();
         if (is(key, &.{"o"})) return if (app.halfHome()) app.swapHome(true) else app.toOrchestrator();
         if (is(key, &.{"A"})) return app.openAuto();
         if (is(key, &.{"P"})) return app.jumpProposed();
@@ -5054,6 +5168,32 @@ pub const App = struct {
         app.prompt = prompt;
         app.normal = false;
         app.dirty = true;
+    }
+
+    /// `r` on the plan: every window narrowed to the next repo, and after the last to every one.
+    fn cyclePlanRepo(app: *App) void {
+        const view = &app.board_view.?;
+        var repos: [max_repos][]const u8 = undefined;
+        const n = if (app.board) |*b| b.repos(&repos) else 0;
+        view.plan_repo = if (view.plan_repo >= n) 0 else view.plan_repo + 1;
+        view.plan_pick = 0;
+        app.dirty = true;
+    }
+
+    /// The first pick of the window beside the picked row's, to the right or the left, in the
+    /// other column at the same height; null where there is none or it holds nothing to pick.
+    fn planBeside(app: *const App, sheet: *const sheets.Sheet, right: bool) ?usize {
+        const view = app.board_view.?;
+        const here = (sheet.picked(view.plan_pick) orelse return null).win;
+        const left_col = here == .now or here == .next;
+        if (here == .driving or left_col != right) return null;
+        const at = app.planSlot(here).y;
+        const side: []const sheets.Window = if (right) &.{ .goals, .unplanned, .landed } else &.{ .now, .next };
+        for (side) |win| {
+            const rect = app.planSlot(win);
+            if (at >= rect.y and at < rect.y + rect.h) return (sheet.pickRange(win) orelse return null).first;
+        }
+        return null;
     }
 
     /// `babylon drive N`: the goal Plan drives towards.
@@ -5156,6 +5296,14 @@ pub const App = struct {
         const view = &app.board_view.?;
         if (m.y == 0) {
             if (draw.planAutoSwitch(app)) |at| if (m.x >= at.x and m.x < at.x + at.w) return app.planAutoClick();
+            var tabs: [33]RepoTab = undefined;
+            const found = app.planRepoTabs(&tabs);
+            if (app.workbench()) for (tabs[0..found.n]) |tab| if (m.x >= tab.x and m.x < tab.x + tab.w) {
+                view.plan_repo = tab.repo;
+                view.plan_pick = 0;
+                app.dirty = true;
+                return;
+            };
             const link = app.planLink();
             if (m.x >= link.x and m.x < link.x + link.w) try app.toBoard();
             const orch = app.orchLink();
@@ -11103,4 +11251,59 @@ test "a click on not planned's + new button opens the new ticket window, and a w
     app.term_w = 200;
     app.view_w = 60;
     try std.testing.expect(app.newHead() == null);
+}
+
+test "on Plan r narrows every window to one repo and back, / dims what misses the find and the pick skips it, h and l go to the window beside, and arena plan N picks N, opening its window" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 30;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"repo":"arena","title":"alpha","status":"doing"},
+        \\{"id":2,"repo":"babylon","title":"beta","status":"doing"},
+        \\{"id":11,"repo":"arena","title":"gamma","status":"todo"}],"plan":{"now":[
+        \\{"ticket":1,"repo":"arena","title":"alpha","state":"building"},
+        \\{"ticket":2,"repo":"babylon","title":"beta","state":"building"}],
+        \\"next":[{"ticket":11,"repo":"arena","title":"gamma","why":"","waits_on":[]}],
+        \\"goals":[{"epic":9,"title":"A goal","total":1,"landed":0,"steps":[{"ticket":1,"state":"building"}]}],
+        \\"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    const eq = std.testing.expectEqual;
+    const view = &app.board_view.?;
+    var sheet: sheets.Sheet = undefined;
+
+    try app.planKey("r");
+    try eq(@as(usize, 1), view.plan_repo);
+    try std.testing.expect(app.planSheet(&sheet));
+    for (sheet.rows[0..sheet.n]) |row| try std.testing.expect(row.ticket != 2);
+    try app.planKey("r");
+    try app.planKey("r");
+    try eq(@as(usize, 0), view.plan_repo);
+
+    @memcpy(app.find[0..4], "beta");
+    app.find_len = 4;
+    app.refind();
+    try app.planKey("j");
+    try std.testing.expect(app.planSheet(&sheet));
+    try eq(@as(u32, 2), sheet.picked(view.plan_pick).?.ticket.?);
+    try app.planKey("\x1b");
+    try eq(@as(usize, 0), app.find_len);
+
+    view.plan_pick = (sheet.pickRange(.now) orelse return error.NoNow).first;
+    try app.planKey("l");
+    try std.testing.expect(app.planSheet(&sheet));
+    try eq(sheets.Window.goals, sheet.picked(view.plan_pick).?.win);
+    try app.planKey("h");
+    try std.testing.expect(app.planSheet(&sheet));
+    try eq(sheets.Window.now, sheet.picked(view.plan_pick).?.win);
+
+    app.plan_shut.insert(.next);
+    try std.testing.expect(try app.pickPlanTicket(11));
+    try std.testing.expect(!app.plan_shut.contains(.next));
+    try std.testing.expect(app.planSheet(&sheet));
+    try eq(@as(u32, 11), sheet.picked(view.plan_pick).?.ticket.?);
 }
