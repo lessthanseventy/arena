@@ -19,6 +19,7 @@ const draw = @import("draw.zig");
 const win_driving = @import("win_driving.zig");
 const win_goals = @import("win_goals.zig");
 const win_landed = @import("win_landed.zig");
+const win_move = @import("win_move.zig");
 const win_next = @import("win_next.zig");
 const win_now = @import("win_now.zig");
 const win_unplanned = @import("win_unplanned.zig");
@@ -2153,6 +2154,7 @@ pub const App = struct {
     /// The feed atop the orchestrator's column, from babylon's board: none without one.
     pub fn feedOf(app: *const App, f: *feed.Feed) bool {
         const b = if (app.board) |*b| b else return false;
+        if (app.planShown() and app.workbench()) return false;
         const pick = if (app.board_view) |view| view.pick else std.math.maxInt(usize);
         var asks: [box_max]Asked = undefined;
         var boxes: [box_max]feed.Box = undefined;
@@ -2161,11 +2163,17 @@ pub const App = struct {
         return true;
     }
 
-    const box_max = 4;
+    pub const box_max = 4;
+
+    /// babylon's refusal of what was asked of Your move item `id`, when it has one.
+    pub fn refusalOf(app: *const App, id: []const u8) ?[]const u8 {
+        for (app.refusals.items) |r| if (std.mem.eql(u8, r.id, id)) return r.text;
+        return null;
+    }
 
     /// The tickets of Your move whose holder's pane shows Claude Code's own question box, with the
     /// options read off it.
-    fn questionBoxes(app: *const App, asks: *[box_max]Asked, boxes: *[box_max]feed.Box) usize {
+    pub fn questionBoxes(app: *const App, asks: *[box_max]Asked, boxes: *[box_max]feed.Box) usize {
         const b = if (app.board) |*b| b else return 0;
         var n: usize = 0;
         for (b.needsYou()) |need| {
@@ -2336,7 +2344,7 @@ pub const App = struct {
         return true;
     }
 
-    fn feedAct(app: *App, item: feed.Item, key: []const u8) !bool {
+    pub fn feedAct(app: *App, item: feed.Item, key: []const u8) !bool {
         const b = if (app.board) |*b| b else return false;
         const named: []const u8 = if (std.mem.eql(u8, key, "\r")) "⏎" else key;
 
@@ -4739,6 +4747,7 @@ pub const App = struct {
         sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.halfHome(), app.workbench(), shut, app.planSee(&repos));
         app.narrowPlan(sheet);
         if (app.workbench()) {
+            sheet.withNeedCards(app.plan_open, b);
             sheet.withButtons(app.plan_open);
             sheet.withHeld(b.plan().?, KnownPanes{ .app = app });
         }
@@ -4861,7 +4870,7 @@ pub const App = struct {
 
     /// Whether a click or space on `row` opens it in place: the rows that are one ticket.
     fn opensInPlace(row: *const sheets.Row) bool {
-        return row.ticket != null and (row.kind == .now or row.kind == .next or row.kind == .todo or row.kind == .backlog);
+        return row.ticket != null and (row.kind == .need or row.kind == .now or row.kind == .next or row.kind == .todo or row.kind == .backlog);
     }
 
     /// The plan's windows are laid out on this: the cells under the head's rule to the last row.
@@ -4872,7 +4881,7 @@ pub const App = struct {
     /// Where `win` is on the screen: its title bar, body and shadow.
     pub fn planSlot(app: *const App, win: sheets.Window) sheets.Rect {
         const area = app.planArea();
-        const at = sheets.slot(win, area.w, area.h);
+        const at = sheets.slot(win, area.w, area.h, if (app.halfHome()) sheets.move_rows_half else sheets.move_rows_full);
         return .{ .x = area.x + at.x, .y = area.y + at.y, .w = at.w, .h = at.h };
     }
 
@@ -5061,6 +5070,7 @@ pub const App = struct {
         if (view.whole != null and is(key, &.{ "\x1b", "q" })) return app.closeWhole();
         if (view.whole != null and !is(key, &.{ "J", "K", "x", "e", "\r", " ", "t", "o", "p", ">", "<", "G", "w", "W", "H" })) return;
         if (app.workbench()) if (sheet.picked(view.plan_pick)) |row| {
+            if (row.kind == .need and !is(key, &.{ "j", "k", "h", "l", "z", "Z", "f", "/", "r", "?", "B", "q", "\x1b", "`", "g", "A", "P", "]", "[", " ", "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D" }) and try win_move.answer(app, row, key)) return;
             if (row.kind == .chips and try app.chipKey(key)) return;
             if (is(key, &.{"z"})) return app.togglePlanFold(row.win);
             if (is(key, &.{"Z"})) return app.foldPlanAll(row.win);
@@ -5271,6 +5281,7 @@ pub const App = struct {
             .chips, .todo, .unplanned => try win_unplanned.act(app, row),
             .goals_more => try app.toBoard(),
             .landed => try win_landed.act(app, row),
+            .need => try win_move.act(app, row),
             else => {},
         }
     }
@@ -5319,6 +5330,7 @@ pub const App = struct {
             const button = sheets.driveButtonAt(need, app.planRect(.driving).x, m.x) orelse return;
             return app.driveAnswer(button);
         }
+        if (row.kind == .need_card) return win_move.click(app, &sheet, at, m);
         if (row.kind == .buttons) return app.planButtonClick(&sheet, at, m);
         if (row.kind == .held) {
             const pane = app.board.?.plan().?.now[row.item].holder() orelse return;
@@ -5487,6 +5499,7 @@ pub const App = struct {
     /// on Your move's first item or its last, or on the one of `ticket` when it has one.
     fn toFeed(app: *App, key: []const u8, ticket: ?u32) !void {
         const view = &app.board_view.?;
+        if (app.planShown() and app.workbench()) return app.toMove(key, ticket);
         if (!app.sided()) return;
         view.focus = .orchestrator;
         if (app.sideDue()) app.normal = true;
@@ -5502,6 +5515,22 @@ pub const App = struct {
             _ = app.pickCard(id);
             app.pickPlan(id);
         }
+    }
+
+    /// `]` or `[` on the plan: the pick on Your move's first item or its last, or on the one of
+    /// `ticket` when it has one; the plan has the keys.
+    fn toMove(app: *App, key: []const u8, ticket: ?u32) !void {
+        const view = &app.board_view.?;
+        view.focus = .board;
+        view.whole = null;
+        app.dirty = true;
+        var sheet: sheets.Sheet = undefined;
+        if (!app.planSheet(&sheet)) return;
+        const range = sheet.pickRange(.move) orelse return;
+        view.plan_pick = if (anyKey(key, &.{"["})) range.first + range.n - 1 else range.first;
+        if (ticket) |id| for (sheet.rows[0..sheet.n]) |row| {
+            if (row.win == .move and row.kind == .need and row.ticket == id) view.plan_pick = row.pick orelse continue;
+        };
     }
 
     /// A key on the board: h, l and the arrows go between columns, j and k along one, r narrows
@@ -11241,7 +11270,7 @@ test "on Plan's windows z folds the picked one and keeps the pick, Z folds the r
     try std.testing.expect(!app.plan_shut.contains(.now));
 
     try app.planKey("Z");
-    try eq(@as(usize, 5), app.plan_shut.count());
+    try eq(@as(usize, 6), app.plan_shut.count());
     try std.testing.expect(!app.plan_shut.contains(.now));
     try app.planKey("Z");
     try eq(@as(usize, 0), app.plan_shut.count());
@@ -11577,4 +11606,47 @@ test "⏎ on a subagent row in a card's modal shows that subagent, as the rail's
     try std.testing.expect(app.board_view == null);
     try std.testing.expectEqual(@as(u32, 12), app.pick.?.pane);
     try std.testing.expectEqualStrings("check deps", app.pick.?.name[0..app.pick.?.len]);
+}
+
+fn needsBoard(buf: []u8, n: usize) ![]const u8 {
+    var w: Writer = .fixed(buf);
+    try w.writeAll("{\"tickets\":[],\"needs_you\":[");
+    for (0..n) |i| try w.print("{s}{{\"id\":\"ask:{d}\",\"kind\":\"ask\",\"ticket\":{d},\"repo\":\"arena\",\"text\":\"item {d}\",\"actions\":[{{\"key\":\"y\",\"label\":\"yes\",\"argv\":[\"true\"]}}]}}", .{ if (i > 0) "," else "", i, 100 + i, i });
+    try w.writeAll("],\"plan\":{\"now\":[],\"next\":[],\"goals\":[],\"landed_today\":{\"count\":0,\"newest\":[]},\"not_planned\":{\"count\":0,\"follow_ups\":0,\"by_repo\":{}}}}");
+    return w.buffered();
+}
+
+test "Your move is a fixed slot whatever it holds, the picked item opens to its card and closes the last, and ] goes to its first item" {
+    const eq = std.testing.expectEqual;
+    var height: ?u16 = null;
+    for ([_]usize{ 0, 3, 8 }) |n| {
+        var buf: [4096]u8 = undefined;
+        var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+        app.term_w = 200;
+        app.view_w = 60;
+        app.view_h = 40;
+        app.roles = @import("parts.zig").roles();
+        app.board = try tickets.Board.parse(std.testing.allocator, try needsBoard(&buf, n));
+        defer app.board.?.deinit();
+        app.board_view = .{ .home = true, .plan = true, .focus = .board };
+        const rect = app.planSlot(.move);
+        if (height) |h| try eq(h, rect.h) else height = rect.h;
+        try eq(@as(u16, sheets.move_rows_full + sheets.window_chrome), rect.h);
+        if (n == 0) continue;
+
+        app.board_view.?.plan_pick = 5 % n;
+        try app.planKey("]");
+        try eq(@as(usize, 0), app.board_view.?.plan_pick);
+        try app.planKey(" ");
+        try eq(@as(u32, 100), app.plan_open.get(.move));
+        try app.planKey("j");
+        try app.planKey(" ");
+        try eq(@as(u32, 101), app.plan_open.get(.move));
+        var sheet: sheets.Sheet = undefined;
+        try std.testing.expect(app.planSheet(&sheet));
+        var cards: usize = 0;
+        for (sheet.rows[0..sheet.n]) |row| cards += @intFromBool(row.kind == .need_card);
+        try eq(@as(usize, 2), cards);
+        try eq(@as(usize, n), sheet.pickRange(.move).?.n);
+    }
 }

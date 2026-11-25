@@ -22,11 +22,12 @@ const ideas_shown = 3;
 /// The bit of `unfolded` that holds the ideas open.
 pub const ideas_fold: u3 = 0;
 
-pub const Kind = enum { head, blank, now, next, why, more, goals_more, goal, landed, unplanned, chips, todo, backlog, focal, drove, card_top, goal_bar, goal_next, goal_block, idea, ideas_more, summary, note, buttons, held };
+pub const Kind = enum { head, blank, need, need_card, now, next, why, more, goals_more, goal, landed, unplanned, chips, todo, backlog, focal, drove, card_top, goal_bar, goal_next, goal_block, idea, ideas_more, summary, note, buttons, held };
 pub const Style = enum { normal, dim, heading, attention };
 
 /// Workbench's plan is six windows, each a fixed slot of the screen.
 pub const Window = enum {
+    move,
     driving,
     now,
     next,
@@ -36,6 +37,7 @@ pub const Window = enum {
 
     pub fn title(win: Window) []const u8 {
         return switch (win) {
+            .move => "your move",
             .driving => "driving towards",
             .now => "in flight",
             .unplanned => "not planned",
@@ -55,14 +57,22 @@ pub const Rect = struct { x: u16, y: u16, w: u16, h: u16 };
 pub const window_chrome = 2;
 const driving_h = 5;
 
-/// Where `win` sits on a plan area `w` by `h` cells: its title bar, body and shadow. Worked out
-/// from the area alone, so nothing in a window or its fold moves another.
-pub fn slot(win: Window, w: u16, h: u16) Rect {
-    const top = @min(driving_h, h);
+/// Rows Your move's slot shows at full width and at half: whatever it holds, its slot is this tall.
+pub const move_rows_full = 5;
+pub const move_rows_half = 3;
+
+/// Where `win` sits on a plan area `w` by `h` cells, Your move showing `move_rows`: its title
+/// bar, body and shadow. Worked out from the area alone, so nothing in a window or its fold
+/// moves another.
+pub fn slot(win: Window, w: u16, h: u16, move_rows: u16) Rect {
+    const move_h = @min(move_rows + window_chrome, h);
+    const drive_h = @min(driving_h, h - move_h);
+    const top = move_h + drive_h;
     const rest = h - top;
     const half = w * 3 / 5;
     return switch (win) {
-        .driving => .{ .x = 0, .y = 0, .w = w, .h = top },
+        .move => .{ .x = 0, .y = 0, .w = w, .h = move_h },
+        .driving => .{ .x = 0, .y = move_h, .w = w, .h = drive_h },
         .now => .{ .x = 0, .y = top, .w = half, .h = rest * 6 / 10 },
         .next => .{ .x = 0, .y = top + rest * 6 / 10, .w = half, .h = rest - rest * 6 / 10 },
         .goals => .{ .x = half, .y = top, .w = w - half, .h = rest * 4 / 10 },
@@ -276,6 +286,27 @@ pub const Sheet = struct {
         s.n += extra;
     }
 
+    /// Rows of the whole card under the Your move row that is open: its question, its buttons and,
+    /// for a to-try item, a row for each check. They are no picks.
+    pub fn withNeedCards(s: *Sheet, open: Open, b: *const tickets.Board) void {
+        const ticket = open.get(.move);
+        if (ticket == 0) return;
+        var from: ?usize = null;
+        for (s.rows[0..s.n], 0..) |row, i| if (row.kind == .need and row.ticket == ticket) {
+            from = i;
+            break;
+        };
+        const at = from orelse return;
+        const need = b.needsYou()[s.rows[at].item];
+        const extra = 2 + need.steps.len;
+        if (s.n + extra > max_rows) return;
+        std.mem.copyBackwards(Row, s.rows[at + 1 + extra .. s.n + extra], s.rows[at + 1 .. s.n]);
+        for (0..extra) |part| {
+            s.rows[at + 1 + part] = .{ .kind = .need_card, .ticket = ticket, .item = s.rows[at].item, .part = @intCast(part + 1), .win = .move };
+        }
+        s.n += extra;
+    }
+
     /// A second line under each in-flight row whose Claude's pane `known` has, for its workspace
     /// chip; it is no pick, so the picks stay where they were.
     pub fn withHeld(s: *Sheet, given: *const tickets.Plan, known: anytype) void {
@@ -476,6 +507,10 @@ pub const Sheet = struct {
 
     /// Workbench's plan: each window's rows, in the order the pick walks them.
     fn windowRows(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64, see: See) void {
+        if (s.begin(.move)) s.summaryRow(s.moveSummary(b)) else for (b.needsYou(), 0..) |need, at| {
+            s.add(.{ .kind = .need, .pick = 0, .ticket = need.ticket, .item = at });
+        }
+        s.end("✓ nothing needs you");
         if (s.begin(.driving)) s.summaryRow(s.drivingSummary(given, b)) else if (driveLanded(given, b)) |need| {
             const title = drivenTitle(b, need, given.driving.?);
             s.add(.{ .kind = .drove, .part = 1, .pick = 0, .ticket = given.driving, .text = s.print("✓ #{d} {s}", .{ given.driving.?, title }) });
@@ -505,6 +540,11 @@ pub const Sheet = struct {
             s.add(.{ .kind = .landed, .pick = 0, .ticket = id, .item = at });
         }
         s.end("none");
+    }
+
+    fn moveSummary(s: *Sheet, b: *const tickets.Board) []const u8 {
+        const n = b.needsYou().len;
+        return if (n == 0) "✓ nothing needs you" else s.print("▲ {d} need you", .{n});
     }
 
     fn drivingSummary(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board) []const u8 {
@@ -1103,8 +1143,9 @@ test "the focal goal is the first with a step being built, a card is five rows, 
     try std.testing.expectEqual(@as(u32, 453), goalBlock(given.goals[0]).?.on);
     var s: Sheet = undefined;
     s.build(given, &b, 100, 0, 0, false, true, .empty, .{});
-    try std.testing.expectEqual(Kind.focal, s.rows[0].kind);
-    try std.testing.expectEqual(@as(usize, 0), s.rows[0].pick.?);
+    const at = s.span(.driving).start;
+    try std.testing.expectEqual(Kind.focal, s.rows[at].kind);
+    try std.testing.expectEqual(@as(usize, 0), s.rows[at].pick.?);
     var cards: usize = 0;
     for (s.rows[0..s.n]) |row| cards += @intFromBool(row.kind == .card_top);
     try std.testing.expectEqual(@as(usize, 2), cards);
@@ -1148,10 +1189,11 @@ test "the focal window follows plan.driving, says whose pick it is, and asks wha
     const given = b.plan().?;
     const need = driveLanded(given, &b).?;
     s.build(given, &b, 100, 0, 0, false, true, .empty, .{});
-    try std.testing.expectEqualStrings("✓ #14 The house", s.rows[0].text);
-    try std.testing.expectEqualStrings("landed. what next?", s.rows[1].text);
+    const at = s.span(.driving).start;
+    try std.testing.expectEqualStrings("✓ #14 The house", s.rows[at].text);
+    try std.testing.expectEqualStrings("landed. what next?", s.rows[at + 1].text);
 
-    try std.testing.expectEqual(Kind.drove, s.rows[2].kind);
+    try std.testing.expectEqual(Kind.drove, s.rows[at + 2].kind);
     var buf: [96]u8 = undefined;
     try std.testing.expectEqualStrings("2 the orchestrator", driveButton(&buf, need, 1));
     try std.testing.expectEqualStrings("+ a new goal", driveButton(&buf, need, 2));
@@ -1160,7 +1202,7 @@ test "the focal window follows plan.driving, says whose pick it is, and asks wha
     try std.testing.expectEqual(@as(?usize, null), driveButtonAt(need, 10, 10));
     try std.testing.expectEqualStrings("driving towards · landed", drivingTitle(given, &b));
     s.build(given, &b, 100, 0, 0, false, true, Shut.initOne(.driving), .{});
-    try std.testing.expectEqualStrings("✓ #14 The house  1/1 · landed. what next?", s.rows[0].text);
+    try std.testing.expectEqualStrings("✓ #14 The house  1/1 · landed. what next?", s.rows[s.span(.driving).start].text);
 }
 
 test "goals past what fits fold into one row, and landed and not planned keep theirs" {

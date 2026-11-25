@@ -13,6 +13,7 @@ const goal_mod = @import("goal.zig");
 const win_landed = @import("win_landed.zig");
 const win_driving = @import("win_driving.zig");
 const win_now = @import("win_now.zig");
+const win_move = @import("win_move.zig");
 const win_next = @import("win_next.zig");
 const win_goals = @import("win_goals.zig");
 const win_unplanned = @import("win_unplanned.zig");
@@ -2367,9 +2368,10 @@ fn benchPlan(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
     try benchWindow(app, w, r, sheet, view, view.whole.?, true);
 }
 
-fn windowCount(given: *const tickets.Plan, win: sheets.Window) ?usize {
+fn windowCount(b: *const tickets.Board, given: *const tickets.Plan, win: sheets.Window) ?usize {
     return switch (win) {
         .driving => null,
+        .move => b.needsYou().len,
         .now => given.now.len,
         .next => given.next.len,
         .goals => given.goals.len - @intFromBool(for (given.goals) |goal| {
@@ -2392,7 +2394,7 @@ fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet
     const mine = sheet.span(win);
     const picked_at = if (lit) sheet.rowOf(view.plan_pick) else null;
     const focused = !app.columnFocused() and (if (picked_at) |at| sheet.rows[at].win == win else false);
-    try bench.window(w, r, rect.x, rect.y, ww, rect.h - 1, if (win == .driving) sheets.drivingTitle(given, &app.board.?) else win.title(), windowCount(given, win), focused);
+    try bench.window(w, r, rect.x, rect.y, ww, rect.h - 1, if (win == .driving) sheets.drivingTitle(given, &app.board.?) else win.title(), windowCount(&app.board.?, given, win), focused);
     const bar = if (focused) r.raised else r.tile;
     if (whole) {
         try bench.say(w, rect.x + ww - 10, rect.y, "q close", r.dim, bar, false);
@@ -2473,6 +2475,7 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
             if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
             try bench.say(w, x0 + 2, y, clip(row.text, room), r.dim, bg, false);
         },
+        .need, .need_card => try win_move.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .focal, .drove => try win_driving.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .now => try win_now.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .next => try win_next.paint(app, w, r, sheet, at, y, x0, ww, lit),
@@ -4936,7 +4939,7 @@ test "Home in Workbench's look: the focal goal is the one with a step building, 
     var app = homeApp(&board);
     app.term_w = 80;
     app.view_w = 80;
-    app.view_h = 23;
+    app.view_h = 31;
     app.roles = bench.roles();
     app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
     const r = bench.roles();
@@ -4944,7 +4947,7 @@ test "Home in Workbench's look: the focal goal is the one with a step building, 
     var sheet: sheets.Sheet = undefined;
     try std.testing.expect(app.planSheet(&sheet));
     // the goal with a step building, not the first listed
-    try std.testing.expectEqual(@as(usize, 1), sheet.rows[0].item);
+    try std.testing.expectEqual(@as(usize, 1), sheet.rows[sheet.span(.driving).start].item);
 
     var buf: [65536]u8 = undefined;
     var out: Writer = .fixed(&buf);
@@ -4982,7 +4985,7 @@ test "a goal with a step to try reads ▲ 1 to try after its bar in the you colo
     var app = homeApp(&board);
     app.term_w = 80;
     app.view_w = 80;
-    app.view_h = 23;
+    app.view_h = 31;
     app.roles = bench.roles();
     app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
     const r = bench.roles();
@@ -5508,7 +5511,7 @@ test "Plan's rows start with a ▌ in their repo's colour, and a goal's card has
     var app = homeApp(&board);
     app.term_w = 80;
     app.view_w = 80;
-    app.view_h = 23;
+    app.view_h = 31;
     app.roles = bench.roles();
     const r = bench.roles();
     app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
@@ -5746,4 +5749,26 @@ test "a Claude's hover card lists each subagent and its shell under its state li
     const shell = std.mem.indexOf(u8, drawn, "◔ mix ecto.migrate") orelse return error.NoShell;
     try std.testing.expect(state < first and first < second and second < shell);
     try std.testing.expect(std.mem.indexOf(u8, drawn, "2 agents") == null);
+}
+
+test "Your move with 8 items scrolls inside its five rows to the picked one" {
+    var buf: [4096]u8 = undefined;
+    var json: Writer = .fixed(&buf);
+    try json.writeAll("{\"tickets\":[],\"needs_you\":[");
+    for (0..8) |i| try json.print("{s}{{\"id\":\"ask:{d}\",\"kind\":\"ask\",\"ticket\":{d},\"repo\":\"arena\",\"text\":\"item {d}\",\"actions\":[]}}", .{ if (i > 0) "," else "", i, 100 + i, i });
+    try json.writeAll("],\"plan\":{\"now\":[],\"next\":[],\"goals\":[],\"landed_today\":{\"count\":0,\"newest\":[]},\"not_planned\":{\"count\":0,\"follow_ups\":0,\"by_repo\":{}}}}");
+    var board = try tickets.Board.parse(std.testing.allocator, json.buffered());
+    defer board.deinit();
+    var app = homeApp(&board);
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 31;
+    app.roles = bench.roles();
+    app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board, .plan_pick = 7 };
+    var screen: [262144]u8 = undefined;
+    var out: Writer = .fixed(&screen);
+    try planView(&app, &out, app.board_view.?);
+    const drawn = out.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "item 7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "item 0") == null);
 }
