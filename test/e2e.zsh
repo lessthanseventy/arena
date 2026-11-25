@@ -2194,7 +2194,7 @@ check "a look at is an item with its doc named and o to open it" see 'o open   y
 key ']'
 key o
 check "o opens its doc in a window of its own" await doc_window
-check "which says so when the file is not in the ticket's repo" await eval 'inner capture-pane -p -t "$(inner list-windows -a -F "#{window_id} #{window_name}" | awk "\$2==\"doc\"{print \$1}")" | grep -q "no such file: .*projects/tlon/docs/none-jkdufltb.md"'
+check "which says so when the file is not in the ticket's repo" await eval 'inner capture-pane -p -t "$(inner list-windows -a -F "#{window_id} #{window_name}" | awk "\$2 ~ /^doc/{print \$1}")" | grep -q "no such file: .*projects/tlon/docs/none-jkdufltb.md"'
 for s in $(inner list-sessions -F '#{session_name}'); do inner set-environment -t $s HOME $tmp; done
 mkdir -p $tmp/projects/tlon/.worktrees/t307-design/docs
 print -r -- 'only-on-the-branch' >$tmp/projects/tlon/.worktrees/t307-design/docs/none-jkdufltb.md
@@ -2204,7 +2204,7 @@ key M-b
 see '▌ #307 tlon  look at'
 key ']'
 key o
-doc_windows_show() { local w; for w in $(inner list-windows -a -F '#{window_id} #{window_name}' | awk '$2=="doc"{print $1}'); do inner capture-pane -p -t $w | grep -q "$1" && return 0; done; return 1 }
+doc_windows_show() { local w; for w in $(inner list-windows -a -F '#{window_id} #{window_name}' | awk '$2 ~ /^doc/{print $1}'); do inner capture-pane -p -t $w | grep -q "$1" && return 0; done; return 1 }
 check "a doc only in the ticket's worktree opens from there" await doc_windows_show only-on-the-branch
 for s in $(inner list-sessions -F '#{session_name}'); do inner set-environment -t $s HOME $HOME; done
 inner set-option -g remain-on-exit off
