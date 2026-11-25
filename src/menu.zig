@@ -50,7 +50,7 @@ pub const main = [_]Item{
     .{ .icon = "/", .label = "Search history", .key = '/', .action = .search },
     .{ .icon = "◇", .label = "New session", .key = 'S', .action = .new_session, .group = true },
     .{ .icon = "✎", .label = "Rename session", .key = 'R', .action = .rename_session },
-    .{ .icon = "→", .label = "Jump to window", .key = 'p', .action = .jump },
+    .{ .icon = "→", .label = "Go to", .key = 'p', .action = .jump },
     .{ .icon = "▦", .label = "Overview", .key = 'o', .action = .overview },
     .{ .icon = "▤", .label = "Board", .key = 't', .action = .board },
     .{ .icon = "◧", .label = "Wide or narrow rail", .key = 'w', .action = .rail_width },
