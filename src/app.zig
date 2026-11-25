@@ -11,6 +11,7 @@ const Pass = @import("pass.zig").Pass;
 const tickets = @import("board.zig");
 const feed = @import("feed.zig");
 const autos = @import("auto.zig");
+const goal_modal = @import("goal.zig");
 const sheets = @import("plan.zig");
 const capture = @import("report.zig");
 const draw = @import("draw.zig");
@@ -378,6 +379,8 @@ pub const BoardView = struct {
     withdrawing: bool = false,
     /// Auto's settings shown over the board, and the row picked: auto, hold, then each repo.
     auto_pick: ?usize = null,
+    /// The `+ goal` modal is over the plan; what it holds is `App.goal`.
+    goal_open: bool = false,
     /// The keys were in the orchestrator's column when it opened, and go back there.
     auto_from_column: bool = false,
     auto_normal: bool = false,
@@ -399,7 +402,7 @@ pub const BoardView = struct {
 
     /// Whether a box lies over the board, the keys its own.
     pub fn boxed(view: BoardView) bool {
-        return view.help or view.detail != null or view.answering or view.giving != null or view.auto_pick != null;
+        return view.help or view.detail != null or view.answering or view.giving != null or view.auto_pick != null or view.goal_open;
     }
 };
 
@@ -432,6 +435,7 @@ pub const App = struct {
     menu: ?menu.Menu = null,
     /// A name being typed, over everything else.
     prompt: ?menu.Prompt = null,
+    goal: goal_modal.Modal = .{},
     /// What the board is narrowed to by `/`, kept after Enter.
     find: [200]u8 = undefined,
     find_len: usize = 0,
@@ -2564,6 +2568,7 @@ pub const App = struct {
     /// the screen.
     pub fn quiet(app: *const App) bool {
         if (app.drag != .none or app.menu != null or app.prompt != null) return false;
+        if (app.board_view) |view| if (view.goal_open) return false;
         if (app.overview != null or app.popup != null) return false;
         return if (app.board_view) |view| !view.boxed() else true;
     }
@@ -4257,6 +4262,7 @@ pub const App = struct {
         if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) view.plan_pick = @min(view.plan_pick + 1, sheet.picks -| 1);
         if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.plan_pick -|= 1;
         if (is(key, &.{"?"})) view.help = true;
+        if (is(key, &.{"+"})) return app.openGoal();
         if (is(key, &.{"B"})) return app.toBoard();
         if (is(key, &.{ "J", "K", "x", "e" })) {
             const row = sheet.picked(view.plan_pick) orelse return;
@@ -4354,6 +4360,8 @@ pub const App = struct {
         const at = app.planTop(&sheet) + (m.y - 2);
         if (at >= sheet.n) return;
         const row = sheet.rows[at];
+        const head = app.goalHead();
+        if (row.kind == .head and app.workbench() and std.mem.eql(u8, row.text, "goals") and m.x >= head.x and m.x < head.x + head.w) return app.openGoal();
         const pick = row.pick orelse return;
         const picked = view.plan_pick == pick;
         view.plan_pick = pick;
@@ -4473,6 +4481,7 @@ pub const App = struct {
         app.dirty = true;
         const view = &app.board_view.?;
         const is = anyKey;
+        if (view.goal_open) return app.goalKey(key);
         if (view.auto_pick != null) return app.autoKey(key);
         if (view.answering) return app.answerKey(key);
         if (view.giving != null) return app.giveKey(key);
@@ -4704,6 +4713,104 @@ pub const App = struct {
         if (pick.* < 2) return;
         if (is(key, &.{ "+", "=" })) try app.autoStep(pick.* - 2, true);
         if (is(key, &.{"-"})) try app.autoStep(pick.* - 2, false);
+    }
+
+    /// The `+ goal` modal over Plan's middle: a title bar, a prompt, a field of four lines, the
+    /// buttons with a line under them, and the foot. None where the screen is too small for it.
+    pub fn goalRect(app: *const App) ?ModalRect {
+        const width: u16 = @min(app.boardW() -| 4, 64);
+        const h: u16 = 12;
+        if (width < 30 or app.view_h < first_line + h + 2) return null;
+        return .{ .x = app.boardX() + (app.boardW() -| width) / 2, .y = first_line + (app.view_h - first_line - h) / 2, .w = width, .h = h };
+    }
+
+    pub const GoalButton = struct { key: []const u8, label: []const u8, x: u16, w: u16 };
+
+    /// The modal's three buttons on its row 8, left to right: plan it now, just keep it, cancel.
+    pub fn goalButtons(rect: ModalRect) [3]GoalButton {
+        var out = [3]GoalButton{
+            .{ .key = "\r", .label = "⏎ plan it now", .x = 0, .w = 0 },
+            .{ .key = "k", .label = "k just keep it", .x = 0, .w = 0 },
+            .{ .key = "q", .label = "q cancel", .x = 0, .w = 0 },
+        };
+        var x = rect.x + 3;
+        for (&out) |*button| {
+            button.x = x;
+            button.w = @intCast(cellCount(button.label) + 2);
+            x += button.w + 2;
+        }
+        return out;
+    }
+
+    /// Where the `+ goal` button sits on a goals title bar, `x` and width.
+    pub fn goalHead(app: *const App) struct { x: u16, w: u16 } {
+        return .{ .x = app.boardX() + 1 + app.boardW() -| 3 -| 10, .w = 8 };
+    }
+
+    fn openGoal(app: *App) !void {
+        const view = &app.board_view.?;
+        if (app.goalRect() == null) return;
+        app.goal = .{};
+        view.goal_open = true;
+        app.dirty = true;
+    }
+
+    /// A key in the `+ goal` modal; `⏎` and `k` send what is typed to babylon, and the modal waits
+    /// for its answer.
+    fn goalKey(app: *App, key: []const u8) !void {
+        const view = &app.board_view.?;
+        app.dirty = true;
+        switch (app.goal.press(key)) {
+            .none => {},
+            .cancel => view.goal_open = false,
+            .plan => try app.goalSend(true),
+            .keep => try app.goalSend(false),
+        }
+    }
+
+    /// `babylon idea TEXT`, with `--plan` to plan it now. The modal stays until babylon answers.
+    fn goalSend(app: *App, plan_now: bool) !void {
+        app.goal.busy = true;
+        app.goal.said_len = 0;
+        const idea = std.mem.trim(u8, app.goal.text(), " ");
+        _ = try app.runWith("goal", if (plan_now) &.{ "babylon", "idea", idea, "--plan" } else &.{ "babylon", "idea", idea }, true);
+    }
+
+    /// babylon's answer to the modal: `ok` closes it, anything else is said in it, the text kept.
+    pub fn goalAnswered(app: *App, text: []const u8) !void {
+        const view = if (app.board_view) |*open| open else return;
+        if (!view.goal_open) return;
+        app.dirty = true;
+        const line = std.mem.trim(u8, text, " \n");
+        if (std.mem.eql(u8, line, "ok")) {
+            view.goal_open = false;
+            return;
+        }
+        var clean: std.ArrayList(u8) = .empty;
+        defer clean.deinit(app.gpa);
+        try @import("text.zig").appendClean(&clean, app.gpa, line[0 .. std.mem.indexOfScalar(u8, line, '\n') orelse line.len]);
+        app.goal.refuse(if (clean.items.len > 0) clean.items else "babylon refused the idea");
+    }
+
+    /// A click in the `+ goal` modal: a button is its key, and outside it, or its ✕, cancels.
+    fn goalClick(app: *App, m: keys.Mouse) !void {
+        const view = &app.board_view.?;
+        const rect = app.goalRect() orelse {
+            view.goal_open = false;
+            return;
+        };
+        const close = m.y == rect.y and m.x + 4 >= rect.x + rect.w and m.x + 2 <= rect.x + rect.w;
+        if (close or !rect.contains(m.x, m.y)) {
+            view.goal_open = false;
+            return;
+        }
+        if (app.goal.typing) return;
+        if (m.y >= rect.y + 3 and m.y <= rect.y + 6) {
+            app.goal.typing = true;
+            return;
+        }
+        if (m.y != rect.y + 8) return;
+        for (goalButtons(rect)) |button| if (m.x >= button.x and m.x < button.x + button.w) return app.goalKey(button.key);
     }
 
     /// Turns auto or hold the other way, shown at once and sent once the presses stop.
@@ -5709,6 +5816,10 @@ pub const App = struct {
         const open = &app.board_view.?;
         // a box over the board takes the click, as a key would, so nothing hidden under it is pressed
         if (open.boxed()) {
+            if (open.goal_open) {
+                try app.goalClick(m);
+                return true;
+            }
             if (open.auto_pick != null) {
                 try app.autoClick(m);
                 return true;

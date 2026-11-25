@@ -2086,6 +2086,16 @@ key Enter
 check "and Enter keeps it there with the new why, through babylon" await last 'next 7 --why the light switch now'
 key x
 check "x takes it out of next, through babylon" await last 'next 7 --drop'
+: >$tmp/babylon
+key +
+check "+ on the plan opens the goal modal under its prompt" see "what should be true when it's done"
+key -l 'money on the bar'
+check "what is typed, k among it, shows in its field" see 'money on the bar'
+key Escape
+check "esc ends typing, and the keys written are its buttons" see '⏎ plan  k keep  i type  q cancel'
+key k
+check "k keeps it: babylon idea is run with the text" await last 'idea money on the bar'
+check "and the modal closes on babylon's answer" gone "what should be true when it's done"
 key l
 key i
 # the click that focuses a new terminal window lands anywhere in it

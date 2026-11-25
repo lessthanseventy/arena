@@ -9,6 +9,7 @@ const app_mod = @import("app.zig");
 const tickets = @import("board.zig");
 const feed = @import("feed.zig");
 const sheets = @import("plan.zig");
+const goal_mod = @import("goal.zig");
 const App = app_mod.App;
 const Session = app_mod.Session;
 const Window = app_mod.Window;
@@ -1985,8 +1986,98 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     }
     if (view.detail) |id| try detailBox(app, w, id, view.detail_scroll);
     try autoBox(app, w);
+    if (view.goal_open) try goalBox(app, w);
     if (view.help) try helpBox(app, w);
 }
+
+const goal_prompt = "what should be true when it's done? as rough as you like";
+const goal_field_rows = 4;
+
+/// The `+ goal` modal: its prompt, the field with the idea wrapped in it, the buttons, a dim line
+/// of what the first does, babylon's refusal, and the foot with the mode and its keys.
+fn goalBox(app: *const App, w: *Writer) !void {
+    const rect = app.goalRect() orelse return;
+    const modal = &app.goal;
+    const inner: u16 = rect.w - 5;
+    const x0 = rect.x + 2;
+    var lines: [64][]const u8 = undefined;
+    const n = goal_mod.wrap(modal.text(), inner -| 1, &lines);
+    const first = n -| goal_field_rows;
+    var asked: [2][]const u8 = .{ "", "" };
+    _ = goal_mod.wrap(goal_prompt, inner, &asked);
+    const buttons = App.goalButtons(rect);
+    const said = modal.refusal();
+    const mode = if (modal.typing) "INSERT" else "NORMAL";
+    const keys_text = if (modal.typing) "esc done typing" else "⏎ plan  k keep  i type  q cancel";
+    const note = if (modal.busy) "asking babylon…" else "an Opus Claude breaks it out into steps";
+    if (app.roles) |r| {
+        try bench.window(w, r, rect.x, rect.y, rect.w - 1, rect.h, "a new goal", null, true);
+        try bench.say(w, rect.x + rect.w - 4, rect.y, "✕", r.text, r.raised, true);
+        for (asked, 0..) |line, i| try bench.say(w, x0, rect.y + 1 + @as(u16, @intCast(i)), line, r.dim, r.panel, false);
+        for (0..goal_field_rows) |row| {
+            const y = rect.y + 3 + @as(u16, @intCast(row));
+            try bench.fill(w, x0, y, inner, r.well);
+            if (first + row >= n) {
+                if (row == 0 and n == 0 and modal.typing) try bench.say(w, x0, y, "█", r.accent, r.well, false);
+                continue;
+            }
+            const line = lines[first + row];
+            try bench.say(w, x0, y, line, r.text, r.well, false);
+            if (modal.typing and first + row == n - 1 and cellCount(line) < inner) try bench.say(w, x0 + cellCount(line), y, "█", r.accent, r.well, false);
+        }
+        for (buttons, 0..) |button, i| {
+            const primary = i == 0 and !modal.typing;
+            try bench.headButton(w, r, button.x, rect.y + 8, std.fmt.bufPrint(&goal_buf, " {s} ", .{button.label}) catch "", if (modal.typing) r.dim else r.accent, primary);
+        }
+        try bench.say(w, buttons[0].x, rect.y + 9, clip(note, inner -| 1), r.dim, r.panel, false);
+        if (said.len > 0) try bench.say(w, x0, rect.y + 10, clip(said, inner), r.failed, r.panel, true);
+        try bench.say(w, x0, rect.y + 11, mode, if (modal.typing) r.you else r.accent, r.panel, true);
+        try bench.say(w, x0 + 8, rect.y + 11, clip(keys_text, inner -| 8), r.dim, r.panel, false);
+        return;
+    }
+    const edge = ink(app, "amber", 4);
+    const dim = ink(app, "dim", 8);
+    var pen: Pen = .{};
+    try pen.set(w, edge, null);
+    try w.print("\x1b[{d};{d}H╭─", .{ rect.y + 1, rect.x + 1 });
+    try pen.set(w, heading(app), null);
+    try w.writeAll(" a new goal ");
+    try pen.set(w, edge, null);
+    for (15..rect.w) |_| try w.writeAll("─");
+    try w.writeAll("╮");
+    for (1..rect.h - 1) |row| {
+        var text: []const u8 = "";
+        var style: vt.Style = .{};
+        switch (row) {
+            1, 2 => {
+                text = asked[row - 1];
+                style = dim;
+            },
+            3...6 => if (first + row - 3 < n) {
+                text = lines[first + row - 3];
+            },
+            8 => text = std.fmt.bufPrint(&goal_buf, "{s}   {s}   {s}", .{ buttons[0].label, buttons[1].label, buttons[2].label }) catch "",
+            9 => {
+                text = note;
+                style = dim;
+            },
+            10 => {
+                text = if (said.len > 0) said else keys_text;
+                style = if (said.len > 0) ink(app, "emberdim", 1) else dim;
+            },
+            else => {},
+        }
+        try boxLine(w, &pen, edge, style, rect.x, rect.y + @as(u16, @intCast(row)) + 1, text, inner);
+    }
+    try pen.set(w, edge, null);
+    try w.print("\x1b[{d};{d}H╰", .{ rect.y + rect.h, rect.x + 1 });
+    for (0..rect.w - 2) |_| try w.writeAll("─");
+    try w.writeAll("╯");
+    try pen.set(w, dim, null);
+    try w.print("\x1b[{d};{d}H {s} ", .{ rect.y + rect.h, rect.x + 3, mode });
+}
+
+var goal_buf: [64]u8 = undefined;
 
 fn repeat(w: *Writer, x: usize, y: usize, cell_glyph: []const u8, n: usize, fg: color.RGB, bg: color.RGB) !void {
     var buf: [1024]u8 = undefined;
@@ -2061,6 +2152,7 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
             try bench.titleBar(w, r, x0, y, ww, row.text, focused);
             var nbuf: [16]u8 = undefined;
             _ = try bench.chip(w, r, x0 + 4 + cellCount(row.text), y, std.fmt.bufPrint(&nbuf, "{d}", .{row.count}) catch "", r.dim, false);
+            if (std.mem.eql(u8, row.text, "goals")) try bench.headButton(w, r, app.goalHead().x, y, " + goal ", r.accent, false);
             try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
         },
         .focal => {
@@ -3219,6 +3311,7 @@ const plan_keys = [_][2][]const u8{
     .{ "j k, arrows", "pick a row: now, next, goals, landed, not planned" },
     .{ "⏎, click it", "go: its Claude, the gate, start it, unfold a row, the board on it" },
     .{ "space, t", "its whole ticket" },
+    .{ "+", "a new goal: plan it now, or just keep it" },
     .{ "J K x e", "on next: move it down or up, take it out, edit its why" },
     .{ "B, b", "the board, and back to the plan" },
     .{ "] [", "your move, first or last" },

@@ -198,6 +198,7 @@ fn checkRefusals(app: *App) !void {
     }
     try takeRefusal(app, "start");
     try takeRefusal(app, "move");
+    try takeRefusal(app, "goal");
 }
 
 fn takeRefusal(app: *App, id: []const u8) !void {
@@ -209,6 +210,7 @@ fn takeRefusal(app: *App, id: []const u8) !void {
     if (std.mem.startsWith(u8, id, "auto:")) return app.autoRefused(id, text);
     if (std.mem.eql(u8, id, "start")) return app.startAnswered(text);
     if (std.mem.eql(u8, id, "report")) return app.reportAnswered(text);
+    if (std.mem.eql(u8, id, "goal")) return app.goalAnswered(text);
     if (std.mem.eql(u8, id, "move")) {
         var said: [256]u8 = undefined;
         return app.reportAnswered(std.fmt.bufPrint(&said, "no {s}", .{text}) catch "no babylon refused the move");
