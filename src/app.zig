@@ -6553,6 +6553,7 @@ pub const App = struct {
     pub fn modalCard(app: *const App) ?*const tickets.Card {
         const view = app.board_view orelse return null;
         const id = view.detail orelse return null;
+        if (app.planShown()) return app.cardById(id);
         const card = app.boardCard(view.col, view.row) orelse return null;
         return if (card.id == id) card else null;
     }
