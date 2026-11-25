@@ -36,7 +36,11 @@ inner() { tmux -L $in -f /dev/null "$@" }
 outer() { tmux -L $out -f /dev/null "$@" }
 # kill-server leaves the socket file behind
 cleanup() {
+  # a group kill that repeats its TERM would end this, or its kill-server client, half done
+  trap '' HUP INT TERM
   [[ -n $server ]] && kill -CONT $server 2>/dev/null
+  [[ -n $inner_pid ]] && kill $inner_pid 2>/dev/null
+  [[ -n $outer_pid ]] && kill $outer_pid 2>/dev/null
   inner kill-server 2>/dev/null
   outer kill-server 2>/dev/null
   rm -f ${TMUX_TMPDIR:-/tmp}/tmux-$UID/{$in,$out}
@@ -116,6 +120,7 @@ check() {
 # the checks read sh's own prompt, not one handed down
 unset PS1
 inner new-session -d -s alpha -n one -x 100 -y 30 sh
+inner_pid=$(inner display -p '#{pid}')
 inner set -g default-command sh
 inner new-window -t alpha -n two sh
 inner new-window -t alpha -n three sh

@@ -45,4 +45,14 @@ wait $run
 check "killed mid-run, its inner server no longer answers" silent arena-e2e-in-$run
 check "nor its outer one" silent arena-e2e-out-$run
 
+# a process-group kill that repeats its TERM reaches the run's own kill-server too
+setsid zsh $root/test/e2e.zsh &>/dev/null &
+run=$!
+await answers arena-e2e-out-$run
+kill -TERM -- -$run
+kill -TERM -- -$run
+wait $run
+check "killed twice in a row, its inner server no longer answers" silent arena-e2e-in-$run
+check "nor its outer one" silent arena-e2e-out-$run
+
 exit $((fails > 0))
