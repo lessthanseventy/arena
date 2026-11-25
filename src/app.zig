@@ -2657,6 +2657,12 @@ pub const App = struct {
         };
     }
 
+    /// Reads `$f` with each empty cell of a table row padded to 30 no-break spaces: glow sizes a
+    /// column by its cells' median width, so a column that is mostly empty is drawn a cell wide.
+    const pad_empty_cells =
+        "{ pad=$(printf '\\302\\240%.0s' $(seq 30)); " ++
+        "sed -E ':a; /^\\|/ s/\\| +\\|/|'\"$pad\"'|/; ta' \"$f\"; }";
+
     /// The doc of a row, opened: a link by `xdg-open`, a file of the ticket's worktree (its repo's
     /// checkout when it has none) in a window of its own, in `glow` else `less`.
     fn openDoc(app: *App, need: tickets.Need) !bool {
@@ -2669,7 +2675,7 @@ pub const App = struct {
             "f=\"$HOME/projects/$1/$2\"; " ++
             "if [ -n \"$3\" ]; then for d in \"$HOME/projects/$1/.worktrees/t$3-\"*/; do [ -f \"$d$2\" ] && f=\"$d$2\" && break; done; fi; " ++
             "if [ ! -f \"$f\" ]; then echo \"no such file: $f\"; read _; exit; fi; " ++
-            "if command -v glow >/dev/null 2>&1; then glow -p \"$f\"; else less \"$f\"; fi";
+            "if command -v glow >/dev/null 2>&1; then " ++ pad_empty_cells ++ " | glow -p -; else less \"$f\"; fi";
         var cmd: Writer.Allocating = .init(app.gpa);
         defer cmd.deinit();
         var ticket_buf: [16]u8 = undefined;
@@ -8672,6 +8678,22 @@ test "a refused report says babylon's reason, a filed one its number, and both g
     try app.reportAnswered("ok \n");
     try std.testing.expectEqualStrings("filed", app.report_said.?);
     try std.testing.expect(!app.report_failed);
+}
+
+test "a doc's table has its empty cells padded, so glow gives their column room" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "d.md", .data = "| a | b | |\n| --- | --- | --- |\n| x | y | |\n\nno | | cell\n" });
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const dir = dir_buf[0..try tmp.dir.realPath(std.testing.io, &dir_buf)];
+    const script = try std.fmt.allocPrint(std.testing.allocator, "f={s}/d.md; {s}", .{ dir, App.pad_empty_cells });
+    defer std.testing.allocator.free(script);
+    const ran = try std.process.run(std.testing.allocator, std.testing.io, .{ .argv = &.{ "sh", "-c", script } });
+    defer std.testing.allocator.free(ran.stdout);
+    defer std.testing.allocator.free(ran.stderr);
+    const pad = "\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}" ++ "\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}" ++ "\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}";
+    const want = "| a | b |" ++ pad ++ "|\n| --- | --- | --- |\n| x | y |" ++ pad ++ "|\n\nno | | cell\n";
+    try std.testing.expectEqualStrings(want, ran.stdout);
 }
 
 test "two reports in one second keep two captures" {
