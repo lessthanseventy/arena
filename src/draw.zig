@@ -2246,6 +2246,7 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         try pen.set(w, .{}, null);
         for (cellCount(row.text) + 1..width) |_| try w.writeAll(" ");
     }
+    if (view.giving) |picked| if (app.pickedCard()) |card| try giveBox(app, w, card.id, picked);
     if (view.detail) |id| try detailBox(app, w, id, view.detail_scroll);
     try autoBox(app, w);
     if (view.goal_open) try goalBox(app, w);
