@@ -4978,7 +4978,7 @@ pub const App = struct {
             sheet.withButtons(app.plan_open);
             sheet.withHeld(b.plan().?, KnownPanes{ .app = app });
             var others: [max_others]Agent = undefined;
-            sheet.withOthers(app.otherClaudes(&others).len);
+            sheet.withOthers(app.otherClaudes(&others).len, app.findText());
         }
         return true;
     }

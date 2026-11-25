@@ -343,8 +343,9 @@ pub const Sheet = struct {
     }
 
     /// A rule `other Claudes N` and a pick for each of the `n` Claudes with no ticket, at the foot
-    /// of in flight's rows, where its `none` stood. `item` of a row is its place among them.
-    pub fn withOthers(s: *Sheet, n: usize) void {
+    /// of in flight's rows, where its `none` stood. `item` of a row is its place among them. A
+    /// Claude holds no title, so a `find` leaves its row dim and out of the picks.
+    pub fn withOthers(s: *Sheet, n: usize, find: []const u8) void {
         if (n == 0 or !s.bench or s.shut.contains(.now)) return;
         var foot: usize = 0;
         for (s.rows[0..s.n], 0..) |row, i| {
@@ -357,7 +358,8 @@ pub const Sheet = struct {
         var rows: [max_rows]Row = undefined;
         @memcpy(rows[0..foot], s.rows[0..foot]);
         rows[foot] = .{ .kind = .head, .text = "other Claudes", .count = n, .win = .now };
-        for (0..n) |i| rows[foot + 1 + i] = .{ .kind = .other, .pick = 0, .item = i, .win = .now };
+        const found = find.len > 0;
+        for (0..n) |i| rows[foot + 1 + i] = .{ .kind = .other, .pick = if (found) null else 0, .dim = found, .item = i, .win = .now };
         const rest = s.rows[foot + dropped .. s.n];
         @memcpy(rows[foot + 1 + n ..][0..rest.len], rest);
         s.n = foot + 1 + n + rest.len;
@@ -424,7 +426,6 @@ pub const Sheet = struct {
             .next => .{ given.next[row.item].ticket, given.next[row.item].title, given.next[row.item].repo, std.mem.eql(u8, given.next[row.item].repo, repo) },
             .goal, .card_top, .goal_bar, .goal_next, .goal_block => .{ given.goals[row.item].epic, given.goals[row.item].title, "", goalIn(b, given.goals[row.item], repo) },
             .idea => .{ given.ideas[row.item].epic, given.ideas[row.item].title, "", true },
-            .other => return if (find.len > 0) .dim else .keep,
             else => return .keep,
         };
         if (repo.len > 0 and !in_repo) return .hide;
