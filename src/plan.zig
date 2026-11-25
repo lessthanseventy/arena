@@ -6,12 +6,8 @@ const text_mod = @import("text.zig");
 
 pub const max_rows = 160;
 
-/// The stages whose tickets fold into one row past the first two of them, in the order of the
-/// bits `unfolded` holds; queued folds from its first.
-pub const folds = [_][]const u8{ "verifying", "reviewing", "landing", "queued" };
-const queued_fold = folds.len - 1;
-/// Tickets of one stage kept as rows of their own before the rest fold.
-const unfolded_rows = 2;
+/// The pipeline's stages in the order in flight lists them; queued goes by place.
+const stages = [_][]const u8{ "landing", "reviewing", "verifying", "queued" };
 /// The tickets of next that are drawn; the rest are `+N`.
 const next_shown = 7;
 /// The tickets of next a folded window names.
@@ -23,17 +19,16 @@ const foot_rows = 5;
 const idea_rows = 5;
 /// Ideas shown a row each; past it they fold to one row.
 const ideas_shown = 3;
-/// The bit of `unfolded` that holds the ideas open, past the pipeline's folds.
-pub const ideas_fold: u3 = folds.len;
+/// The bit of `unfolded` that holds the ideas open.
+pub const ideas_fold: u3 = 0;
 
-pub const Kind = enum { head, blank, now, folded, next, why, more, goals_more, goal, landed, unplanned, focal, drove, card_top, goal_bar, goal_next, goal_block, idea, ideas_more, summary, note, buttons };
+pub const Kind = enum { head, blank, now, next, why, more, goals_more, goal, landed, unplanned, focal, drove, card_top, goal_bar, goal_next, goal_block, idea, ideas_more, summary, note, buttons };
 pub const Style = enum { normal, dim, heading, attention };
 
-/// Workbench's plan is seven windows, each a fixed slot of the screen.
+/// Workbench's plan is six windows, each a fixed slot of the screen.
 pub const Window = enum {
     driving,
     now,
-    landing,
     next,
     goals,
     unplanned,
@@ -42,6 +37,7 @@ pub const Window = enum {
     pub fn title(win: Window) []const u8 {
         return switch (win) {
             .driving => "driving towards",
+            .now => "in flight",
             .unplanned => "not planned",
             else => @tagName(win),
         };
@@ -64,11 +60,10 @@ const driving_h = 5;
 pub fn slot(win: Window, w: u16, h: u16) Rect {
     const top = @min(driving_h, h);
     const rest = h - top;
-    const half = w / 2;
+    const half = w * 3 / 5;
     return switch (win) {
         .driving => .{ .x = 0, .y = 0, .w = w, .h = top },
-        .now => .{ .x = 0, .y = top, .w = half, .h = rest * 3 / 10 },
-        .landing => .{ .x = 0, .y = top + rest * 3 / 10, .w = half, .h = rest * 3 / 10 },
+        .now => .{ .x = 0, .y = top, .w = half, .h = rest * 6 / 10 },
         .next => .{ .x = 0, .y = top + rest * 6 / 10, .w = half, .h = rest - rest * 6 / 10 },
         .goals => .{ .x = half, .y = top, .w = w - half, .h = rest * 4 / 10 },
         .unplanned => .{ .x = half, .y = top + rest * 4 / 10, .w = w - half, .h = rest * 3 / 10 },
@@ -87,7 +82,7 @@ pub const Row = struct {
     /// Its place among the rows that can be picked; none for a heading, a why line or a gap.
     pick: ?usize = null,
     ticket: ?u32 = null,
-    /// Of a folded row: which stage's fold it is, as a bit of `unfolded`.
+    /// Of a row that unfolds more: which bit of `unfolded` it is.
     fold: ?u3 = null,
     style: Style = .normal,
     text: []const u8 = "",
@@ -314,7 +309,7 @@ pub const Sheet = struct {
         s.picks = 0;
         s.used = 0;
         if (bench) return s.windowRows(given, b, width, epoch);
-        s.nowRows(given, width, epoch, unfolded);
+        s.nowRows(given, width, epoch);
         s.nextRows(given, width);
         s.goalRows(given, width);
         s.ideaRows(given, width, epoch, unfolded);
@@ -352,9 +347,10 @@ pub const Sheet = struct {
             s.add(.{ .kind = .focal, .item = at, .part = 3 });
         }
         s.end("no goal yet");
-        if (s.begin(.now)) s.summaryRow(s.nowSummary(given)) else s.buildingRows(given, width, epoch);
-        s.end("none");
-        if (s.begin(.landing)) s.summaryRow(s.landingSummary(given)) else s.pipelineRows(given, width, epoch, 0);
+        if (s.begin(.now)) s.summaryRow(s.nowSummary(given)) else {
+            s.buildingRows(given, width, epoch);
+            s.pipelineRows(given, width, epoch);
+        }
         s.end("none");
         if (s.begin(.next)) s.summaryRow(s.nextSummary(given)) else s.nextRows(given, width);
         s.end("none");
@@ -386,28 +382,16 @@ pub const Sheet = struct {
         for (given.now) |item| if (building(item)) {
             if (item.stalled != null) stalled += 1 else working += 1;
         };
-        if (stalled == 0) return s.print("◐ {d} building", .{working});
-        return s.print("◐ {d} building · ◇ {d} stalled", .{ working, stalled });
-    }
-
-    fn landingSummary(s: *Sheet, given: *const tickets.Plan) []const u8 {
         const start = s.used;
-        var done: [8][]const u8 = undefined;
-        var stages: usize = 0;
-        for (given.now) |item| {
-            if (building(item)) continue;
-            const name = item.stage orelse "";
-            const seen = for (done[0..stages]) |was| {
-                if (std.mem.eql(u8, was, name)) break true;
-            } else false;
-            if (seen or stages == done.len) continue;
-            done[stages] = name;
-            stages += 1;
+        if (stalled == 0) _ = s.print("◐ {d} building", .{working}) else _ = s.print("◐ {d} building · ◇ {d} stalled", .{ working, stalled });
+        var first = true;
+        for (stages) |name| {
             var count: usize = 0;
-            for (given.now) |other| count += @intFromBool(inStage(other, name));
-            _ = s.print("{s}{s} {d}", .{ if (stages == 1) "◒ " else " · ", name, count });
+            for (given.now) |item| count += @intFromBool(!building(item) and std.mem.eql(u8, item.stage orelse "", name));
+            if (count == 0) continue;
+            _ = s.print("{s}{s} {d}", .{ if (first) " · ◒ " else " · ", name, count });
+            first = false;
         }
-        if (stages == 0) return "◒ none";
         return s.buf[start..s.used];
     }
 
@@ -454,57 +438,40 @@ pub const Sheet = struct {
         return std.mem.eql(u8, item.state, "building");
     }
 
-    fn nowRows(s: *Sheet, given: *const tickets.Plan, width: usize, epoch: i64, unfolded: u8) void {
-        s.headRow("now", given.now.len);
+    fn nowRows(s: *Sheet, given: *const tickets.Plan, width: usize, epoch: i64) void {
+        s.headRow("in flight", given.now.len);
         s.buildingRows(given, width, epoch);
-        s.pipelineRows(given, width, epoch, unfolded);
+        s.pipelineRows(given, width, epoch);
     }
 
     fn buildingRows(s: *Sheet, given: *const tickets.Plan, width: usize, epoch: i64) void {
         for (given.now, 0..) |item, i| if (building(item)) s.nowRow(item, i, width, epoch);
     }
 
-    /// The pipeline's tickets, a stage at a time in the order babylon first names them; in
-    /// Workbench's landing window a row to each, which scrolls.
-    fn pipelineRows(s: *Sheet, given: *const tickets.Plan, width: usize, epoch: i64, unfolded: u8) void {
-        var done: [8][]const u8 = undefined;
-        var stages: usize = 0;
-        for (given.now) |item| {
-            if (building(item)) continue;
-            const name = item.stage orelse "";
-            const seen = for (done[0..stages]) |was| {
-                if (std.mem.eql(u8, was, name)) break true;
-            } else false;
-            if (seen or stages == done.len) continue;
-            done[stages] = name;
-            stages += 1;
-            s.stageRows(given, name, width, epoch, unfolded);
-        }
+    /// The pipeline's tickets, a row to each: landing first, then reviewing, verifying and
+    /// queued by place.
+    fn pipelineRows(s: *Sheet, given: *const tickets.Plan, width: usize, epoch: i64) void {
+        var order: [max_rows]u16 = undefined;
+        var n: usize = 0;
+        for (given.now, 0..) |item, i| if (!building(item) and n < order.len) {
+            order[n] = @intCast(i);
+            n += 1;
+        };
+        std.mem.sort(u16, order[0..n], given, pipelineBefore);
+        for (order[0..n]) |i| s.nowRow(given.now[i], i, width, epoch);
     }
 
-    fn foldOf(name: []const u8) ?u3 {
-        for (folds, 0..) |known, bit| if (std.mem.eql(u8, known, name)) return @intCast(bit);
-        return null;
+    fn stageRank(item: tickets.NowItem) usize {
+        for (stages, 0..) |name, rank| if (std.mem.eql(u8, item.stage orelse "", name)) return rank;
+        return stages.len;
     }
 
-    fn inStage(item: tickets.NowItem, name: []const u8) bool {
-        return !building(item) and std.mem.eql(u8, item.stage orelse "", name);
-    }
-
-    fn stageRows(s: *Sheet, given: *const tickets.Plan, name: []const u8, width: usize, epoch: i64, unfolded: u8) void {
-        var count: usize = 0;
-        for (given.now) |item| count += @intFromBool(inStage(item, name));
-        const fold = foldOf(name);
-        const open = s.bench or if (fold) |bit| unfolded & (@as(u8, 1) << bit) != 0 else true;
-        const first: usize = if (fold) |bit| (if (bit == queued_fold or s.narrow) 0 else unfolded_rows) else count;
-        var seen: usize = 0;
-        for (given.now, 0..) |item, i| {
-            if (!inStage(item, name)) continue;
-            if (open or seen < first) s.nowRow(item, i, width, epoch);
-            seen += 1;
-        }
-        if (open or count <= first) return;
-        s.foldedRow(given, name, count - first, first, width);
+    fn pipelineBefore(given: *const tickets.Plan, a: u16, b: u16) bool {
+        const left = given.now[a];
+        const right = given.now[b];
+        if (stageRank(left) != stageRank(right)) return stageRank(left) < stageRank(right);
+        if ((left.place orelse 0) != (right.place orelse 0)) return (left.place orelse 0) < (right.place orelse 0);
+        return a < b;
     }
 
     fn nowRow(s: *Sheet, item: tickets.NowItem, at: usize, width: usize, epoch: i64) void {
@@ -512,7 +479,8 @@ pub const Sheet = struct {
         const mark: []const u8 = if (item.stalled != null) "◇" else if (item.waiting_on != null) "◷" else if (building(item)) "◐" else if (queued) "»" else "◒";
         var age: [16]u8 = undefined;
         const how = ago(&age, item.since, epoch);
-        const state = item.stage orelse item.state;
+        var th: [16]u8 = undefined;
+        const state = if (queued and item.place != null) s.print("queued {s}", .{place(item.place.?, &th)}) else item.stage orelse item.state;
         var said: [96]u8 = undefined;
         const right = if (item.stalled) |why|
             s.print("stalled · {s}", .{why})
@@ -530,30 +498,6 @@ pub const Sheet = struct {
             .tail_at = both.tail_at,
             .tail_style = if (item.stalled != null) .attention else .normal,
         });
-    }
-
-    fn foldedRow(s: *Sheet, given: *const tickets.Plan, name: []const u8, count: usize, skip: usize, width: usize) void {
-        const queued = std.mem.eql(u8, name, "queued");
-        const start = s.used;
-        _ = s.print(" {s} {s} {d}", .{ if (queued) "»" else "◒", name, count });
-        var seen: usize = 0;
-        var shown: usize = 0;
-        for (given.now) |item| {
-            if (!inStage(item, name)) continue;
-            seen += 1;
-            if (seen <= skip) continue;
-            var chip: [96]u8 = undefined;
-            var th: [16]u8 = undefined;
-            const text = if (queued and item.place != null)
-                std.fmt.bufPrint(&chip, "  #{d} {s} {s}", .{ item.ticket, item.repo, place(item.place.?, &th) }) catch ""
-            else
-                std.fmt.bufPrint(&chip, "  #{d} {s}", .{ item.ticket, item.repo }) catch "";
-            if (text_mod.cells(s.buf[start..s.used]) + text_mod.cells(text) + 6 > width) break;
-            _ = s.print("{s}", .{text});
-            shown += 1;
-        }
-        if (shown < count) _ = s.print("  +{d}", .{count - shown});
-        s.add(.{ .kind = .folded, .pick = 0, .fold = foldOf(name), .text = s.buf[start..s.used] });
     }
 
     fn nextRows(s: *Sheet, given: *const tickets.Plan, width: usize) void {
@@ -782,7 +726,7 @@ fn spaces(n: usize) []const u8 {
 }
 
 /// `1st`, `2nd`, `3rd`, `4th`: a place in a queue, in `buf`.
-fn place(n: u32, buf: []u8) []const u8 {
+pub fn place(n: u32, buf: []u8) []const u8 {
     const word: []const u8 = if (n % 100 >= 11 and n % 100 <= 13) "th" else switch (n % 10) {
         1 => "st",
         2 => "nd",
@@ -831,7 +775,7 @@ fn rowText(s: *const Sheet, kind: Kind, nth: usize) ?[]const u8 {
     return null;
 }
 
-test "the plan's rows: building first, a stage's first two tickets, the rest and the queued folded, each said as babylon gives it" {
+test "in flight: building first, then the pipeline a row to a ticket, landing before reviewing before verifying before queued by place, each said as babylon gives it" {
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     var s: Sheet = undefined;
@@ -839,24 +783,41 @@ test "the plan's rows: building first, a stage's first two tickets, the rest and
     s.build(b.plan().?, &b, 100, epoch, 0, false, false, .empty);
     const eq = std.testing.expectEqualStrings;
     const ok = std.testing.expect;
-    try eq("now 7", rowText(&s, .head, 0).?);
+    try eq("in flight 7", rowText(&s, .head, 0).?);
     try ok(std.mem.startsWith(u8, rowText(&s, .now, 0).?, " ◐ #600 arena    Design"));
     try ok(std.mem.endsWith(u8, rowText(&s, .now, 0).?, "building · 6m"));
     try ok(std.mem.indexOf(u8, rowText(&s, .now, 1).?, "◇ #510") != null);
     try ok(std.mem.endsWith(u8, rowText(&s, .now, 1).?, "stalled · idle 9m"));
     try ok(std.mem.endsWith(u8, rowText(&s, .now, 2).?, "verifying · 20m"));
-    try std.testing.expectEqual(@as(?[]const u8, null), rowText(&s, .now, 4));
-    try eq(" ◒ verifying 1  #560 arena", rowText(&s, .folded, 0).?);
-    try eq(" » queued 2  #588 babylon 1st  #429 babylon 2nd", rowText(&s, .folded, 1).?);
+    try ok(std.mem.indexOf(u8, rowText(&s, .now, 3).?, "#591") != null);
+    try ok(std.mem.indexOf(u8, rowText(&s, .now, 4).?, "#560") != null);
+    try ok(std.mem.indexOf(u8, rowText(&s, .now, 5).?, "» #588") != null);
+    try ok(std.mem.endsWith(u8, rowText(&s, .now, 5).?, "queued 1st · 13m"));
+    try ok(std.mem.indexOf(u8, rowText(&s, .now, 6).?, "» #429") != null);
+    try ok(std.mem.endsWith(u8, rowText(&s, .now, 6).?, "queued 2nd · 13m"));
+    try std.testing.expectEqual(@as(?[]const u8, null), rowText(&s, .now, 7));
 }
 
-test "an unfolded stage is a row to a ticket" {
-    var b = try tickets.Board.parse(std.testing.allocator, sample);
+test "a landing ticket is listed before reviewing, verifying and queued, whatever order babylon gives" {
+    var b = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"plan":{"now":[
+        \\{"ticket":1,"repo":"arena","title":"q2","state":"landing","stage":"queued","place":2},
+        \\{"ticket":2,"repo":"arena","title":"v","state":"landing","stage":"verifying"},
+        \\{"ticket":3,"repo":"arena","title":"l","state":"landing","stage":"landing"},
+        \\{"ticket":4,"repo":"arena","title":"q1","state":"landing","stage":"queued","place":1},
+        \\{"ticket":5,"repo":"arena","title":"r","state":"landing","stage":"reviewing"},
+        \\{"ticket":6,"repo":"arena","title":"b","state":"building"}]}}
+    );
     defer b.deinit();
     var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 100, 0, 1 << queued_fold, false, false, .empty);
-    try std.testing.expect(rowText(&s, .folded, 1) == null);
-    try std.testing.expect(std.mem.indexOf(u8, rowText(&s, .now, 5).?, "» #429") != null);
+    s.build(b.plan().?, &b, 100, 0, 0, false, true, .empty);
+    const want = [_]u32{ 6, 3, 5, 2, 4, 1 };
+    var at: usize = 0;
+    for (s.rows[0..s.n]) |row| if (row.kind == .now) {
+        try std.testing.expectEqual(want[at], row.ticket.?);
+        at += 1;
+    };
+    try std.testing.expectEqual(want.len, at);
 }
 
 test "a wait with no ticket and no landing to wait for is no wait" {
@@ -886,8 +847,8 @@ test "next says what each waits on and why, goals their steps, and the picks run
     try ok(has(u8, rowText(&s, .goal, 1).?, "1 of 2  ○ #3 waits on #2") != null);
     try ok(has(u8, rowText(&s, .landed, 0).?, "landed today 2   #322 arena held card e2e · #999") != null);
     try ok(has(u8, rowText(&s, .unplanned, 0).?, "not planned 5, 3 follow-ups   arena 3 · tlon 2") != null);
-    // 2 building, 2 verifying rows, 2 folded, 3 next, 2 goals, landed, not planned
-    try std.testing.expectEqual(@as(usize, 2 + 2 + 2 + 3 + 2 + 2), s.picks);
+    // 2 building and 5 pipeline rows, 3 next, 2 goals, landed, not planned
+    try std.testing.expectEqual(@as(usize, 2 + 5 + 3 + 2 + 2), s.picks);
     try std.testing.expectEqual(s.picks - 1, s.rows[s.rowOf(s.picks - 1).?].pick.?);
 }
 
@@ -1021,7 +982,7 @@ test "the focal window follows plan.driving, says whose pick it is, and asks wha
 test "goals past what fits fold into one row, and landed and not planned keep theirs" {
     var buf: [8192]u8 = undefined;
     var used = (try std.fmt.bufPrint(&buf, "{{\"tickets\":[],\"plan\":{{\"now\":[],\"next\":[],\"goals\":[", .{})).len;
-    for (0..30) |i| {
+    for (0..32) |i| {
         used += (try std.fmt.bufPrint(buf[used..], "{s}{{\"epic\":{d},\"title\":\"g{d}\",\"total\":2,\"landed\":1,\"steps\":[{{\"ticket\":1,\"state\":\"landed\"}},{{\"ticket\":2,\"state\":\"next\"}}]}}", .{ if (i > 0) "," else "", 100 + i, i })).len;
     }
     used += (try std.fmt.bufPrint(buf[used..], "],\"landed_today\":{{\"count\":0,\"newest\":[]}},\"not_planned\":{{\"count\":0,\"follow_ups\":0,\"by_repo\":{{}}}}}}}}", .{})).len;

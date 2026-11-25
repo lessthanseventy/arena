@@ -2118,13 +2118,14 @@ check "x takes it out of next, through babylon" await last 'next 7 --drop'
 cp $tmp/run/babylon/board.json $tmp/board.slots
 mkdir -p $tmp/.config/ficciones/theme
 for name in AMBER VIOLET AMBERDIM EMBERDIM INK DIM GREY SURFACE0 SURFACE2 SURFACE3 SURFACE4 BG CYAN MOSS PINK RED; do print -r -- "PALETTE_$name=#808080"; done >$tmp/.config/ficciones/theme/palette.sh
-print -r -- '{"tickets":[{"id":701,"repo":"arena","title":"First building","kind":"ticket","status":"doing","priority":"med","blocked_by":[]}],"plan":{"now":[{"ticket":701,"repo":"arena","title":"First building","state":"building","since":"2026-11-24T10:00:00Z"},{"ticket":702,"repo":"arena","title":"Second building","state":"building","since":"2026-11-24T10:00:00Z"}],"next":[{"ticket":7,"repo":"tlon","title":"Lights","why":"","set_by":"orchestrator","waits_on":[]}],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}' >$tmp/run/babylon/board.json
-check "in Workbench's look the plan's windows have their title bars" await shows '◆ now.*◆ goals'
-check "now holds the tickets being built" see 'First buil'
+print -r -- '{"tickets":[{"id":701,"repo":"arena","title":"First building","kind":"ticket","status":"doing","priority":"med","blocked_by":[]}],"plan":{"now":[{"ticket":701,"repo":"arena","title":"First building","state":"building","since":"2026-11-24T10:00:00Z"},{"ticket":702,"repo":"arena","title":"Second landing","state":"landing","stage":"verifying","since":"2026-11-24T10:00:00Z"}],"next":[{"ticket":7,"repo":"tlon","title":"Lights","why":"","set_by":"orchestrator","waits_on":[]}],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}' >$tmp/run/babylon/board.json
+check "in Workbench's look the plan's windows have their title bars" await shows '◆ in flight.*◆ goals'
+check "in flight holds the ticket being built" see 'First buil'
+check "and the pipeline's, with its stage" see 'Second lan.*verifying'
 title_row() { screen | grep -n "$1" | head -1 | cut -d: -f1 }
 next_row=$(title_row '◆ next')
 key z
-check "z folds the picked window to its summary" see '◐ 2 building'
+check "z folds the picked window to its summary" see '◐ 1 building · ◒ verifying 1'
 check "its rows are gone" gone 'First buil'
 same_row() { [[ $(title_row '◆ next') == $next_row ]] }
 check "and the window below it stays on the same screen row" await same_row
@@ -2138,11 +2139,16 @@ key q
 check "and q closes it" gone 'q close'
 check "with the window below still on its row" same_row
 title_click() { local row=$(title_row "$1"); local line=$(screen | sed -n "${row}p"); mouse 0 $(( ${#${line%%$1*}} + 3 )) $row M; mouse 0 $(( ${#${line%%$1*}} + 3 )) $row m }
-title_click '◆ now'
-check "a click on a window's title bar folds it, off its ▾ too" see '◐ 2 building'
-title_click '◆ now'
+title_click '◆ in flight'
+check "a click on a window's title bar folds it, off its ▾ too" see '◐ 1 building · ◒ verifying 1'
+title_click '◆ in flight'
 check "and a click again opens it" see 'First buil'
 check "with the window below still on its row" same_row
+key j
+key Enter
+check "⏎ on a pipeline row opens the gate's modal for its run" await shows '✗ gate +failed'
+key Escape
+key k
 : >$tmp/babylon
 key -l ' '
 check "space opens the row in place, with the card's buttons under it" await shows 'o open +e edit'

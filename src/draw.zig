@@ -2165,19 +2165,16 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
         try w.writeAll(App.orch_link);
     }
     const given = b.plan().?;
-    var landing: usize = 0;
-    for (given.now) |item| landing += @intFromBool(!std.mem.eql(u8, item.state, "building"));
     const auto = if (app.auto()) |state|
         std.fmt.bufPrint(&buf, "◐ auto {d}/{d}", .{ state.working, state.cap }) catch "◐"
     else
         "◐ auto";
-    var landing_buf: [32]u8 = undefined;
     var today_buf: [32]u8 = undefined;
     var needs_buf: [16]u8 = undefined;
     const needs_n = b.needsYou().len;
     const pieces = [_]struct { []const u8, vt.Style }{
         .{ auto, if (app.auto() != null) autoOn(app) else dim },
-        .{ std.fmt.bufPrint(&landing_buf, "◒ landing {d}", .{landing}) catch "", dim },
+
         .{ std.fmt.bufPrint(&today_buf, "✓ {d} today", .{given.landed_today.count}) catch "", dim },
         .{ std.fmt.bufPrint(&needs_buf, "▲ {d}", .{needs_n}) catch "", if (needs_n > 0) heading(app) else dim },
     };
@@ -2350,12 +2347,9 @@ fn benchPlan(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
 }
 
 fn windowCount(given: *const tickets.Plan, win: sheets.Window) ?usize {
-    var building: usize = 0;
-    for (given.now) |item| building += @intFromBool(std.mem.eql(u8, item.state, "building"));
     return switch (win) {
         .driving => null,
-        .now => building,
-        .landing => given.now.len - building,
+        .now => given.now.len,
         .next => given.next.len,
         .goals => given.goals.len - @intFromBool(for (given.goals) |goal| {
             if (given.driving == goal.epic) break true;
@@ -2534,9 +2528,12 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
             var lbuf: [64]u8 = undefined;
             const how = sheets.ago(&age, item.since, app.epoch);
             const state = item.stage orelse item.state;
+            var said: [24]u8 = undefined;
+            var th: [16]u8 = undefined;
+            const shown = if (item.place) |n| (if (std.mem.eql(u8, state, "queued")) (std.fmt.bufPrint(&said, "queued {s}", .{sheets.place(n, &th)}) catch state) else state) else state;
             const label = if (item.stalled) |why|
                 std.fmt.bufPrint(&lbuf, "stalled · {s}", .{why}) catch "stalled"
-            else if (item.waiting_on) |wait| wait.say(&lbuf) else if (how.len > 0) std.fmt.bufPrint(&lbuf, "{s} · {s}", .{ state, how }) catch state else state;
+            else if (item.waiting_on) |wait| wait.say(&lbuf) else if (how.len > 0) std.fmt.bufPrint(&lbuf, "{s} · {s}", .{ shown, how }) catch shown else shown;
             const lead = if (item.stalled != null) r.failed else if (item.waiting_on != null) r.dim else stepHue(r, state).lead;
             const chip_w = cellCount(label) + 2;
             const chip_x = x0 + ww -| (chip_w + 1);
@@ -2545,11 +2542,6 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
                 _ = try bench.chipInk(w, r, chip_x, y, label, lead, if (item.stalled != null) r.on_accent else r.text, item.stalled != null);
                 try bench.say(w, title_x, y, clip(item.title, chip_x - title_x - 1), r.text, bg, false);
             } else try bench.say(w, title_x, y, clip(item.title, x0 + ww -| title_x -| 1), r.text, bg, false);
-        },
-        .folded => {
-            try bench.fill(w, x0, y, ww, bg);
-            if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
-            try bench.say(w, x0 + 2, y, clip(std.mem.trimStart(u8, row.text, " "), room), r.dim, bg, false);
         },
         .next => {
             const item = given.next[row.item];
@@ -5348,9 +5340,10 @@ test "a goal with a step to try reads ▲ 1 to try after its bar in the you colo
     for (sheet.rows[0..sheet.n], 0..) |row, i| {
         if (row.kind == .goal_bar and row.item == 0) at = i;
     }
-    const y = 2 + (at - app.planTop(&sheet));
-    const cw = app.boardW() - 3 - 2;
-    const label_x = app.boardX() + 1 + 1 + 3 + cw -| 4 -| "2/3  66%".len -| 10 -| 2;
+    const rect = app.planSlot(.goals);
+    const y = rect.y + 1 + (at - sheet.span(.goals).start) - app.planWindowTop(&sheet, .goals, rect.h - sheets.window_chrome);
+    const cw = rect.w - 1 - 2;
+    const label_x = rect.x + 1 + 3 + cw -| 4 -| "2/3  66%".len -| 10 -| 2;
     const words_x = label_x + "2/3  66%".len + 2;
     const mark = try bench.probe(f, words_x, y);
     try std.testing.expectEqual(@as(u21, '▲'), mark.cp);

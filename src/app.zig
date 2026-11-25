@@ -4962,7 +4962,7 @@ pub const App = struct {
         }
         switch (row.kind) {
             .summary => try app.togglePlanFold(row.win),
-            .folded, .ideas_more => if (row.fold) |bit| {
+            .ideas_more => if (row.fold) |bit| {
                 view.unfolded ^= @as(u8, 1) << bit;
             },
             .idea => {
@@ -4981,7 +4981,7 @@ pub const App = struct {
                 const pane = if (item.holder()) |held| (if (app.paneWindow(held) != null) held else null) else null;
                 if (pane) |held| return app.showPane(held);
                 if (item.stalled != null) return app.send(.ignore, captured("babylon start {d}"), .{id});
-                if (!std.mem.eql(u8, item.state, "building")) try app.toGate();
+                if (!std.mem.eql(u8, item.state, "building")) try app.openGate(id);
             },
             .next => if (row.ticket) |id| try app.send(.ignore, captured("babylon start {d}"), .{id}),
             .goals_more => try app.toBoard(),
@@ -10549,7 +10549,7 @@ test "on Plan's windows z folds the picked one and keeps the pick, Z folds the r
     try std.testing.expect(!app.plan_shut.contains(.now));
 
     try app.planKey("Z");
-    try eq(@as(usize, 6), app.plan_shut.count());
+    try eq(@as(usize, 5), app.plan_shut.count());
     try std.testing.expect(!app.plan_shut.contains(.now));
     try app.planKey("Z");
     try eq(@as(usize, 0), app.plan_shut.count());
