@@ -1039,6 +1039,524 @@ key 'exit' Enter
 check "a session ending moves arena to one that is left" see '╭─ 3 three '
 check "and takes it off the rail" gone '│ beta '
 
+# Plan drives what the board drove: the tickets, their modals, the keys on a row, the orchestrator's column beside it.
+# Workbench's look (a palette) gives Plan its windows and rows for not planned; the plain look keeps what the typing
+# races need, the column's lit state.
+one=$(inner display -p -t alpha:one '#{pane_id}')
+mkdir -p $tmp/run/babylon $tmp/.config/ficciones/theme
+print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[],"stage":"failed",'\
+'"stage_note":"the review sent it back: the first reason runs long enough to need a second row in the box, and\nthe last words of it are never cut off",'\
+'"ask":{"id":5,"question":"Which colour?","options":["red","blue"]}},'\
+'{"id":8,"repo":"arena","title":"Board of the lanes","kind":"ticket","status":"doing","priority":"high","claimed_by":"'$one'",'\
+'"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[7]},'\
+'{"id":11,"repo":"arena","title":"Handed in","kind":"ticket","status":"review","priority":"med","claimed_by":"'$one'",'\
+'"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[],"stage":"queued"}],'\
+'"backlog":[{"id":12,"repo":"arena","title":"Someday","kind":"ticket","status":"backlog","priority":"med","blocked_by":[]}],'\
+'"plan":{"now":[{"ticket":8,"repo":"arena","title":"Board of the lanes","state":"building","since":"2026-11-24T10:00:00Z","pane":"'$one'"},'\
+'{"ticket":11,"repo":"arena","title":"Handed in","state":"landing","stage":"queued","place":1,"since":"2026-11-24T10:00:00Z"}],'\
+'"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":1,"follow_ups":0,"by_repo":{"tlon":1}}}}' \
+  >$tmp/run/babylon/board.json
+cp $tmp/run/babylon/board.json $tmp/board.kept
+for name in AMBER VIOLET AMBERDIM EMBERDIM INK DIM GREY SURFACE0 SURFACE2 SURFACE3 SURFACE4 BG CYAN MOSS PINK RED; do print -r -- "PALETTE_$name=#808080"; done >$tmp/.config/ficciones/theme/palette.sh
+outer resize-window -t o -x 200 -y 40
+see '^│ ▤ board +1 todo  1 doing │'
+normal
+key b
+see 'in flight[^0-9]*2'
+key M-b
+gone 'in flight[^0-9]*2'
+last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
+outer resize-window -t o -x 200 -y 40
+zselect -t 100
+$bin -L $in plan 7
+see "not planned"
+: >$tmp/babylon
+key ' '
+key o
+check "a ticket's modal opened from a not planned row shows the question and its options by number" see '2 blue'
+key 2
+checked() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == 'answer 5 2' ]] }
+check "and a number answers it through babylon" await checked
+check "and closes it" gone '2 blue'
+touch $tmp/refuse
+key ' '
+key o
+key 1
+refused() { [[ -f $tmp/notified && $(<$tmp/notified) == *'babylon: no session to answer'* ]] }
+check "and an answer babylon refuses says why" await refused
+rm $tmp/refuse
+rowof() { screen | grep -n -m1 -- "$1" | cut -d: -f1 }
+key ' '
+key o
+check "space on a row and o show the picked ticket's whole ticket, as babylon tells it" see 'the whole of it'
+check "with its close button in the foot" see 'q close'
+check "and a send-back's reason whole in it, on as many rows as it takes" see 'last words of it are never cut off'
+key j j j j j
+check "and j scrolls it no further than its last line" see 'the whole of it'
+key Escape
+check "Escape puts it away" gone 'the whole of it'
+key ' '
+key o
+see 'the whole of it'
+key q
+check "q closes it too" gone 'the whole of it'
+nofile() { [[ ! -e $tmp/run/babylon/detail-7.txt ]] }
+check "leaving no file of it behind" await nofile
+close_at() { local l=$(settled | grep -m1 "q close"); print $(( ${#${l%%q close*}} + 1 )) $(settled | grep -n -m1 "q close" | cut -d: -f1) }
+key ' '
+key o
+see 'the whole of it'
+mouse 0 ${(z)$(close_at)} M
+check "a click on the modal's close button puts it away" gone 'the whole of it'
+key ' '
+key o
+see 'the whole of it'
+foot_at=(${(z)$(close_at)})
+mouse 0 $(( foot_at[1] - 20 )) $(( foot_at[2] - 3 )) M
+check "a click inside the modal leaves it open" shows 'the whole of it'
+mouse 0 70 39 M
+check "and a click outside it closes it" gone 'the whole of it'
+$bin -L $in plan 7
+check "arena plan and a ticket's id, run elsewhere, opens Plan with the pick on it" see 'not planned'
+key ' '
+check "so that space opens its row" see '⏎ start'
+key ' '
+key ' '
+key o
+see 'the whole of it'
+arena_pid=$(pgrep -x -P $(outer display -p -t o '#{pane_pid}') arena)
+kill -STOP $arena_pid
+key Escape
+$bin -L $in plan 8
+zselect -t 10
+kill -CONT $arena_pid
+zselect -t 10
+check "an Escape typed before arena plan moved the pick put the modal away, not Plan after" gone 'the whole of it'
+key ' '
+check "and the pick is on the new ticket" see '⏎ go'
+key ' '
+outer resize-window -t o -x 121 -y 24
+two=$(inner list-panes -s -t alpha -F '#{pane_id}' | sed -n 2p)
+$bin -L $in show $two
+check "arena show and a pane puts its window in front, Plan put away" await dots '○●○'
+$bin -L $in plan 7
+see 'not planned'
+$bin -L $in show $two
+check "and a show with Plan open puts it away for the pane" await dots '○●○'
+shows '^NORMAL' || key C-Space
+see '^NORMAL'
+key -l '#'
+key -l 7
+key Enter
+check "# in normal mode and a ticket's number open that ticket's modal over Plan" see 'the whole of it'
+key Escape
+check "Esc puts the modal away" gone 'the whole of it'
+zselect -t 10
+key Escape
+check "and Plan" gone 'not planned'
+outer resize-window -t o -x 200 -y 40
+zselect -t 200
+last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
+$bin -L $in plan 7
+see 'not planned'
+key /
+key -l zzz
+check "/ opens a find line on Plan, the typing in it" see '/ zzz'
+key BSpace BSpace BSpace
+key -l TLON
+key Enter
+check "Enter keeps the find and gives Plan its keys" see '/ TLON'
+key Escape
+check "Escape clears it" gone '/ TLON'
+$bin -L $in plan 7
+zselect -t 100
+key p
+check "p raises the picked row's priority through babylon" await last 'update 7 --priority high'
+key w
+check "w on a not planned row asks its why at the foot" see '❯ +⏎ save  esc drop'
+key Escape
+check "and Escape drops it" gone '⏎ save  esc drop'
+key w
+key -l 'the lights'
+key Enter
+check "its why puts the ticket at the bottom of next, through babylon" await last 'next 7 --why the lights'
+key W
+check "and W at its top" await last 'next 7 --at 1'
+folded_file=$tmp/.local/state/arena/folded
+$bin -L $in plan 7
+zselect -t 200
+key k
+key Enter
+check "⏎ on a repo's chip folds its rows" gone '#7 Lights'
+check "and the fold is kept with the repo folds" await eval 'grep -qx tlon $folded_file'
+key Z
+check "Z on the chip opens only that repo's rows" see '#7 Lights'
+check "and the fold is gone from the repo folds" await eval '! grep -qx tlon $folded_file'
+inner set -p -t alpha:one @arena_claude_since $(date +%s)
+see 'other Claudes 1'
+$bin -L $in plan 7
+zselect -t 200
+key G
+check "G on a not planned row shows the running Claudes it can be given to" see '│? *[1-9] +alpha · one'
+key Escape
+check "and Escape puts them away" gone 'give #7 to'
+key G
+see "give #7 to"
+key "$(screen | sed -n 's/.*[│ ] *\([1-9]\)  *alpha · one .*/\1/p' | head -1)"
+check "and a Claude's number gives it the ticket through babylon, by its pane" await last "give 7 $one"
+touch $tmp/refuse
+$bin -L $in plan 7
+zselect -t 200
+key G
+see "give #7 to"
+key "$(screen | sed -n 's/.*[│ ] *\([1-9]\)  *alpha · one .*/\1/p' | head -1)"
+unfit() { [[ -f $tmp/notified && $(<$tmp/notified) == *"babylon: the Claude in $one is mid-turn"* ]] }
+check "and refused by babylon, it says why, the pane whole" await unfit
+rm $tmp/refuse
+inner set -pu -t alpha:one @arena_claude_since
+outer resize-window -t o -x 200 -y 40
+$bin -L $in plan 7
+see 'not planned'
+: >$tmp/babylon
+key J
+check "J on a not planned row moves it down its repo's order through babylon" await last 'move 7 down --repo tlon'
+key k
+key l
+key Enter
+check "⏎ on the backlog chip shows the backlog rows in place of the todo ones" see '#12 Someday'
+key j
+: >$tmp/babylon
+key t
+check "t on a backlog row moves it to todo through babylon" await last 'update 12 --status todo'
+key k
+key Enter
+key Escape
+cp $tmp/run/babylon/board.json $tmp/board.noauto
+$bin -L $in plan 7
+zselect -t 200
+check "with no auto in babylon's file, Plan's head says nothing of it" hides 'auto [0-9]'
+key A
+check "A opens auto's settings over Plan" see 'working [0-9]+ of [0-9]+'
+key a
+check "a in them turns babylon's auto mode on" await last 'auto on'
+key Escape
+check "and esc closes them" gone 'working [0-9]+ of [0-9]+'
+print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":2,"working":1}}' >$tmp/run/babylon/board.json
+check "on, Plan's head says how many work of the cap" see ' ◐ auto 1/2( |$)'
+key A
+key a
+check "and a turns it off" await last 'auto off'
+key Escape
+cp $tmp/board.noauto $tmp/run/babylon/board.json
+check "off, the state is gone" gone 'auto [0-9]'
+check "with nothing of the orchestrator in babylon's file, Plan's head has no button for it" hides ' ● orch '
+print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":4,"working":4,"tools":{"working":1,"cap":1}}}' >$tmp/run/babylon/board.json
+check "with room, Plan's head says the tools slots when babylon's file gives them" see ' ◐ auto 4/4 · tools 1/1( |$)'
+outer resize-window -t o -x 121
+check "and with less room, without the tools slots" see ' ◐ auto 4/4 +✓ 0 today'
+outer resize-window -t o -x 200
+cp $tmp/board.noauto $tmp/run/babylon/board.json
+outer resize-window -t o -x 200 -y 40
+zselect -t 200
+key Escape
+plan_up='◆ in flight'
+plan_home() { normal; key b; see "$plan_up" }
+plan_at() { $bin -L $in plan $1; see "$plan_up" }
+plan_home
+touch $tmp/refuse-start
+plan_at 7
+key Enter
+check "⏎ on a not planned row babylon refuses to start says why on the foot, Plan still open" see 'babylon: ticke'
+rm $tmp/refuse-start
+: >$tmp/babylon
+key Enter
+check "⏎ on a free todo row runs babylon start on it" await last 'start 7'
+await eval '[[ -e $tmp/run/babylon/refused-start ]]'
+await eval '[[ ! -e $tmp/run/babylon/refused-start ]]'
+check "and closes Plan once babylon has started it" gone "$plan_up"
+plan_home
+plan_at 8
+key Enter
+check "⏎ on an in flight row goes to the Claude holding it" see '╭─ 1 one '
+plan_home
+print -r -- "${$(<$tmp/board.kept)%\}}"',"proposals":[{"id":4,"action":"start","ticket_id":7,"what":"Start #7","why":"Next in line"}],"needs_you":[{"id":"proposal:4","kind":"proposal","ticket":7,"repo":"tlon","text":"P4 Start #7: Next in line","actions":[{"key":"⏎","label":"go","argv":["babylon","go","4"]},{"key":"x","label":"no","argv":["babylon","no","4"]}]}]}' >$tmp/run/babylon/board.json
+check "Plan's head counts what needs you" see ' ▲ 1'
+plan_at 7
+: >$tmp/babylon
+key Enter
+check "⏎ on a row with an open proposal answers it through babylon, not a Claude started" await last 'go 4'
+plan_at 7
+key x
+check "and x on it says no to it" await last 'no 4'
+cp $tmp/board.kept $tmp/run/babylon/board.json
+gone ' ▲ 1'
+plan_at 7
+: >$tmp/babylon
+key '>'
+check "> on a not planned row closes a ticket still to do" await last 'update 7 --status done'
+key e
+check "e on a not planned row edits it in a window of its own" await last 'edit 7'
+key Escape
+plan_at 8
+key ' '
+key o
+check "a modal opened from an in flight row shows its body" see 'the whole of it'
+check "and its holder's state" see 'its Claude: '
+key Enter
+check "and ⏎ in it goes to the Claude holding it" see '╭─ 1 one '
+plan_up='◆ in flight'
+plan_home() { normal; key b; see "$plan_up" }
+plan_at() { $bin -L $in plan $1; see "$plan_up" }
+in_session() { [[ $(inner list-clients -F '#{session_name}') == $1 ]] }
+orch_lit() { [[ $(outer capture-pane -ep -t o) =~ $'((\e\\[[0-9;]*m)+) ○ orchestrator ' && $match[1] =~ '[[;]7[;m]' ]] }
+shown_cursor() { [[ $(outer display -p -t o '#{cursor_flag}') == $1 ]] }
+said() { inner capture-pane -p -t $1 | grep -qx $2 }
+inner new-session -d -s babylon-gate -n gate sh
+plan_at 7
+key g
+check "g on Plan shows the gate" see '╭─ 1 gate '
+plan_home
+print -r -- '{"tickets":[{"id":21,"repo":"arena","title":"Running","kind":"ticket","status":"review","priority":"med","blocked_by":[],"stage":"reviewing"},{"id":22,"repo":"arena","title":"Waiting","kind":"ticket","status":"review","priority":"med","blocked_by":[],"stage":"queued"}],"plan":{"now":[{"ticket":21,"repo":"arena","title":"Running","state":"landing","stage":"reviewing","since":"2026-11-24T10:00:00Z"},{"ticket":22,"repo":"arena","title":"Waiting","state":"landing","stage":"queued","place":1,"since":"2026-11-24T10:00:00Z"}],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}' >$tmp/run/babylon/board.json
+see '#21 Running'
+plan_at 21
+key g
+check "g on Plan with a run in progress opens the gate's modal on it" see '╭─ gate · #21 '
+check "its stages with their marks and times" see '✓ rebase +ok +4s'
+check "the failed one's result" see '✗ gate +failed +1m 58s'
+check "and its failing output under them" see '│ expected 1, found 0 +│'
+check "and what is queued behind it" see 'queued behind it: #22 arena'
+check "with its keys in the foot" see '╰─ L whole log ─ t ticket ─ u bump ─ W withdraw ─ q close'
+key u
+check "u bumps it through babylon" await last 'bump 21'
+key q
+key q
+print -r -- '{"tickets":[{"id":13,"repo":"babylon","title":"Gatekeeping","kind":"ticket","status":"todo","priority":"med","blocked_by":[]}],"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":1,"follow_ups":0,"by_repo":{"babylon":1}}}}' >$tmp/run/babylon/board.json
+plan_home
+see 'Gatekeeping'
+plan_at 13
+key Enter
+check "⏎ on a babylon row starts it through babylon" await last 'start 13'
+check "and closes Plan" gone "$plan_up"
+cp $tmp/board.kept $tmp/run/babylon/board.json
+plan_home
+see '#7 Lights'
+plan_at 7
+key k
+key o
+starting() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == orchestrator ]] }
+check "o on Plan starts the orchestrator when it is not running" await starting
+plan_at 7
+check "Plan opened in the meantime" see "$plan_up"
+key q
+check "and closed" gone "$plan_up"
+inner new-session -d -s orchestrator -n orch sh
+zselect -t 100
+check "an orchestrator that shows after the human moved on does not pull them to it" see '╭─ 1 gate '
+plan_at 7
+key k
+key o
+check "and o goes to it now it is there" see '╭─ 1 orch '
+inner kill-session -t '=orchestrator'
+check "with the orchestrator gone, arena goes elsewhere" gone '╭─ 1 orch '
+asked=$(grep -cx orchestrator $tmp/babylon)
+plan_at 7
+key k
+key o
+asked_again() { (( $(grep -cx orchestrator $tmp/babylon) > asked )) }
+check "o asks babylon to start it again" await asked_again
+inner new-session -d -s orchestrator -n orch sh
+check "and with no other move made, arena goes to it once its session is there" see '╭─ 1 orch '
+key Escape
+inner kill-session -t '=orchestrator'
+inner kill-session -t '=babylon-gate'
+await in_session alpha
+plan_up='in flight [0-9]'
+plan_home() { normal; key b; see "$plan_up" }
+plan_at() { $bin -L $in plan $1; see "$plan_up" }
+in_session() { [[ $(inner list-clients -F '#{session_name}') == $1 ]] }
+orch_lit() { [[ $(outer capture-pane -ep -t o) =~ $'((\e\\[[0-9;]*m)+) ○ orchestrator ' && $match[1] =~ '[[;]7[;m]' ]] }
+shown_cursor() { [[ $(outer display -p -t o '#{cursor_flag}') == $1 ]] }
+said() { inner capture-pane -p -t $1 | grep -qx $2 }
+rowof() { screen | grep -n -m1 -F -- "$1" | cut -d: -f1 }
+colof() { local l=$(screen | sed -n $1p); [[ $l == *"$2"* ]] || return 1; local p=${l%%"$2"*}; print $(( ${#p} + 1 )) }
+spot() { local l=$(screen | grep -m1 -- "$1"); local p=${l%%"$1"*}; print $(( ${#p} + 2 )) $(screen | grep -n -m1 -- "$1" | cut -d: -f1) }
+print -r -- '' >$tmp/.config/ficciones/theme/palette.sh
+outer resize-window -t o -x 121 -y 24
+inner new-session -d -s orchestrator -n orch sh
+cp $tmp/board.kept $tmp/board.two
+print -r -- "${$(<$tmp/board.two)%\}}"',"orchestrator":{"on":true,"running":true}}' >$tmp/run/babylon/board.json
+: >$tmp/babylon
+$bin -L $in plan 8
+see "$plan_up"
+check "with the orchestrator running, Plan has its window beside it" see '╭─ ○ orchestrator · idle '
+check "arena in its session to have it live" await in_session orchestrator
+check "Plan keeps the keys: its column is unlit, the cursor in no pane" eval '! orch_lit && shown_cursor 0'
+key M-l
+check "Alt+l from Plan focuses it, lit as the focused column" await orch_lit
+key 'echo side' Enter
+check "what is typed then reaches its pane" see '│side +│'
+in_mode() { [[ -n $(inner display -p -t orchestrator:orch '#{pane_mode}') ]] }
+cp $tmp/run/babylon/board.json $tmp/board.chatty
+print -r -- "${$(<$tmp/board.chatty)%\}}"',"auto":{"on":true,"cap":2,"working":1}}' >$tmp/run/babylon/board.json
+see '◐ (auto )?1/2'
+touch $tmp/chatty
+offs=$(grep -cx 'auto off' $tmp/babylon)
+r=$(rowof '◐ auto'); c=$(colof $r '◐ auto')
+mouse 0 $((c + 1)) $r M
+mouse 0 $((c + 1)) $r M
+await eval '(( $(grep -cx "auto off" $tmp/babylon) > offs ))'
+zselect -t 50
+check "a babylon command that prints leaves the orchestrator's pane out of any mode" eval '! in_mode'
+key M-l
+key -l 'echo after-chatter-jkdufltb'
+key Enter
+check "and a sentence typed then reaches it whole" await eval 'inner capture-pane -p -t orchestrator:orch | grep -qx after-chatter-jkdufltb'
+rm $tmp/chatty
+cp $tmp/board.chatty $tmp/run/babylon/board.json
+inner copy-mode -t orchestrator:orch
+check "the pane put in a mode" eval 'in_mode'
+key M-l
+key -l 'echo after-mode-jkdufltb'
+key Enter
+check "a sentence typed to a pane in a mode takes it out and reaches the pane whole" await eval 'inner capture-pane -p -t orchestrator:orch | grep -qx after-mode-jkdufltb && ! in_mode'
+: >$tmp/babylon
+check "and none of it Plan, which stays open" eval '[[ ! -s $tmp/babylon ]] && shows "$plan_up"'
+mousing() { [[ $(inner display -p -t $1 '#{mouse_standard_flag}') == 1 ]] }
+print -rn -- $'\e[?1000h\e[?1006h' >$tmp/clicks
+inner send-keys -t orchestrator:orch "stty -echo -icanon; cat $tmp/clicks; timeout 2 cat -v; printf '\\033[?1006l\\033[?1000l'; stty sane" Enter
+await mousing orchestrator:orch
+mouse 64 100 10 M
+wheeled() { inner capture-pane -pJ -t orchestrator:orch | grep -qF '[<64;' }
+check "a wheel over it reaches its program" await wheeled
+await eval '! mousing orchestrator:orch'
+key M-h
+check "Alt+h goes back to Plan" await eval '! orch_lit && shown_cursor 0'
+key '?'
+check "whose keys are its own again" see "the plan.s keys"
+key Escape
+mouse 0 100 10 M
+mouse 0 100 10 m
+check "a click on the column focuses it" await orch_lit
+key 'echo back' Enter
+check "and what is typed reaches its pane" see '│back +│'
+mouse 0 45 22 M
+mouse 0 45 22 m
+check "a click on Plan gives Plan the keys" await eval '! orch_lit'
+key '`'
+check "where \` folds the column away" gone '╭─ ○ orchestrator · idle '
+check "going back to the session the human was in" await in_session alpha
+key '`'
+check "and unfolds it" see '╭─ ○ orchestrator · idle '
+key Escape
+check "closing Plan goes back to the session the human was in" await in_session alpha
+server=$(inner display -p '#{pid}')
+kill -STOP $server
+key C-Space b M-h q
+zselect -t 50
+kill -CONT $server
+check "opened and closed before tmux has switched, it comes back all the same" await in_session alpha
+plan_at 8
+await in_session orchestrator
+kill -STOP $server
+key '`' '`' q
+zselect -t 50
+kill -CONT $server
+check "folded, unfolded and closed before tmux has switched back, it comes back all the same" await in_session alpha
+kill -STOP $server
+key C-Space b M-h
+see "$plan_up"
+key M-l 'echo ahead' Enter
+zselect -t 50
+check "Plan stays open on an Alt+l typed before tmux has switched" shows "$plan_up"
+kill -CONT $server
+check "Alt+l and what is typed before tmux has switched reach the orchestrator's pane" await said orchestrator:orch ahead
+check "Plan left open" await shows "$plan_up"
+key -l 'echo jkdufltb'
+key Enter
+check "with Plan open, a sentence of Plan's own letters reaches the orchestrator's pane whole" await said orchestrator:orch jkdufltb
+check "and Plan is still open" see "$plan_up"
+key C-Space
+key -l 'nojkdu'
+key Enter
+zselect -t 50
+check "Ctrl+Space makes that column normal: none of it reaches the pane" eval '! said orchestrator:orch nojkdu'
+check "home in normal mode shows NORMAL and how to type" see '^NORMAL .*Ctrl\+Space / i to type'
+key -l i
+check "and i is insert again" gone '^NORMAL'
+kill -STOP $server
+key M-h Escape
+gone "$plan_up"
+key 'echo home' Enter
+zselect -t 50
+kill -CONT $server
+inner new-window -d -t orchestrator: -n two sh
+plan_at 8
+see '` fold'
+key Escape
+await in_session alpha
+orch_at() { [[ $(inner display -p -t orchestrator: '#{window_name}') == $1 ]] }
+kill -STOP $server
+key C-Space b M-h M-l M-l
+zselect -t 50
+kill -CONT $server
+check "Alt+l again before tmux has switched steps to the orchestrator's next window" await orch_at two
+kill -STOP $server
+key M-h
+zselect -t 50
+kill -CONT $server
+check "and Alt+h back" await orch_at orch
+inner kill-window -t orchestrator:two
+plan_at 8
+key Escape
+await in_session alpha
+cp $tmp/board.kept $tmp/board.pipe
+print -r -- "${$(<$tmp/board.pipe)%\}}"',"orchestrator":{"on":true,"running":true}}' >$tmp/run/babylon/board.json
+key C-Space
+see '^NORMAL .*b home'
+key b
+check "b in normal mode goes home: the orchestrator's column beside Plan, with the keys" await orch_lit
+check "in insert" hides '^NORMAL'
+await in_session orchestrator
+inner kill-session -t '=orchestrator'
+check "its session ending leaves home open, its head saying it restarts" see '╭─ ◌ orchestrator · restarting '
+check "Plan still there" await shows "$plan_up"
+check "and arena in the session the human was in" await in_session alpha
+inner new-session -d -s orchestrator -n orch sh
+check "the column comes back on the new orchestrator" see '╭─ ○ orchestrator · idle '
+check "with the keys, as the human left them" await orch_lit
+key 'echo again' Enter
+check "and what is typed reaches the new one's pane" see '│again +│'
+print -r -- "${$(<$tmp/board.pipe)%\}}"',"orchestrator":{"on":true,"running":true},"needs_you":['\
+'{"id":"ask:5","kind":"ask","ticket":8,"repo":"arena","text":"#8 arena  asks: Blue or green?",'\
+'"actions":[{"key":"1","label":"Blue","argv":["babylon","answer","5","1"]},{"key":"c","label":"in words","argv":["babylon","answer","5","--words"],"needs":"words"}]},'\
+'{"id":"sendback:7","kind":"sendback","ticket":7,"repo":"tlon","text":"✗ #7 tlon  sent back, free: red",'\
+'"actions":[{"key":"G","label":"give","argv":null,"needs":"pick"},{"key":"⏎","label":"start","argv":null,"needs":"surface"}]}]}' >$tmp/run/babylon/board.json
+see '▲ your move 2'
+key M-h
+await eval '! orch_lit'
+key ']'
+feed_lit() { [[ $(outer capture-pane -ep -t o | grep -F -- "$1") =~ $'((\e\\[[0-9;]*m)+)'"$1" && $match[1] =~ '[[;]7[;m]' ]] }
+check "] from Plan puts the feed's pick on Your move's first item, the column normal" await feed_lit '#8 arena  asks'
+key j
+check "where its keys are the feed's" await feed_lit '✗ #7 tlon'
+key i
+see '│again '
+key M-h
+check "Alt+h gives Plan the keys" await eval '! orch_lit'
+key '['
+check "[ from Plan puts the feed's pick on Your move's last item" await feed_lit '✗ #7 tlon'
+key M-h
+await eval '! orch_lit'
+repeat 9 key j
+key o
+check "o goes to it, Plan put away" gone "$plan_up"
+key 'echo whole' Enter
+check "and what is typed after o reaches its pane" see '│whole +│'
+inner kill-session -t '=orchestrator'
+await in_session alpha
+print -r -- '' >$tmp/.config/ficciones/theme/palette.sh
+outer resize-window -t o -x 121 -y 24
+rm -f $tmp/babylon $tmp/notified
 one=$(inner display -p -t alpha:one '#{pane_id}')
 mkdir -p $tmp/run/babylon
 print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[],"stage":"failed",'\
@@ -1108,230 +1626,13 @@ check "sent back and asking in its footer" see '│ \? asks · ✗ sent'
 cardrow() { local l; for l in "${(@f)$(outer capture-pane -ep -t o)}"; [[ $l == *$1* ]] && print -r -- $l }
 picked_lit() { [[ $(cardrow '#7 Lights') == *$'\e[1m\e[38;5;4m│\e[0m #7 Lights'* ]] }
 high_edge() { [[ $(cardrow '#8 Board') == *$'\e[38;5;4m▌\e[38;5;8m #8 Board'* ]] }
-key a
-check "a shows the picked card's question" see '│ Which colour\? +│'
-check "with its options by number" see '│ 2  blue +│'
-key 2
-checked() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == 'answer 5 2' ]] }
-check "and a number answers it through babylon" await checked
-check "and puts it away" gone 'Which colour'
-: >$tmp/babylon
-key ' '
-check "space opens its modal, the question and its options as numbered buttons, a row each" see ' 1 red +│'
-check "and the second under it" see ' 2 blue +│'
-key 2
-check "a number answers it there through babylon" await checked
-check "and closes it" gone ' 1 red '
-touch $tmp/refuse
-key a
-check "asked again" see '│ Which colour\? +│'
-key 1
-refused() { [[ -f $tmp/notified && $(<$tmp/notified) == *'babylon: no session to answer'* ]] }
-check "and refused by babylon, it says why" await refused
-rm $tmp/refuse
 masked() { screen | awk '{ s = $0; out = ""; while (match(s, / [0-9]+[smhd]/)) { tok = substr(s, RSTART, RLENGTH); gsub(/[0-9]/, "N", tok); out = out substr(s, 1, RSTART - 1) tok; s = substr(s, RSTART + RLENGTH) } print out s }' | sed 's/[◓◑◒]/◐/g' }
-close_at() { local l=$(settled | grep -m1 "╰─ .*q close"); print ${l[(i)q close]} }
-foot_at() { local l=$(settled | grep -m1 "╰─ .*q close"); print $(( ${l[(i)╰]} - 1 )) }
-# every cell but the box's: its rows from the third, and its columns from the left edge to the right
-mask() {
-  local n=0 line
-  while IFS= read -r line; do
-    ((n++))
-    if ((n >= 3 && n <= box_f)); then print -r -- "${line[1,box_l]}${line[box_r+1,-1]}"; else print -r -- $line; fi
-  done
-}
-outside() { masked | mask }
-board_before=$(masked)
-key ' '
-check "Space shows the picked card's whole ticket, as babylon tells it" see '│ the whole of it '
-check "in a frame with its close button in the foot" see '╰─ .*q close '
-box_l=$(foot_at)
-box_f=$(settled | grep -n -m1 '╰─ .*q close' | cut -d: -f1)
-foot=$(settled | grep -m1 '╰─ .*q close')
-box_r=$(( box_l + ${${foot[box_l+1,-1]}[(i)╯]} ))
-outside_before=$(print -r -- "$board_before" | mask)
-check "no cell outside it has changed" eval '[[ $(outside) == "$outside_before" ]]'
-check "it says the card whole: its title, stage and the ask's options as buttons" see '│ #7 Lights'
-check "and its actions in the foot, the ones that apply" see '╰─ .*e edit'
-check "a send-back's reason is in the body whole, on as many rows as it takes" see 'last words of it are never cut off'
-key j j j j j
-check "and j scrolls it no further than its last line" see '│ the whole of it '
-key Escape
-check "and Escape puts it away" gone 'the whole of it'
-check "leaving the screen as it was" await eval '[[ $(masked) == "$board_before" ]]'
-key ' '
-see 'the whole of it'
-mouse 0 $(close_at) $(settled | grep -n -m1 "╰─ .*q close" | cut -d: -f1) M
-check "a click on its close button puts it away" gone 'the whole of it'
-key ' '
-see 'the whole of it'
-mouse 0 $(( $(foot_at) + 4 )) 10 M
-check "a click inside it leaves it open" shows 'the whole of it'
-mouse 0 $(( $(foot_at) + 4 )) 2 M
-check "and a click outside it closes it" gone 'the whole of it'
-key ' '
-see 'the whole of it'
-key q
-check "q closes it too" gone 'the whole of it'
-nofile() { [[ ! -e $tmp/run/babylon/detail-7.txt ]] }
-check "leaving no file of it behind" await nofile
-key ' '
-check "shown again" see '│ the whole of it '
-mouse 0 3 12 M
-check "and closed with the board by a click on the rail, no file either" await nofile
-$bin -L $in board 7
-check "arena board and a ticket's id, run elsewhere, opens the board on it with its question" see '│ Which colour\? +│'
-# The Escape comes by the outer server and the message by the inner one, so nothing orders them;
-# arena stopped meanwhile reads both at once, the Escape held as a lone one.
-arena_pid=$(pgrep -x -P $(outer display -p -t o '#{pane_pid}') arena)
-kill -STOP $arena_pid
-key Escape
-$bin -L $in board 8
-zselect -t 10
-kill -CONT $arena_pid
-check "and with the board open, moves the pick to it" see '⏎ go +e edit '
-# past the wait that tells a lone Escape from Alt
-zselect -t 10
-check "the Escape typed before it put the question away, not the board after" shows ' every [0-9]+ +[a-z]'
-key Escape
-gone ' every [0-9]+ +[a-z]'
-two=$(inner list-panes -s -t alpha -F '#{pane_id}' | sed -n 2p)
-$bin -L $in show $two
-check "arena show and a pane puts its window in front" await dots '○●○'
-$bin -L $in show "#8"
-check "arena show and a held ticket's number does the same for its Claude's pane" await dots '●○○'
-$bin -L $in inbox
-check "arena inbox opens home" see '╭─ ○ orchestrator · off '
-$bin -L $in show $two
-check "and a show with the board open puts it away for the pane" await dots '○●○'
-$bin -L $in show "#7"
-zselect -t 10
-check "a show of a ticket nobody holds changes nothing" dots '○●○'
-shows '^NORMAL' || key C-Space
-see '^NORMAL'
-key -l '#'
-check "# in normal mode starts a ticket's number, shown in the bar" see 'open #▏'
-key -l 7
-check "its digits go in it" see 'open #7▏'
-key Enter
-check "and Enter opens that ticket's modal" see '│ the whole of it '
-key Escape
-check "Esc puts the modal away" gone '│ the whole of it '
-zselect -t 10
-key Escape
-check "and the board" gone ' every [0-9]+ +[a-z]'
-shows '^NORMAL' && key C-Space
-key M-b
 last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
-key /
-key -l zzz
-check "/ opens a find line in the header, the typing in it" see '/ zzz +⏎ keep  esc clear'
-check "and every column narrows to the cards that match" gone 'Lights'
-key BSpace BSpace BSpace
-key -l TLON
-check "case is ignored, and a repo matches" see 'Lights'
-key Enter
-check "Enter keeps the find and gives the board its keys" see '/ TLON +esc clear'
-key Escape
-check "Escape clears it" gone '/ TLON'
-check "and the card is back" see 'Lights'
-key p
-check "p raises the picked card's priority through babylon" await last 'update 7 --priority high'
-key w
-check "w asks the picked todo card's why at the board's foot" see '❯ +⏎ save  esc drop'
-key Escape
-check "and Escape drops it" gone '⏎ save  esc drop'
-key w
-key -l 'the lights'
-key Enter
-check "its why puts the card at the bottom of next, through babylon" await last 'next 7 --why the lights'
-key W
-check "and W at its top" await last 'next 7 --at 1'
-key z
-check "z folds the picked card's repo to its heading, with its mark" see 'tlon ▸'
-check "and an ask in it still shows on the folded heading" see 'tlon ▸ ▲'
-check "and its cards are gone from the column" gone 'Lights'
-key Z
-check "Z unfolds every repo" see 'Lights'
-check "and the headings are open again" gone 'tlon ▸'
 
-inner set -p -t alpha:one @arena_claude_since $(date +%s)
-key G
-check "G shows the running Claudes the picked card can be given to" see '│ [1-9]  alpha · one '
-key Escape
-check "and Escape puts them away" gone 'give #7 to'
-key G
-key "$(screen | sed -n 's/.*│ \([1-9]\)  alpha · one .*/\1/p')"
-check "and a Claude's number gives it the card through babylon, by its pane" await last "give 7 $one"
-check "and puts them away" gone 'give #7 to'
-touch $tmp/refuse
-key G
-key "$(screen | sed -n 's/.*│ \([1-9]\)  alpha · one .*/\1/p')"
-unfit() { [[ $(<$tmp/notified) == *"babylon: the Claude in $one is mid-turn"* ]] }
-check "and refused by babylon, it says why, the pane whole" await unfit
-rm $tmp/refuse
-inner set -pu -t alpha:one @arena_claude_since
-check "with no auto in babylon's file, the board says nothing of it" hides 'auto [0-9]'
-key A
-check "A opens auto's settings over the board" see 'working [0-9]+ of [0-9]+'
-key a
-check "a in them turns babylon's auto mode on" await last 'auto on'
-key Escape
-check "and esc closes them" gone 'working [0-9]+ of [0-9]+'
 cp $tmp/run/babylon/board.json $tmp/board.noauto
-print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":2,"working":1}}' >$tmp/run/babylon/board.json
-check "on, the switch beside the tabs says how many work of the cap" see ' ◐ auto 1/2( |$)'
-key A
-key a
-check "and a turns it off" await last 'auto off'
-key Escape
-cp $tmp/board.noauto $tmp/run/babylon/board.json
-check "off, the state is gone" gone 'auto [0-9]'
 tabrow() { settled | grep -n -m1 -E ' every [0-9]+ +[a-z]' | cut -d: -f1 }
 tabcol() { local l=$(settled | grep -m1 -E ' every [0-9]+ +[a-z]'); local p=${l%%" $1 "*}; print $(( ${#p} + 2 )) }
 autocol() { local l=$(settled | sed -n "$(( $(tabrow) - 1 ))p"); local p=${l%% ◐ *}; print $(( ${#p} + 2 )) }
-mouse 0 $(autocol) $(( $(tabrow) - 1 )) M
-check "a click on the switch turns it on" await last 'auto on'
-check "with nothing of the orchestrator in babylon's file, the board's header has no button for it" hides ' ● orch '
-print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":4,"working":4,"tools":{"working":1,"cap":1}}}' >$tmp/run/babylon/board.json
-outer resize-window -t o -x 160
-check "with room, the header's auto switch says the tools slots when babylon's file gives them" see ' ◐ auto 4/4 · tools 1/1( |$)'
-outer resize-window -t o -x 70
-check "and with less room, only the slots in use" see ' ◐ 4/4( |$)'
-outer resize-window -t o -x 121
-cp $tmp/board.noauto $tmp/run/babylon/board.json
-print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":2,"working":1}}' >$tmp/run/babylon/board.json
-see ' ◐ auto 1/2( |$)'
-auto_offs() { grep -cx 'auto off' $tmp/babylon }
-offs=$(auto_offs)
-mouse 0 $(autocol) $(( $(tabrow) - 1 )) M
-check "one click on the switch of auto on only asks to turn it off" see ' ◐ turn off\?( |$)'
-zselect -t 30
-check "and does not turn it off" eval '(( $(auto_offs) == offs ))'
-mouse 0 $(autocol) $(( $(tabrow) - 1 )) M
-check "a second click does" await eval '(( $(auto_offs) > offs ))'
-cp $tmp/board.noauto $tmp/run/babylon/board.json
-print -r -- "${$(<$tmp/board.noauto)%\}}"',"orchestrator":{"on":true,"running":false}}' >$tmp/run/babylon/board.json
-check "the board's row atop the rail says an orchestrator is not running" see '^│ ▤ board orch  '
-print -r -- "${$(<$tmp/board.noauto)%\}}"',"orchestrator":{"on":false,"running":false}}' >$tmp/run/babylon/board.json
-check "and that babylon keeps it off" see '^│ ▤ board orch off '
-print -r -- "${$(<$tmp/board.noauto)%\}}"',"orchestrator":{"on":true,"running":true}}' >$tmp/run/babylon/board.json
-check "and names it running" see '^│ ▤ board orch  '
-check "the board's header has a ● orch button" see ' ● orch '
-cp $tmp/board.noauto $tmp/run/babylon/board.json
-check "with nothing of it in babylon's file again, the row says nothing" gone '^│ ▤ board orch'
-print -r -- "${$(<$tmp/board.noauto)%\}}"',"proposals":[{"id":4,"action":"start","ticket_id":7,"what":"Start #7","why":"Next in line"}],"needs_you":[{"id":"proposal:4","kind":"proposal","ticket":7,"repo":"tlon","text":"P4 Start #7: Next in line","actions":[]}]}' >$tmp/run/babylon/board.json
-check "a card with an open proposal shows it" see '▲ proposed'
-check "the header counts what needs you" see ' ▲ 1 need you'
-check "and the card has a no beside its go" see '⏎ go +x no '
-key Enter
-check "go on it answers the proposal through babylon, not a Claude started" await last 'go 4'
-key x
-check "and x says no to it" await last 'no 4'
-# the pick rests, so a peek of it opens; the pointer moving puts it away
-mouse 35 80 24 M
-cp $tmp/board.noauto $tmp/run/babylon/board.json
-check "with it settled, the card and the header say nothing of it" gone '▲ [1-9]'
 print -r -- '{"tickets":['\
 '{"id":13,"repo":"tlon","title":"Held for an answer","kind":"ticket","status":"review","priority":"med","claimed_by":"'$one'",'\
 '"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[],"stage":"queued","ask":{"id":6,"question":"Which size?"}},'\
@@ -1343,25 +1644,6 @@ print -r -- '{"tickets":[{"id":15,"repo":"tlon","title":"Handed over","kind":"ti
 check "a todo card handed to a pane is drawn held by it" see '[▌│] one +│'
 cp $tmp/board.noauto $tmp/run/babylon/board.json
 check "with the board back, #7 is there" see '#7 Lights'
-mouse 0 ${(z)$(spot '#7 Lights')} M
-key J
-check "J moves it down its column, among its lane's" await last 'move 7 down --repo tlon'
-key '>'
-check "> closes a ticket still to do" await last 'update 7 --status done'
-key e
-check "e edits it in a window of its own" await last 'edit 7'
-normal
-key /
-key '#7'
-check "normal / finds a ticket by its number" see '#7 › Lights'
-key Enter
-check "and Enter opens its card's modal" see '╭─ #7 '
-key q
-gone '╭─ #7 '
-key q
-gone ' every [0-9]+ +[a-z]'
-key M-b
-see ' every [0-9]+ +[a-z]'
 key +
 check "+ files one, from every repo with the repo asked" await last 'new'
 key M-b
@@ -1398,50 +1680,18 @@ mouse 32 $onto M
 mouse 0 $onto m
 check "a press on the picked card, dragged onto a repo's tab, moves it to todo through babylon" await told
 check "and does not open its modal" gone '╭─ #12 '
-: >$tmp/babylon
-key t
-check "t moves a backlog card to todo through babylon" await told
 key r
 check "r from the backlog goes back to every repo" await tablit every
 check "which does not show the backlog" gone '#12 Someday'
-touch $tmp/refuse-start
-key Enter
-check "Enter on a card babylon refuses to start says why on the card, the board still open" see 'babylon: ticke'
-rm $tmp/refuse-start
-: >$tmp/babylon
-key Enter
-check "Enter on a free todo card runs babylon start on it" await last 'start 7'
-# arena deletes babylon's answer in the step that closes the board: M-b before that would close it
-await eval '[[ -e $tmp/run/babylon/refused-start ]]'
-await eval '[[ ! -e $tmp/run/babylon/refused-start ]]'
-check "and closes the board once babylon has started it" gone ' every [0-9]+ +[a-z]'
+key q
+gone ' every [0-9]+ +[a-z]'
 key M-b
 check "and the board opens again on every repo" await tablit every
 key r
 check "and r again narrows it to the first repo" await tablit arena
-key l
-key ' '
-check "Space on a doing card shows its body" see '│ the whole of it '
-check "and its holder's state" see '│ its Claude: '
-key Escape
-check "Escape puts it away" gone '│ its Claude: '
-zselect -t 10
-click ${(z)$(spot '#8 Board')}
-check "a click on the picked card opens its modal and does not go" see '│ the whole of it '
-key Enter
-check "and Enter in it goes to the Claude holding it" see '╭─ 1 one '
-mouse 0 3 2 M
-check "a click on its row in the rail goes home: the board, and the orchestrator's column beside it" see '╭─ ○ orchestrator · off '
-check "which says how to start an orchestrator that is off" see 'orchestrator off · ⏎ start it'
-check "with the board there" await shows ' every [0-9]+ +[a-z]'
-key Enter
-check "and Enter there starts it" await last orchestrator
-: >$tmp/babylon
-mouse 0 3 2 M
-check "another click stays home" shows ' every [0-9]+ +[a-z]'
 key q
-check "and q there closes it" gone ' every [0-9]+ +[a-z]'
-key -l i
+gone ' every [0-9]+ +[a-z]'
+shows '^NORMAL' && key -l i
 see 'INSERT|◆ home'
 x=$(col '◆ home')
 mouse 0 $x 24 M
@@ -1449,343 +1699,6 @@ mouse 0 $x 24 m
 check "a click on ◆ home in the foot row goes home" see ' every [0-9]+ +[a-z]'
 key q
 check "and q closes it again" gone ' every [0-9]+ +[a-z]'
-# the colour the board's row atop the rail, unlit with the board closed, names the orchestrator in
-rail_orch_ink() { [[ $(outer capture-pane -ep -t o) =~ $'▤ board((\e\\[[0-9;]*m)*) orch' && $match[1] == *"38;5;$1m" ]] }
-cp $tmp/run/babylon/board.json $tmp/board.closed
-print -r -- "${$(<$tmp/board.closed)%\}}"',"orchestrator":{"on":true,"running":true}}' >$tmp/run/babylon/board.json
-check "the board's row has a running orchestrator lit" await rail_orch_ink 5
-print -r -- "${$(<$tmp/board.closed)%\}}"',"orchestrator":{"on":true,"running":false}}' >$tmp/run/babylon/board.json
-check "and one that is not running unlit" await rail_orch_ink 8
-cp $tmp/board.closed $tmp/run/babylon/board.json
-check "and says nothing of it once babylon's file does not" gone '^│ ▤ board orch'
-key M-b
-see ' every [0-9]+ +[a-z]'
-key -l 'qecho kept-after-q'
-kept_after() { inner capture-pane -p -t alpha:one | grep -qF 'echo kept-after-q' }
-check "what is typed in one read after the q closing the board is the pane's" await kept_after
-key C-u
-inner new-session -d -s babylon-gate -n gate sh
-key M-b
-check "with babylon's gate session there, the board offers it" see '◒'
-check "and the rail does not list it" gone '│ babyl'
-key g
-check "g on the board shows the gate" see '╭─ 1 gate '
-cp $tmp/run/babylon/board.json $tmp/board.kept
-print -r -- '{"tickets":[{"id":21,"repo":"arena","title":"Running","kind":"ticket","status":"review","priority":"med","blocked_by":[],"stage":"reviewing"},{"id":22,"repo":"arena","title":"Waiting","kind":"ticket","status":"review","priority":"med","blocked_by":[],"stage":"queued"}]}' \
-  >$tmp/run/babylon/board.json
-key M-b
-see '#21 Running'
-key g
-check "g on the board with a run in progress opens the gate's modal on it" see '╭─ gate · #21 '
-check "its stages with their marks and times" see '✓ rebase +ok +4s'
-check "the failed one's result" see '✗ gate +failed +1m 58s'
-check "and its failing output under them" see '│ expected 1, found 0 +│'
-check "and what is queued behind it" see 'queued behind it: #22 arena'
-check "with its keys in the foot" see '╰─ L whole log ─ t ticket ─ u bump ─ W withdraw ─ q close'
-key u
-check "u bumps it through babylon" await last 'bump 21'
-key q
-key q
-print -r -- '{"tickets":[{"id":13,"repo":"babylon","title":"Gatekeeping","kind":"ticket","status":"todo","priority":"med","blocked_by":[]}]}' \
-  >$tmp/run/babylon/board.json
-key M-b
-see 'Gatekeeping'
-key Enter
-check "Enter on a babylon card starts it through babylon too" await last 'start 13'
-check "and closes the board" gone ' every [0-9]+ +[a-z]'
-
-cp $tmp/board.kept $tmp/run/babylon/board.json
-key M-b
-key o
-starting() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == orchestrator ]] }
-check "o on the board starts the orchestrator when it is not running" await starting
-key M-b
-check "the board opened in the meantime" see ' every [0-9]+ +[a-z]'
-key M-b
-check "and closed" gone ' every [0-9]+ +[a-z]'
-inner new-session -d -s orchestrator -n orch sh
-# nothing to wait on for what must not happen: a second for the session to be seen
-zselect -t 100
-check "an orchestrator that shows after the human moved on does not pull them to it" see '╭─ 1 gate '
-key M-b
-key o
-check "and o goes to it now it is there" see '╭─ 1 orch '
-check "which the rail does not list" gone '│ orchestrator '
-inner kill-session -t '=orchestrator'
-check "with the orchestrator gone, arena goes elsewhere" gone '╭─ 1 orch '
-asked=$(grep -cx orchestrator $tmp/babylon)
-key M-b
-key o
-asked_again() { (( $(grep -cx orchestrator $tmp/babylon) > asked )) }
-check "o asks babylon to start it again" await asked_again
-inner new-session -d -s orchestrator -n orch sh
-check "and with no other move made, arena goes to it once its session is there" see '╭─ 1 orch '
-print -r -- '{"tickets":[{"id":9,"repo":"arena","title":"Pipe","kind":"ticket","status":"review","priority":"med","blocked_by":[],"stage":"reviewing"}]}' \
-  >$tmp/run/babylon/board.json
-check "while babylon works a ticket toward main, the board's row says which and how far" see '^│ ▤ board +◐ #9 reviewing │'
-print -r -- '{"tickets":[{"id":9,"repo":"arena","title":"Pipe","kind":"ticket","status":"review","priority":"med","blocked_by":[],"stage":"reviewing"},'\
-'{"id":10,"repo":"tlon","title":"Pipe two","kind":"ticket","status":"review","priority":"med","blocked_by":[],"stage":"verifying"}]}' \
-  >$tmp/run/babylon/board.json
-check "and with two going, the first and how many more" see '^│ ▤ board +◐ #9 reviewing \+1 │'
-
-in_session() { [[ $(inner list-clients -F '#{session_name}') == $1 ]] }
-mouse 0 5 3 M
-mouse 0 5 3 m
-await in_session alpha
-key M-b
-check "with the orchestrator running, the board has its window beside it" see '╭─ ○ orchestrator · idle '
-check "arena in its session to have it live" await in_session orchestrator
-orch_lit() { [[ $(outer capture-pane -ep -t o) =~ $'((\e\\[[0-9;]*m)+) ○ orchestrator ' && $match[1] =~ '[[;]7[;m]' ]] }
-shown_cursor() { [[ $(outer display -p -t o '#{cursor_flag}') == $1 ]] }
-check "the board keeps the keys: its column is unlit, the cursor in no pane" eval '! orch_lit && shown_cursor 0'
-cp $tmp/run/babylon/board.json $tmp/board.two
-print -r -- "${$(<$tmp/board.two)%\}}"',"orchestrator":{"on":true,"running":true}}' >$tmp/run/babylon/board.json
-in_orch() { in_session orchestrator }
-orchspot() { local row=$(( $(tabrow) - 1 )); local l=$(settled | sed -n "${row}p"); local p=${l%%●*}; print $(( ${#p} + 1 )) $row }
-check "the board's header has an orchestrator button once babylon's file has an orchestrator" see ' ● +◐'
-mouse 0 ${(z)$(orchspot)} M
-check "and a click on it closes the board, in the orchestrator's session" hides ' every [0-9]+ +[a-z]'
-check "which it stays in" in_orch
-cp $tmp/board.two $tmp/run/babylon/board.json
-mouse 0 5 3 M
-mouse 0 5 3 m
-await in_session alpha
-key M-b
-check "the board opens beside it again" see ' every [0-9]+ +[a-z]'
-await in_session orchestrator
-: >$tmp/babylon
-key M-l
-check "Alt+l from the board focuses it, lit as the focused column" await orch_lit
-key 'echo side' Enter
-check "what is typed then reaches its pane" see '│side +│'
-for control in ' every' ' arena'; do
-  click ${(z)$(spot $control)}
-  key -l "echo after${control// /}-jkdufltb"
-  key Enter
-  check "a click on the header's$control leaves the column the keys: a sentence reaches its pane whole" await eval "inner capture-pane -p -t orchestrator:orch | grep -qx after${control// /}-jkdufltb"
-done
-# what babylon prints to a run-shell must not open tmux's view mode on the pane, which swallows keys
-in_mode() { [[ -n $(inner display -p -t orchestrator:orch '#{pane_mode}') ]] }
-cp $tmp/run/babylon/board.json $tmp/board.chatty
-print -r -- "${$(<$tmp/board.chatty)%\}}"',"auto":{"on":true,"cap":2,"working":1}}' >$tmp/run/babylon/board.json
-see ' ◐ (auto )?1/2( |$)'
-touch $tmp/chatty
-offs=$(grep -cx 'auto off' $tmp/babylon)
-mouse 0 $(autocol) $(( $(tabrow) - 1 )) M
-see ' ◐ turn off\?( |$)'
-mouse 0 $(autocol) $(( $(tabrow) - 1 )) M
-await eval '(( $(grep -cx "auto off" $tmp/babylon) > offs ))'
-zselect -t 50
-check "a babylon command that prints leaves the orchestrator's pane out of any mode" eval '! in_mode'
-key -l 'echo after-chatter-jkdufltb'
-key Enter
-check "and a sentence typed then reaches it whole" await eval 'inner capture-pane -p -t orchestrator:orch | grep -qx after-chatter-jkdufltb'
-rm $tmp/chatty
-cp $tmp/board.chatty $tmp/run/babylon/board.json
-inner copy-mode -t orchestrator:orch
-check "the pane put in a mode" eval 'in_mode'
-key -l 'echo after-mode-jkdufltb'
-key Enter
-check "a sentence typed to a pane in a mode takes it out and reaches the pane whole" await eval 'inner capture-pane -p -t orchestrator:orch | grep -qx after-mode-jkdufltb && ! in_mode'
-: >$tmp/babylon
-check "and none of it the board, which stays open" eval '[[ ! -s $tmp/babylon ]] && shows " every [0-9]+ +[a-z]"'
-inner send-keys -t orchestrator:orch "stty -echo -icanon; cat $tmp/clicks; timeout 2 cat -v; printf '\\033[?1006l\\033[?1000l'; stty sane" Enter
-await mousing orchestrator:orch
-mouse 64 100 10 M
-wheeled() { inner capture-pane -pJ -t orchestrator:orch | grep -qF '[<64;' }
-check "a wheel over it reaches its program" await wheeled
-await eval '! mousing orchestrator:orch'
-key M-h
-check "Alt+h goes back to the board" await eval '! orch_lit && shown_cursor 0'
-key '?'
-check "whose keys are its own again" see "the board's keys"
-key Escape
-mouse 0 100 10 M
-mouse 0 100 10 m
-check "a click on it focuses it too" await orch_lit
-key 'echo back' Enter
-check "and what is typed reaches its pane" see '│back +│'
-mouse 0 45 22 M
-mouse 0 45 22 m
-check "a click on the board gives the board the keys" await eval '! orch_lit'
-key '`'
-check "where \` folds it away" gone '╭─ ○ orchestrator · idle '
-check "going back to the session the human was in" await in_session alpha
-key '`'
-check "and unfolds it" see '╭─ ○ orchestrator · idle '
-key Escape
-check "closing the board goes back to the session the human was in" await in_session alpha
-check "the strip its whole width again" see '╭─ 1 one ─'
-# The sessions' server stopped answers nothing: arena reads what is typed with its switch unanswered.
-# Nothing shows that arena has read it, so it is given half a second to.
-server=$(inner display -p '#{pid}')
-kill -STOP $server
-key M-b q
-zselect -t 50
-kill -CONT $server
-check "opened and closed before tmux has switched, it comes back all the same" await in_session alpha
-key M-b
-await in_session orchestrator
-kill -STOP $server
-key '`' '`' q
-zselect -t 50
-kill -CONT $server
-check "folded, unfolded and closed before tmux has switched back, it comes back all the same" await in_session alpha
-said() { inner capture-pane -p -t $1 | grep -qx $2 }
-kill -STOP $server
-key M-b
-see ' every [0-9]+ +[a-z]'
-key M-l 'echo ahead' Enter
-zselect -t 50
-check "the board stays open on an Alt+l typed before tmux has switched" shows ' every [0-9]+ +[a-z]'
-kill -CONT $server
-check "Alt+l and what is typed before tmux has switched reach the orchestrator's pane" await said orchestrator:orch ahead
-check "the board left open" await shows ' every [0-9]+ +[a-z]'
-key -l 'echo jkdufltb'
-key Enter
-check "with the board open, a sentence of the board's own letters reaches the orchestrator's pane whole" await said orchestrator:orch jkdufltb
-check "and the board is still open" see ' every [0-9]+ +[a-z]'
-key C-Space
-key -l 'nojkdu'
-key Enter
-zselect -t 50
-check "Ctrl+Space makes that column normal: none of it reaches the pane" eval '! said orchestrator:orch nojkdu'
-check "home in normal mode shows NORMAL and how to type" see '^NORMAL .*Ctrl\+Space / i to type'
-key -l i
-check "and i is insert again" gone '^NORMAL'
-kill -STOP $server
-key M-b
-gone ' every [0-9]+ +[a-z]'
-key 'echo home' Enter
-zselect -t 50
-kill -CONT $server
-check "what is typed after the board closes, before tmux has switched back, reaches the human's" await said alpha: home
-check "and none of it the orchestrator's" eval '! said orchestrator:orch home'
-inner new-window -d -t orchestrator: -n two sh
-key M-b
-see '` fold ─╮ ╭─ 2 t'
-key M-b
-await in_session alpha
-orch_at() { [[ $(inner display -p -t orchestrator: '#{window_name}') == $1 ]] }
-kill -STOP $server
-key M-b M-l M-l
-zselect -t 50
-kill -CONT $server
-check "Alt+l again before tmux has switched steps to the orchestrator's next window" await orch_at two
-kill -STOP $server
-key M-h
-zselect -t 50
-kill -CONT $server
-check "and Alt+h back" await orch_at orch
-inner kill-window -t orchestrator:two
-key M-b
-await in_session alpha
-cp $tmp/run/babylon/board.json $tmp/board.pipe
-print -r -- "${$(<$tmp/board.pipe)%\}}"',"orchestrator":{"on":true,"running":true}}' >$tmp/run/babylon/board.json
-key C-Space
-see '^NORMAL .*b home'
-key b
-check "b in normal mode goes home: the orchestrator's column beside the board, with the keys" await orch_lit
-check "in insert" hides '^NORMAL'
-await in_session orchestrator
-inner kill-session -t '=orchestrator'
-check "its session ending leaves home open, its head saying it restarts" see '╭─ ◌ orchestrator · restarting '
-check "the board still there" await shows ' every [0-9]+ +[a-z]'
-check "and arena in the session the human was in" await in_session alpha
-inner new-session -d -s orchestrator -n orch sh
-check "the column comes back on the new orchestrator" see '╭─ ○ orchestrator · idle '
-check "with the keys, as the human left them" await orch_lit
-key 'echo again' Enter
-check "and what is typed reaches the new one's pane" see '│again +│'
-print -r -- "${$(<$tmp/board.pipe)%\}}"',"orchestrator":{"on":true,"running":true},"needs_you":['\
-'{"id":"ask:5","kind":"ask","ticket":8,"repo":"arena","text":"#8 arena  asks: Blue or green?",'\
-'"actions":[{"key":"1","label":"Blue","argv":["babylon","answer","5","1"]},{"key":"c","label":"in words","argv":["babylon","answer","5","--words"],"needs":"words"}]}]}' >$tmp/run/babylon/board.json
-feed_above() {
-  local head=$(rowof '○ orchestrator · idle') move=$(rowof '▲ your move 1') said=$(rowof '│again ')
-  [[ -n $head && -n $move && -n $said ]] && (( head < move && move < said ))
-}
-check "the feed sits atop the orchestrator's column, Your move above its pane's first line" await feed_above
-check "each item as babylon words it, its actions under it" see '▌     1 Blue   c in words'
-print -r -- "${$(jq -c '.tickets += [{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[],"stage":"failed"}]' $tmp/board.pipe)%\}}"',"orchestrator":{"on":true,"running":true},"needs_you":['\
-'{"id":"ask:5","kind":"ask","ticket":8,"repo":"arena","text":"#8 arena  asks: Blue or green?",'\
-'"actions":[{"key":"1","label":"Blue","argv":["babylon","answer","5","1"]},{"key":"c","label":"in words","argv":["babylon","answer","5","--words"],"needs":"words"}]},'\
-'{"id":"sendback:7","kind":"sendback","ticket":7,"repo":"tlon","text":"✗ #7 tlon  sent back, free: red",'\
-'"actions":[{"key":"G","label":"give","argv":null,"needs":"pick"},{"key":"⏎","label":"start","argv":null,"needs":"surface"},'\
-'{"key":"x","label":"close","argv":["babylon","update","7","--status","done"]}]}]}' >$tmp/run/babylon/board.json
-see '▲ your move 2'
-check "the rail's top row says how many need the human" see '^│ ▤ board ▲ 2'
-: >$tmp/babylon
-key C-Space
-feed_lit() { [[ $(outer capture-pane -ep -t o | grep -F -- "$1") =~ $'((\e\\[[0-9;]*m)+)'"$1" && $match[1] =~ '[[;]7[;m]' ]] }
-check "normal mode in the column puts the pick on the feed's first item, lit" await feed_lit '#8 arena  asks'
-key 1
-check "an ask's option number runs its answer as babylon gives it" await last 'answer 5 1'
-touch $tmp/refuse
-key 1
-check "and babylon's refusal is said in place of the item's buttons" see '▌     babylon: no session'
-rm $tmp/refuse
-key j
-check "j moves the pick to the next item" await feed_lit '✗ #7 tlon'
-key x
-check "x on a free send-back closes it, as its action says" await last 'update 7 --status done'
-key Enter
-check "and Enter starts a Claude on it through babylon" await last 'start 7'
-key G
-check "G on it shows the running Claudes to give it to" see ' give #7 to '
-key Escape
-gone ' give #7 to '
-key k
-check "and closing them gives the feed back its keys" await feed_lit '#8 arena  asks'
-key c
-check "c on an ask opens a modal over the column, the ask quoted in it" see '✎ in words'
-see '#8 arena  asks: Blue or gre'
-check "with send and cancel in its foot" see '⏎ send .*esc cancel'
-key -l 'never mind'
-key Escape
-check "Escape drops it, and the feed has its keys again" await feed_lit '#8 arena  asks'
-gone 'esc cancel'
-: >$tmp/babylon
-key c
-key 'in words'
-key Enter
-check "Enter runs the action with the words as its last argument" await last 'answer 5 --words in words'
-check "and the line is gone, the feed has its keys" await feed_lit '#8 arena  asks'
-jq -c '. + {"hold":false,"auto":{"on":true,"cap":6,"working":2,"idle":{"slots":1,"why":"next empty"},"repo_caps":{"arena":3,"babylon":2,"tlon":1}},"plan":{"next":[{"ticket":655,"repo":"arena","title":"Typing reaches no pane","why":"third sighting","set_by":"orchestrator"},{"ticket":656,"repo":"babylon","title":"Held lines","why":"","set_by":"orchestrator"}]}}' $tmp/run/babylon/board.json >$tmp/board.tmp && mv $tmp/board.tmp $tmp/run/babylon/board.json
-see '◐ (auto )?2/6'
-: >$tmp/babylon
-mouse 0 $(( $(autocol) + 3 )) $(( $(tabrow) - 1 )) M
-check "a click on the header's auto words opens its settings, one row for each repo" see 'arena +\[-\] +3 +\[\+\]'
-check "and says how many work of the cap" see 'working 2 of 6'
-repo_row() { settled | grep -n -m1 -E "$1 +\\[-\\]" | cut -d: -f1 }
-plus_col() { local l=$(settled | grep -m1 -E "$1 +\\[-\\]"); local p=${l%%\[+\]*}; print $(( ${#p} + 2 )) }
-press=$'\e'"[<0;$(plus_col arena);$(repo_row arena)M"
-outer send-keys -t o -l "$press$press"
-check "two clicks on a repo's [+] show its cap two up at once" see 'arena +\[-\] +5 +\[\+\]'
-check "and babylon is told the last value only" await last 'auto --repo-cap arena=5'
-zselect -t 30
-check "once, not a command for each click" eval '(( $(grep -c -- "--repo-cap arena=" $tmp/babylon) == 1 ))'
-key Escape
-check "esc closes the settings" gone 'working 2 of 6'
-jq -c "del(.hold,.auto,.plan)" $tmp/run/babylon/board.json >$tmp/board.tmp && mv $tmp/board.tmp $tmp/run/babylon/board.json
-key k k
-key i
-key M-h
-await eval '! orch_lit'
-key ']'
-check "] from the board puts the feed's pick on Your move's first item, the column normal" await feed_lit '#8 arena  asks'
-key j
-check "where its keys are the feed's" await feed_lit '✗ #7 tlon'
-key i
-see '│again '
-key M-h
-check "Alt+h gives the board the keys" await eval '! orch_lit'
-key o
-check "o goes to it, the board put away" gone ' every [0-9]+ +[a-z]'
-key 'echo whole' Enter
-check "and what is typed after o reaches its pane" see '│whole +│'
-mouse 0 5 3 M
-mouse 0 5 3 m
-await in_session alpha
 
 done_card() { print -r -- '{"id":'$1',"repo":"arena","title":"Done '$1'","kind":"ticket","status":"done","priority":"med","blocked_by":[]}' }
 print -r -- '{"tickets":[{"id":20,"repo":"arena","title":"Next","kind":"ticket","status":"todo","priority":"med","blocked_by":[]},'\
@@ -1812,13 +1725,6 @@ mouse 35 100 24 M
 check "and its tab is dim" tab_dim menard
 check "where one with work is not" tab_lit arena
 cp $tmp/run/babylon/board.json $tmp/board.lanes
-print -r -- "${$(<$tmp/board.lanes)%\}}"',"auto":{"on":true,"cap":2,"working":1}}' >$tmp/run/babylon/board.json
-check "with room, the header says auto beside every button" see ' ▲ 0 need you +◒ gate +◐ auto 1/2( |$)'
-outer resize-window -t o -x 66
-check "and with less room still, it keeps the switch" see ' ◐ 1/2( |$)'
-outer resize-window -t o -x 121
-cp $tmp/board.lanes $tmp/run/babylon/board.json
-check "and off, it is gone again" gone 'auto [0-9]'
 check "not the rest" gone 'Done 22'
 key r
 check "and so in one repo's view" see '│ 2 more +│'
@@ -1829,8 +1735,8 @@ key Escape
 check "put away again" gone '│ left running: it holds #9 '
 key j j j
 check "where the pick goes no further than the last shown" see '│ e edit +│'
-$bin -L $in board 21
-check "arena board and the id of a done card older than those shown has its whole ticket over the board" see '│ #21 Lights '
+$bin -L $in plan 21
+check "arena plan and the id of a done card older than those shown has its whole ticket over the board" see '│ #21 Lights '
 key Escape
 check "put away as any other" gone '│ #21 Lights '
 key M-b
@@ -1933,10 +1839,13 @@ print -r -- '{"tickets":[{"id":40,"repo":"arena","title":"Hover me","kind":"tick
 '"orchestrator":{"on":true,"running":true}}' >$tmp/run/babylon/board.json
 claude alpha:one stop '{"last_assistant_message": "Hovered"}'
 inner set -p -t alpha:one @arena_claude_since $(($(date +%s) - 7300))
+inner new-session -d -s orchestrator -n orch sh
 inner split-window -h -t orchestrator:orch sh
 outer resize-window -t o -x 160
 key M-b
-key '`'
+see '#40 Hover'
+zselect -t 30
+shows '╭─ ○ orchestrator · idle ' || key '`'
 see '╭─ ○ orchestrator · idle '
 see '#40 Hover'
 see '╭─ doing 1 '
@@ -2166,6 +2075,7 @@ cp $tmp/run/babylon/board.json $tmp/board.plan
 print -r -- "${$(<$tmp/board.plan)%\}}"',"auto":{"on":true,"cap":4,"working":2,"tools":{"working":1,"cap":1}}}' >$tmp/run/babylon/board.json
 check "on, Plan's head says how many work of the cap" see '◐ auto 2/4'
 check "and the orchestrator's column and the rail say nothing of auto" eval '[[ $(screen | grep -c "auto 2/4") == 1 ]]'
+auto_offs() { grep -cx 'auto off' $tmp/babylon }
 offs=$(auto_offs)
 r=$(rowof '◐ auto'); c=$(colof $r '◐ auto')
 mouse 0 $((c + 1)) $r M
@@ -2227,6 +2137,9 @@ check "esc ends typing, and the keys written are its buttons" see '⏎ plan  k k
 key k
 check "k keeps it: babylon idea is run with the text" await last 'idea money on the bar'
 check "and the modal closes on babylon's answer" gone "what should be true when it's done"
+see 'default model'
+key Escape
+gone 'default model'
 key l
 key i
 # the click that focuses a new terminal window lands anywhere in it
@@ -2429,59 +2342,71 @@ await shows "esc away"
 key Escape
 check "esc puts it away too" gone 'esc away'
 
-# a doing card its session handed off from says which pane, and H asks its Claude to hand it off
-print -r -- '{"tickets":[{"id":920,"repo":"arena","title":"Peek me","kind":"ticket","status":"doing","priority":"med","claimed_by":"'$g6'",'\
-'"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","handed_off_from":"%407","handed_off_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[]}]}' >$tmp/run/babylon/board.json
-await shows '#920 Peek me'
-mouse 0 ${(z)$(spot '#920 Peek')} M
-mouse 35 80 24 M
+key M-b
+gone ' every [0-9]+ +[a-z]'
+plan_up='in flight [0-9]'
+plan_at() { $bin -L $in plan $1; see "$plan_up" }
+rowof() { screen | grep -n -m1 -F -- "$1" | cut -d: -f1 }
+colof() { local l=$(screen | sed -n $1p); [[ $l == *"$2"* ]] || return 1; local p=${l%%"$2"*}; print $(( ${#p} + 1 )) }
+spot() { local l=$(screen | grep -m1 -- "$1"); local p=${l%%"$1"*}; print $(( ${#p} + 2 )) $(screen | grep -n -m1 -- "$1" | cut -d: -f1) }
+last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
+print -r -- '' >$tmp/.config/ficciones/theme/palette.sh
+outer resize-window -t o -x 121 -y 24
+nowplan() { print -r -- '{"tickets":[{"id":920,"repo":"arena","title":"Peek me","kind":"ticket","status":"doing","priority":"med","claimed_by":"'$g6'","claimed_at":"'$1'","blocked_by":[]'"$2"'}],"plan":{"now":[{"ticket":920,"repo":"arena","title":"Peek me","state":"building","since":"'$1'","pane":"'$g6'"}],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}' >$tmp/run/babylon/board.json }
+nowplan $(date -u -d '2 days ago' +%Y-%m-%dT%H:%M:%SZ)
+zselect -t 200
+$bin -L $in plan 920
+now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+nowplan $now ',"handed_off_from":"%407","handed_off_at":"'$now'"'
+zselect -t 150
+plan_at 920
 key ' '
-check "a card handed off from a pane says so in its modal" await shows 'handed off from %407'
+key o
+check "a row handed off from a pane says so in its modal" await shows 'handed off from %407'
 check "whose foot has H for asking its Claude to hand off" see 'H hand off'
 key H
 sent() { [[ $(inner capture-pane -J -p -t gamma:g6) == *'hand #920 off: commit what is uncommitted as a WIP commit, then call handoff.'* ]] }
-check "H types the ask into the Claude holding it, as babylon's own does" await sent
+check "H in it types the ask into the Claude holding it, as babylon's own does" await sent
 key Escape
-
-# three cards asking, each opened once: a number answers on the first, a click on the second, ⏎ on the third
+mkdir -p $tmp/.config/ficciones/theme
+for name in AMBER VIOLET AMBERDIM EMBERDIM INK DIM GREY SURFACE0 SURFACE2 SURFACE3 SURFACE4 BG CYAN MOSS PINK RED; do print -r -- "PALETTE_$name=#808080"; done >$tmp/.config/ficciones/theme/palette.sh
+outer resize-window -t o -x 200 -y 40
 asking() { print -r -- '{"id":'$1',"repo":"arena","title":"'$2'","kind":"ticket","status":"todo","priority":"med","blocked_by":[],"ask":{"id":'$3',"question":"Which one?","options":["alpha","beta","gamma"]}}' }
-print -r -- '{"tickets":['"$(asking 920 'Peek me' 6)"','"$(asking 921 'Second' 7)"','"$(asking 922 'Third' 8)"'],'\
-'"needs_you":[{"id":"ask:6","kind":"ask","ticket":920,"repo":"arena","text":"#920 arena  asks: Which one?","actions":['\
-'{"key":"1","label":"alpha","argv":["babylon","answer","6","1"]},{"key":"2","label":"beta","argv":["babylon","answer","6","2"]},'\
-'{"key":"3","label":"gamma","argv":["babylon","answer","6","3"]},{"key":"c","label":"in words","argv":["babylon","answer","6","--words"],"needs":"words"}]}]}' >$tmp/run/babylon/board.json
+print -r -- '{"tickets":['"$(asking 920 'Peek me' 6)"','"$(asking 921 'Second' 7)"','"$(asking 922 'Third' 8)"'],"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":3,"follow_ups":0,"by_repo":{"arena":3}}}}' >$tmp/run/babylon/board.json
+zselect -t 300
+$bin -L $in plan 920
 see '#922 Third'
-mouse 0 ${(z)$(spot '#920 Peek')} M
-mouse 35 80 24 M
 key ' '
-check "a card with an open ask: its modal lists every option, a row each" see '│ +3 +gamma'
-check "and its words, on a key that leaves its Claude another" see '│ +c +in words'
+key o
+check "a ticket with an open ask: its modal opened from a row lists every option, a row each" see '3 gamma'
 check "and ⏎ in its foot is labelled for answering the lit option" see '⏎ answer 1'
 : >$tmp/babylon
 key 2
 check "a number answers that option through babylon" await last 'answer 6 2'
-check "and puts the modal away" gone '│ +3 +gamma'
-mouse 0 ${(z)$(spot '#921 Second')} M
-mouse 35 80 24 M
+check "and puts the modal away" gone '3 gamma'
+$bin -L $in plan 921
+see '#922 Third'
 key ' '
-await shows '│ +3 +gamma'
+key o
+await shows '3 gamma'
 : >$tmp/babylon
-gamma_row=$(screen | grep -n -m1 -E '│ +3 +gamma' | cut -d: -f1)
+gamma_row=$(screen | grep -n -m1 -E '3 gamma' | cut -d: -f1)
 mouse 0 $(( $(colof $gamma_row '3 gamma') + 1 )) $gamma_row M
 check "a click on an option answers it" await last 'answer 7 3'
-mouse 0 ${(z)$(spot '#922 Third')} M
-mouse 35 80 24 M
+$bin -L $in plan 922
+see '#922 Third'
 key ' '
-await shows '│ +3 +gamma'
+key o
+await shows '3 gamma'
 : >$tmp/babylon
 key Enter
 check "and ⏎ answers the lit one, which its label said" await last 'answer 8 1'
+key Escape
 print -r -- '{"tickets":[{"id":930,"repo":"arena","title":"Lights","kind":"ticket","status":"try","stage":"landed","priority":"med","blocked_by":[],'\
-'"checks":[{"n":1,"text":"it is told","result":null},{"n":2,"text":"it has buttons","result":null}]}]}' >$tmp/run/babylon/board.json
-check "a card to try leads the done column, marked ▲, and is counted in it" await shows '▲ #930'
-mouse 0 ${(z)$(spot '#930')} M
-mouse 35 80 24 M
-key ' '
-check "its modal lists its checks, a row each" await shows '· 2 it has buttons'
+'"checks":[{"n":1,"text":"it is told","result":null},{"n":2,"text":"it has buttons","result":null}]}],"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}' >$tmp/run/babylon/board.json
+zselect -t 300
+$bin -L $in plan 930
+check "a ticket to try, opened from Plan, has a modal listing its checks, a row each" await shows '· 2 it has buttons'
 clipped() { [[ $(outer show-buffer 2>/dev/null) == $1 ]] }
 key Y
 check "Y copies the picked check through OSC 52" await clipped 'it is told'
@@ -2514,6 +2439,8 @@ check "shift+⏎ starts a new line, both lines in the box" see '  by a day'
 key Enter
 check "and ⏎ sends it back with the words as written, the new line in them, through babylon" await eval 'grep -qx "tried 930 2 no too late" $tmp/babylon && [[ $(tail -1 $tmp/babylon) == "by a day" ]]'
 check "and the modal is gone" gone 'What went wrong\?'
+print -r -- '' >$tmp/.config/ficciones/theme/palette.sh
+outer resize-window -t o -x 121 -y 24
 key Escape
 key M-b
 key M-q
