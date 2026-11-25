@@ -2506,6 +2506,13 @@ fn benchChips(app: *const App, w: *Writer, r: theme.Roles, card: *const tickets.
         at += 1;
         at += @as(u16, @intCast(try bench.chipAt(w, r, at, y, modelName(model), r.dim, r.well)));
     };
+    if (card.handed_off_from) |pane| {
+        const text = std.fmt.bufPrint(&buf, "↩ {s}", .{pane}) catch "";
+        if (at + cellCount(text) + 3 <= end) {
+            at += 1;
+            at += @as(u16, @intCast(try bench.chipAt(w, r, at, y, text, r.dim, r.well)));
+        }
+    }
     var age: [8]u8 = undefined;
     var said: [24]u8 = undefined;
     const since: []const u8 = switch (card.status) {
@@ -2916,6 +2923,8 @@ fn benchFacts(app: *const App, w: *Writer, r: theme.Roles, card: *const tickets.
     const low = std.mem.eql(u8, card.priority, "low");
     const state = benchState(app, card, r, &sbuf);
     const held = if (card.heldBy()) |pane| std.fmt.bufPrint(&lbuf, "held {s}", .{pane}) catch "" else "";
+    var hbuf: [48]u8 = undefined;
+    const handed = if (card.handed_off_from) |pane| std.fmt.bufPrint(&hbuf, "handed off from {s}", .{pane}) catch "" else "";
     var filed: [8]u8 = undefined;
     var claimed: [8]u8 = undefined;
     var fbuf: [24]u8 = undefined;
@@ -2928,6 +2937,7 @@ fn benchFacts(app: *const App, w: *Writer, r: theme.Roles, card: *const tickets.
         if (state) |s| .{ .label = s.label, .lead = s.lead, .words = s.words, .filled = s.filled } else .{ .label = @tagName(card.status), .lead = r.dim, .words = r.text, .filled = false },
         .{ .label = if (card.model) |m| modelName(m) else "", .lead = r.dim, .words = r.text, .filled = false },
         .{ .label = held, .lead = r.dim, .words = r.text, .filled = false },
+        .{ .label = handed, .lead = r.dim, .words = r.text, .filled = false },
         .{ .label = filed_text, .lead = r.dim, .words = r.text, .filled = false },
         .{ .label = claimed_text, .lead = r.dim, .words = r.text, .filled = false },
     };
@@ -3187,7 +3197,7 @@ const board_keys = [_][2][]const u8{
     .{ "hjkl, arrows", "pick a card" },
     .{ "⏎, click it", "go to the Claude holding it, or start one on a free todo card" },
     .{ "space", "its whole ticket: body, links, gate log" },
-    .{ "a G x P", "answer, give to a Claude, no to a proposal (⏎ is go), oldest proposed" },
+    .{ "a G H x P", "answer, give, ask its Claude to hand off, no to a proposal, oldest proposed" },
     .{ "e", "edit its title, repo and body" },
     .{ "p", "raise its priority, high back to low" },
     .{ "> <", "close a ticket to do, reopen a done one" },
@@ -3684,6 +3694,10 @@ fn cardDetail(app: *const App, card: *const tickets.Card, with_repo: bool, buf: 
         out.print("{s}{s}", .{ sep, modelName(model) }) catch {};
         sep = " · ";
     };
+    if (card.handed_off_from) |pane| {
+        out.print("{s}handed off from {s}", .{ sep, pane }) catch {};
+        sep = " · ";
+    }
     if (card.status == .done and card.session_note.len > 0) out.print("{s}{s}", .{ sep, card.session_note }) catch {};
     return out.buffered();
 }
@@ -3985,6 +3999,16 @@ test "a queued card says its place in its repo's line, and with a question open 
     try std.testing.expect(std.mem.indexOf(u8, drawn, "held: asks") != null);
     try std.testing.expect(std.mem.indexOf(u8, drawn, "queued") == null);
     try std.testing.expect(std.mem.indexOf(u8, drawn, "? asks") == null);
+}
+
+test "a card handed off says from which pane, on a last row of its own" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    var card: tickets.Card = .{ .id = 7, .title = "t", .status = .todo };
+    try std.testing.expect(!App.cardHasLast(&card, false));
+    card.handed_off_from = "%407";
+    try std.testing.expect(App.cardHasLast(&card, false));
+    var buf: [160]u8 = undefined;
+    try std.testing.expectEqualStrings("handed off from %407", cardDetail(&app, &card, false, &buf));
 }
 
 test "a card not picked: its priority bar, its whole title wrapped to four rows, and a last row only with something to say" {

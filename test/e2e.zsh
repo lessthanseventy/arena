@@ -2203,6 +2203,20 @@ await shows "esc away"
 key Escape
 check "esc puts it away too" gone 'esc away'
 
+# a doing card its session handed off from says which pane, and H asks its Claude to hand it off
+print -r -- '{"tickets":[{"id":920,"repo":"arena","title":"Peek me","kind":"ticket","status":"doing","priority":"med","claimed_by":"'$g6'",'\
+'"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","handed_off_from":"%407","handed_off_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[]}]}' >$tmp/run/babylon/board.json
+await shows '#920 Peek me'
+mouse 0 ${(z)$(spot '#920 Peek')} M
+mouse 35 80 24 M
+key ' '
+check "a card handed off from a pane says so in its modal" await shows 'handed off from %407'
+check "whose foot has H for asking its Claude to hand off" see 'H hand off'
+key H
+sent() { [[ $(inner capture-pane -J -p -t gamma:g6) == *'hand #920 off: commit what is uncommitted as a WIP commit, then call handoff.'* ]] }
+check "H types the ask into the Claude holding it, as babylon's own does" await sent
+key Escape
+
 # three cards asking, each opened once: a number answers on the first, a click on the second, ⏎ on the third
 asking() { print -r -- '{"id":'$1',"repo":"arena","title":"'$2'","kind":"ticket","status":"todo","priority":"med","blocked_by":[],"ask":{"id":'$3',"question":"Which one?","options":["alpha","beta","gamma"]}}' }
 print -r -- '{"tickets":['"$(asking 920 'Peek me' 6)"','"$(asking 921 'Second' 7)"','"$(asking 922 'Third' 8)"'],'\

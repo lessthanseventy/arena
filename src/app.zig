@@ -3901,7 +3901,7 @@ pub const App = struct {
         if (app.boardCard(view.col, view.row)) |card| {
             var have: [12]CardAction = undefined;
             const actions = cardActions(card, &have);
-            const order = [_]CardAction{ .go, .open, .no, .answer, .give, .edit, .priority, .close, .reopen, .to_todo, .up, .down, .to_next };
+            const order = [_]CardAction{ .go, .open, .no, .answer, .give, .handoff, .edit, .priority, .close, .reopen, .to_todo, .up, .down, .to_next };
             for (order) |action| {
                 const there = action == .open or std.mem.indexOfScalar(CardAction, actions, action) != null;
                 const wanted = full or action == .go or action == .open or action == .give or action == .edit;
@@ -4075,7 +4075,7 @@ pub const App = struct {
             (card.status != .review and (card.holder() != null or card.status == .doing)) or
             with_repo or card.blocked_by.len > 0 or std.mem.eql(u8, card.kind, "epic") or
             (card.status == .todo and card.model != null) or
-            (card.status == .done and card.session_note.len > 0);
+            (card.status == .done and card.session_note.len > 0) or card.handed_off_from != null;
     }
 
     pub const CardAt = struct { lane: usize, col: usize, row: usize };
@@ -4564,7 +4564,7 @@ pub const App = struct {
         const keyed = [_]struct { []const u8, CardAction }{
             .{ "\r", .go },    .{ "e", .edit },    .{ "p", .priority }, .{ ">", .close },
             .{ "<", .reopen }, .{ "J", .down },    .{ "K", .up },       .{ "t", .to_todo },
-            .{ "G", .give },   .{ "w", .to_next },
+            .{ "G", .give },   .{ "w", .to_next }, .{ "H", .handoff },
         };
         for (keyed) |pair| if (std.mem.eql(u8, key, pair[0])) return app.act(pair[1]);
     }
@@ -4828,6 +4828,7 @@ pub const App = struct {
         up,
         down,
         to_next,
+        handoff,
         open,
 
         /// The key that does it, as the box on the board writes it.
@@ -4845,6 +4846,7 @@ pub const App = struct {
                 .up => "K",
                 .down => "J",
                 .to_next => "w",
+                .handoff => "H",
                 .open => "space",
             };
         }
@@ -4864,6 +4866,7 @@ pub const App = struct {
                 .up => "↑",
                 .down => "↓",
                 .to_next => "next",
+                .handoff => "hand off",
             };
         }
     };
@@ -4882,6 +4885,7 @@ pub const App = struct {
             .{ .give, givable(card) },                                                 .{ .edit, true },                   .{ .priority, true },
             .{ .close, card.status == .todo },                                         .{ .reopen, card.status == .done }, .{ .to_todo, card.status == .backlog },
             .{ .up, movable },                                                         .{ .down, movable },                .{ .to_next, card.status == .todo },
+            .{ .handoff, card.status == .doing and card.holder() != null },
         };
         for (all) |pair| if (pair[1]) {
             out[n] = pair[0];
@@ -4918,6 +4922,7 @@ pub const App = struct {
             },
             .close => try app.send(.ignore, captured("babylon update {d} --status done"), .{card.id}),
             .to_next => try app.toNext(card.id, false),
+            .handoff => try app.askHandoff(card),
             .reopen, .to_todo => try app.send(.ignore, captured("babylon update {d} --status todo"), .{card.id}),
             .open => unreachable,
             .up, .down => {
@@ -4928,6 +4933,14 @@ pub const App = struct {
                 view.row = if (down) @min(view.row + 1, app.boardColumn(view.col, &.{}) -| 1) else view.row -| 1;
             },
         }
+    }
+
+    /// The session holding `card` asked to hand it off, in the words babylon's own handoff
+    /// proposal types: it commits what is uncommitted, then calls handoff.
+    fn askHandoff(app: *App, card: *const tickets.Card) !void {
+        const pane = card.holder() orelse return;
+        try app.send(.ignore, "send-keys -t %{d} -l 'Your human asks you to hand #{d} off: commit what is uncommitted as a WIP commit, then call handoff.'", .{ pane, card.id });
+        try app.send(.ignore, "send-keys -t %{d} Enter", .{pane});
     }
 
     /// A button on the board, where it is drawn and clicked: 0-based, as the mouse has it.
@@ -5040,6 +5053,7 @@ pub const App = struct {
         wr.print("{s}", .{@tagName(card.status)}) catch {};
         if (card.stage) |stage| wr.print(" · {s}", .{stage}) catch {};
         if (card.heldBy()) |pane| wr.print(" · held by {s}", .{pane}) catch {};
+        if (card.handed_off_from) |pane| wr.print(" · handed off from {s}", .{pane}) catch {};
         if (card.model) |model| wr.print(" · {s}", .{model}) catch {};
         if (card.branch) |branch| wr.print(" · {s}", .{branch}) catch {};
         head.add(.dim, "{s}", .{wr.buffered()});
@@ -5148,6 +5162,7 @@ pub const App = struct {
                     .go => "⏎",
                     .no => "x",
                     .give => "G",
+                    .handoff => "H",
                     .edit => "e",
                     .priority => "p",
                     .close => ">",
@@ -5315,7 +5330,7 @@ pub const App = struct {
         };
         if (app.askWords(card)) |w| if (is(key, &.{w.action.key})) return app.pressModal(.words);
         const claude_key = app.claudeKey(card);
-        const action: ModalAction = if (is(key, &.{"\r"})) .{ .card = .go } else if (is(key, &.{"G"})) .{ .card = .give } else if (is(key, &.{"e"})) .{ .card = .edit } else if (is(key, &.{"p"})) .{ .card = .priority } else if (is(key, &.{">"})) .{ .card = .close } else if (is(key, &.{"<"})) .{ .card = .reopen } else if (is(key, &.{claude_key}) and app.claudeOf(card) != null) .claude else return;
+        const action: ModalAction = if (is(key, &.{"\r"})) .{ .card = .go } else if (is(key, &.{"G"})) .{ .card = .give } else if (is(key, &.{"H"})) .{ .card = .handoff } else if (is(key, &.{"e"})) .{ .card = .edit } else if (is(key, &.{"p"})) .{ .card = .priority } else if (is(key, &.{">"})) .{ .card = .close } else if (is(key, &.{"<"})) .{ .card = .reopen } else if (is(key, &.{claude_key}) and app.claudeOf(card) != null) .claude else return;
         try app.pressModal(action);
     }
 
@@ -7424,6 +7439,17 @@ test shellQuote {
 /// nothing, and no epic. babylon says why when it refuses what this lets through.
 fn givable(card: *const tickets.Card) bool {
     return card.holder() == null and card.status == .todo and card.blocked_by.len == 0 and !std.mem.eql(u8, card.kind, "epic");
+}
+
+test "hand off is a doing card's action while a Claude holds it, and no other card's" {
+    var have: [12]App.CardAction = undefined;
+    var c: tickets.Card = .{ .id = 1, .title = "a", .status = .doing, .claimed_by = "%3" };
+    try std.testing.expect(std.mem.indexOfScalar(App.CardAction, App.cardActions(&c, &have), .handoff) != null);
+    c.claimed_by = null;
+    try std.testing.expect(std.mem.indexOfScalar(App.CardAction, App.cardActions(&c, &have), .handoff) == null);
+    c.claimed_by = "%3";
+    c.status = .todo;
+    try std.testing.expect(std.mem.indexOfScalar(App.CardAction, App.cardActions(&c, &have), .handoff) == null);
 }
 
 test "a card is given only while it is free to claim, whatever its repo" {

@@ -43,6 +43,9 @@ pub const Card = struct {
     handed_to: ?[]const u8 = null,
     /// The landed ticket whose pane still holds it, while it is handed.
     handed_from: ?u32 = null,
+    /// The pane whose session handed it off to this one, as `%407`, and when, in the same form.
+    handed_off_from: ?[]const u8 = null,
+    handed_off_at: ?[]const u8 = null,
     branch: ?[]const u8 = null,
     /// The open tickets it waits on.
     blocked_by: []const u32 = &.{},
@@ -538,6 +541,17 @@ test "a todo card handed to a pane is held by it until the pane claims it" {
     try std.testing.expectEqual(@as(?u32, 7), b.cards()[0].holder());
     try std.testing.expectEqual(@as(?u32, 4), b.cards()[0].handed_from);
     try std.testing.expectEqual(@as(?u32, 9), b.cards()[1].holder());
+}
+
+test "a card says which pane handed it off and when" {
+    var b = try Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":6,"title":"Fresh","status":"doing","claimed_by":"%9","handed_off_from":"%407","handed_off_at":"2026-11-24T21:00:00Z"},
+        \\{"id":7,"title":"Plain","status":"doing","claimed_by":"%8","handed_off_from":null,"handed_off_at":null}]}
+    );
+    defer b.deinit();
+    try std.testing.expectEqualStrings("%407", b.cards()[0].handed_off_from.?);
+    try std.testing.expectEqualStrings("2026-11-24T21:00:00Z", b.cards()[0].handed_off_at.?);
+    try std.testing.expectEqual(@as(?[]const u8, null), b.cards()[1].handed_off_from);
 }
 
 test "a note's escapes and control characters are gone once the board is parsed, and it is one line" {
