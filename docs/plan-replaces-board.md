@@ -79,7 +79,7 @@ is folded. A window holding more rows than fit scrolls inside itself. That is #8
 │        high, two days old, nothing blocks it      │ │▌>_ #322 A held card that asks or is sen…  med │
 │ 3 ▌>_ #346 Board 13: / finds cards        ← #760  │ │                                   ↓ 7 more   │
 │ 4 ▌☗  #590 Restarts become a Your move    ← #588  │ ├─ ◆ landed │ 23 today ──────────────── ▾ ┤
-│ 5 ▌✎  #433 The bar says ▲ N and opens arena's…  ready│ │▌⌂ ▲ #825 house soak day · 3 checks   try it 2h│
+│ 5 ▌✎  #433 The bar says ▲ N and opens arena's…  ready│ │▌⌂ ✓ #825 house soak day                    2h │
 │                                                    │ │▌>_ ✓ #632 Plan's head reads auto once    29m │
 │                                                    │ │▌>_ ✓ #754 Folds survive a restart         50m │
 │                                                    │ │▌⌂  ✓ #457 Money notices show the amount   1h │
@@ -114,10 +114,8 @@ glyph after it is the repo's icon. The mockup shows the picked row on `#760` wit
    only that repo. Under the chips, the open repos' todo rows in babylon's order, each with its
    priority on the right and `← #N` when blocked. The `backlog` chip shows backlog rows in its
    place, as the board's backlog tab did.
-8. **Landed**: to-try rows first, `▲ try it` in the "you" colour with their age. Then today's
-   landings newest first, `✓` with how long ago. `space` on a to-try row opens the modal with its
-   checks. `y` / `n` on the row settle the first open check, as Your move's tile does. A to-try
-   ticket also shows in Your move (#843): that list is for deciding, and this one is the record.
+8. **Landed**: today's landings newest first, `✓` with how long ago. `<` reopens a row. A to-try
+   ticket shows in Your move only (#843), where its card has the checks and `y` / `n`.
 
 ## Folding
 
