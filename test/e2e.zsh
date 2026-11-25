@@ -2098,6 +2098,23 @@ key -l ' '
 check "space opens the row in place, with the card's buttons under it" await shows 'o open +e edit'
 key -l ' '
 check "and space closes it" gone 'o open +e edit'
+check "the pick starts on the first window's row" see '▌▌ #701 First building'
+key /
+key -l Light
+key Enter
+check "/ with part of a title keeps the rows that hold it, and the pick skips the rest" await shows '▌▌1 +#7 Lights'
+check "the rows that miss it stay, dimmed" see '#701 First building'
+key Escape
+check "and Escape clears it" gone '/ Light'
+key r
+check "r narrows the plan to one repo" await gone 'Lights'
+check "the repo's rows are the ones left" see 'First building'
+for round in 1 2 3 4 5; do
+  shows 'Lights' && break
+  key r
+  zselect -t 30
+done
+check "and r past the last repo shows every one again" await shows 'Lights'
 repeat 12 key j
 key '<'
 check "< on a landed row opens its ticket again" await last 'update 703 --status todo'
@@ -2119,6 +2136,14 @@ check "and the other repo's rows are the ones left" see 'Bet'
 check "the fold is kept with the repo folds" await eval 'grep -qx q $folded_file'
 chip_click 'q 1'
 check "a click on the chip again opens them" await shows 'Alp'
+chip_click 'q 1'
+await gone 'Alp'
+outer resize-window -t o -y 40
+plan_said=$($bin -L $in plan 801 2>&1; print exit $?)
+check "arena plan N tells the running arena" test "$plan_said" = 'exit 0'
+check "arena plan N on a ticket in a shut repo chip opens the chip" await shows 'Alp'
+check "and the fold file no longer holds the repo" await eval '! grep -qx q $folded_file'
+outer resize-window -t o -y 24
 : >$tmp/babylon
 click ${(z)$(spot Alp)}
 key w

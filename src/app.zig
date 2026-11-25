@@ -3977,7 +3977,8 @@ pub const App = struct {
         try app.toSide();
     }
 
-    /// The plan's pick put on ticket `id`, the window it is in opened first when it is folded.
+    /// The plan's pick put on ticket `id`, the window it is in opened first when it is folded, and
+    /// its repo's chip in not planned as a click on it leaves it.
     /// False when no window of the plan holds it.
     fn pickPlanTicket(app: *App, id: u32) !bool {
         const view = &app.board_view.?;
@@ -3997,6 +3998,18 @@ pub const App = struct {
             };
             app.plan_shut.insert(win);
         }
+        const repo = (app.cardById(id) orelse return false).repo orelse return false;
+        if (!app.folded(repo)) return false;
+        const unplanned_shut = app.plan_shut.contains(.unplanned);
+        app.plan_shut.remove(.unplanned);
+        try app.toggleRepoFold(repo);
+        if (app.planSheet(&sheet)) if (planPickOf(&sheet, id)) |pick| {
+            view.plan_pick = pick;
+            try app.saveFolds();
+            return true;
+        };
+        try app.toggleRepoFold(repo);
+        if (unplanned_shut) app.plan_shut.insert(.unplanned);
         return false;
     }
 
@@ -12032,4 +12045,33 @@ test "a Claude waiting in its pane is a Your move item after babylon's, ⏎ show
     bare.claude = .done;
     try app.syncWaiting();
     try std.testing.expectEqual(@as(usize, 1), app.board.?.needsYou().len);
+}
+
+test "arena plan N opens the shut repo chip that holds N" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 300;
+    app.view_w = 200;
+    app.view_h = 40;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":5,"repo":"tlon","title":"Lights","status":"todo","priority":"med","blocked_by":[]},
+        \\{"id":6,"repo":"arena","title":"Keys","status":"todo","priority":"med","blocked_by":[]}],
+        \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},
+        \\"not_planned":{"count":2,"follow_ups":0,"by_repo":{"tlon":1,"arena":1}}}}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    var sheet: sheets.Sheet = undefined;
+    app.setFold("tlon", true);
+    app.plan_shut.insert(.unplanned);
+    try app.showPlan(5);
+    try std.testing.expect(!app.folded("tlon"));
+    try std.testing.expect(!app.plan_shut.contains(.unplanned));
+    try std.testing.expect(app.planSheet(&sheet));
+    try std.testing.expectEqual(@as(u32, 5), sheet.picked(app.board_view.?.plan_pick).?.ticket.?);
 }
