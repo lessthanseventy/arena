@@ -17,8 +17,14 @@ const next_shown = 7;
 
 /// Rows kept past the goals for the foot: a gap, not planned's head and row, a gap, landed.
 const foot_rows = 5;
+/// Rows kept past the goals for the ideas: a gap, their rule, and three rows or the fold.
+const idea_rows = 5;
+/// Ideas shown a row each; past it they fold to one row.
+const ideas_shown = 3;
+/// The bit of `unfolded` that holds the ideas open, past the pipeline's folds.
+pub const ideas_fold: u3 = folds.len;
 
-pub const Kind = enum { head, blank, now, folded, next, why, more, goals_more, goal, landed, unplanned, focal, card_top, goal_bar, goal_next, goal_block };
+pub const Kind = enum { head, blank, now, folded, next, why, more, goals_more, goal, landed, unplanned, focal, card_top, goal_bar, goal_next, goal_block, idea, ideas_more };
 pub const Style = enum { normal, dim, heading, attention };
 
 pub const Row = struct {
@@ -159,6 +165,7 @@ pub const Sheet = struct {
         s.nowRows(given, width, epoch, unfolded);
         s.nextRows(given, width);
         s.goalRows(given, width);
+        s.ideaRows(given, width, epoch, unfolded);
         s.add(.{ .kind = .blank });
         if (bench) {
             s.headRow("not planned", given.not_planned.count);
@@ -314,7 +321,7 @@ pub const Sheet = struct {
             name_w = @max(name_w, @min(text_mod.cells(goal.title), 26));
         };
         const per: usize = if (s.bench) 5 else 1;
-        const room_rows = max_rows -| s.n -| foot_rows;
+        const room_rows = max_rows -| s.n -| foot_rows -| idea_rows;
         const shown = if (given.goals.len * per <= room_rows) given.goals.len else (room_rows -| 1) / per;
         for (given.goals[0..shown], 0..) |goal, i| {
             if (s.bench) {
@@ -349,6 +356,74 @@ pub const Sheet = struct {
             s.add(.{ .kind = .goal, .pick = 0, .ticket = goal.epic, .text = s.clipped(width, line) });
         }
         if (shown < given.goals.len) s.add(.{ .kind = .goals_more, .pick = 0, .style = .dim, .text = s.print("  +{d} more goals", .{given.goals.len - shown}) });
+    }
+
+    /// Under a rule, a row to each idea in the order babylon gives them, oldest first; past
+    /// three, one row that unfolds them.
+    fn ideaRows(s: *Sheet, given: *const tickets.Plan, width: usize, epoch: i64, unfolded: u8) void {
+        if (given.ideas.len == 0) return;
+        s.add(.{ .kind = .blank });
+        s.headRow("ideas", given.ideas.len);
+        if (given.ideas.len > ideas_shown and unfolded & (@as(u8, 1) << ideas_fold) == 0) {
+            s.add(.{ .kind = .ideas_more, .pick = 0, .fold = ideas_fold, .style = .dim, .text = s.print(" +{d} ideas", .{given.ideas.len}) });
+            return;
+        }
+        for (given.ideas, 0..) |idea, i| {
+            const state = ideaState(idea);
+            var said: [64]u8 = undefined;
+            const label = ideaLabel(&said, idea, epoch);
+            const asks = state == .planning and idea.asks > 0;
+            const right = if (asks) s.print("{s}  ▲ asks you", .{label}) else label;
+            const left = s.print(" {s} #{d} {s}", .{ ideaMark(state), idea.epic, idea.title });
+            const both = s.spread(width, left, right);
+            s.add(.{
+                .kind = .idea,
+                .pick = 0,
+                .ticket = idea.epic,
+                .item = i,
+                .text = both.text,
+                .tail_at = both.tail_at,
+                .tail_style = if (asks) .attention else .dim,
+            });
+        }
+    }
+
+    pub const IdeaState = enum { idea, planning, draft };
+
+    /// An idea's state as one of the three drawn; one babylon names otherwise is a plain idea.
+    pub fn ideaState(idea: tickets.Idea) IdeaState {
+        return std.meta.stringToEnum(IdeaState, idea.state) orelse .idea;
+    }
+
+    pub fn ideaMark(state: IdeaState) []const u8 {
+        return switch (state) {
+            .idea => "○",
+            .planning => "◐",
+            .draft => "☐",
+        };
+    }
+
+    /// What an idea says of itself on its row, in `buf`: kept for how long, planning for how
+    /// long, or its steps drafted and waiting on a look.
+    pub fn ideaLabel(buf: []u8, idea: tickets.Idea, epoch: i64) []const u8 {
+        var age: [16]u8 = undefined;
+        const out = switch (ideaState(idea)) {
+            .idea => std.fmt.bufPrint(buf, "idea · kept {s}", .{kept(&age, idea.since, epoch)}),
+            .planning => blk: {
+                const how = ago(&age, idea.since, epoch);
+                break :blk std.fmt.bufPrint(buf, "planning{s}{s}", .{ if (how.len > 0) " · " else "", how });
+            },
+            .draft => std.fmt.bufPrint(buf, "draft · {d} steps · look", .{idea.steps}),
+        };
+        return out catch "";
+    }
+
+    /// How long an idea has been kept, in whole days once past one.
+    fn kept(buf: []u8, since: ?[]const u8, epoch: i64) []const u8 {
+        const then = tickets.epochOf(since) orelse return "";
+        const days = @divFloor(@max(epoch - then, 0), 86400);
+        if (days >= 1) return std.fmt.bufPrint(buf, "{d}d", .{days}) catch "";
+        return ago(buf, since, epoch);
     }
 
     pub fn stepMark(state: []const u8) []const u8 {
@@ -531,6 +606,41 @@ test "next says what each waits on and why, goals their steps, and the picks run
     // 2 building, 2 verifying rows, 2 folded, 3 next, 2 goals, landed, not planned
     try std.testing.expectEqual(@as(usize, 2 + 2 + 2 + 3 + 2 + 2), s.picks);
     try std.testing.expectEqual(s.picks - 1, s.rows[s.rowOf(s.picks - 1).?].pick.?);
+}
+
+test "ideas draw a row each under their rule, one in each state, and fold past three" {
+    const ok = std.testing.expect;
+    const given = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"plan":{"ideas":[
+        \\{"epic":830,"title":"money","state":"planning","plan_ticket":839,"pane":"%12","asks":1,"since":"2026-11-24T20:00:00Z"},
+        \\{"epic":831,"title":"retro","state":"draft","steps":7,"since":"2026-11-24T10:00:00Z"},
+        \\{"epic":829,"title":"garden","state":"idea","since":"2026-11-22T10:00:00Z"}]}}
+    );
+    var b = given;
+    defer b.deinit();
+    var s: Sheet = undefined;
+    s.build(b.plan().?, &b, 80, tickets.epochOf("2026-11-24T20:04:00Z").?, 0, false, false);
+    try ok(std.mem.eql(u8, rowText(&s, .head, 3).?, "ideas 3"));
+    const planning = rowText(&s, .idea, 0).?;
+    try ok(std.mem.indexOf(u8, planning, "◐ #830 money") != null);
+    try ok(std.mem.indexOf(u8, planning, "planning · 4m  ▲ asks you") != null);
+    try ok(std.mem.indexOf(u8, rowText(&s, .idea, 1).?, "☐ #831 retro") != null);
+    try ok(std.mem.indexOf(u8, rowText(&s, .idea, 1).?, "draft · 7 steps · look") != null);
+    try ok(std.mem.indexOf(u8, rowText(&s, .idea, 2).?, "○ #829 garden") != null);
+    try ok(std.mem.indexOf(u8, rowText(&s, .idea, 2).?, "idea · kept 2d") != null);
+    try ok(rowText(&s, .ideas_more, 0) == null);
+
+    var four = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"plan":{"ideas":[
+        \\{"epic":1,"title":"a"},{"epic":2,"title":"b"},{"epic":3,"title":"c"},{"epic":4,"title":"d"}]}}
+    );
+    defer four.deinit();
+    s.build(four.plan().?, &four, 80, 0, 0, false, false);
+    try ok(rowText(&s, .idea, 0) == null);
+    try ok(std.mem.eql(u8, rowText(&s, .ideas_more, 0).?, " +4 ideas"));
+    s.build(four.plan().?, &four, 80, 0, @as(u8, 1) << ideas_fold, false, false);
+    try ok(rowText(&s, .ideas_more, 0) == null);
+    try ok(rowText(&s, .idea, 3) != null);
 }
 
 test "a goal with a step to try reads ▲ N to try, and the step is neither next nor moving" {

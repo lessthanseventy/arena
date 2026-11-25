@@ -2313,6 +2313,38 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
             try bench.say(w, title_x, y, clip(item.title, chip_x -| title_x -| 1 -| pin_w), r.text, bg, false);
             try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
         },
+        .idea => {
+            const idea = given.ideas[row.item];
+            const state = sheets.Sheet.ideaState(idea);
+            try bench.fill(w, x0, y, ww, bg);
+            if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
+            const lead = switch (state) {
+                .idea => r.dim,
+                .planning => r.building,
+                .draft => r.you,
+            };
+            var idb: [16]u8 = undefined;
+            const id = std.fmt.bufPrint(&idb, "#{d}", .{idea.epic}) catch "";
+            try bench.say(w, x0 + 2, y, sheets.Sheet.ideaMark(state), lead, bg, false);
+            try bench.say(w, x0 + 4, y, id, r.dim, bg, true);
+            var lbuf: [64]u8 = undefined;
+            const label = sheets.Sheet.ideaLabel(&lbuf, idea, app.epoch);
+            const asks = state == .planning and idea.asks > 0;
+            const ask_text = "▲ asks you";
+            const right = x0 + ww -| 1;
+            const chip_x = right -| (cellCount(label) + 2) -| (if (asks) cellCount(ask_text) + 1 else 0);
+            const title_x = x0 + 5 + cellCount(id);
+            if (asks) try bench.say(w, right -| cellCount(ask_text), y, ask_text, r.you, bg, true);
+            if (chip_x > title_x + 4) {
+                _ = try bench.chipInk(w, r, chip_x, y, label, lead, r.text, false);
+                try bench.say(w, title_x, y, clip(idea.title, chip_x - title_x - 1), r.text, bg, false);
+            } else try bench.say(w, title_x, y, clip(idea.title, right -| title_x), r.text, bg, false);
+        },
+        .ideas_more => {
+            try bench.fill(w, x0, y, ww, bg);
+            if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
+            try bench.say(w, x0 + 2, y, clip(std.mem.trim(u8, row.text, " "), room), r.dim, bg, false);
+        },
         .why, .more, .goals_more => {
             try bench.fill(w, x0, y, ww, r.panel);
             try bench.say(w, x0 + 7, y, clip(std.mem.trim(u8, row.text, " "), room -| 5), r.dim, r.panel, false);
@@ -3367,11 +3399,12 @@ const board_keys = [_][2][]const u8{
 };
 
 const plan_keys = [_][2][]const u8{
-    .{ "j k, arrows", "pick a row: now, next, goals, landed, not planned" },
-    .{ "⏎, click it", "go: its Claude, the gate, start it, unfold a row, the board on it" },
+    .{ "j k, arrows", "pick a row: now, next, goals, ideas, landed, not planned" },
+    .{ "⏎, click it", "go: its Claude, the gate, start it, plan an idea, unfold a row, the board on it" },
     .{ "space, t", "its whole ticket" },
     .{ "+", "a new goal: plan it now, or just keep it" },
     .{ "J K x e", "on next: move it down or up, take it out, edit its why" },
+    .{ "x e", "on a kept idea: withdraw it, edit it" },
     .{ "B, b", "the board, and back to the plan" },
     .{ "] [", "your move, first or last" },
     .{ "l, h", "the orchestrator's column, and back" },

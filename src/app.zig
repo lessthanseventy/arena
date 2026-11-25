@@ -4479,6 +4479,7 @@ pub const App = struct {
         if (is(key, &.{"B"})) return app.toBoard();
         if (is(key, &.{ "J", "K", "x", "e" })) {
             const row = sheet.picked(view.plan_pick) orelse return;
+            if (row.kind == .idea) return app.ideaKey(row, key);
             if (row.kind != .next) return;
             const b = &app.board.?;
             for (b.next(), 0..) |item, at| {
@@ -4505,6 +4506,15 @@ pub const App = struct {
         }
     }
 
+    /// `e` and `x` on an idea row: a kept idea's text edited in $EDITOR as a card's is, or the idea
+    /// withdrawn. One with a Claude on it or a draft is left to its own keys.
+    fn ideaKey(app: *App, row: *const sheets.Row, key: []const u8) !void {
+        const idea = app.board.?.plan().?.ideas[row.item];
+        if (sheets.Sheet.ideaState(idea) != .idea) return;
+        if (anyKey(key, &.{"e"})) return app.ticketWindow("babylon edit {d}", .{idea.epic});
+        if (anyKey(key, &.{"x"})) try app.send(.ignore, captured("babylon withdraw {d}"), .{idea.epic});
+    }
+
     /// What a key does on a row of the plan. Space and `t` open its ticket's whole detail. Enter
     /// goes: to the Claude building it, or with none and nothing moving it, starts one; to the
     /// gate for a ticket in the pipeline; unfolds a folded row; starts a ticket of next now;
@@ -4518,8 +4528,16 @@ pub const App = struct {
             return;
         }
         switch (row.kind) {
-            .folded => if (row.fold) |bit| {
+            .folded, .ideas_more => if (row.fold) |bit| {
                 view.unfolded ^= @as(u8, 1) << bit;
+            },
+            .idea => {
+                const idea = given.ideas[row.item];
+                switch (sheets.Sheet.ideaState(idea)) {
+                    .idea => try app.send(.ignore, captured("babylon idea {d} --plan"), .{idea.epic}),
+                    .planning => if (idea.holder()) |held| if (app.paneWindow(held) != null) return app.showPane(held),
+                    .draft => _ = try app.openDetail(idea.epic),
+                }
             },
             .now => {
                 const id = row.ticket orelse return;
@@ -9258,6 +9276,65 @@ test "the plan's pick lights its ticket's Your move item dim in the feed, and th
     view.pick = 0;
     try std.testing.expect(try app.feedKey("j"));
     try eq(@as(usize, 1), view.plan_pick);
+}
+
+test "⏎ on an idea plans it, e and x edit and withdraw it, and ⏎ on the fold opens them" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 40;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"plan":{"ideas":[
+        \\{"epic":829,"title":"garden","state":"idea"},
+        \\{"epic":831,"title":"retro","state":"draft","steps":7}]}}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    const eq = std.testing.expectEqual;
+    const view = &app.board_view.?;
+    var got: [1024]u8 = undefined;
+
+    try app.planKey("\r");
+    var len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon idea 829 --plan") != null);
+
+    const before = len;
+    try app.planKey("x");
+    len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[before..len], "babylon withdraw 829") != null);
+
+    // a draft has no e or x of its own yet
+    try app.planKey("j");
+    try app.planKey("x");
+    try app.planKey("e");
+    try eq(len, try sent.readPositionalAll(std.testing.io, &got, 0));
+
+    // e on a kept idea opens its window, and closes the board
+    const then = len;
+    try app.planKey("k");
+    try app.planKey("e");
+    len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[then..len], "babylon edit 829") != null);
+    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+
+    app.board.?.deinit();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"plan":{"ideas":[
+        \\{"epic":1,"title":"a"},{"epic":2,"title":"b"},{"epic":3,"title":"c"},{"epic":4,"title":"d"}]}}
+    );
+    view.plan_pick = 0;
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    try std.testing.expect(sheet.picked(view.plan_pick).?.kind == .ideas_more);
+    try app.planKey("\r");
+    try eq(@as(u8, 1) << sheets.ideas_fold, view.unfolded);
+    try std.testing.expect(app.planSheet(&sheet));
+    try std.testing.expect(sheet.picked(view.plan_pick).?.kind == .idea);
 }
 
 test "an item of any kind runs its action's argv: ⏎ on a digest with no ticket and no repo" {

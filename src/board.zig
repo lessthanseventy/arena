@@ -281,6 +281,26 @@ pub const Goal = struct {
     steps: []Step = &.{},
 };
 
+/// An epic that is not yet a goal: kept as `idea`, with a Claude on it as `planning`, or its
+/// steps drafted and awaiting the human's look as `draft`.
+pub const Idea = struct {
+    epic: u32,
+    title: []const u8 = "",
+    state: []const u8 = "idea",
+    plan_ticket: ?u32 = null,
+    pane: ?[]const u8 = null,
+    asks: u32 = 0,
+    steps: u32 = 0,
+    since: ?[]const u8 = null,
+
+    /// The id of the pane planning it, if babylon names one.
+    pub fn holder(idea: *const Idea) ?u32 {
+        const pane = idea.pane orelse return null;
+        if (pane.len < 2 or pane[0] != '%') return null;
+        return std.fmt.parseInt(u32, pane[1..], 10) catch null;
+    }
+};
+
 pub const LandedToday = struct { count: u32 = 0, newest: []u32 = &.{} };
 
 pub const NotPlanned = struct {
@@ -295,6 +315,7 @@ pub const Plan = struct {
     now: []NowItem = &.{},
     next: []Next = &.{},
     goals: []Goal = &.{},
+    ideas: []Idea = &.{},
     landed_today: LandedToday = .{},
     not_planned: NotPlanned = .{},
 };
@@ -354,6 +375,7 @@ pub const Board = struct {
                 item.why = try cleanLine(arena, item.why);
             }
             for (given.goals) |*goal| goal.title = try cleanLine(arena, goal.title);
+            for (given.ideas) |*idea| idea.title = try cleanLine(arena, idea.title);
         }
         for (parsed.value.proposals) |*proposal| {
             proposal.why = try cleanLine(arena, proposal.why);
