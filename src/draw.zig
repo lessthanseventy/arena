@@ -3013,7 +3013,7 @@ fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
     };
     const card = app.modalCard();
     var head: App.CardHead = .{};
-    if (card) |it| App.cardHead(it, inner, app.epoch, app.askWords(it) != null, &head);
+    if (card) |it| app.modalHead(it, inner, app.askWords(it) != null, &head);
     const win = if (card) |it| app.claudeOf(it) else null;
     if (win) |it| App.claudeHead(it, &head);
     const claude_rows: u16 = if (win != null and bottom - top - 2 > note_rows + head.n + 1) 1 else 0;
@@ -3181,7 +3181,7 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
     try bench.say(w, rect.x + rect.w - 4, rect.y, "✕", r.text, r.raised, true);
 
     var head: App.CardHead = .{};
-    if (card) |it| App.cardHead(it, inner, app.epoch, app.askWords(it) != null, &head);
+    if (card) |it| app.modalHead(it, inner, app.askWords(it) != null, &head);
     if (card) |it| if (app.claudeOf(it)) |claude| App.claudeHead(claude, &head);
     const note = doneNote(app, id);
     var note_rows: u16 = 0;

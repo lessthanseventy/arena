@@ -3,6 +3,7 @@
 const std = @import("std");
 const tickets = @import("board.zig");
 const Card = tickets.Card;
+const runcheck = @import("runcheck.zig");
 
 pub const Kind = enum { move_head, quiet, item, buttons, refused, more, try_head, try_title, try_machine, try_step, try_buttons };
 
@@ -14,7 +15,10 @@ const min_pane = 6;
 
 /// babylon's refusal of what was asked of a Your move item, by the item's id: said in place of
 /// its buttons.
+/// What babylon refused, or arena says of a check it runs: a row a line, at most `note_rows`.
 pub const Refusal = struct { id: []const u8, text: []const u8 };
+
+pub const note_rows = 9;
 
 /// The options of Claude Code's own question box on a ticket's pane, read off its screen.
 pub const Box = struct { ticket: u32, options: []const []const u8 };
@@ -176,7 +180,7 @@ pub fn buildPicked(f: *Feed, board: *const tickets.Board, refused: []const Refus
         const mine: u8 = if (isTry(need)) 1 else if (std.mem.eql(u8, need.kind, "sendback")) 2 else 0;
         if (mine != group) continue;
         if (mine == 1) {
-            const room = 3 + 3 * need.steps.len + 2 + @intFromBool(!rule);
+            const room = 3 + 3 * need.steps.len + 2 + @intFromBool(!rule) + note_rows;
             if (f.move.items + @max(1, openSteps(need)) > f.move.starts.len or f.move.n + room > f.move.lines.len) break :groups;
             if (!rule) f.move.add(.try_head, false, "── to try {d} ", .{tries});
             rule = true;
@@ -346,8 +350,11 @@ fn tile(p: *Part, need: tickets.Need, need_at: usize, refused: []const Refusal, 
         p.items += 1;
     }
     if (refusalOf(refused, need.id)) |why| {
-        p.add(.try_buttons, true, "{s}", .{why});
-        p.lines[p.n - 1].need = need_at;
+        var rows = std.mem.splitScalar(u8, why, '\n');
+        while (rows.next()) |row| {
+            p.add(.try_buttons, true, "{s}", .{row});
+            p.lines[p.n - 1].need = need_at;
+        }
     }
 }
 
@@ -356,10 +363,13 @@ fn buttons(p: *Part, need: tickets.Need, at: usize) void {
     var line: [96]u8 = undefined;
     var w: std.Io.Writer = .fixed(&line);
     const step = need.steps[at];
+    var found: [512]u8 = undefined;
+    const runs = runcheck.find(step.text, &found).len > 0;
     const looks = isLook(step);
     if (looks) w.writeAll("o look") catch {};
+    if (runs) w.print("{s}r run", .{if (looks) "   " else ""}) catch {};
     for (step.actions, 0..) |action, k| {
-        w.print("{s}{s} {s}", .{ if (k == 0 and !looks) "" else "   ", action.key, action.label }) catch break;
+        w.print("{s}{s} {s}", .{ if (k == 0 and !looks and !runs) "" else "   ", action.key, action.label }) catch break;
     }
     p.add(.try_buttons, false, "{s}", .{w.buffered()});
     p.lines[p.n - 1].need = p.lines[p.n - 2].need;

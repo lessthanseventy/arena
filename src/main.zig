@@ -182,6 +182,7 @@ const BoardFile = struct {
 
 /// babylon's refusals of what the feed ran, written beside its board, taken in for the feed to say.
 fn checkRefusals(app: *App) !void {
+    try app.checkPoll();
     try takeRefusal(app, "report");
     const b = if (app.board) |*b| b else return;
     for (b.needsYou()) |need| try takeRefusal(app, need.id);

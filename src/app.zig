@@ -20,6 +20,7 @@ const win_driving = @import("win_driving.zig");
 const win_goals = @import("win_goals.zig");
 const win_landed = @import("win_landed.zig");
 const win_move = @import("win_move.zig");
+const runcheck = @import("runcheck.zig");
 const win_next = @import("win_next.zig");
 const win_now = @import("win_now.zig");
 const win_unplanned = @import("win_unplanned.zig");
@@ -572,6 +573,10 @@ pub const App = struct {
 
     /// babylon's refusals of what the feed ran for its items, said in their place.
     refusals: std.ArrayList(feed.Refusal) = .empty,
+    /// The check whose commands `r` showed, for ⏎ to run.
+    check_ask: ?CheckAsk = null,
+    /// The checks run in a window of their own, the newest of a check last.
+    check_runs: std.ArrayList(CheckRun) = .empty,
     /// babylon's refusal of the board's start, drawn on the card's action row until the next key.
     start_refused: ?[]u8 = null,
     /// What babylon said of the last report filed, drawn on the bottom row until the next key.
@@ -2379,6 +2384,19 @@ pub const App = struct {
         const b = if (app.board) |*b| b else return false;
         const named: []const u8 = if (std.mem.eql(u8, key, "\r")) "⏎" else key;
 
+        if (app.check_ask) |ask| {
+            var same = false;
+            if (item.need) |at| if (item.step) |s| {
+                const need = b.needsYou()[at];
+                same = s < need.steps.len and need.ticket == ask.ticket and need.steps[s].n == ask.n;
+            };
+            if (same and std.mem.eql(u8, named, "⏎")) {
+                try app.checkStart();
+                return true;
+            }
+            app.checkCancel();
+            if (anyKey(key, &.{"\x1b"})) return true;
+        }
         const at = item.need orelse {
             if (!std.mem.eql(u8, named, "⏎")) return false;
             const id = item.ticket orelse return true;
@@ -2402,6 +2420,14 @@ pub const App = struct {
         }
         if (item.step) |s| if (s < need.steps.len) {
             if (anyKey(key, &.{"o"}) and feed.isLook(need.steps[s])) return app.lookAtDiff(need, need.steps[s]);
+            if (need.ticket) |ticket| {
+                const step = need.steps[s];
+                if (anyKey(key, &.{"r"}) and try app.checkOffer(ticket, step.n, step.text)) return true;
+                if (std.mem.eql(u8, named, "⏎")) if (app.checkRunOf(ticket, step.n)) |run| if (run.pane) |pane| {
+                    try app.showPane(pane);
+                    return true;
+                };
+            }
         };
         if (item.step) |s| if (s < need.steps.len) for (need.steps[s].actions) |action| {
             if (!std.mem.eql(u8, action.key, named)) continue;
@@ -2919,6 +2945,115 @@ pub const App = struct {
     pub fn refusalPath(app: *const App, id: []const u8, buf: []u8) ?[]const u8 {
         const dir = app.board_dir orelse return null;
         return std.fmt.bufPrint(buf, "{s}/refused-{s}", .{ dir, id }) catch null;
+    }
+
+    pub const CheckAsk = struct { ticket: u32, n: u32, cmds: [512]u8 = undefined, len: usize = 0 };
+    pub const CheckRun = struct { ticket: u32, n: u32, pane: ?u32 = null, done: bool = false };
+
+    /// What arena says of check `n` of ticket `ticket`, under its tile and in its modal, as the
+    /// lines of `text`.
+    fn checkNote(app: *App, ticket: u32, comptime fmt: []const u8, args: anytype) !void {
+        var id: [24]u8 = undefined;
+        var clean: std.ArrayList(u8) = .empty;
+        defer clean.deinit(app.gpa);
+        var raw: [4096]u8 = undefined;
+        const text = std.fmt.bufPrint(&raw, fmt, args) catch return;
+        try @import("text.zig").appendClean(&clean, app.gpa, text);
+        const owned_id = try app.gpa.dupe(u8, std.fmt.bufPrint(&id, "try:{d}", .{ticket}) catch return);
+        errdefer app.gpa.free(owned_id);
+        app.dropRefusal(owned_id);
+        try app.refusals.append(app.gpa, .{ .id = owned_id, .text = try clean.toOwnedSlice(app.gpa) });
+        app.dirty = true;
+    }
+
+    /// `r` on check `n` of ticket `ticket`, whose words are `text`: shows the commands in them,
+    /// which run only on ⏎. Whether the text held any.
+    pub fn checkOffer(app: *App, ticket: u32, n: u32, text: []const u8) !bool {
+        var ask: CheckAsk = .{ .ticket = ticket, .n = n };
+        const found = runcheck.find(text, &ask.cmds);
+        if (found.len == 0) return false;
+        ask.len = found.len;
+        app.check_ask = ask;
+        try app.checkNote(ticket, "run check {d}?\n{s}\n⏎ run · esc cancel", .{ n, found });
+        return true;
+    }
+
+    /// The ask dropped, with what it said.
+    pub fn checkCancel(app: *App) void {
+        const ask = app.check_ask orelse return;
+        app.check_ask = null;
+        var id: [24]u8 = undefined;
+        app.dropRefusal(std.fmt.bufPrint(&id, "try:{d}", .{ask.ticket}) catch return);
+        app.dirty = true;
+    }
+
+    /// Where check `n` of ticket `ticket` writes its exit code and output while it runs.
+    fn checkDir(app: *const App, ticket: u32, n: u32, buf: []u8) ?[]const u8 {
+        const dir = app.board_dir orelse return null;
+        return std.fmt.bufPrint(buf, "{s}/check-{d}-{d}", .{ dir, ticket, n }) catch null;
+    }
+
+    /// ⏎ on the ask: its commands run in a window of their own named `check #N`, which stays
+    /// open for the output; arena reads the exit code and the last lines off its files.
+    pub fn checkStart(app: *App) !void {
+        const ask = app.check_ask orelse return;
+        app.check_ask = null;
+        var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const dir = app.checkDir(ask.ticket, ask.n, &dir_buf) orelse return app.checkCancel();
+        const script =
+            "d=$1; mkdir -p \"$d\" && rm -f \"$d/rc\" \"$d/out\" && printf '%s' \"${TMUX_PANE#%}\" >\"$d/pane\"; " ++
+            "{ sh -c \"$2\"; echo $? >\"$d/rc.t\"; } 2>&1 | tee \"$d/out\"; mv \"$d/rc.t\" \"$d/rc\"; " ++
+            "printf '\\nexit %s · ⏎ closes\\n' \"$(cat \"$d/rc\")\"; read _";
+        var cmd: Writer.Allocating = .init(app.gpa);
+        defer cmd.deinit();
+        try cmd.writer.print("new-window -d -a -n \"check ##{d}\" sh -c ", .{ask.ticket});
+        for ([_][]const u8{ script, "_", dir, ask.cmds[0..ask.len] }, 0..) |arg, i| {
+            if (i > 0) try cmd.writer.writeAll(" ");
+            try tmuxQuote(&cmd.writer, arg);
+        }
+        try app.send(.ignore, "{s}", .{cmd.written()});
+        for (app.check_runs.items, 0..) |run, i| if (run.ticket == ask.ticket and run.n == ask.n) {
+            _ = app.check_runs.orderedRemove(i);
+            break;
+        };
+        try app.check_runs.append(app.gpa, .{ .ticket = ask.ticket, .n = ask.n });
+        try app.checkNote(ask.ticket, "check {d} running · ⏎ to its window", .{ask.n});
+    }
+
+    /// The window a check was run in: its last run's.
+    pub fn checkRunOf(app: *const App, ticket: u32, n: u32) ?CheckRun {
+        var found: ?CheckRun = null;
+        for (app.check_runs.items) |run| if (run.ticket == ticket and run.n == n) {
+            found = run;
+        };
+        return found;
+    }
+
+    /// Reads what the running checks wrote: the pane of the window, then the exit code and the
+    /// last five lines of output, which are said under the check.
+    pub fn checkPoll(app: *App) !void {
+        for (app.check_runs.items) |*run| {
+            if (run.done) continue;
+            var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+            const dir = app.checkDir(run.ticket, run.n, &dir_buf) orelse continue;
+            if (run.pane == null) if (app.readCheckFile(dir, "pane")) |text| {
+                defer app.gpa.free(text);
+                run.pane = std.fmt.parseInt(u32, std.mem.trim(u8, text, " \n"), 10) catch null;
+            };
+            const rc = app.readCheckFile(dir, "rc") orelse continue;
+            defer app.gpa.free(rc);
+            run.done = true;
+            const out = app.readCheckFile(dir, "out") orelse try app.gpa.dupe(u8, "");
+            defer app.gpa.free(out);
+            var tail: [2048]u8 = undefined;
+            try app.checkNote(run.ticket, "check {d}: exit {s}\n{s}\n⏎ to its window", .{ run.n, std.mem.trim(u8, rc, " \n"), lastLines(out, 5, &tail) });
+        }
+    }
+
+    fn readCheckFile(app: *const App, dir: []const u8, name: []const u8) ?[]u8 {
+        var path: [std.fs.max_path_bytes]u8 = undefined;
+        const at = std.fmt.bufPrint(&path, "{s}/{s}", .{ dir, name }) catch return null;
+        return std.Io.Dir.cwd().readFileAlloc(app.io, at, app.gpa, .limited(1 << 16)) catch null;
     }
 
     /// A refusal read for Your move item `id`, said in its place until it is acted on again or
@@ -6326,7 +6461,7 @@ pub const App = struct {
     };
 
     /// What a modal button does when pressed.
-    pub const ModalAction = union(enum) { close, card: CardAction, option: u8, sub: u8, words, claude, whole_log, ticket, bump, withdraw, tried_ok, tried_no, copy_check };
+    pub const ModalAction = union(enum) { close, card: CardAction, option: u8, sub: u8, words, claude, whole_log, ticket, bump, withdraw, tried_ok, tried_no, copy_check, run_check };
 
     /// A button of the modal frame, where it is drawn and clicked: 0-based. It reads ` key label `.
     pub const ModalButton = struct {
@@ -6459,6 +6594,17 @@ pub const App = struct {
         }
     }
 
+    /// `cardHead` for the open modal: a to-try card's rows end with what arena says of the check
+    /// it ran, or asks to run.
+    pub fn modalHead(app: *const App, card: *const tickets.Card, inner: usize, words: bool, head: *CardHead) void {
+        cardHead(card, inner, app.epoch, words, head);
+        if (card.status != .@"try") return;
+        var id: [24]u8 = undefined;
+        const note = app.refusalOf(std.fmt.bufPrint(&id, "try:{d}", .{card.id}) catch return) orelse return;
+        var rows = std.mem.splitScalar(u8, note, '\n');
+        while (rows.next()) |row| head.add(.dim, "{s}", .{row});
+    }
+
     /// The most subagents a Claude's rows list, in its card and its modal.
     pub const max_sub_rows = 4;
 
@@ -6501,7 +6647,7 @@ pub const App = struct {
         if (app.modalCard()) |card| {
             var head: CardHead = undefined;
             const words = app.askWords(card);
-            cardHead(card, detailWidth(app.boardW()).inner, app.epoch, words != null, &head);
+            app.modalHead(card, detailWidth(app.boardW()).inner, words != null, &head);
             if (app.claudeOf(card)) |win| {
                 claudeHead(win, &head);
                 if (head.subs_n > 0) subs = .{ .win = win, .line = head.subs.?, .n = head.subs_n };
@@ -6535,9 +6681,13 @@ pub const App = struct {
                 const tries = [_]ModalButton{
                     .{ .action = .tried_ok, .key = "y", .label = "✓ it works", .x = x, .y = foot },
                     .{ .action = .tried_no, .key = "n", .label = "✗ it failed", .x = x, .y = foot },
+                    .{ .action = .run_check, .key = "r", .label = "run", .x = x, .y = foot },
                     .{ .action = .copy_check, .key = "Y", .label = "copy", .x = x, .y = foot },
                 };
+                var found: [512]u8 = undefined;
+                const runs = if (pickedCheck(card, app.board_view.?.check_pick)) |check| runcheck.find(check.text, &found).len > 0 else false;
                 for (tries) |item| {
+                    if (item.action == .run_check and !runs) continue;
                     var button = item;
                     button.x = x;
                     if (x + button.width() > right or n == out.len) break;
@@ -6635,7 +6785,15 @@ pub const App = struct {
     fn pressModal(app: *App, action: ModalAction) !void {
         const view = &app.board_view.?;
         switch (action) {
-            .close => view.detail = null,
+            .close => {
+                view.detail = null;
+                app.checkCancel();
+            },
+            .run_check => {
+                const card = app.modalCard() orelse return;
+                const check = pickedCheck(card, view.check_pick) orelse return;
+                _ = try app.checkOffer(card.id, check.n, check.text);
+            },
             .card => |card| try app.act(card),
             .option => |choice| {
                 const ask = (app.modalCard() orelse return).ask orelse return;
@@ -6714,6 +6872,12 @@ pub const App = struct {
             if (is(key, &.{"y"})) return app.pressModal(.tried_ok);
             if (is(key, &.{"n"})) return app.pressModal(.tried_no);
             if (is(key, &.{"Y"})) return app.pressModal(.copy_check);
+            if (is(key, &.{"r"})) return app.pressModal(.run_check);
+            if (is(key, &.{"\r"})) if (pickedCheck(card, view.check_pick)) |check| {
+                if (app.check_ask) |ask| if (ask.ticket == card.id and ask.n == check.n) return app.checkStart();
+                if (app.checkRunOf(card.id, check.n)) |run| if (run.pane) |pane| return app.showPane(pane);
+            };
+            app.checkCancel();
         };
         if (is(key, &.{ "j", "\x1b[B", "\x1bOB" }) and view.detail_scroll + 1 < app.detailRows()) view.detail_scroll += 1;
         if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.detail_scroll -|= 1;
@@ -9109,6 +9273,37 @@ pub fn branchTicket(branch: []const u8) ?[]const u8 {
 
 /// `arg` as one argument of a tmux command: in double quotes, with `\`, `"` and `$` escaped and
 /// `#` doubled, which tmux would read as a format.
+/// The last `n` lines of `text`, each cut to 100 characters, in `buf`.
+fn lastLines(text: []const u8, n: usize, buf: []u8) []const u8 {
+    const body = std.mem.trimEnd(u8, text, " \r\n");
+    var from: usize = 0;
+    var seen: usize = 0;
+    var i = body.len;
+    while (i > 0) : (i -= 1) if (body[i - 1] == '\n') {
+        seen += 1;
+        if (seen == n) {
+            from = i;
+            break;
+        }
+    };
+    var w: Writer = .fixed(buf);
+    var lines = std.mem.splitScalar(u8, body[from..], '\n');
+    var first = true;
+    while (lines.next()) |line| {
+        if (!first) w.writeByte('\n') catch break;
+        first = false;
+        w.writeAll(@import("text.zig").clip(std.mem.trimEnd(u8, line, "\r"), 100)) catch break;
+    }
+    return w.buffered();
+}
+
+test lastLines {
+    var buf: [256]u8 = undefined;
+    try std.testing.expectEqualStrings("b\nc", lastLines("a\nb\nc\n\n", 2, &buf));
+    try std.testing.expectEqualStrings("hi", lastLines("hi\n", 5, &buf));
+    try std.testing.expectEqualStrings("", lastLines("", 5, &buf));
+}
+
 fn tmuxQuote(w: *Writer, arg: []const u8) !void {
     try w.writeByte('"');
     for (arg) |c| switch (c) {

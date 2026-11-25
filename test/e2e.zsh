@@ -2323,6 +2323,29 @@ print -r -- $'comments[2]{end_line,id,path,"side,omitempty",start_line,text}:\n 
 key o
 check "and its comments are the ✗'s words, an anchored line each" await eval '[[ $(<$tmp/babylon) == *"tried 932 1 no src/a.zig:12: loop never ends"* && $(<$tmp/babylon) == *"src/b.zig:3-5: why, \"here\" second"* ]]'
 rm -f $tmp/comments
+# a check that holds a command gets r: it shows the command and runs nothing until ⏎, the command
+# runs in a window of its own, and the tile says its exit and last lines
+running() {
+  print -r -- '{"tickets":[],"needs_you":[{"id":"try:933","kind":"try","ticket":933,"repo":"arena","text":"#933 arena  Echo","since":"2026-11-24T10:00:00Z","machine":"gate ✓","steps":['\
+'{"n":1,"text":"say `echo hi` and read it","result":null,"actions":[{"key":"y","label":"✓","argv":["babylon","tried","933","1","ok"]},{"key":"n","label":"✗","argv":["babylon","tried","933","1","no"],"needs":"words"}]}],'\
+'"actions":[]}]}' >$tmp/run/babylon/board.json
+}
+running
+see 'r run'
+key ']'
+key r
+check "r shows the command first, with ⏎ run · esc cancel" see 'run check 1\?'
+check "and nothing has run before ⏎" eval '[[ ! -e $tmp/run/babylon/check-933-1 ]]'
+key Escape
+check "esc cancels it" gone 'run check 1\?'
+key r
+see 'run check 1\?'
+key Enter
+check "⏎ runs it in a window named check #933" await eval '[[ $(inner list-windows -a -F "#{window_name}") == *"check #933"* ]]'
+check "and the tile says its exit and its last lines" await shows 'check 1: exit 0'
+check "with what the command printed" shows '^.*▌? *hi *$'
+check "and y is still the human's to press" shows 'y ✓'
+inner kill-window -t "$(inner list-windows -a -F '#{window_id} #{window_name}' | awk '/check #933/ {print $1}')"
 key M-b
 cp $tmp/board.nolook $tmp/run/babylon/board.json
 # home takes the plan as it opens, so arena must have read it back before b
