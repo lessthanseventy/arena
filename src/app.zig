@@ -4008,8 +4008,8 @@ pub const App = struct {
             try app.saveFolds();
             return true;
         };
-        try app.toggleRepoFold(repo);
         if (unplanned_shut) app.plan_shut.insert(.unplanned);
+        try app.toggleRepoFold(repo);
         return false;
     }
 
