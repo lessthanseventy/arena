@@ -1002,7 +1002,7 @@ fn wordsLine(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
     const y = app.view_h -| 2;
     const inner = (if (why) app.boardW() else app.view_w) -| 4;
     var buf: [256]u8 = undefined;
-    const hint = if (prompt.what == .tried) "  what went wrong?  ⏎ send it back  esc not ✗" else if (why) "  ⏎ save  esc drop" else "  ⏎ send  esc drop";
+    const hint = if (prompt.what == .tried or App.stepWords(prompt.*)) App.back_hint else if (why) "  ⏎ save  esc drop" else "  ⏎ send  esc drop";
     const room = inner -| 2 -| cellCount(hint);
     const text = prompt.text();
     var shown = text;
@@ -1408,12 +1408,80 @@ fn benchFeedRow(app: *const App, w: *Writer, pen: *Pen, r: theme.Roles, f: *cons
     try o.finish();
 }
 
+/// Workbench's rows of a to-try tile: the rule over the section, the title with its chip and age,
+/// the machine's line, a row for each wrapped line of a check, and the buttons under the picked
+/// one. The picked check lit raised.
+fn benchTryRow(app: *const App, w: *Writer, pen: *Pen, r: theme.Roles, f: *const feed.Feed, row: usize, inner: u16) !void {
+    const line = f.line(row);
+    const on = app.feedLitItem(f);
+    const strong = app.feedLit() == .focused;
+    const lit = if (on) |o| line.need != null and o.need == line.need and line.step != null and o.step == line.step else false;
+    var o: RowOut = .{ .w = w, .pen = pen, .room = inner, .bg = if (line.kind == .try_head) r.panel else if (lit) r.raised else r.tile };
+    try o.say(r.text, false, " ");
+    switch (line.kind) {
+        .try_head => {
+            try o.say(r.dim, false, line.text);
+            while (o.room > 0) try o.say(r.dim, false, "─");
+        },
+        .try_title => {
+            try o.say(r.text, false, "  ");
+            try o.chip(r, r.you, "try", true);
+            const age = line.alt;
+            const room = o.room -| (cellCount(age) + 2);
+            const text = clip(line.text, room);
+            try o.say(r.text, false, text);
+            try o.say(r.text, false, spaceRun(o.room -| (cellCount(age) + 1)));
+            try o.say(if (line.old) r.you else r.dim, line.old, age);
+        },
+        .try_machine => {
+            try o.say(r.text, false, "  ");
+            const button = line.alt;
+            const space = std.mem.indexOfScalar(u8, button, ' ') orelse button.len;
+            const room = o.room -| (if (button.len > 0) cellCount(button) + 5 else @as(usize, 0));
+            const text = clip(line.text, room);
+            try o.say(r.dim, false, text);
+            if (button.len > 0) {
+                try o.say(r.text, false, spaceRun(o.room -| (cellCount(button) + 5)));
+                try o.button(r, button[0..space], std.mem.trimStart(u8, button[space..], " "), false);
+            }
+        },
+        .try_step => {
+            try o.say(if (strong) r.accent else r.dim, true, if (lit) "▌ " else "  ");
+            const room = o.room -| (if (line.settled) @as(usize, 2) else 0);
+            const text = clip(line.text, room);
+            try o.say(if (line.settled) r.dim else r.text, false, text);
+            if (line.settled) {
+                try o.say(r.text, false, spaceRun(o.room -| 1));
+                try o.say(r.dim, false, "✓");
+            }
+        },
+        .try_buttons => {
+            if (line.failed) {
+                try o.say(r.failed, false, "    ");
+                try o.say(r.failed, false, line.text);
+            } else {
+                try o.say(r.text, false, "  ");
+                var primary = true;
+                var pieces = std.mem.splitSequence(u8, line.text, "   ");
+                while (pieces.next()) |piece| {
+                    const space = std.mem.indexOfScalar(u8, piece, ' ') orelse piece.len;
+                    try o.button(r, piece[0..space], std.mem.trimStart(u8, piece[space..], " "), primary and strong);
+                    primary = false;
+                }
+            }
+        },
+        else => {},
+    }
+    try o.finish();
+}
+
 /// Row `row` of the feed atop the orchestrator's column, `inner` cells wide: its line, or past
 /// them, the rule under it.
 fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usize, inner: u16) !void {
     const dim = ink(app, "dim", 8);
     if (row < f.count()) if (app.roles) |r| switch (f.line(row).kind) {
         .item, .buttons, .refused, .move_head, .strip, .landing_chips, .building_chips => return benchFeedRow(app, w, pen, r, f, row, inner),
+        .try_head, .try_title, .try_machine, .try_step, .try_buttons => return benchTryRow(app, w, pen, r, f, row, inner),
         else => {},
     };
     if (row >= f.count()) {
@@ -1430,7 +1498,8 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
         .item => "▌ ",
         .buttons, .refused => "▌     ",
         .next_refused => "    ",
-        .landing_chips, .building_chips, .next_item => "  ",
+        .landing_chips, .building_chips, .next_item, .try_step => "  ",
+        .try_buttons => "      ",
         else => "",
     };
     if (lead.len > 0 and room > cellCount(lead)) {
@@ -1454,15 +1523,20 @@ fn feedRow(app: *const App, w: *Writer, pen: *Pen, f: *const feed.Feed, row: usi
             break :blk strong;
         },
         .next_item => .{},
-        .quiet, .more, .landed, .buttons, .strip => dim,
+        .quiet, .more, .landed, .buttons, .strip, .try_head, .try_machine => dim,
         .refused, .next_refused => ink(app, "emberdim", 1),
-        .item, .landing_chips, .building_chips => .{},
+        .try_buttons => if (line.failed) ink(app, "emberdim", 1) else dim,
+        .item, .landing_chips, .building_chips, .try_title, .try_step => .{},
     };
     if (room == 0) return;
     // the pick's cells lit: the whole line of a Your move item, a ticket's chip of its own
     var lit_from: usize = 0;
     var lit_to: usize = 0;
     var shown = line.text;
+    var marked: [256]u8 = undefined;
+    // without Workbench's raised cells, a settled check ends on its mark and a picked tile's machine line on its button
+    if (line.kind == .try_step and line.settled) shown = std.fmt.bufPrint(&marked, "{s}  ✓", .{line.text}) catch shown;
+    if (line.kind == .try_machine and line.alt.len > 0) shown = std.fmt.bufPrint(&marked, "{s}   {s}", .{ line.text, line.alt }) catch shown;
     if (app.feedLitItem(f)) |on| if (on.line == row) {
         if (line.alt.len > 0) shown = line.alt;
         lit_from = clip(shown, on.at).len;
@@ -5115,4 +5189,62 @@ test "a card to try wears ▲ try it in the you colour, filled, and leads the re
     const first = try bench.probe(out.buffered(), 1, app.listH() + 1);
     try eq(@as(u21, '▲'), first.cp);
     try eq(r.you, first.fg);
+}
+
+test "a to-try tile is drawn: its chip, its age in the you colour at a week, the machine's line, a check's rows, the picked check's buttons and its tile's close untried" {
+    var b = try tickets.Board.parse(std.testing.allocator, feed.try_sample);
+    defer b.deinit();
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.roles = @import("parts.zig").roles();
+    const r = app.roles.?;
+    var f: feed.Feed = undefined;
+    feed.buildPicked(&f, &b, &.{}, 56, 80, 1795262400, 0, null, 2);
+    var buf: [2048]u8 = undefined;
+    var want: [64]u8 = undefined;
+    const Rows = struct {
+        fn at(app_: *const App, f_: *const feed.Feed, out_: []u8, row: usize) ![]const u8 {
+            var out: Writer = .fixed(out_);
+            var pen: Pen = .{};
+            try feedRow(app_, &out, &pen, f_, row, 56);
+            return out.buffered();
+        }
+        fn has(drawn: []const u8, text: []const u8) bool {
+            return std.mem.indexOf(u8, drawn, text) != null;
+        }
+    };
+
+    const head = try Rows.at(&app, &f, &buf, 2);
+    try std.testing.expect(Rows.has(head, "── to try 2 ─"));
+
+    const title = try Rows.at(&app, &f, &buf, 3);
+    try std.testing.expect(Rows.has(title, "try"));
+    try std.testing.expect(Rows.has(title, "#825 tlon  house soak day"));
+    try std.testing.expect(Rows.has(title, try sgr(&want, paintStyle(r.dim, r.tile, false))));
+    try std.testing.expect(!Rows.has(title, try sgr(&want, paintStyle(r.you, r.tile, true))));
+
+    const machine = try Rows.at(&app, &f, &buf, 4);
+    try std.testing.expect(Rows.has(machine, "soak day ✓  gate ✓  review ✓"));
+    try std.testing.expect(Rows.has(machine, "close untried"));
+
+    const first = try Rows.at(&app, &f, &buf, 5);
+    try std.testing.expect(Rows.has(first, "1 remind me in two minutes"));
+    const settled = try Rows.at(&app, &f, &buf, 7);
+    try std.testing.expect(Rows.has(settled, "2 how much have I spent this week"));
+    try std.testing.expect(Rows.has(settled, "✓"));
+    try std.testing.expect(!Rows.has(first, "✓"));
+
+    var at: usize = 0;
+    while (f.line(at).kind != .try_buttons) at += 1;
+    const buttons = try Rows.at(&app, &f, &buf, at);
+    try std.testing.expect(Rows.has(buttons, "y"));
+    try std.testing.expect(Rows.has(buttons, "✓"));
+    try std.testing.expect(Rows.has(buttons, "✗"));
+
+    var week: usize = 0;
+    while (!(f.line(week).kind == .try_title and f.line(week).old)) week += 1;
+    const old = try Rows.at(&app, &f, &buf, week);
+    try std.testing.expect(Rows.has(old, try sgr(&want, paintStyle(r.you, r.tile, true))));
+    try std.testing.expect(Rows.has(old, "11d"));
+    const other = try Rows.at(&app, &f, &buf, week + 1);
+    try std.testing.expect(!Rows.has(other, "close untried"));
 }

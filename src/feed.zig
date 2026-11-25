@@ -5,7 +5,10 @@ const std = @import("std");
 const tickets = @import("board.zig");
 const Card = tickets.Card;
 
-pub const Kind = enum { move_head, quiet, item, buttons, refused, next_refused, more, strip, next_head, next_item, landing_head, building_head, landing_chips, building_chips, landed };
+pub const Kind = enum { move_head, quiet, item, buttons, refused, next_refused, more, strip, next_head, next_item, landing_head, building_head, landing_chips, building_chips, landed, try_head, try_title, try_machine, try_step, try_buttons };
+
+/// The age past which a to-try tile's age is in the "you" colour.
+pub const stale_days = 7;
 
 /// The lists a chip of the strip opens.
 pub const Section = enum { next, landing, building, landed };
@@ -23,6 +26,8 @@ pub const Item = struct {
     ticket: ?u32 = null,
     /// Its place in babylon's needs_you, for a Your move item.
     need: ?usize = null,
+    /// Of a to-try tile's item: its place in the need's steps; none while it has no open step.
+    step: ?usize = null,
     /// Its place in next, for a ticket there.
     next: ?usize = null,
     /// The list a chip of the strip opens; none on the auto chip, which opens auto's settings.
@@ -50,21 +55,31 @@ pub const Line = struct {
     text: []const u8,
     /// Of a Your move item's row: its place in babylon's needs_you.
     need: ?usize = null,
-    /// What a line of next says in place of its title while it is the pick.
+    /// Of a to-try tile's row of a check: its place in the need's steps.
+    step: ?usize = null,
+    /// Of a check's row: it is settled.
+    settled: bool = false,
+    /// Of a to-try tile's first row: it has waited stale_days or more.
+    old: bool = false,
+    /// What a line of next says in place of its title while it is the pick; a to-try tile's title
+    /// its age, and its machine line the button its picked tile has.
     alt: []const u8 = "",
 };
 
 /// Lines and the text they point into: Your move's, or what follows it.
 const Part = struct {
-    lines: [48]Line = undefined,
+    lines: [128]Line = undefined,
     n: usize = 0,
-    /// The line each Your move item starts on, and its ticket.
-    starts: [24]usize = undefined,
-    tickets: [24]?u32 = undefined,
+    /// The line each Your move item starts on, its ticket, and its place in needs_you and, for a
+    /// check, the need's steps.
+    starts: [48]usize = undefined,
+    tickets: [48]?u32 = undefined,
+    need_at: [48]usize = undefined,
+    step_at: [48]?usize = undefined,
     items: usize = 0,
     /// How many items babylon gave, of which `items` are held.
     total: usize = 0,
-    buf: [4096]u8 = undefined,
+    buf: [8192]u8 = undefined,
     used: usize = 0,
     spots: [96]Spot = undefined,
     n_spots: usize = 0,
@@ -177,7 +192,7 @@ pub const Feed = struct {
     /// The `i`th thing the pick can be on: Your move's items first, then the strip's chips, then
     /// the open list's tickets.
     pub fn item(f: *const Feed, i: usize) ?Item {
-        if (i < f.items_shown) return .{ .line = f.move.starts[i], .ticket = f.move.tickets[i], .need = i };
+        if (i < f.items_shown) return .{ .line = f.move.starts[i], .ticket = f.move.tickets[i], .need = f.move.need_at[i], .step = f.move.step_at[i] };
         const top = f.shown + @intFromBool(f.cut());
         const spots = f.popSpots();
         // the open list's tickets follow its own chip
@@ -216,17 +231,43 @@ pub const Feed = struct {
 /// drawn under the strip, over the pane, as far as the column goes. An item babylon refused says
 /// why in place of its buttons.
 pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, width: usize, rows: usize, epoch: i64, today: i64, open: ?Section) void {
+    buildPicked(f, board, refused, width, rows, epoch, today, open, std.math.maxInt(usize));
+}
+
+/// `build` with the pick known: the item `pick` of Your move, which a to-try tile shows its
+/// buttons under, and whose tile has its close untried button.
+pub fn buildPicked(f: *Feed, board: *const tickets.Board, refused: []const Refusal, width: usize, rows: usize, epoch: i64, today: i64, open: ?Section, pick: usize) void {
     f.* = .{};
     const needs = board.needsYou();
     if (needs.len == 0) f.move.add(.quiet, false, "nothing needs you", .{});
     if (needs.len > 0) f.move.add(.move_head, false, "▲ your move {d}", .{needs.len});
-    f.move.total = needs.len;
-    for (needs, 0..) |need, need_at| {
+    var tries: usize = 0;
+    for (needs) |need| {
+        if (isTry(need)) {
+            tries += 1;
+            f.move.total += @max(1, openSteps(need));
+        } else f.move.total += 1;
+    }
+    // the decisions, then what is to try, then the send-backs
+    var rule = false;
+    groups: for ([_]u8{ 0, 1, 2 }) |group| for (needs, 0..) |need, need_at| {
+        const mine: u8 = if (isTry(need)) 1 else if (std.mem.eql(u8, need.kind, "sendback")) 2 else 0;
+        if (mine != group) continue;
+        if (mine == 1) {
+            const room = 3 + 3 * need.steps.len + 2 + @intFromBool(!rule);
+            if (f.move.items + @max(1, openSteps(need)) > f.move.starts.len or f.move.n + room > f.move.lines.len) break :groups;
+            if (!rule) f.move.add(.try_head, false, "── to try {d} ", .{tries});
+            rule = true;
+            tile(&f.move, need, need_at, refused, width, epoch, pick);
+            continue;
+        }
         // an item is held whole or not at all: its row, a refusal or up to four rows of buttons
-        if (f.move.items == f.move.starts.len or f.move.n + 5 > f.move.lines.len) break;
-        const failed = std.mem.eql(u8, need.kind, "sendback");
+        if (f.move.items == f.move.starts.len or f.move.n + 5 > f.move.lines.len) break :groups;
+        const failed = mine == 2;
         f.move.starts[f.move.items] = f.move.n;
         f.move.tickets[f.move.items] = need.ticket;
+        f.move.need_at[f.move.items] = need_at;
+        f.move.step_at[f.move.items] = null;
         f.move.items += 1;
         // a look's text already names its doc; any other row with one wears a mark
         const marked = need.doc != null and !std.mem.eql(u8, need.kind, "look");
@@ -254,7 +295,7 @@ pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, wi
         for (f.move.lines[before..f.move.n]) |*l| {
             l.failed = failed;
         }
-    }
+    };
 
     var counts: [4]usize = undefined;
     var mark = f.rest.n;
@@ -291,6 +332,109 @@ pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, wi
         f.pop_from = range[0];
         f.pop = @min(range[1] - range[0], rows -| (f.height() + 1));
     }
+}
+
+fn isTry(need: tickets.Need) bool {
+    return std.mem.eql(u8, need.kind, "try");
+}
+
+fn openSteps(need: tickets.Need) usize {
+    var n: usize = 0;
+    for (need.steps) |step| n += @intFromBool(step.result == null);
+    return n;
+}
+
+/// The rows of `text` in `cells` cells, cut at spaces, at most `rows` of them, the last ending in
+/// `…` when it holds no more: the first row and what is left.
+fn wrapRow(text: []const u8, cells: usize, last: bool) struct { row: []const u8, rest: []const u8 } {
+    if (cellCount(text) <= cells) return .{ .row = text, .rest = "" };
+    var end: usize = 0;
+    var seen: usize = 0;
+    var space: ?usize = null;
+    var at: usize = 0;
+    while (at < text.len) {
+        const len = std.unicode.utf8ByteSequenceLength(text[at]) catch 1;
+        if (seen == cells) break;
+        if (text[at] == ' ') space = at;
+        at += len;
+        seen += 1;
+        end = at;
+    }
+    const cut = if (last) end else space orelse end;
+    return .{ .row = std.mem.trimEnd(u8, text[0..cut], " "), .rest = std.mem.trimStart(u8, text[cut..], " ") };
+}
+
+/// A to-try need as a tile: its title and age, the machine's line, and a row for each check,
+/// the open ones items; the picked check has its buttons under it.
+fn tile(p: *Part, need: tickets.Need, need_at: usize, refused: []const Refusal, width: usize, epoch: i64, pick: usize) void {
+    const first = p.items;
+    const count = @max(1, openSteps(need));
+    const picked = pick >= first and pick < first + count;
+    const since = tickets.epochOf(need.since);
+    p.add(.try_title, false, "{s}", .{need.text});
+    var age_buf: [8]u8 = undefined;
+    p.alt("{s}", .{age(&age_buf, epoch, since)});
+    p.lines[p.n - 1].old = if (since) |at| epoch - at >= stale_days * 86400 else false;
+    p.lines[p.n - 1].need = need_at;
+    p.add(.try_machine, false, "{s}", .{need.machine});
+    if (picked) for (need.actions) |action| if (std.mem.eql(u8, action.key, "x")) p.alt("{s} {s}", .{ action.key, action.label });
+    p.lines[p.n - 1].need = need_at;
+    var open: usize = 0;
+    // the number and the margin take six cells of the row
+    const room = width -| 8;
+    for (need.steps, 0..) |step, at| {
+        const settled = step.result != null;
+        const mine = !settled;
+        if (mine) {
+            p.starts[p.items] = p.n;
+            p.tickets[p.items] = need.ticket;
+            p.need_at[p.items] = need_at;
+            p.step_at[p.items] = at;
+            p.items += 1;
+        }
+        var rest: []const u8 = step.text;
+        var row: usize = 0;
+        while (row < 3) : (row += 1) {
+            const cut = wrapRow(rest, room, row == 2);
+            const ellipsis = row == 2 and cut.rest.len > 0;
+            if (row == 0) {
+                p.add(.try_step, false, "{d} {s}{s}", .{ step.n, cut.row, if (ellipsis) "…" else "" });
+            } else p.add(.try_step, false, "  {s}{s}", .{ cut.row, if (ellipsis) "…" else "" });
+            p.lines[p.n - 1].need = need_at;
+            p.lines[p.n - 1].step = at;
+            p.lines[p.n - 1].settled = settled;
+            rest = cut.rest;
+            if (rest.len == 0 or ellipsis) break;
+        }
+        if (mine) {
+            if (picked and first + open == pick) buttons(p, need, at);
+            open += 1;
+        }
+    }
+    if (count > open) {
+        // a tile with no open check is still one item, for its own keys
+        p.starts[p.items] = p.n - 1;
+        p.tickets[p.items] = need.ticket;
+        p.need_at[p.items] = need_at;
+        p.step_at[p.items] = null;
+        p.items += 1;
+    }
+    if (refusalOf(refused, need.id)) |why| {
+        p.add(.try_buttons, true, "{s}", .{why});
+        p.lines[p.n - 1].need = need_at;
+    }
+}
+
+/// The buttons of check `at` of `need`, as babylon gives their keys and labels.
+fn buttons(p: *Part, need: tickets.Need, at: usize) void {
+    var line: [96]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&line);
+    for (need.steps[at].actions, 0..) |action, k| {
+        w.print("{s}{s} {s}", .{ if (k == 0) "" else "   ", action.key, action.label }) catch break;
+    }
+    p.add(.try_buttons, false, "{s}", .{w.buffered()});
+    p.lines[p.n - 1].need = p.lines[p.n - 2].need;
+    p.lines[p.n - 1].step = at;
 }
 
 /// Today's landings: a head and a line for each ticket. The count of them.
@@ -654,7 +798,7 @@ test "more items than the feed holds are counted in ↓ N more, and only whole i
     var json: std.ArrayList(u8) = .empty;
     defer json.deinit(std.testing.allocator);
     try json.appendSlice(std.testing.allocator, "{\"tickets\":[],\"needs_you\":[");
-    for (0..30) |i| {
+    for (0..60) |i| {
         if (i > 0) try json.append(std.testing.allocator, ',');
         try json.print(std.testing.allocator, "{{\"id\":\"ask:{d}\",\"kind\":\"ask\",\"ticket\":{d},\"repo\":\"arena\",\"text\":\"#{d} arena  asks: Q?\"," ++
             "\"actions\":[{{\"key\":\"1\",\"label\":\"A\",\"argv\":[\"babylon\",\"answer\",\"{d}\",\"1\"]}}]}}", .{ i, i + 100, i + 100, i });
@@ -664,9 +808,9 @@ test "more items than the feed holds are counted in ↓ N more, and only whole i
     defer b.deinit();
     var f: Feed = undefined;
     build(&f, &b, &.{}, 56, 400, now, 0, null);
-    try std.testing.expect(f.items_shown < 30);
+    try std.testing.expect(f.items_shown < 60);
     var want: [16]u8 = undefined;
-    try std.testing.expectEqualStrings(try std.fmt.bufPrint(&want, "↓ {d} more", .{30 - f.items_shown}), f.line(f.shown).text);
+    try std.testing.expectEqualStrings(try std.fmt.bufPrint(&want, "↓ {d} more", .{60 - f.items_shown}), f.line(f.shown).text);
     try std.testing.expectEqualStrings("1 A", f.line(f.shown - 1).text);
 }
 
@@ -794,4 +938,97 @@ test "a look at says it can be opened, then babylon's own actions, and names its
     const got = texts(&f, &out);
     try std.testing.expectEqualStrings("#307 tlon  look at: docs/asterion.md", got[1]);
     try std.testing.expectEqualStrings("o open   y looks good   c change", got[2]);
+}
+
+pub const try_sample =
+    \\{"tickets":[],"needs_you":[
+    \\{"id":"ask:3","kind":"ask","ticket":16,"repo":"arena","text":"#16 arena  asks: Blue?","actions":[]},
+    \\{"id":"sendback:12","kind":"sendback","ticket":12,"repo":"arena","text":"✗ #12 arena  sent back","actions":[]},
+    \\{"id":"try:825","kind":"try","ticket":825,"repo":"tlon","text":"#825 tlon  house soak day","since":"2026-11-21T10:00:00Z",
+    \\ "machine":"soak day ✓  gate ✓  review ✓   landed f962a56",
+    \\ "steps":[
+    \\  {"n":1,"text":"remind me in two minutes: it is told, with buttons","result":null,"actions":[
+    \\   {"key":"y","label":"✓","argv":["babylon","tried","825","1","ok"]},
+    \\   {"key":"n","label":"✗","argv":["babylon","tried","825","1","no"],"needs":"words"}]},
+    \\  {"n":2,"text":"how much have I spent this week","result":"ok","actions":[]},
+    \\  {"n":3,"text":"add a to-do from the phone","result":null,"actions":[
+    \\   {"key":"y","label":"✓","argv":["babylon","tried","825","3","ok"]},
+    \\   {"key":"n","label":"✗","argv":["babylon","tried","825","3","no"],"needs":"words"}]}],
+    \\ "actions":[{"key":"x","label":"close untried","argv":["babylon","tried","825","skip"]}]},
+    \\{"id":"try:811","kind":"try","ticket":811,"repo":"arena","text":"#811 arena  plan · board tabs","since":"2026-11-10T10:00:00Z",
+    \\ "machine":"gate ✓  review ✓   landed 3c1e9a0",
+    \\ "steps":[{"n":1,"text":"click plan","result":null,"actions":[
+    \\   {"key":"y","label":"✓","argv":["babylon","tried","811","1","ok"]},
+    \\   {"key":"n","label":"✗","argv":["babylon","tried","811","1","no"],"needs":"words"}]}],
+    \\ "actions":[{"key":"x","label":"close untried","argv":["babylon","tried","811","skip"]}]}
+    \\]}
+;
+
+fn kindsOf(f: *const Feed, kind: Kind) usize {
+    var n: usize = 0;
+    for (0..f.shown) |i| n += @intFromBool(f.line(i).kind == kind);
+    return n;
+}
+
+test "to try is a section after the decisions and before the send-backs, a tile for each ticket, a row for each check" {
+    var b = try tickets.Board.parse(std.testing.allocator, try_sample);
+    defer b.deinit();
+    var f: Feed = undefined;
+    build(&f, &b, &.{}, 56, 80, now, 0, null);
+    const eq = std.testing.expectEqual;
+    const eql = std.testing.expectEqualStrings;
+
+    try eq(Kind.move_head, f.line(0).kind);
+    try eq(Kind.item, f.line(1).kind);
+    try eq(Kind.try_head, f.line(2).kind);
+    try eql("── to try 2 ", f.line(2).text);
+    try eq(Kind.try_title, f.line(3).kind);
+    try eql("#825 tlon  house soak day", f.line(3).text);
+    try eql("2h", f.line(3).alt);
+    try std.testing.expect(!f.line(3).old);
+    try eq(Kind.try_machine, f.line(4).kind);
+    try eql("soak day ✓  gate ✓  review ✓   landed f962a56", f.line(4).text);
+    try eq(@as(usize, 5), kindsOf(&f, .try_step));
+    try std.testing.expect(f.line(f.shown - 1).failed);
+
+    // the wrapped check keeps its number on its first row, a settled one is marked
+    try eql("1 remind me in two minutes: it is told, with", f.line(5).text);
+    try eql("  buttons", f.line(6).text);
+    try std.testing.expect(!f.line(5).settled);
+    try std.testing.expect(f.line(7).settled);
+    try eql("2 how much have I spent this week", f.line(7).text);
+
+    // a ticket waiting a week or more says so, and the tile is one item for each open check
+    try eql("11d", f.line(f.shown - 4).alt);
+    try std.testing.expect(f.line(f.shown - 4).old);
+    try eq(@as(usize, 5), f.items_shown);
+    try eq(@as(?usize, 0), f.item(1).?.step);
+    try eq(@as(?usize, 2), f.item(2).?.step);
+    try eq(@as(?usize, 0), f.item(3).?.step);
+    try eq(@as(?u32, 825), f.item(2).?.ticket);
+    try eq(@as(?usize, 2), f.item(2).?.need);
+    try eq(@as(?usize, 1), f.item(4).?.need);
+}
+
+test "only the picked check shows its buttons, and only its tile the close untried button" {
+    var b = try tickets.Board.parse(std.testing.allocator, try_sample);
+    defer b.deinit();
+    var f: Feed = undefined;
+    build(&f, &b, &.{}, 56, 80, now, 0, null);
+    try std.testing.expectEqual(@as(usize, 0), kindsOf(&f, .try_buttons));
+
+    buildPicked(&f, &b, &.{}, 56, 80, now, 0, null, 2);
+    try std.testing.expectEqual(@as(usize, 1), kindsOf(&f, .try_buttons));
+    var row: usize = 0;
+    while (f.line(row).kind != .try_buttons) row += 1;
+    try std.testing.expectEqualStrings("y ✓   n ✗", f.line(row).text);
+    try std.testing.expectEqual(@as(?usize, 2), f.line(row).step);
+    try std.testing.expectEqual(f.item(2).?.line + 1, row);
+    var close: usize = 0;
+    for (0..f.shown) |i| if (f.line(i).kind == .try_machine and f.line(i).alt.len > 0) {
+        close += 1;
+        try std.testing.expectEqualStrings("x close untried", f.line(i).alt);
+        try std.testing.expectEqual(@as(?usize, 2), f.line(i).need);
+    };
+    try std.testing.expectEqual(@as(usize, 1), close);
 }

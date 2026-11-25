@@ -1698,6 +1698,10 @@ pub const App = struct {
         if (!app.feedOf(&f)) return null;
         const line = y - 1;
         if (line >= f.count() or f.line(line).kind == .buttons) return null;
+        if (line < f.shown and isTryRow(f.line(line).kind)) {
+            const need = (app.board orelse return null).needsYou()[f.line(line).need orelse return null];
+            return if (need.ticket) |id| .{ .ticket = id } else null;
+        }
         const col = x - (left + 2);
         var held: ?feed.Item = null;
         for (0..f.itemCount()) |i| {
@@ -2054,7 +2058,8 @@ pub const App = struct {
         const b = if (app.board) |*b| b else return false;
         const today = app.epoch - @mod(app.epoch + app.utc_offset, 86400);
         const open = if (app.board_view) |view| view.popover else null;
-        feed.build(f, b, app.refusals.items, app.view_w -| 4, app.view_h -| 2, app.epoch, today, open);
+        const pick = if (app.board_view) |view| view.pick else std.math.maxInt(usize);
+        feed.buildPicked(f, b, app.refusals.items, app.view_w -| 4, app.view_h -| 2, app.epoch, today, open, pick);
         return true;
     }
 
@@ -2155,9 +2160,9 @@ pub const App = struct {
         } else if (anyKey(key, &.{ "k", "\x1b[A", "\x1bOA" })) {
             view.pick -|= 1;
         } else if (anyKey(key, &.{"]"})) {
-            if (moves > 0) view.pick = if (view.pick + 1 < moves) view.pick + 1 else 0;
+            if (moves > 0) view.pick = nextTile(&f, view.pick, moves);
         } else if (anyKey(key, &.{"["})) {
-            if (moves > 0) view.pick = if (view.pick > 0 and view.pick <= moves) view.pick - 1 else moves - 1;
+            if (moves > 0) view.pick = prevTile(&f, view.pick, moves);
         } else if (anyKey(key, &.{" "})) {
             const id = f.item(view.pick).?.ticket orelse return true;
             _ = app.pickCard(id);
@@ -2170,6 +2175,27 @@ pub const App = struct {
             app.pickPlan(id);
         };
         return true;
+    }
+
+    /// The first of the `moves` items of Your move that is of the need after `at`'s, or the first.
+    fn nextTile(f: *const feed.Feed, at: usize, moves: usize) usize {
+        if (at >= moves) return 0;
+        var to = at + 1;
+        while (to < moves and f.item(to).?.need == f.item(at).?.need) to += 1;
+        return if (to < moves) to else 0;
+    }
+
+    /// The first item of the need before `at`'s, or of the last when `at` is of the first or is
+    /// not of Your move.
+    fn prevTile(f: *const feed.Feed, at: usize, moves: usize) usize {
+        var to = moves - 1;
+        if (at < moves) {
+            var from = at;
+            while (from > 0 and f.item(from - 1).?.need == f.item(from).?.need) from -= 1;
+            if (from > 0) to = from - 1;
+        }
+        while (to > 0 and f.item(to - 1).?.need == f.item(to).?.need) to -= 1;
+        return to;
     }
 
     /// A chip of the strip opened: its list as a popover over the pane, or closed when it is the
@@ -2197,6 +2223,15 @@ pub const App = struct {
             return true;
         };
         const need = b.needsYou()[at];
+        if (item.step) |s| if (s < need.steps.len) for (need.steps[s].actions) |action| {
+            if (!std.mem.eql(u8, action.key, named)) continue;
+            if (action.needs) |needs| if (std.mem.eql(u8, needs, "words")) {
+                var id: [32]u8 = undefined;
+                return app.openWords(std.fmt.bufPrint(&id, "{s}#{d}", .{ need.id, need.steps[s].n }) catch return true);
+            };
+            if (action.argv) |argv| return app.runNeed(need.id, argv);
+            return true;
+        };
         const found = for (need.actions) |action| {
             if (std.mem.eql(u8, action.key, named)) break action;
         } else null;
@@ -2251,6 +2286,7 @@ pub const App = struct {
         if (!app.feedOf(&f)) return false;
         const row = m.y - 1;
         if (row >= f.shown) return app.stripClick(&f, row, m.x - (left + 2));
+        if (isTryRow(f.line(row).kind) or f.line(row).kind == .try_head) return app.tryClick(&f, row, m.x - (left + 2));
         var at: ?usize = null;
         for (0..f.items_shown) |i| {
             if (f.item(i).?.line <= row) at = i;
@@ -2274,6 +2310,79 @@ pub const App = struct {
         return true;
     }
 
+    /// What the line of the words of a to-try check says after them: the question, and the keys.
+    pub const back_hint = "  what went wrong?  ⏎ send it back  esc not ✗";
+    const send_back = "⏎ send it back";
+
+    /// Whether `prompt` is the words of a to-try check that failed.
+    pub fn stepWords(prompt: menu.Prompt) bool {
+        return prompt.what == .words and std.mem.indexOfScalar(u8, prompt.item(), '#') != null;
+    }
+
+    /// Whether the click `m` is on `send it back`, at the right end of the line of the words of a
+    /// failed check at the column's foot.
+    fn onSendBack(app: *const App, m: keys.Mouse) bool {
+        const inner = app.view_w -| 4;
+        if (m.y != app.view_h -| 2 or inner < cellCount(back_hint)) return false;
+        const hint = (app.term_w - app.view_w) + 1 + (inner - cellCount(back_hint));
+        const from = hint + cellCount(back_hint[0..std.mem.indexOf(u8, back_hint, send_back).?]);
+        return m.x >= from and m.x < from + cellCount(send_back);
+    }
+
+    fn isTryRow(kind: feed.Kind) bool {
+        return switch (kind) {
+            .try_title, .try_machine, .try_step, .try_buttons => true,
+            else => false,
+        };
+    }
+
+    /// A click on a to-try tile, `col` cells from the feed's text: a check's row picks that check,
+    /// a button does what its key does, and the tile's number and title open its modal.
+    fn tryClick(app: *App, f: *const feed.Feed, row: usize, col: usize) !bool {
+        const line = f.line(row);
+        if (line.kind == .try_head) return true;
+        const view = &app.board_view.?;
+        const need_at = line.need orelse return true;
+        // the item it picks: the check's own, else the tile's, the one picked already when it is in it
+        var first: ?usize = null;
+        var mine: ?usize = null;
+        for (0..f.items_shown) |i| {
+            const item = f.item(i).?;
+            if (item.need != need_at) continue;
+            if (first == null) first = i;
+            if (line.step != null and item.step == line.step) mine = i;
+            if (line.step == null and i == view.pick) mine = i;
+        }
+        const i = mine orelse (if (first) |k| (if (view.pick >= k and f.item(view.pick) != null and f.item(view.pick).?.need == need_at) view.pick else k) else return true);
+        view.focus = .orchestrator;
+        if (app.sideDue()) app.normal = true;
+        view.pick = i;
+        app.dirty = true;
+        const item = f.item(i).?;
+        if (item.ticket) |id| {
+            _ = app.pickCard(id);
+            app.pickPlan(id);
+        }
+        const inner = app.view_w -| 2;
+        switch (line.kind) {
+            .try_title => {
+                const id = item.ticket orelse return true;
+                // the chip takes the cells before the title, the age those after it
+                if (col + 1 >= 8 and col + 1 + line.alt.len + 2 < inner) _ = try app.openDetail(id);
+            },
+            .try_machine => {
+                if (line.alt.len > 0 and col + 1 + cellCount(line.alt) + 5 >= inner) return app.feedAct(item, "x");
+            },
+            .try_buttons => {
+                if (line.failed) return true;
+                const chip = feed.chipKeyAt(line.text, col, true) orelse return true;
+                _ = try app.feedAct(item, chip);
+            },
+            else => {},
+        }
+        return true;
+    }
+
     /// A line opened at the column's foot for the human's words on Your move item `id`: Enter
     /// runs its words action with them, Escape drops it.
     fn openWords(app: *App, id: []const u8) bool {
@@ -2293,6 +2402,27 @@ pub const App = struct {
         app.endWords();
         const b = if (app.board) |*b| b else return;
         if (prompt.len == 0) return;
+        if (std.mem.indexOfScalar(u8, prompt.item(), '#')) |hash| {
+            const n = std.fmt.parseInt(u32, prompt.item()[hash + 1 ..], 10) catch return;
+            for (b.needsYou()) |need| {
+                if (!std.mem.eql(u8, need.id, prompt.item()[0..hash])) continue;
+                for (need.steps) |step| {
+                    if (step.n != n) continue;
+                    for (step.actions) |action| {
+                        const needs = action.needs orelse continue;
+                        if (!std.mem.eql(u8, needs, "words")) continue;
+                        const argv = action.argv orelse return;
+                        const full = try app.gpa.alloc([]const u8, argv.len + 1);
+                        defer app.gpa.free(full);
+                        @memcpy(full[0..argv.len], argv);
+                        full[argv.len] = prompt.text();
+                        _ = try app.runNeed(need.id, full);
+                        return;
+                    }
+                }
+            }
+            return;
+        }
         for (b.needsYou()) |need| {
             if (!std.mem.eql(u8, need.id, prompt.item())) continue;
             for (need.actions) |action| {
@@ -6435,6 +6565,10 @@ pub const App = struct {
             app.dirty = true;
         }
         if (app.overview != null) return app.overviewMouse(m);
+        if (app.prompt) |prompt| if (stepWords(prompt)) {
+            if (m.leftPress() and app.onSendBack(m)) try app.sendWords(prompt);
+            return;
+        };
         if (app.board_view != null) if (try app.boardMouse(m)) return;
         if (app.prompt) |*prompt| {
             if (!m.leftPress() and !m.rightPress()) return;
@@ -9239,4 +9373,170 @@ test "a to-try card's modal lists its checks, j and k pick one, y says it works 
     try std.testing.expect(app.prompt == null);
     len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'tried' '7' '2' 'no' 'late'") != null);
+}
+
+fn tryApp(sent: std.Io.File, tmp_board: []const u8) !App {
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 40;
+    app.epoch = 1795262400;
+    app.board_dir = "arena-test-board";
+    app.board = try tickets.Board.parse(std.testing.allocator, tmp_board);
+    app.board_view = .{ .home = true, .plan = true, .focus = .orchestrator };
+    app.normal = true;
+    return app;
+}
+
+fn sentText(sent: std.Io.File, buf: []u8) ![]const u8 {
+    const len = try sent.readPositionalAll(std.testing.io, buf, 0);
+    return buf[0..len];
+}
+
+/// The cell of the feed `col` cells in, at feed row `row`, as a click.
+fn feedPoint(app: *const App, row: usize, col: u16) keys.Mouse {
+    return .{ .code = 0, .x = app.term_w - app.view_w + 2 + col, .y = @intCast(row + 1), .release = false };
+}
+
+fn rowOf(f: *const feed.Feed, kind: feed.Kind, step: ?usize) usize {
+    var row: usize = 0;
+    while (!(f.line(row).kind == kind and f.line(row).step == step)) row += 1;
+    return row;
+}
+
+test "in a to-try tile y settles the picked check, ] and [ go from tile to tile, and x closes it untried" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try tryApp(sent, feed.try_sample);
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.detail_asked.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    const view = &app.board_view.?;
+    const eq = std.testing.expectEqual;
+    var got: [2048]u8 = undefined;
+    var f: feed.Feed = undefined;
+
+    // the pick goes check to check with j, tile to tile with ] and [, round at either end
+    view.pick = 1;
+    try std.testing.expect(try app.feedKey("j"));
+    try eq(@as(usize, 2), view.pick);
+    try std.testing.expect(try app.feedKey("]"));
+    try eq(@as(usize, 3), view.pick);
+    try std.testing.expect(try app.feedKey("]"));
+    try eq(@as(usize, 4), view.pick);
+    try std.testing.expect(try app.feedKey("]"));
+    try eq(@as(usize, 0), view.pick);
+    try std.testing.expect(try app.feedKey("]"));
+    try eq(@as(usize, 1), view.pick);
+    try std.testing.expect(try app.feedKey("["));
+    try eq(@as(usize, 0), view.pick);
+    try std.testing.expect(try app.feedKey("["));
+    try eq(@as(usize, 4), view.pick);
+    try std.testing.expect(try app.feedKey("["));
+    try eq(@as(usize, 3), view.pick);
+    try std.testing.expect(try app.feedKey("["));
+    try eq(@as(usize, 1), view.pick);
+
+    // y runs the check's ok argv; once babylon says it settled, the pick is on the next open one
+    try std.testing.expect(try app.feedKey("y"));
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'tried' '825' '1' 'ok'") != null);
+    app.board.?.deinit();
+    const after = try std.mem.replaceOwned(u8, std.testing.allocator, feed.try_sample, "with buttons\",\"result\":null", "with buttons\",\"result\":\"ok\"");
+    defer std.testing.allocator.free(after);
+    app.board = try tickets.Board.parse(std.testing.allocator, after);
+    try std.testing.expect(app.feedOf(&f));
+    try eq(@as(?usize, 2), app.feedPick(&f).?.step);
+
+    // x runs the tile's close untried
+    try std.testing.expect(try app.feedKey("x"));
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'tried' '825' 'skip'") != null);
+
+    // space opens the ticket's modal
+    try std.testing.expect(try app.feedKey(" "));
+    try eq(@as(?u32, 825), view.detail);
+}
+
+test "n on a check asks what went wrong, ⏎ sends the no argv with the words, esc takes the ✗ back" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try tryApp(sent, feed.try_sample);
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    app.board_view.?.pick = 2;
+    var got: [2048]u8 = undefined;
+
+    try std.testing.expect(try app.feedKey("n"));
+    try std.testing.expectEqual(menu.Prompt.What.words, app.prompt.?.what);
+    try std.testing.expect(App.stepWords(app.prompt.?));
+    for ("two minutes late") |byte| _ = app.prompt.?.press(&.{byte});
+    try app.commit();
+    try std.testing.expect(app.prompt == null);
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'tried' '825' '3' 'no' 'two minutes late'") != null);
+
+    // esc closes the line and runs nothing
+    const before = (try sentText(sent, &got)).len;
+    try std.testing.expect(try app.feedKey("n"));
+    for ("x") |byte| _ = app.prompt.?.press(&.{byte});
+    app.endWords();
+    try std.testing.expect(app.prompt == null);
+    try std.testing.expectEqual(before, (try sentText(sent, &got)).len);
+}
+
+test "a click on a to-try tile picks a check, settles it with ✓, fails it with ✗ and the words, opens its modal and closes it untried" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try tryApp(sent, feed.try_sample);
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.detail_asked.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    const view = &app.board_view.?;
+    const eq = std.testing.expectEqual;
+    var got: [4096]u8 = undefined;
+    var f: feed.Feed = undefined;
+
+    // a click on a check's row picks it
+    view.pick = 0;
+    try std.testing.expect(app.feedOf(&f));
+    try std.testing.expect(try app.boardMouse(feedPoint(&app, rowOf(&f, .try_step, 2), 8)));
+    try std.testing.expect(app.feedOf(&f));
+    try eq(@as(?usize, 2), app.feedPick(&f).?.step);
+
+    // its buttons show under it; a click on ✓ is y
+    const buttons = rowOf(&f, .try_buttons, 2);
+    try std.testing.expect(try app.boardMouse(feedPoint(&app, buttons, 3)));
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'tried' '825' '3' 'ok'") != null);
+
+    // a click on ✗ is n: the line for the words opens, a click outside it does nothing to it
+    try std.testing.expect(try app.boardMouse(feedPoint(&app, buttons, 10)));
+    try std.testing.expect(App.stepWords(app.prompt.?));
+    for ("late") |byte| _ = app.prompt.?.press(&.{byte});
+    try app.onMouse(feedPoint(&app, 3, 10));
+    try std.testing.expect(app.prompt != null);
+
+    // and one on `send it back` sends it with the words
+    const inner: usize = app.view_w - 4;
+    const hint = (app.term_w - app.view_w) + 1 + (inner - cellCount(App.back_hint));
+    const at = std.mem.indexOf(u8, App.back_hint, "⏎ send it back").?;
+    try app.onMouse(.{ .code = 0, .x = @intCast(hint + cellCount(App.back_hint[0..at]) + 3), .y = app.view_h - 2, .release = false });
+    try std.testing.expect(app.prompt == null);
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'tried' '825' '3' 'no' 'late'") != null);
+
+    // the number and the title open the ticket's modal
+    try std.testing.expect(app.feedOf(&f));
+    try std.testing.expect(try app.boardMouse(feedPoint(&app, rowOf(&f, .try_title, null), 12)));
+    try eq(@as(?u32, 825), view.detail);
+    view.detail = null;
+
+    // the picked tile's close untried button closes it untried
+    try std.testing.expect(app.feedOf(&f));
+    const machine = rowOf(&f, .try_machine, null);
+    try std.testing.expect(f.line(machine).alt.len > 0);
+    try std.testing.expect(try app.boardMouse(feedPoint(&app, machine, 50)));
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'tried' '825' 'skip'") != null);
 }

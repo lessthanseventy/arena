@@ -171,6 +171,14 @@ pub const Action = struct {
     needs: ?[]const u8 = null,
 };
 
+/// One check of a to-try item, with the actions babylon gives it.
+pub const TryStep = struct {
+    n: u32,
+    text: []const u8,
+    result: ?[]const u8 = null,
+    actions: []Action = &.{},
+};
+
 /// One thing that is the human's move, as babylon words it: its first row and its actions.
 pub const Need = struct {
     id: []const u8,
@@ -180,6 +188,10 @@ pub const Need = struct {
     text: []const u8,
     /// The file or link of the ask the row is of, a look's or a decision's.
     doc: ?[]const u8 = null,
+    /// Of a `try` item: what the machine did, since when it waits, and its checks.
+    machine: []const u8 = "",
+    since: ?[]const u8 = null,
+    steps: []TryStep = &.{},
     actions: []Action = &.{},
 };
 
@@ -287,7 +299,12 @@ pub const Board = struct {
         for (parsed.value.backlog) |*card| card.title = try cleanLine(arena, card.title);
         for (parsed.value.needs_you) |*need| {
             need.text = try cleanLine(arena, need.text);
+            need.machine = try cleanLine(arena, need.machine);
             for (need.actions) |*action| action.label = try cleanLine(arena, action.label);
+            for (need.steps) |*step| {
+                step.text = try cleanLine(arena, step.text);
+                for (step.actions) |*action| action.label = try cleanLine(arena, action.label);
+            }
         }
         if (parsed.value.plan) |*given| {
             for (given.now) |*item| {

@@ -2143,6 +2143,28 @@ digest_prefix=${digest_line%%⏎ seen*}
 mouse 0 $((${#digest_prefix} + 2)) $digest_row M
 mouse 0 $((${#digest_prefix} + 2)) $digest_row m
 check "and a click on its seen does the same" await last 'digest ok'
+# a ticket to try is a tile with a row for each check, and y on each check settles it: the tile leaves
+trying() {
+  local one=${1:-null} two=${2:-null}
+  print -r -- '{"tickets":[],"needs_you":[{"id":"try:931","kind":"try","ticket":931,"repo":"arena","text":"#931 arena  Lights","since":"2026-11-24T10:00:00Z","machine":"gate ✓  landed abc1234","steps":['\
+'{"n":1,"text":"it is told","result":'$one',"actions":[{"key":"y","label":"✓","argv":["babylon","tried","931","1","ok"]},{"key":"n","label":"✗","argv":["babylon","tried","931","1","no"],"needs":"words"}]},'\
+'{"n":2,"text":"it has buttons","result":'$two',"actions":[{"key":"y","label":"✓","argv":["babylon","tried","931","2","ok"]},{"key":"n","label":"✗","argv":["babylon","tried","931","2","no"],"needs":"words"}]}],'\
+'"actions":[{"key":"x","label":"close untried","argv":["babylon","tried","931","skip"]}]}]}' >$tmp/run/babylon/board.json
+}
+trying
+check "a ticket to try is a tile in Your move, its checks a row each" see '── to try 1'
+see '2 it has buttons'
+key ']'
+: >$tmp/babylon
+key y
+check "y on its first check settles it, through babylon" await last 'tried 931 1 ok'
+trying '"ok"'
+see '1 it is told +✓'
+: >$tmp/babylon
+key y
+check "and then the next, the pick having moved on" await last 'tried 931 2 ok'
+print -r -- '{"tickets":[],"needs_you":[]}' >$tmp/run/babylon/board.json
+check "a ticket tried on every check leaves Your move" gone '── to try'
 key M-b
 cp $tmp/board.nolook $tmp/run/babylon/board.json
 # home takes the plan as it opens, so arena must have read it back before b
