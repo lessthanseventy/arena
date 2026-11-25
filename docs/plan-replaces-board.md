@@ -121,7 +121,7 @@ glyph after it is the repo's icon. The mockup shows the picked row on `#760` wit
 
 ## Folding
 
-`z` folds the window the pick is in, and a click on its title bar's `▾` does the same. A folded
+`z` folds the window the pick is in, and a click anywhere on its title bar does the same. A folded
 window keeps its slot. Its body shows a one-line summary in place of its rows:
 
 | window | its summary |
@@ -136,7 +136,7 @@ window keeps its slot. Its body shows a one-line summary in place of its rows:
 
 **Why a fold doesn't hand its rows to the next window:** #887's rule. If a fold gave its space away,
 every window under it would move. Folding is for quieting a window, not for making room. When a
-list needs the whole height, `f` (or a click on the window's title) opens it as a modal over Plan
+list needs the whole height, `f` opens it as a modal over Plan
 with the list whole, with the same keys on its rows. It is a look, so nothing behind it
 moves ([principle 5](principles.md)).
 
@@ -252,7 +252,7 @@ except where noted.
 1. **Repo identity (#897).** The row's `▌` edge and icon on every Plan row, chips with lead bars, the
    rail's group headings, and babylon off violet. Free.
 2. **Folding windows in fixed slots (#898).** Layout from screen size alone, scrolling inside each window, `z`, `Z`,
-   the title bar's `▾`, the summaries, `f` for a window whole as a modal, and `plan:` lines in
+   a click on the title bar, the summaries, `f` for a window whole as a modal, and `plan:` lines in
    `folded`. Free.
 3. **Rows are cards (#899).** `cardActions` on every ticket row, the buttons on the picked row's second line,
    the foot bar, and the hover peek. After 2.

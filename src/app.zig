@@ -4501,9 +4501,9 @@ pub const App = struct {
         return sheets.windowTop(at - span.start, span.len, body);
     }
 
-    pub const PlanHit = struct { win: sheets.Window, row: ?usize = null, title: bool = false, fold: bool = false };
+    pub const PlanHit = struct { win: sheets.Window, row: ?usize = null, title: bool = false };
 
-    /// What is under (`x`, `y`) of the plan: a window's title bar, its fold mark, or a row.
+    /// What is under (`x`, `y`) of the plan: a window's title bar or a row.
     pub fn planHit(app: *const App, sheet: *const sheets.Sheet, x: u16, y: u16) ?PlanHit {
         const view = app.board_view orelse return null;
         if (view.whole) |win| return app.hitIn(sheet, win, app.planWhole(), x, y);
@@ -4513,10 +4513,7 @@ pub const App = struct {
 
     fn hitIn(app: *const App, sheet: *const sheets.Sheet, win: sheets.Window, rect: sheets.Rect, x: u16, y: u16) ?PlanHit {
         if (rect.h <= sheets.window_chrome or x < rect.x or x + 1 >= rect.x + rect.w or y < rect.y or y + 1 >= rect.y + rect.h) return null;
-        if (y == rect.y) {
-            const glyph = rect.x + rect.w - 4;
-            return .{ .win = win, .title = true, .fold = x + 1 >= glyph and x <= glyph + 1 };
-        }
+        if (y == rect.y) return .{ .win = win, .title = true };
         const body = rect.h - sheets.window_chrome;
         const span = sheet.span(win);
         const line = app.planWindowTop(sheet, win, body) + (y - rect.y - 1);
@@ -4765,7 +4762,7 @@ pub const App = struct {
                 const head = app.goalHead();
                 if (view.whole != null) return;
                 if (hit.win == .goals and m.x >= head.x and m.x < head.x + head.w) return app.openGoal();
-                return if (hit.fold) app.togglePlanFold(hit.win) else app.openWhole(hit.win);
+                return app.togglePlanFold(hit.win);
             }
         }
         const at = app.planRowAt(&sheet, m.x, m.y) orelse return;

@@ -2131,6 +2131,12 @@ check "f opens the window whole, as a modal" see 'q close'
 key q
 check "and q closes it" gone 'q close'
 check "with the window below still on its row" same_row
+title_click() { local row=$(title_row "$1"); local line=$(screen | sed -n "${row}p"); mouse 0 $(( ${#${line%%$1*}} + 3 )) $row M; mouse 0 $(( ${#${line%%$1*}} + 3 )) $row m }
+title_click '◆ now'
+check "a click on a window's title bar folds it, off its ▾ too" see '◐ 2 building'
+title_click '◆ now'
+check "and a click again opens it" see 'First buil'
+check "with the window below still on its row" same_row
 print -r -- '' >$tmp/.config/ficciones/theme/palette.sh
 cp $tmp/board.slots $tmp/run/babylon/board.json
 check "without a palette the plan is the plain one again" see '1 #7 +tlon +Lights +free now'
