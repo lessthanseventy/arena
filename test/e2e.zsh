@@ -2114,7 +2114,7 @@ check "x takes it out of next, through babylon" await last 'next 7 --drop'
 cp $tmp/run/babylon/board.json $tmp/board.slots
 mkdir -p $tmp/.config/ficciones/theme
 for name in AMBER VIOLET AMBERDIM EMBERDIM INK DIM GREY SURFACE0 SURFACE2 SURFACE3 SURFACE4 BG CYAN MOSS PINK RED; do print -r -- "PALETTE_$name=#808080"; done >$tmp/.config/ficciones/theme/palette.sh
-print -r -- '{"tickets":[],"plan":{"now":[{"ticket":701,"repo":"arena","title":"First building","state":"building","since":"2026-11-24T10:00:00Z"},{"ticket":702,"repo":"arena","title":"Second building","state":"building","since":"2026-11-24T10:00:00Z"}],"next":[{"ticket":7,"repo":"tlon","title":"Lights","why":"","set_by":"orchestrator","waits_on":[]}],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}' >$tmp/run/babylon/board.json
+print -r -- '{"tickets":[{"id":701,"repo":"arena","title":"First building","kind":"ticket","status":"doing","priority":"med","blocked_by":[]}],"plan":{"now":[{"ticket":701,"repo":"arena","title":"First building","state":"building","since":"2026-11-24T10:00:00Z"},{"ticket":702,"repo":"arena","title":"Second building","state":"building","since":"2026-11-24T10:00:00Z"}],"next":[{"ticket":7,"repo":"tlon","title":"Lights","why":"","set_by":"orchestrator","waits_on":[]}],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}' >$tmp/run/babylon/board.json
 check "in Workbench's look the plan's windows have their title bars" await shows '◆ now.*◆ goals'
 check "now holds the tickets being built" see 'First buil'
 title_row() { screen | grep -n "$1" | head -1 | cut -d: -f1 }
@@ -2139,6 +2139,19 @@ check "a click on a window's title bar folds it, off its ▾ too" see '◐ 2 bui
 title_click '◆ now'
 check "and a click again opens it" see 'First buil'
 check "with the window below still on its row" same_row
+: >$tmp/babylon
+key -l ' '
+check "space opens the row in place, with the card's buttons under it" await shows 'o open +e edit'
+key -l ' '
+check "and space closes it" gone 'o open +e edit'
+key p
+check "p on a now row raises its priority through babylon" await last 'update 701 --priority high'
+key e
+check "e on a now row edits its ticket" await last 'edit 701'
+normal
+key b
+key Escape
+key h
 print -r -- '' >$tmp/.config/ficciones/theme/palette.sh
 cp $tmp/board.slots $tmp/run/babylon/board.json
 check "without a palette the plan is the plain one again" see '1 #7 +tlon +Lights +free now'

@@ -612,6 +612,8 @@ pub const App = struct {
     fold_n: usize = 0,
     /// Workbench's plan windows folded to their summary, kept in the folds file as `plan:<window>`.
     plan_shut: sheets.Shut = .empty,
+    /// The ticket open in each plan window, kept in the folds file as `open:<window>:<ticket>`.
+    plan_open: sheets.Open = .initFill(0),
     folds_path: ?[]const u8 = null,
     /// Bytes for the terminal arena runs in, written inside the next frame.
     out: std.ArrayList(u8) = .empty,
@@ -1695,7 +1697,13 @@ pub const App = struct {
             };
         }
         if (app.feedUnder(x, y)) |look| return look;
-        if (app.board_view == null or app.planShown()) return null;
+        if (app.planShown()) {
+            var sheet: sheets.Sheet = undefined;
+            if (!app.planSheet(&sheet)) return null;
+            const row = sheet.rows[app.planRowAt(&sheet, x, y) orelse return null];
+            return if (opensInPlace(&row)) .{ .ticket = row.ticket.? } else null;
+        }
+        if (app.board_view == null) return null;
         var buttons: [48]Button = undefined;
         for (app.boardButtons(&buttons)) |button| if (button.hit(x, y)) return null;
         const at = app.boardCardAt(x, y) orelse return null;
@@ -1792,8 +1800,8 @@ pub const App = struct {
                 .session => null,
             };
         };
-        if (!app.key_typed or view.boxed() or view.focus != .board or app.planShown() or app.menu != null or app.prompt != null) return null;
-        const card = app.boardCard(view.col, view.row) orelse return null;
+        if (!app.key_typed or view.boxed() or view.focus != .board or app.menu != null or app.prompt != null) return null;
+        const card = app.pickedCard() orelse return null;
         return .{ .ticket = card.id };
     }
 
@@ -3871,11 +3879,17 @@ pub const App = struct {
             if (line.len == 0) continue;
             if (std.mem.startsWith(u8, line, plan_fold)) {
                 if (std.meta.stringToEnum(sheets.Window, line[plan_fold.len..])) |win| app.plan_shut.insert(win);
+            } else if (std.mem.startsWith(u8, line, plan_opened)) {
+                const rest = line[plan_opened.len..];
+                const colon = std.mem.indexOfScalar(u8, rest, ':') orelse continue;
+                const win = std.meta.stringToEnum(sheets.Window, rest[0..colon]) orelse continue;
+                app.plan_open.set(win, std.fmt.parseInt(u32, rest[colon + 1 ..], 10) catch continue);
             } else app.setFold(line, true);
         }
     }
 
     const plan_fold = "plan:";
+    const plan_opened = "open:";
 
     fn saveFolds(app: *App) !void {
         const path = app.folds_path orelse return;
@@ -3884,6 +3898,8 @@ pub const App = struct {
         for (0..app.fold_n) |i| try data.writer.print("{s}\n", .{app.folds[i][0..app.fold_lens[i]]});
         var shut = app.plan_shut.iterator();
         while (shut.next()) |win| try data.writer.print(plan_fold ++ "{s}\n", .{@tagName(win)});
+        var opened = app.plan_open.iterator();
+        while (opened.next()) |entry| if (entry.value.* != 0) try data.writer.print(plan_opened ++ "{s}:{d}\n", .{ @tagName(entry.key), entry.value.* });
         if (std.fs.path.dirname(path)) |dir| std.Io.Dir.cwd().createDirPath(app.io, dir) catch return;
         std.Io.Dir.cwd().writeFile(app.io, .{ .sub_path = path, .data = data.written() }) catch {};
     }
@@ -4250,20 +4266,22 @@ pub const App = struct {
     /// while a word of babylon's is said in the bar's place.
     pub fn keyBar(app: *const App, out: []BarKey) []BarKey {
         if (app.barRows() == 0 or (app.report_said != null and !app.feedFocused())) return out[0..0];
-        const view = app.board_view orelse return out[0..0];
+        if (app.board_view == null) return out[0..0];
         const full = app.boardW() >= bar_full_w;
         const Item = struct { what: @FieldType(BarKey, "what"), key: []const u8, word: []const u8, group: u8 };
         var items: [24]Item = undefined;
         var m: usize = 0;
-        if (app.boardCard(view.col, view.row)) |card| {
+        if (app.pickedCard()) |card| {
             var have: [12]CardAction = undefined;
             const actions = cardActions(card, &have);
             const order = [_]CardAction{ .go, .open, .no, .answer, .give, .handoff, .edit, .priority, .close, .reopen, .to_todo, .up, .down, .to_next };
+            const plan = app.planShown();
             for (order) |action| {
                 const there = action == .open or std.mem.indexOfScalar(CardAction, actions, action) != null;
                 const wanted = full or action == .go or action == .open or action == .give or action == .edit;
-                if (there and wanted) {
-                    items[m] = .{ .what = .{ .card = action }, .key = action.key(), .word = cardWord(card, action), .group = 0 };
+                const on_plan = !plan or (action != .no and action != .answer and action != .up and action != .down);
+                if (there and wanted and on_plan) {
+                    items[m] = .{ .what = .{ .card = action }, .key = if (plan) planKeyOf(action) else action.key(), .word = cardWord(card, action), .group = 0 };
                     m += 1;
                 }
             }
@@ -4474,8 +4492,7 @@ pub const App = struct {
 
     /// Goes to the Claude holding the card picked, closing the board; nothing when none does.
     fn goCard(app: *App) !void {
-        const view = app.board_view orelse return;
-        const card = app.boardCard(view.col, view.row) orelse return;
+        const card = app.pickedCard() orelse return;
         const pane = card.holder() orelse {
             if (!givable(card)) return;
             // babylon refuses what it will not start and says why; the board closes when it does
@@ -4572,7 +4589,72 @@ pub const App = struct {
         var shut = app.plan_shut;
         if (view.whole) |win| shut.remove(win);
         sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.halfHome(), app.workbench(), shut);
+        if (app.workbench()) sheet.withButtons(app.plan_open);
         return true;
+    }
+
+    /// The card the keys and buttons act on: the plan's picked row's ticket while the plan is
+    /// shown, else the board's pick.
+    pub fn pickedCard(app: *const App) ?*const tickets.Card {
+        const view = app.board_view orelse return null;
+        if (!app.planShown()) return app.boardCard(view.col, view.row);
+        var sheet: sheets.Sheet = undefined;
+        if (!app.planSheet(&sheet)) return null;
+        const row = sheet.picked(view.plan_pick) orelse return null;
+        if (row.kind != .now and row.kind != .next) return null;
+        return app.cardById(row.ticket orelse return null);
+    }
+
+    /// A button of an open ticket's row on the plan, where it is drawn and clicked.
+    pub const PlanButton = struct { action: CardAction, key: []const u8, word: []const u8, x: u16, y: u16, w: u16 };
+
+    /// The buttons of the `.buttons` row at `at` of `sheet`: the card's actions that are no
+    /// modal's (answer and no stay there) and no list's (up and down are J and K), `open` last.
+    pub fn planButtons(app: *const App, sheet: *const sheets.Sheet, at: usize, out: []PlanButton) []PlanButton {
+        const row = sheet.rows[at];
+        const card = app.cardById(row.ticket orelse return out[0..0]) orelse return out[0..0];
+        const rect = app.planRect(row.win);
+        const body = rect.h -| sheets.window_chrome;
+        const top = app.planWindowTop(sheet, row.win, body);
+        const line = at - sheet.span(row.win).start;
+        if (line < top or line >= top + body) return out[0..0];
+        const y = rect.y + 1 + @as(u16, @intCast(line - top));
+        var have: [12]CardAction = undefined;
+        const actions = cardActions(card, &have);
+        const order = [_]CardAction{ .go, .open, .give, .handoff, .edit, .priority, .close, .reopen, .to_todo, .to_next };
+        var x = rect.x + 2;
+        const right = rect.x + rect.w -| 2;
+        var n: usize = 0;
+        for (order) |action| {
+            if (action != .open and std.mem.indexOfScalar(CardAction, actions, action) == null) continue;
+            const key = planKeyOf(action);
+            const word = cardWord(card, action);
+            const w: u16 = @intCast(cellCount(key) + cellCount(word) + 3);
+            if (x + w > right or n == out.len) break;
+            out[n] = .{ .action = action, .key = key, .word = word, .x = x, .y = y, .w = w };
+            n += 1;
+            x += w + 1;
+        }
+        return out[0..n];
+    }
+
+    /// The key of `action` on the plan: space folds a row there, so the modal is `o`.
+    fn planKeyOf(action: CardAction) []const u8 {
+        return if (action == .open) "o" else action.key();
+    }
+
+    /// Ticket row `row` opened, or closed when it is the open one of its window; opening one
+    /// closes the last.
+    fn togglePlanOpen(app: *App, row: *const sheets.Row) !void {
+        const id = row.ticket orelse return;
+        app.plan_open.set(row.win, if (app.plan_open.get(row.win) == id) 0 else id);
+        app.dirty = true;
+        try app.saveFolds();
+    }
+
+    /// Whether a click or space on `row` opens it in place: the rows that are one ticket.
+    fn opensInPlace(row: *const sheets.Row) bool {
+        return row.ticket != null and (row.kind == .now or row.kind == .next);
     }
 
     /// The plan's windows are laid out on this: the cells under the head's rule to the last row.
@@ -4749,7 +4831,7 @@ pub const App = struct {
         if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.plan_pick = @max(view.plan_pick -| 1, first);
         if (is(key, &.{"?"})) view.help = true;
         if (view.whole != null and is(key, &.{ "\x1b", "q" })) return app.closeWhole();
-        if (view.whole != null and !is(key, &.{ "J", "K", "x", "e", "\r", " ", "t" })) return;
+        if (view.whole != null and !is(key, &.{ "J", "K", "x", "e", "\r", " ", "t", "o", "p", ">", "<", "G", "w", "W", "H" })) return;
         if (app.workbench()) if (sheet.picked(view.plan_pick)) |row| {
             if (is(key, &.{"z"})) return app.togglePlanFold(row.win);
             if (is(key, &.{"Z"})) return app.foldPlanAll(row.win);
@@ -4761,10 +4843,14 @@ pub const App = struct {
         };
         if (key.len == 1 and key[0] >= '1' and key[0] <= '9') return app.driveAnswer(key[0] - '1');
         if (is(key, &.{"B"})) return app.toBoard();
+        if (is(key, &.{"o"}) and !app.halfHome() and app.pickedCard() != null) return app.act(.open);
         if (is(key, &.{ "J", "K", "x", "e" })) {
             const row = sheet.picked(view.plan_pick) orelse return;
             if (row.kind == .idea) return app.ideaKey(row, key);
-            if (row.kind != .next) return;
+            if (row.kind != .next) {
+                if (is(key, &.{"e"})) try app.act(.edit);
+                return;
+            }
             const b = &app.board.?;
             for (b.next(), 0..) |item, at| {
                 if (item.ticket != row.ticket.?) continue;
@@ -4773,8 +4859,17 @@ pub const App = struct {
             }
             return;
         }
-        if (is(key, &.{ "\r", " ", "t" })) {
+        if (is(key, &.{"W"})) if (app.pickedCard()) |card| {
+            if (card.status == .todo) return app.toNext(card.id, true);
+        };
+        const keyed = [_]struct { []const u8, CardAction }{
+            .{ "p", .priority }, .{ ">", .close },   .{ "<", .reopen },  .{ "t", .to_todo },
+            .{ "G", .give },     .{ "w", .to_next }, .{ "H", .handoff },
+        };
+        for (keyed) |pair| if (std.mem.eql(u8, key, pair[0])) return app.act(pair[1]);
+        if (is(key, &.{ "\r", " " })) {
             const row = sheet.picked(view.plan_pick) orelse return;
+            if (is(key, &.{" "}) and opensInPlace(row)) return app.togglePlanOpen(row);
             return app.planAct(row, key);
         }
         if (is(key, &.{ "\x1b", "q" })) return app.closeBoard();
@@ -4912,10 +5007,27 @@ pub const App = struct {
             const button = sheets.driveButtonAt(need, app.planRect(.driving).x, m.x) orelse return;
             return app.driveAnswer(button);
         }
+        if (row.kind == .buttons) return app.planButtonClick(&sheet, at, m);
         const pick = row.pick orelse return;
         const picked = view.plan_pick == pick;
         view.plan_pick = pick;
-        if (row.kind == .next) app.drag = .{ .next_row = .{ .from = nextPlace(&sheet, at), .opens = picked } } else if (picked) try app.planAct(&row, "\r");
+        if (row.kind == .next) {
+            app.drag = .{ .next_row = .{ .from = nextPlace(&sheet, at), .opens = true } };
+        } else if (opensInPlace(&row)) {
+            try app.togglePlanOpen(&row);
+        } else if (picked) try app.planAct(&row, "\r");
+    }
+
+    /// A click on the buttons row at `at`: the button under it pressed on its ticket, which the
+    /// pick moves to first, the keys acting on the pick.
+    fn planButtonClick(app: *App, sheet: *const sheets.Sheet, at: usize, m: keys.Mouse) !void {
+        var buttons: [12]PlanButton = undefined;
+        for (app.planButtons(sheet, at, &buttons)) |button| {
+            if (m.y != button.y or m.x < button.x or m.x >= button.x + button.w) continue;
+            const owner = sheet.rows[at - 1 - @as(usize, @intFromBool(sheet.rows[at - 1].kind == .why))];
+            app.board_view.?.plan_pick = owner.pick orelse return;
+            return app.act(button.action);
+        }
     }
 
     /// The place (from 0) in next of the next row at `at` of the sheet.
@@ -4944,7 +5056,7 @@ pub const App = struct {
         if (sheet.rows[at].kind != .next) return;
         const to = nextPlace(&sheet, at);
         if (to == row.from) {
-            if (row.opens and !row.moved) try app.planAct(&sheet.rows[at], "\r");
+            if (row.opens and !row.moved) try app.togglePlanOpen(&sheet.rows[at]);
             return;
         }
         if (row.from >= app.board.?.next().len) return;
@@ -5659,7 +5771,7 @@ pub const App = struct {
     /// through babylon's command line. An action the picked card has not does nothing.
     fn act(app: *App, action: CardAction) !void {
         const view = if (app.board_view) |*open| open else return;
-        const card = app.boardCard(view.col, view.row) orelse return;
+        const card = app.pickedCard() orelse return;
         if (action == .open) {
             _ = try app.openDetail(card.id);
             return;
@@ -6411,7 +6523,7 @@ pub const App = struct {
         if (anyKey(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.giving = picked -| 1;
         const to = if (anyKey(key, &.{"\r"})) picked else if (key.len == 1 and key[0] >= '1' and key[0] <= '9') key[0] - '1' else return;
         if (to >= n) return;
-        const card = app.boardCard(view.col, view.row) orelse return;
+        const card = app.pickedCard() orelse return;
         // babylon's refusal (that Claude is mid-turn, the card was claimed meanwhile) is said
         try app.send(.ignore, "run-shell -b \"out=\\$(babylon give {d} %{d} 2>&1) || " ++
             "{{ command -v notify-send >/dev/null && notify-send -a arena -- \\\"\\$out\\\"; }}\"", .{ card.id, found[to].win.agent_pane });
@@ -10381,4 +10493,53 @@ test "on Plan's windows z folds the picked one and keeps the pick, Z folds the r
     fresh.loadFolds("tlon\nplan:now\nplan:nowhere\nplan:landed\n");
     try std.testing.expect(fresh.folded("tlon") and !fresh.folded("plan:now"));
     try std.testing.expect(fresh.plan_shut.contains(.now) and fresh.plan_shut.contains(.landed) and fresh.plan_shut.count() == 2);
+}
+
+test "space opens a Plan ticket row in place, one to a window, with the card's own actions as its buttons; the open row loads from its file's open: line" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 30;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"repo":"arena","title":"a","status":"doing"},
+        \\{"id":2,"repo":"arena","title":"b","status":"doing"},
+        \\{"id":11,"repo":"arena","title":"n","status":"todo"}],"plan":{"now":[
+        \\{"ticket":1,"repo":"arena","title":"a","state":"building"},
+        \\{"ticket":2,"repo":"arena","title":"b","state":"building"}],
+        \\"next":[{"ticket":11,"repo":"arena","title":"n","why":"","waits_on":[]}],
+        \\"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer app.board.?.deinit();
+    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    const eq = std.testing.expectEqual;
+    var sheet: sheets.Sheet = undefined;
+
+    try eq(@as(u32, 1), app.pickedCard().?.id);
+    try app.planKey(" ");
+    try eq(@as(u32, 1), app.plan_open.get(.now));
+    try std.testing.expect(app.planSheet(&sheet));
+    const at = for (sheet.rows[0..sheet.n], 0..) |row, i| {
+        if (row.kind == .buttons) break i;
+    } else return error.TestUnexpectedResult;
+    try eq(@as(u32, 1), sheet.rows[at].ticket.?);
+    var buttons: [12]App.PlanButton = undefined;
+    var have: [12]App.CardAction = undefined;
+    const actions = App.cardActions(app.pickedCard().?, &have);
+    const shown = app.planButtons(&sheet, at, &buttons);
+    try std.testing.expect(shown.len >= 2);
+    for (shown) |button| {
+        try std.testing.expect(button.action == .open or std.mem.indexOfScalar(App.CardAction, actions, button.action) != null);
+        try eq(shown[0].y, button.y);
+    }
+
+    try app.planKey("j");
+    try app.planKey(" ");
+    try eq(@as(u32, 2), app.plan_open.get(.now));
+    try app.planKey(" ");
+    try eq(@as(u32, 0), app.plan_open.get(.now));
+
+    app.loadFolds("open:now:7\nopen:nowhere:3\n");
+    try eq(@as(u32, 7), app.plan_open.get(.now));
 }

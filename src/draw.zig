@@ -2436,6 +2436,13 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
     const room = ww - 4;
     switch (row.kind) {
         .blank => {},
+        .buttons => {
+            try bench.fill(w, x0, y, ww, r.panel);
+            var buttons: [12]App.PlanButton = undefined;
+            for (app.planButtons(sheet, at, &buttons), 0..) |button, i| {
+                _ = try bench.button(w, r, button.x, button.y, button.key, button.word, i == 0, null);
+            }
+        },
         .head => {
             try bench.fill(w, x0, y, ww, r.panel);
             var buf: [48]u8 = undefined;
@@ -3107,8 +3114,8 @@ fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
 fn benchOver(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     try boardButtons(app, w, view);
     _ = try findLine(app, w);
-    if (view.answering) if (app.boardCard(view.col, view.row)) |card| if (card.ask) |ask| try askBox(app, w, card.id, ask);
-    if (view.giving) |picked| if (app.boardCard(view.col, view.row)) |card| try giveBox(app, w, card.id, picked);
+    if (view.answering) if (app.pickedCard()) |card| if (card.ask) |ask| try askBox(app, w, card.id, ask);
+    if (view.giving) |picked| if (app.pickedCard()) |card| try giveBox(app, w, card.id, picked);
     if (view.detail) |id| try detailBox(app, w, id, view.detail_scroll);
     try autoBox(app, w);
     try draftBox(app, w);

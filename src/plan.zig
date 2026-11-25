@@ -26,7 +26,7 @@ const ideas_shown = 3;
 /// The bit of `unfolded` that holds the ideas open, past the pipeline's folds.
 pub const ideas_fold: u3 = folds.len;
 
-pub const Kind = enum { head, blank, now, folded, next, why, more, goals_more, goal, landed, unplanned, focal, drove, card_top, goal_bar, goal_next, goal_block, idea, ideas_more, summary, note };
+pub const Kind = enum { head, blank, now, folded, next, why, more, goals_more, goal, landed, unplanned, focal, drove, card_top, goal_bar, goal_next, goal_block, idea, ideas_more, summary, note, buttons };
 pub const Style = enum { normal, dim, heading, attention };
 
 /// Workbench's plan is seven windows, each a fixed slot of the screen.
@@ -49,6 +49,9 @@ pub const Window = enum {
 };
 
 pub const Shut = std.EnumSet(Window);
+
+/// The ticket open in each window, 0 for none: one at a time.
+pub const Open = std.EnumArray(Window, u32);
 
 pub const Rect = struct { x: u16, y: u16, w: u16, h: u16 };
 
@@ -199,6 +202,36 @@ pub const Sheet = struct {
             len += 1;
         };
         return .{ .start = start, .len = len };
+    }
+
+    /// A row of the card's buttons under each ticket row that is open in its window, after the
+    /// why a next row has; it is no pick, so the picks stay where they were.
+    pub fn withButtons(s: *Sheet, open: Open) void {
+        var after: [max_rows]u32 = @splat(0);
+        var extra: usize = 0;
+        for (s.rows[0..s.n], 0..) |row, i| {
+            const owner = if (row.kind == .why and i > 0 and s.rows[i - 1].kind == .next) s.rows[i - 1] else row;
+            if (owner.kind != .now and owner.kind != .next) continue;
+            const ticket = owner.ticket orelse continue;
+            if (open.get(owner.win) != ticket) continue;
+            const why_follows = owner.kind == .next and row.kind != .why and i + 1 < s.n and s.rows[i + 1].kind == .why;
+            if (why_follows) continue;
+            after[i] = ticket;
+            extra += 1;
+        }
+        if (extra == 0 or s.n + extra > max_rows) return;
+        var j = s.n + extra;
+        var i = s.n;
+        while (i > 0) {
+            i -= 1;
+            if (after[i] != 0) {
+                j -= 1;
+                s.rows[j] = .{ .kind = .buttons, .ticket = after[i], .win = s.rows[i].win };
+            }
+            j -= 1;
+            s.rows[j] = s.rows[i];
+        }
+        s.n += extra;
     }
 
     /// The picks of `win`: the first and how many.
