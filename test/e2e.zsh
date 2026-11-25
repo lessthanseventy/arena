@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 # arena end to end: it runs in one private tmux server, standing in for the terminal, against
 # sessions in another. Nothing here touches the tmux server or the configuration of whoever runs it.
-zmodload zsh/zselect
+zmodload zsh/zselect zsh/datetime
 
 root=${0:A:h:h}
 bin=$root/zig-out/bin/arena
@@ -1028,7 +1028,8 @@ key l k
 check "l to a column its repo has no card in picks the first repo's that has" see '⏎ go +e edit '
 key h j
 check "and h back to its own, j off its group's end staying when none is below" see '⏎ start +a answer '
-spot() { local l=$(screen | grep -m1 -- "$1"); local p=${l%%"$1"*}; print $(( ${#p} + 2 )) $(screen | grep -n -m1 -- "$1" | cut -d: -f1) }
+# column and row from one settled picture: from two, one caught mid-frame, a click goes out with no row
+spot() { local at l p; at=$(settled | grep -n -m1 -- "$1") || return 1; l=${at#*:} p=${l%%"$1"*}; print $(( ${#p} + 2 )) ${at%%:*} }
 mouse 0 ${(z)$(spot '#8 Board')} M
 check "a click on a card in a repo's group picks it" see '⏎ go +e edit '
 mouse 0 ${(z)$(spot '#7 Lights')} M
@@ -1857,20 +1858,26 @@ park() { mouse 35 $rest_x $rest_y M }
 # The pointer from where nothing is under it to column $1, row $2: no cell changed, text or
 # attribute. Then away again, and it is all as it was.
 hovered() {
-  local text before after
+  local text before after now moved
   local -a cells
-  park
-  local settled i
-  for i in {1..20}; do
-    settled=$(screen)
-    zselect -t 50
-    [[ $(screen) == "$settled" ]] && break
+  local settled i try
+  # A pointer at rest opens a peek after ARENA_LOOK_MS: a look that took longer than that, on a
+  # busy machine, saw the peek and not the hover, and is taken again.
+  for try in {1..5}; do
+    park
+    for i in {1..20}; do
+      settled=$(screen)
+      zselect -t 50
+      [[ $(screen) == "$settled" ]] && break
+    done
+    before=$(pic) text=$(screen)
+    moved=$EPOCHREALTIME
+    mouse 35 $1 $2 M
+    zselect -t 30
+    after=$(pic) now=$(screen)
+    (( EPOCHREALTIME - moved < 1.8 )) && break
   done
-  before=$(pic) text=$(screen)
-  mouse 35 $1 $2 M
-  zselect -t 30
-  after=$(pic)
-  [[ $(screen) == "$text" ]] || { print "      text changed"; diff <(print -r -- "$text") <(screen) | sed 's/^/      /'; return 1 }
+  [[ $now == "$text" ]] || { print "      text changed"; diff <(print -r -- "$text") <(print -r -- "$now") | sed 's/^/      /'; return 1 }
   cells=("${(@f)$(changed "$before" "$after")}")
   cells=("${(@)cells:#}")
   (( $#cells == 0 )) || { print -l -- "      changed:" "${cells[@]}"; return 1 }
@@ -2222,6 +2229,8 @@ key ']'
 key o
 doc_windows_show() { local w; for w in $(inner list-windows -a -F '#{window_id} #{window_name}' | awk '$2 ~ /^doc/{print $1}'); do inner capture-pane -p -t $w | grep -q "$1" && return 0; done; return 1 }
 check "a doc only in the ticket's worktree opens from there" await doc_windows_show only-on-the-branch
+# tmux has the window before arena has gone to it: an Alt+b ahead of that would be undone by it
+see '╭─ [0-9]+ doc'
 for s in $(inner list-sessions -F '#{session_name}'); do inner set-environment -t $s HOME $HOME; done
 inner set-option -g remain-on-exit off
 # an item of any kind runs its action: a digest has no ticket and no repo, and ⏎ is its seen
@@ -2510,8 +2519,9 @@ outer new-session -d -s o -x 121 -y 24 \
   "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 $bin -L $in 2>$tmp/err; echo EXIT \$?; cat"
 check "a held row's chip reads its session, window and pane" see "alpha:$held_index · $held_pane"
 inner select-window -t alpha:one
-mouse 0 ${(z)$(spot "alpha:$held_index · $held_pane")} M
-mouse 0 ${(z)$(spot "alpha:$held_index · $held_pane")} m
+chip=$(spot "alpha:$held_index · $held_pane")
+mouse 0 ${(z)chip} M
+mouse 0 ${(z)chip} m
 check "and a click on it goes to that pane" await eval '[[ $(inner display -p -t alpha "#{pane_id}") == $held_pane ]]'
 
 exit $((fails > 0))
