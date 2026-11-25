@@ -8494,8 +8494,9 @@ pub const App = struct {
     fn sendKeys(app: *App, pane: *const Pane, bytes: []const u8) !void {
         var cmd: Writer.Allocating = .init(app.gpa);
         defer cmd.deinit();
-        // a pane left in a mode, by tmux's own output or the human's, takes the keys itself
-        try app.send(.ignore, "if-shell -F -t %{d} \"#{{pane_in_mode}}\" \"send-keys -t %{d} -X cancel\"", .{ pane.id, pane.id });
+        // A pane left in a mode, by tmux's own output or the human's, takes the keys itself. Not
+        // `if-shell`: the command it runs answers too, and arena would take that for the next reply.
+        try app.send(.ignore, "copy-mode -q -t %{d}", .{pane.id});
         try cmd.writer.print("send-keys -H -t %{d}", .{pane.id});
         for (bytes) |b| try cmd.writer.print(" {x:0>2}", .{b});
         try app.send(.ignore, "{s}", .{cmd.written()});
