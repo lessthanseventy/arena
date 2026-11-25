@@ -5772,3 +5772,25 @@ test "Your move with 8 items scrolls inside its five rows to the picked one" {
     try std.testing.expect(std.mem.indexOf(u8, drawn, "item 7") != null);
     try std.testing.expect(std.mem.indexOf(u8, drawn, "item 0") == null);
 }
+
+test "on the e2e's 24-row screen every Plan window keeps its title and a body row" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"needs_you":[],"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer board.deinit();
+    var app = homeApp(&board);
+    app.term_w = 121;
+    app.view_w = 60;
+    app.view_h = 24;
+    app.roles = bench.roles();
+    app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
+    var screen: [262144]u8 = undefined;
+    var out: Writer = .fixed(&screen);
+    try planView(&app, &out, app.board_view.?);
+    for (std.enums.values(sheets.Window)) |win| {
+        try std.testing.expect(app.planSlot(win).h > sheets.window_chrome);
+        // goals' `+ goal` button covers the end of its title at this width
+        const shown = if (win == .goals) win.title()[0..4] else win.title();
+        try std.testing.expect(std.mem.indexOf(u8, out.buffered(), shown) != null);
+    }
+}

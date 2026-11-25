@@ -57,6 +57,10 @@ pub const Rect = struct { x: u16, y: u16, w: u16, h: u16 };
 pub const window_chrome = 2;
 const driving_h = 5;
 
+/// Under this many rows the windows above the lists keep one body row each, so not planned and
+/// the rest keep rows of theirs.
+const short_area = 26;
+
 /// Rows Your move's slot shows at full width and at half: whatever it holds, its slot is this tall.
 pub const move_rows_full = 5;
 pub const move_rows_half = 3;
@@ -65,8 +69,10 @@ pub const move_rows_half = 3;
 /// bar, body and shadow. Worked out from the area alone, so nothing in a window or its fold
 /// moves another.
 pub fn slot(win: Window, w: u16, h: u16, move_rows: u16) Rect {
-    const move_h = @min(move_rows + window_chrome, h);
-    const drive_h = @min(driving_h, h - move_h);
+    // on a short screen Your move gives rows to the windows under it, down to one
+    const shown: u16 = if (h < short_area) @as(u16, 1) else move_rows;
+    const move_h = @min(shown + window_chrome, h);
+    const drive_h = @min(@as(u16, if (h < short_area) driving_h - 2 else driving_h), h - move_h);
     const top = move_h + drive_h;
     const rest = h - top;
     const half = w * 3 / 5;
