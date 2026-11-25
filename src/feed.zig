@@ -334,6 +334,11 @@ pub fn buildPicked(f: *Feed, board: *const tickets.Board, refused: []const Refus
     }
 }
 
+/// Whether `step` is read off a diff: its change is there to be looked at with `o`.
+pub fn isLook(step: tickets.TryStep) bool {
+    return std.mem.eql(u8, step.kind, "look") and step.range.len > 0;
+}
+
 fn isTry(need: tickets.Need) bool {
     return std.mem.eql(u8, need.kind, "try");
 }
@@ -429,8 +434,11 @@ fn tile(p: *Part, need: tickets.Need, need_at: usize, refused: []const Refusal, 
 fn buttons(p: *Part, need: tickets.Need, at: usize) void {
     var line: [96]u8 = undefined;
     var w: std.Io.Writer = .fixed(&line);
-    for (need.steps[at].actions, 0..) |action, k| {
-        w.print("{s}{s} {s}", .{ if (k == 0) "" else "   ", action.key, action.label }) catch break;
+    const step = need.steps[at];
+    const looks = isLook(step);
+    if (looks) w.writeAll("o look") catch {};
+    for (step.actions, 0..) |action, k| {
+        w.print("{s}{s} {s}", .{ if (k == 0 and !looks) "" else "   ", action.key, action.label }) catch break;
     }
     p.add(.try_buttons, false, "{s}", .{w.buffered()});
     p.lines[p.n - 1].need = p.lines[p.n - 2].need;

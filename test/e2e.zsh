@@ -24,6 +24,10 @@ chmod +x $tmp/bin/notify-send
 # stands in for babylon's command line: it says what the board answered
 print -r -- $'#!/bin/sh\necho "$@" >>'$tmp$'/babylon\n[ "$1" = answer ] && [ -e '$tmp$'/refuse ] && { echo "babylon: no session to answer" >&2; exit 1; }\n[ "$1" = give ] && [ -e '$tmp$'/refuse ] && { echo "babylon: the Claude in $3 is mid-turn" >&2; exit 1; }\n[ "$1" = start ] && [ -e '$tmp$'/refuse-start ] && { echo "babylon: ticket #$2 is claimed by pane %1010" >&2; exit 1; }\n[ "$1" = next ] && [ -e '$tmp$'/refuse-next ] && { echo "babylon: ticket #$2 is claimed by pane %1010" >&2; exit 1; }\n[ "$1" = detail ] && printf \'#%s Lights\\n\\nthe whole of it\\n\' "$2"\n[ "$1" = gate ] && printf \'run submitted 2026-11-24T05:00:00Z\\n  rebase: ok (2026-11-24T05:00:01Z to 2026-11-24T05:00:05Z)\\n  gate: failed (2026-11-24T05:00:05Z to 2026-11-24T05:02:03Z)\\n    expected 1, found 0\\n\'\n[ "$1" = auto ] && [ -e '$tmp$'/chatty ] && { echo "babylon: auto chatter"; echo "babylon: auto chatter on stderr" >&2; }\nexit 0' >$tmp/bin/babylon
 chmod +x $tmp/bin/babylon
+# stands in for meatcheck: it records what it was asked and prints the comments it was given
+print -r -- $'#!/bin/sh\necho "$@" >>'$tmp$'/meatcheck\n[ -e '$tmp$'/comments ] && cat '$tmp$'/comments\nexit 0' >$tmp/bin/meatcheck
+chmod +x $tmp/bin/meatcheck
+mkdir -p $tmp/projects/arena
 export PATH=$tmp/bin:$PATH
 
 inner() { tmux -L $in -f /dev/null "$@" }
@@ -2165,6 +2169,24 @@ key y
 check "and then the next, the pick having moved on" await last 'tried 931 2 ok'
 print -r -- '{"tickets":[],"needs_you":[]}' >$tmp/run/babylon/board.json
 check "a ticket tried on every check leaves Your move" gone '── to try'
+# a check to look at the diff: o opens meatcheck on the landed range; its comments come back as the ✗, none as ✓
+looking() {
+  print -r -- '{"tickets":[],"needs_you":[{"id":"try:932","kind":"try","ticket":932,"repo":"arena","text":"#932 arena  Doors","since":"2026-11-24T10:00:00Z","machine":"gate ✓","steps":['\
+'{"n":1,"text":"look at the change: is the retry bounded","kind":"look","range":"abc123^..abc123","result":null,"actions":[{"key":"y","label":"✓","argv":["babylon","tried","932","1","ok"]},{"key":"n","label":"✗","argv":["babylon","tried","932","1","no"],"needs":"words"}]}],'\
+'"actions":[]}]}' >$tmp/run/babylon/board.json
+}
+looking
+see 'o look'
+key ']'
+: >$tmp/babylon
+key o
+check "o on a look check runs meatcheck on the landed range, with the check's words" await eval '[[ -f $tmp/meatcheck ]] && grep -q -- "--diff abc123^..abc123 --prompt look at the change: is the retry bounded" $tmp/meatcheck'
+check "and no comments is a ✓, through babylon" await last 'tried 932 1 ok'
+print -r -- $'src/a.zig,12,12,loop never ends\nsrc/b.zig,3,5,why, here' >$tmp/comments
+: >$tmp/babylon
+key o
+check "and its comments are the ✗'s words, an anchored line each" await eval '[[ $(<$tmp/babylon) == *"tried 932 1 no src/a.zig:12: loop never ends"* && $(<$tmp/babylon) == *"src/b.zig:3-5: why, here"* ]]'
+rm -f $tmp/comments
 key M-b
 cp $tmp/board.nolook $tmp/run/babylon/board.json
 # home takes the plan as it opens, so arena must have read it back before b

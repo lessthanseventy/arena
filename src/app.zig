@@ -2223,6 +2223,9 @@ pub const App = struct {
             return true;
         };
         const need = b.needsYou()[at];
+        if (item.step) |s| if (s < need.steps.len) {
+            if (anyKey(key, &.{"o"}) and feed.isLook(need.steps[s])) return app.lookAtDiff(need, need.steps[s]);
+        };
         if (item.step) |s| if (s < need.steps.len) for (need.steps[s].actions) |action| {
             if (!std.mem.eql(u8, action.key, named)) continue;
             if (action.needs) |needs| if (std.mem.eql(u8, needs, "words")) {
@@ -2536,6 +2539,36 @@ pub const App = struct {
             try tmuxQuote(&cmd.writer, arg);
         }
         try app.closeBoard();
+        try app.send(.ignore, "{s}", .{cmd.written()});
+        return true;
+    }
+
+    /// `o` on a check to look at the diff: meatcheck on the landed change, in a window of its own
+    /// so no Claude waits on it, its comments back as the ✗'s words, none as ✓.
+    fn lookAtDiff(app: *App, need: tickets.Need, step: tickets.TryStep) !bool {
+        const ticket = need.ticket orelse return true;
+        if (!plainName(need.repo)) return true;
+        const script =
+            "cd \"$HOME/projects/$1\" || exit; " ++
+            "out=$(meatcheck --diff \"$2\" --prompt \"$3\") || { echo \"meatcheck failed\"; read _; exit; }; " ++
+            "if [ -z \"$out\" ]; then babylon tried \"$4\" \"$5\" ok; else " ++
+            "words=$(printf '%s\\n' \"$out\" | awk -F, '{t=$4; for (i=5;i<=NF;i++) t=t \",\" $i; l=($2==$3)?$2:$2 \"-\" $3; printf \"%s:%s: %s\\n\",$1,l,t}'); " ++
+            "babylon tried \"$4\" \"$5\" no \"$words\"; fi";
+        var id: [12]u8 = undefined;
+        var n: [12]u8 = undefined;
+        var cmd: Writer.Allocating = .init(app.gpa);
+        defer cmd.deinit();
+        try cmd.writer.writeAll("new-window -a -n look sh -c ");
+        const args = [_][]const u8{
+            script,                                                   "_",
+            need.repo,                                                step.range,
+            step.text,                                                std.fmt.bufPrint(&id, "{d}", .{ticket}) catch return true,
+            std.fmt.bufPrint(&n, "{d}", .{step.n}) catch return true,
+        };
+        for (args, 0..) |arg, i| {
+            if (i > 0) try cmd.writer.writeAll(" ");
+            try tmuxQuote(&cmd.writer, arg);
+        }
         try app.send(.ignore, "{s}", .{cmd.written()});
         return true;
     }
@@ -9539,4 +9572,30 @@ test "a click on a to-try tile picks a check, settles it with ✓, fails it with
     try std.testing.expect(f.line(machine).alt.len > 0);
     try std.testing.expect(try app.boardMouse(feedPoint(&app, machine, 50)));
     try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'tried' '825' 'skip'") != null);
+}
+
+test "o on a check to look at the diff opens meatcheck on the landed range in a window of its own, with the check's words as its prompt" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try tryApp(sent,
+        \\{"tickets":[],"needs_you":[{"id":"try:932","kind":"try","ticket":932,"repo":"arena","text":"#932 arena  Lights","since":"2026-11-21T10:00:00Z","machine":"gate ✓",
+        \\"steps":[{"n":2,"text":"look at the change: is the retry bounded?","kind":"look","range":"abc123^..abc123","result":null,"actions":[
+        \\{"key":"y","label":"✓","argv":["babylon","tried","932","2","ok"]},{"key":"n","label":"✗","argv":["babylon","tried","932","2","no"],"needs":"words"}]}],"actions":[]}]}
+    );
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    app.board_view.?.pick = 0;
+    var f: feed.Feed = undefined;
+    try std.testing.expect(app.feedOf(&f));
+    try std.testing.expectEqualStrings("o look   y ✓   n ✗", f.line(rowOf(&f, .try_buttons, 0)).text);
+
+    try std.testing.expect(try app.feedKey("o"));
+    var got: [4096]u8 = undefined;
+    const said = try sentText(sent, &got);
+    try std.testing.expect(std.mem.indexOf(u8, said, "new-window -a -n look") != null);
+    try std.testing.expect(std.mem.indexOf(u8, said, "meatcheck --diff") != null);
+    try std.testing.expect(std.mem.indexOf(u8, said, "abc123^..abc123") != null);
+    try std.testing.expect(std.mem.indexOf(u8, said, "is the retry bounded?") != null);
 }

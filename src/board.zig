@@ -175,6 +175,9 @@ pub const Action = struct {
 pub const TryStep = struct {
     n: u32,
     text: []const u8,
+    /// `look` for a check to be done by reading the landed change; then `range` is its git range.
+    kind: []const u8 = "",
+    range: []const u8 = "",
     result: ?[]const u8 = null,
     actions: []Action = &.{},
 };
