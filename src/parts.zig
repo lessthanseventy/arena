@@ -274,7 +274,9 @@ test "the roles come from the palette's names, dim stays readable on a tile, and
     const r = roles();
     try std.testing.expectEqual(RGB{ .r = 0x0D, .g = 0x0D, .b = 0x0D }, r.ground);
     try std.testing.expectEqual(RGB{ .r = 0x2A, .g = 0x2A, .b = 0x2A }, r.raised);
-    try std.testing.expectEqual(r.repo[1], r.you);
+    try std.testing.expect(!std.meta.eql(r.repo[1], r.you));
+    try std.testing.expect(!std.meta.eql(r.repo[1], r.repo[2]));
+    for ([_]RGB{ r.ground, r.panel, r.tile, r.raised }) |face| try std.testing.expect(color.contrast(r.repo[1], face) >= color.floor);
     try std.testing.expectEqual(r.repo[0], r.accent);
     try std.testing.expect(color.contrast(r.dim, r.tile) >= color.floor);
     try std.testing.expect(color.contrast(r.dim, r.tile) < color.contrast(r.text, r.tile));

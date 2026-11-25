@@ -67,6 +67,7 @@ pub const Roles = struct {
         const amber = Theme.find(text, "AMBER") orelse return null;
         const violet = Theme.find(text, "VIOLET") orelse return null;
         const cyan = Theme.find(text, "CYAN") orelse return null;
+        const blue = Theme.find(text, "BLUE") orelse babylon_blue;
         const raised = Theme.find(text, "SURFACE4") orelse return null;
         const dim = dimmed(grey, raised.mix(grey, pick_lift));
         return .{
@@ -80,7 +81,7 @@ pub const Roles = struct {
             .accent = amber,
             .on_accent = Theme.find(text, "INK") orelse return null,
             .you = violet,
-            .repo = .{ amber, violet, cyan, Theme.find(text, "MOSS") orelse return null, Theme.find(text, "PINK") orelse return null },
+            .repo = .{ amber, blue, cyan, Theme.find(text, "MOSS") orelse return null, Theme.find(text, "PINK") orelse return null },
             .building = amber,
             .checking = cyan,
             .queued = dim,
@@ -88,6 +89,10 @@ pub const Roles = struct {
             .landed = Theme.find(text, "MOSS") orelse return null,
         };
     }
+
+    /// babylon's colour when the palette has no BLUE: between cyan and violet, clear of both and
+    /// of the amber, and over the contrast floor on every surface.
+    pub const babylon_blue: RGB = .{ .r = 0x5F, .g = 0x8F, .b = 0xFF };
 
     /// How far the picked card's face is lifted from `raised` toward the text.
     pub const pick_lift = 0.15;

@@ -548,10 +548,15 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
             const holds = if (s.focused()) |win| win.agent() else false;
             const repo = app.sessionRepo(si);
             const lit = s.id == app.current and app.board_view == null and !holds;
-            try pen.set(w, if (lit) heading(app) else if (!wide and repo.len > 0) repoStyle(repo) else dim, null);
+            const base = if (lit) heading(app) else if (!wide and repo.len > 0) repoStyle(repo) else dim;
+            try pen.set(w, base, null);
             if (wide) {
                 const name = clip(s.name, inner - 2);
-                try w.writeAll(" ");
+                if (repoEdge(app, repo)) |edge| {
+                    try pen.set(w, edge, null);
+                    try w.writeAll("▌");
+                    try pen.set(w, base, null);
+                } else try w.writeAll(" ");
                 try w.writeAll(name);
                 filled = 1 + cellCount(name);
             } else {
@@ -568,7 +573,12 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
             var buf: [8]u8 = undefined;
             const time = ago(&buf, app.epoch, win.since);
             const picked = if (app.railPicked()) |pick| pick == .agent and pick.agent == win.id else false;
-            try pickBar(app, w, pen, picked, if (win.claude == .none) dim else ink(app, "amber", 4));
+            if (repoEdge(app, app.sessionRepo(a.session))) |edge| {
+                if (picked) try pickBar(app, w, pen, true, dim) else {
+                    try pen.set(w, edge, null);
+                    try w.writeAll("▌");
+                }
+            } else try pickBar(app, w, pen, picked, if (win.claude == .none) dim else ink(app, "amber", 4));
             try pen.set(w, if (win.claude == .none) dim else ink(app, "amber", 4), null);
             try put(w, agentGlyph(app, win));
             filled = 2;
@@ -715,6 +725,14 @@ fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: 
 }
 
 /// A repo's colour, one of the terminal's own, the same for the same name.
+/// `repo`'s colour in Workbench's look, for the `▌` that starts its rows; none for a repo it has
+/// no colour for, or without a palette.
+fn repoEdge(app: *const App, repo: []const u8) ?vt.Style {
+    const r = app.roles orelse return null;
+    for (theme.Roles.repo_names, 0..) |name, i| if (std.mem.eql(u8, name, repo)) return rgbStyle(r.repo[i]);
+    return null;
+}
+
 fn repoStyle(repo: []const u8) vt.Style {
     return .{ .fg_color = .palette(@intCast(2 + std.hash.Wyhash.hash(0, repo) % 5)) };
 }
@@ -2265,8 +2283,12 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
             {
                 try bench.fill(w, x0, y, ww, bg);
                 if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
+                try bench.say(w, x0 + 1, y, "▌", hue, bg, false);
                 switch (row.part) {
-                    1 => try bench.say(w, x0 + 2, y, clip(goal.title, room), r.text, bg, true),
+                    1 => {
+                        const shares = try goalChips(w, r, b, goal, x0 + ww, y);
+                        try bench.say(w, x0 + 2, y, clip(goal.title, room -| shares), r.text, bg, true);
+                    },
                     2 => {
                         var buf: [32]u8 = undefined;
                         const label = std.fmt.bufPrint(&buf, "{d}/{d} landed", .{ goal.landed, goal.total }) catch "";
@@ -2306,6 +2328,7 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
             const repo = repoHue(r, item.repo);
             var idb: [16]u8 = undefined;
             const id = std.fmt.bufPrint(&idb, "#{d}", .{item.ticket}) catch "";
+            try bench.say(w, x0 + 1, y, "▌", repo.hue, bg, false);
             try bench.say(w, x0 + 2, y, repo.glyph, repo.hue, bg, false);
             try bench.say(w, x0 + 4, y, id, repo.hue, bg, true);
             var age: [16]u8 = undefined;
@@ -2338,6 +2361,7 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
             const repo = repoHue(r, item.repo);
             var idb: [16]u8 = undefined;
             const id = std.fmt.bufPrint(&idb, "#{d}", .{item.ticket}) catch "";
+            try bench.say(w, x0 + 1, y, "▌", repo.hue, bg, false);
             try bench.say(w, x0 + 4, y, repo.glyph, repo.hue, bg, false);
             try bench.say(w, x0 + 6, y, id, repo.hue, bg, true);
             var lbuf: [48]u8 = undefined;
@@ -2409,12 +2433,13 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
                 .card_top => try bench.bevel(w, cx, y, cw, if (card_picked) r.text.mix(face, 0.5) else r.raised, face),
                 .goal => {
                     try bench.fill(w, cx, y, cw, face);
-                    if (card_picked) try bench.say(w, cx, y, "▌", mark, face, true);
+                    if (card_picked) try bench.say(w, cx + 1, y, "▌", mark, face, true);
                     var idb: [16]u8 = undefined;
                     const id = std.fmt.bufPrint(&idb, "#{d} ", .{goal.epic}) catch "";
                     const hue = goalHue(b, r, goal);
+                    const shares = try goalChips(w, r, b, goal, cx + cw, y);
                     try bench.say(w, cx + 2, y, id, hue, face, true);
-                    try bench.say(w, cx + 2 + cellCount(id), y, clip(goal.title, cw -| 4 -| cellCount(id)), r.text, face, true);
+                    try bench.say(w, cx + 2 + cellCount(id), y, clip(goal.title, cw -| 4 -| cellCount(id) -| shares), r.text, face, true);
                 },
                 .goal_bar => {
                     try bench.fill(w, cx, y, cw, face);
@@ -2443,6 +2468,7 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
                     } else try bench.say(w, cx + 10, y, "nothing", r.dim, face, false);
                 },
             }
+            if (row.kind != .card_top) try bench.say(w, cx, y, "▌", goalHue(b, r, goal), face, false);
         },
         .unplanned => {
             const not = given.not_planned;
@@ -2483,6 +2509,40 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
             }
         },
     }
+}
+
+/// A goal whose steps are in more than one repo: a chip for each, right-aligned to `right`, with
+/// its landed and total steps there. The cells they take, with a gap; none for a goal of one
+/// repo, whose edge says it.
+fn goalChips(w: *Writer, r: theme.Roles, b: *const tickets.Board, goal: tickets.Goal, right: usize, y: u16) !usize {
+    var landed: [theme.Roles.repo_names.len]usize = @splat(0);
+    var total: [theme.Roles.repo_names.len]usize = @splat(0);
+    var repos: usize = 0;
+    for (goal.steps) |step| {
+        const card = for (b.cards()) |card| {
+            if (card.id == step.ticket) break card;
+        } else continue;
+        const at = for (theme.Roles.repo_names, 0..) |name, i| {
+            if (std.mem.eql(u8, name, card.repo orelse "")) break i;
+        } else continue;
+        repos += @intFromBool(total[at] == 0);
+        total[at] += 1;
+        landed[at] += @intFromBool(std.mem.eql(u8, step.state, "landed"));
+    }
+    if (repos < 2) return 0;
+    var x = right;
+    var taken: usize = 0;
+    for (theme.Roles.repo_names, 0..) |_, i| {
+        if (total[i] == 0) continue;
+        var buf: [24]u8 = undefined;
+        const label = std.fmt.bufPrint(&buf, "{s} {d}/{d}", .{ repo_glyphs[i], landed[i], total[i] }) catch "";
+        const width = cellCount(label) + 2;
+        if (taken + width + 1 > right / 2) break;
+        x -= width + 1;
+        taken += width + 1;
+        _ = try bench.chipInk(w, r, x, y, label, r.repo[i], r.text, false);
+    }
+    return taken;
 }
 
 /// Nerd Font glyphs, one a repo, in `Roles.repo_names`' order.
@@ -5433,5 +5493,52 @@ test "Plan's windows keep their slots: another window's rows, a count or a fold 
             const diamond = try bench.probe(out.buffered(), slot.x + 1, slot.y);
             try eq(@as(u21, '◆'), diamond.cp);
         }
+    }
+}
+
+test "Plan's rows start with a ▌ in their repo's colour, and a goal's card has it on every row" {
+    const eq = std.testing.expectEqual;
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":701,"repo":"arena","status":"doing","title":"A"},
+        \\{"id":702,"repo":"babylon","status":"doing","title":"B"},
+        \\{"id":703,"repo":"menard","status":"todo","title":"C"}],
+        \\"plan":{"now":[
+        \\{"ticket":701,"repo":"arena","title":"A","state":"building"},
+        \\{"ticket":702,"repo":"babylon","title":"B","state":"building"}],
+        \\"next":[{"ticket":703,"repo":"menard","title":"C","why":"","waits_on":[]}],
+        \\"goals":[{"epic":9,"title":"g","total":2,"landed":0,"steps":[{"ticket":701,"state":"building"},{"ticket":703,"state":"todo"}]}],
+        \\"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer board.deinit();
+    var app = homeApp(&board);
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 23;
+    app.roles = bench.roles();
+    const r = bench.roles();
+    app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
+    var buf: [262144]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try planView(&app, &out, app.board_view.?);
+    const drawn = out.buffered();
+
+    const now = app.planSlot(.now);
+    for (0..2) |line| {
+        const edge = try bench.probe(drawn, now.x + 1, now.y + 1 + @as(u16, @intCast(line)));
+        try eq(@as(u21, '▌'), edge.cp);
+        try eq(r.repo[line], edge.fg);
+    }
+    const next = app.planSlot(.next);
+    const edge = try bench.probe(drawn, next.x + 1, next.y + 1);
+    try eq(@as(u21, '▌'), edge.cp);
+    try eq(r.repo[3], edge.fg);
+
+    // the card's rows, its title, bar, next and blocker, wear the colour of the goal's repo
+    const goals = app.planSlot(.goals);
+    for (2..4) |line| {
+        const mark = try bench.probe(drawn, goals.x + 1, goals.y + @as(u16, @intCast(line)));
+        try eq(@as(u21, '▌'), mark.cp);
+        try eq(r.repo[0], mark.fg);
     }
 }
