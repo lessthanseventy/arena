@@ -367,8 +367,9 @@ pub const BoardView = struct {
     /// The ticket whose whole detail is shown over the board, and how far down it is scrolled.
     detail: ?u32 = null,
     detail_scroll: usize = 0,
-    /// The list of the orchestrator's strip open as a popover over its pane.
-    popover: ?feed.Section = null,
+    /// The tab of the orchestrator's strip that is lit, and how far its list is scrolled.
+    tab: feed.Section = .next,
+    tab_scroll: usize = 0,
     /// The option of the modal's open ask that ⏎ answers, from 1.
     ask_pick: u8 = 1,
     /// The check of the modal's to-try ticket that `y` and `n` act on, from 1.
@@ -2057,9 +2058,9 @@ pub const App = struct {
     pub fn feedOf(app: *const App, f: *feed.Feed) bool {
         const b = if (app.board) |*b| b else return false;
         const today = app.epoch - @mod(app.epoch + app.utc_offset, 86400);
-        const open = if (app.board_view) |view| view.popover else null;
+        const lit: feed.View = if (app.board_view) |view| .{ .lit = view.tab, .scroll = view.tab_scroll } else .{};
         const pick = if (app.board_view) |view| view.pick else std.math.maxInt(usize);
-        feed.buildPicked(f, b, app.refusals.items, app.view_w -| 4, app.view_h -| 2, app.epoch, today, open, pick);
+        feed.buildPicked(f, b, app.refusals.items, app.view_w -| 4, app.view_h -| 2, app.epoch, today, lit, pick);
         return true;
     }
 
@@ -2149,15 +2150,21 @@ pub const App = struct {
         view.pick = @min(view.pick, n - 1);
         const moves = f.items_shown;
         const was = view.pick;
-        if (view.popover != null and anyKey(key, &.{"\x1b"})) {
-            view.popover = null;
-            app.dirty = true;
-            return true;
-        }
         if (f.item(view.pick).?.chip and anyKey(key, &.{ " ", "\r" })) return app.openChip(f.item(view.pick).?);
+        const first = f.firstSpot();
         if (anyKey(key, &.{ "j", "\x1b[B", "\x1bOB" })) {
+            if (view.pick + 1 == first + f.popCount() and view.pick >= first and f.scroll < f.max_scroll) {
+                view.tab_scroll = f.scroll + 1;
+                app.dirty = true;
+                return app.pickPanelEnd(true);
+            }
             view.pick = @min(view.pick + 1, n - 1);
         } else if (anyKey(key, &.{ "k", "\x1b[A", "\x1bOA" })) {
+            if (view.pick == first and f.scroll > 0) {
+                view.tab_scroll = f.scroll - 1;
+                app.dirty = true;
+                return app.pickPanelEnd(false);
+            }
             view.pick -|= 1;
         } else if (anyKey(key, &.{"]"})) {
             if (moves > 0) view.pick = nextTile(&f, view.pick, moves);
@@ -2198,17 +2205,43 @@ pub const App = struct {
         return to;
     }
 
-    /// A chip of the strip opened: its list as a popover over the pane, or closed when it is the
-    /// one open; auto's chip opens auto's settings.
+    /// A tab of the strip clicked or opened: its list lit in the panel, from the top.
     fn openChip(app: *App, item: feed.Item) !bool {
         const view = &app.board_view.?;
         app.dirty = true;
-        const section = item.section orelse {
-            view.popover = null;
-            try app.openAuto();
-            return true;
-        };
-        view.popover = if (view.popover == section) null else section;
+        const section = item.section.?;
+        if (view.tab != section) view.tab_scroll = 0;
+        view.tab = section;
+        return true;
+    }
+
+    /// The pick put on the panel's last ticket, or its first, once it has scrolled a line.
+    fn pickPanelEnd(app: *App, last: bool) bool {
+        var f: feed.Feed = undefined;
+        if (!app.feedOf(&f)) return true;
+        const view = &app.board_view.?;
+        const first = f.firstSpot();
+        if (f.popCount() > 0) view.pick = if (last) first + f.popCount() - 1 else first;
+        if (f.item(view.pick).?.ticket) |id| {
+            _ = app.pickCard(id);
+            app.pickPlan(id);
+        }
+        return true;
+    }
+
+    /// The wheel over the panel scrolls its list a line a notch. Whether it was over the panel.
+    fn panelWheel(app: *App, m: keys.Mouse) bool {
+        if (!app.sided() or m.y < 1) return false;
+        const left = app.term_w - app.view_w;
+        if (m.x < left + 2 or m.x + 2 > app.term_w) return false;
+        var f: feed.Feed = undefined;
+        if (!app.feedOf(&f)) return false;
+        const top = f.height() - f.panel;
+        const row = m.y - 1;
+        if (row < top or row >= f.height()) return false;
+        const view = &app.board_view.?;
+        view.tab_scroll = if (m.code & 1 == 0) f.scroll -| 1 else @min(f.scroll + 1, f.max_scroll);
+        app.dirty = true;
         return true;
     }
 
@@ -5960,6 +5993,7 @@ pub const App = struct {
                 }
             }
             if (m.leftPress() and try app.feedClick(m)) return true;
+            if (m.wheel() and app.panelWheel(m)) return true;
             if (app.sideShown() and (app.sideFocused() or m.wheel())) return false;
             if (m.leftPress()) {
                 view.focus = .orchestrator;
@@ -9599,4 +9633,62 @@ test "o on a check to look at the diff opens meatcheck on the landed range in a 
     try std.testing.expect(std.mem.indexOf(u8, said, "meatcheck --diff") != null);
     try std.testing.expect(std.mem.indexOf(u8, said, "abc123^..abc123") != null);
     try std.testing.expect(std.mem.indexOf(u8, said, "is the retry bounded?") != null);
+}
+test "a tab clicked lights its list in place, and j and the wheel scroll the panel without resizing the feed" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 40;
+    var json: std.ArrayList(u8) = .empty;
+    defer json.deinit(std.testing.allocator);
+    try json.appendSlice(std.testing.allocator, "{\"tickets\":[],\"needs_you\":[],\"plan\":{\"next\":[");
+    for (0..30) |i| {
+        if (i > 0) try json.append(std.testing.allocator, ',');
+        try json.print(std.testing.allocator, "{{\"ticket\":{d},\"repo\":\"arena\",\"title\":\"n\",\"why\":\"\",\"set_by\":\"orchestrator\"}}", .{i + 100});
+    }
+    try json.appendSlice(std.testing.allocator, "]}}");
+    app.board = try tickets.Board.parse(std.testing.allocator, json.items);
+    defer app.board.?.deinit();
+    app.board_view = .{ .home = true, .plan = true, .focus = .orchestrator };
+    const view = &app.board_view.?;
+    const eq = std.testing.expectEqual;
+
+    var f: feed.Feed = undefined;
+    try std.testing.expect(app.feedOf(&f));
+    const height = f.height();
+    const tabs = f.chips;
+    for (tabs) |tab| {
+        _ = try app.openChip(.{ .line = 0, .chip = true, .section = tab.section });
+        try std.testing.expect(app.feedOf(&f));
+        try eq(height, f.height());
+    }
+    _ = try app.openChip(.{ .line = 0, .chip = true, .section = .next });
+    try eq(feed.Section.next, view.tab);
+
+    try std.testing.expect(app.feedOf(&f));
+    view.pick = f.firstSpot() + f.popCount() - 1;
+    try std.testing.expect(try app.feedKey("j"));
+    try eq(@as(usize, 1), view.tab_scroll);
+    try std.testing.expect(app.feedOf(&f));
+    try eq(f.firstSpot() + f.popCount() - 1, view.pick);
+    try std.testing.expect(try app.feedKey("k"));
+    try eq(@as(usize, 1), view.tab_scroll);
+
+    view.pick = f.firstSpot();
+    try std.testing.expect(try app.feedKey("k"));
+    try eq(@as(usize, 0), view.tab_scroll);
+
+    const wheel_y: u16 = @intCast(f.height() + 1 - f.panel);
+    const x = app.term_w - app.view_w + 3;
+    try std.testing.expect(try app.boardMouse(.{ .code = 65, .x = x, .y = wheel_y, .release = false }));
+    try eq(@as(usize, 1), view.tab_scroll);
+    try std.testing.expect(try app.boardMouse(.{ .code = 64, .x = x, .y = wheel_y, .release = false }));
+    try eq(@as(usize, 0), view.tab_scroll);
+    try std.testing.expect(app.feedOf(&f));
+    try eq(height, f.height());
 }

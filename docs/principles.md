@@ -42,3 +42,8 @@ A review of a design or a UI change checks it against them.
    landings and Claudes that have finished wait in their places until the human looks.
 9. **Plain text, fast.** What is drawn is text a terminal can draw, with no frame later than the
    key that asked for it.
+10. **Nothing moves by itself.** A click, a hover or a count changing never resizes or moves
+    anything outside the element itself. Panels have a fixed size and scroll; a tab's label has a
+    fixed width and shortens rather than wraps. Only what the human must act on (Your move) may
+    grow, and if it ever needs a cap, it gets the same fixed size and scroll. Content that moves
+    on its own works against WCAG 3.2 (Predictable).
