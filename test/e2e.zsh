@@ -2155,6 +2155,11 @@ key -l ' '
 check "space opens the row in place, with the card's buttons under it" await shows 'o open +e edit'
 key -l ' '
 check "and space closes it" gone 'o open +e edit'
+repeat 12 key j
+key '<'
+check "< on a landed row opens its ticket again" await last 'update 703 --status todo'
+repeat 12 key k
+: >$tmp/babylon
 key p
 check "p on a now row raises its priority through babylon" await last 'update 701 --priority high'
 key e

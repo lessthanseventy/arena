@@ -4636,7 +4636,7 @@ pub const App = struct {
         var sheet: sheets.Sheet = undefined;
         if (!app.planSheet(&sheet)) return null;
         const row = sheet.picked(view.plan_pick) orelse return null;
-        if (row.kind != .now and row.kind != .next) return null;
+        if (row.kind != .now and row.kind != .next and row.kind != .landed) return null;
         return app.cardById(row.ticket orelse return null);
     }
 
