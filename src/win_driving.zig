@@ -100,3 +100,14 @@ pub fn titleClick(app: *App) !bool {
     try app.driveGoal(given.goals[at].epic);
     return true;
 }
+
+/// The driving window's title-bar extra: the focal goal's epic and doc, after the title.
+pub fn frame(app: *App, w: *Writer, r: theme.Roles, rect: sheets.Rect, ww: usize, bar: color.RGB) !void {
+    const given = app.board.?.plan().?;
+    if (app.plan_shut.contains(.driving) or sheets.driveLanded(given, &app.board.?) != null) return;
+    const at = sheets.focalGoal(given) orelse return;
+    const goal = given.goals[at];
+    var buf: [160]u8 = undefined;
+    const text = std.fmt.bufPrint(&buf, "epic #{d}{s}{s}", .{ goal.epic, if (goal.doc != null) " · " else "", goal.doc orelse "" }) catch "";
+    try bench.say(w, rect.x + 34, rect.y, clip(text, ww -| 38), r.dim, bar, false);
+}

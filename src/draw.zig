@@ -2298,12 +2298,7 @@ fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet
         const head = app.goalHead();
         try bench.headButton(w, r, head.x, head.y, " + goal ", r.accent, false);
     }
-    if (win == .driving and !app.plan_shut.contains(win) and sheets.driveLanded(given, &app.board.?) == null) if (sheets.focalGoal(given)) |at| {
-        const goal = given.goals[at];
-        var buf: [160]u8 = undefined;
-        const text = std.fmt.bufPrint(&buf, "epic #{d}{s}{s}", .{ goal.epic, if (goal.doc != null) " · " else "", goal.doc orelse "" }) catch "";
-        try bench.say(w, rect.x + 34, rect.y, clip(text, ww -| 38), r.dim, bar, false);
-    };
+    if (win == .driving) try win_driving.frame(app, w, r, rect, ww, bar);
     for (0..body) |line| {
         const at = if (lit) app.planRowOnLine(sheet, win, body, line) else line;
         if (at >= mine.len) break;
