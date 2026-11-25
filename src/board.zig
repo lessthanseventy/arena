@@ -281,15 +281,24 @@ pub const Goal = struct {
     steps: []Step = &.{},
 };
 
+/// A question the planning Claude put to the human, and their answer once given.
+pub const IdeaAsk = struct {
+    id: u32 = 0,
+    question: []const u8 = "",
+    answer: ?[]const u8 = null,
+};
+
 /// An epic that is not yet a goal: kept as `idea`, with a Claude on it as `planning`, or its
 /// steps drafted and awaiting the human's look as `draft`.
 pub const Idea = struct {
     epic: u32,
     title: []const u8 = "",
+    body: []const u8 = "",
     state: []const u8 = "idea",
     plan_ticket: ?u32 = null,
     pane: ?[]const u8 = null,
     asks: u32 = 0,
+    ask_list: []IdeaAsk = &.{},
     steps: u32 = 0,
     since: ?[]const u8 = null,
 
@@ -377,7 +386,14 @@ pub const Board = struct {
                 item.why = try cleanLine(arena, item.why);
             }
             for (given.goals) |*goal| goal.title = try cleanLine(arena, goal.title);
-            for (given.ideas) |*idea| idea.title = try cleanLine(arena, idea.title);
+            for (given.ideas) |*idea| {
+                idea.title = try cleanLine(arena, idea.title);
+                idea.body = try cleanLine(arena, idea.body);
+                for (idea.ask_list) |*ask| {
+                    ask.question = try cleanLine(arena, ask.question);
+                    if (ask.answer) |answer| ask.answer = try cleanLine(arena, answer);
+                }
+            }
         }
         for (parsed.value.proposals) |*proposal| {
             proposal.why = try cleanLine(arena, proposal.why);

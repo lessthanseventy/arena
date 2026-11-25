@@ -211,7 +211,9 @@ steps filed in the backlog derive `backlog`.
     {"epic": 830, "title": "money on the desktop bar", "state": "planning",
      "plan_ticket": 839, "pane": "%1502", "asks": 1, "since": "2026-11-24T20:01:00Z"},
     {"epic": 831, "title": "a weekly retro I can read on my phone", "state": "draft",
-     "steps": 7, "ask": 61, "since": "..."},
+     "body": "a retro I can read on my phone, weekly", "steps": 7, "ask": 61,
+     "asks": 0, "ask_list": [{"id": 58, "question": "weekly or daily?", "answer": "weekly"}],
+     "since": "..."},
     {"epic": 829, "title": "asterion learns the garden", "state": "idea", "since": "..."}
   ]
 }

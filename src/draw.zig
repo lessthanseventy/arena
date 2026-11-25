@@ -3153,9 +3153,23 @@ fn draftBox(app: *const App, w: *Writer) !void {
         try w.writeAll("╯");
     }
     try draftLine(app, w, rect, 1, app.draftTitle(epic), .plain);
-    var count: [32]u8 = undefined;
-    try draftLine(app, w, rect, 2, std.fmt.bufPrint(&count, "{d} steps", .{steps.len}) catch "", .dim);
-    const shown = @min(steps.len, rect.h -| 6);
+    var count: [200]u8 = undefined;
+    const body = if (app.draftIdea(epic)) |idea| idea.body else "";
+    const quote = if (body.len == 0)
+        std.fmt.bufPrint(&count, "{d} steps", .{steps.len}) catch ""
+    else
+        std.fmt.bufPrint(&count, "from your idea: \"{s}\"", .{clip(body, 150)}) catch "";
+    try draftLine(app, w, rect, 2, quote, .dim);
+    const asks = app.draftAsks(epic);
+    const shown = @min(steps.len, rect.h -| 6 -| asks.len);
+    for (asks, 0..) |ask, i| {
+        var line: [300]u8 = undefined;
+        const text = if (ask.answer) |answer|
+            std.fmt.bufPrint(&line, "asked you: \"{s}\" you: \"{s}\"", .{ clip(ask.question, 100), clip(answer, 60) }) catch ""
+        else
+            std.fmt.bufPrint(&line, "asked you: \"{s}\" (open)", .{clip(ask.question, 100)}) catch "";
+        try draftLine(app, w, rect, @intCast(4 + shown + i), text, .dim);
+    }
     for (steps[0..shown], 0..) |step, i| {
         var row: [200]u8 = undefined;
         var waits: [48]u8 = undefined;
@@ -5067,7 +5081,8 @@ test "a draft's modal draws the outcome, a row to each step with what it waits o
         \\{"id":830,"repo":"tlon","kind":"epic","title":"The bar shows what is safe to spend","status":"backlog"},
         \\{"id":832,"repo":"tlon","model":"claude-sonnet-5-5","title":"safe-to-spend as a file","status":"backlog","epic_id":830},
         \\{"id":833,"repo":"ficciones","model":"claude-haiku-5-5","title":"the bar reads it","status":"backlog","epic_id":830,"blocked_by":[832]}],
-        \\"plan":{"ideas":[{"epic":830,"title":"The bar","state":"draft","steps":2}]}}
+        \\"plan":{"ideas":[{"epic":830,"title":"The bar","state":"draft","steps":2,"body":"the bar shows spend",
+        \\"ask_list":[{"id":1,"question":"tlon or ficciones?","answer":"tlon"},{"id":2,"question":"which timer?","answer":null}]}]}}
     );
     defer board.deinit();
     var app: App = .{ .gpa = gpa, .io = std.testing.io, .tmux_in = undefined };
@@ -5080,7 +5095,7 @@ test "a draft's modal draws the outcome, a row to each step with what it waits o
     defer out.deinit();
     try frame(&app, &out.writer, .all);
     const drawn = out.written();
-    for ([_][]const u8{ "draft #830", "The bar shows what is safe to spend", "2 steps", "1 #832 tlon", "sonnet", "free", "2 #833 ficciones", "haiku", "← #832", "y go   r reply with changes" }) |want| {
+    for ([_][]const u8{ "draft #830", "The bar shows what is safe to spend", "from your idea: \"the bar shows spend\"", "asked you: \"tlon or ficciones?\" you: \"tlon\"", "asked you: \"which timer?\" (open)", "1 #832 tlon", "sonnet", "free", "2 #833 ficciones", "haiku", "← #832", "y go   r reply with changes" }) |want| {
         std.testing.expect(std.mem.indexOf(u8, drawn, want) != null) catch |err| {
             std.debug.print("missing {s}\n", .{want});
             return err;

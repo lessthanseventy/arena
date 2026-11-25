@@ -5359,6 +5359,22 @@ pub const App = struct {
         return "";
     }
 
+    /// The idea behind epic `epic`'s draft, when babylon lists it.
+    pub fn draftIdea(app: *const App, epic: u32) ?tickets.Idea {
+        const plan = if (app.board) |*b| b.plan() orelse return null else return null;
+        for (plan.ideas) |idea| if (idea.epic == epic) return idea;
+        return null;
+    }
+
+    /// The most asks a draft's modal lists.
+    pub const draft_asks_max = 3;
+
+    /// The asks the planning Claude made, the first few, for the modal's foot.
+    pub fn draftAsks(app: *const App, epic: u32) []const tickets.IdeaAsk {
+        const idea = app.draftIdea(epic) orelse return &.{};
+        return idea.ask_list[0..@min(idea.ask_list.len, draft_asks_max)];
+    }
+
     /// The Your move item of epic `epic`'s look, when babylon gives one.
     fn draftNeed(app: *const App, epic: u32) ?*const tickets.Need {
         const b = if (app.board) |*b| b else return null;
@@ -5378,7 +5394,7 @@ pub const App = struct {
         const width: u16 = @min(app.boardW() -| 4, 84);
         const bottom = app.view_h -| 2;
         if (width < 40 or bottom < first_line + 7) return null;
-        const h: u16 = @intCast(@min(6 + n, bottom - first_line + 1));
+        const h: u16 = @intCast(@min(6 + n + app.draftAsks(epic).len, bottom - first_line + 1));
         return .{ .x = app.boardX() + (app.boardW() -| width) / 2, .y = first_line, .w = width, .h = h };
     }
 
