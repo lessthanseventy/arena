@@ -279,7 +279,7 @@ before the new one is in.
    the card, and `⏎` or a click on a subagent row in the Claude's modal shows it, as the rail's click did.
 5. **The switcher:** `s` anywhere (and `/` in a pane view) lists Claudes (urgency first) and sessions before typing,
    `+ new session`, `J` `K` to order, `x` to close a session. **The foot row** in a pane view:
-   `◆ home ▲ N`, the session and its windows, `/ go to`, `≡`. `j` `k` in a pane view's normal
+   `◆ home ▲ N`, the session and its windows, `s go to`, `≡`. `j` `k` in a pane view's normal
    mode step between sessions.
 6. **Remove the rail:** `rail`, `railRow`, `agentRow`, the rail's picks, folds, dwell and peek,
    `agent_sort`, `w` and the menu's rail entry, the rail's mouse handling, its e2e checks and the
