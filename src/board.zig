@@ -212,6 +212,12 @@ pub const Wait = struct {
     ticket: ?u32 = null,
     lane: ?[]const u8 = null,
     until: ?u32 = null,
+
+    /// The first wait that names a ticket or a landing to wait for; a lane with no `until` is nothing.
+    pub fn first(on: []const Wait) ?Wait {
+        for (on) |wait| if (wait.ticket != null or wait.until != null) return wait;
+        return null;
+    }
 };
 
 /// Whom a ticket is waiting on: another ticket, or words, since when. Babylon sets it on a ticket

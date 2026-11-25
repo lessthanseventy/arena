@@ -2301,14 +2301,15 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
             try bench.say(w, x0 + 4, y, repo.glyph, repo.hue, bg, false);
             try bench.say(w, x0 + 6, y, id, repo.hue, bg, true);
             var lbuf: [48]u8 = undefined;
-            const label = if (item.waits_on.len == 0) "ready" else if (item.waits_on[0].ticket) |t|
+            const first = tickets.Wait.first(item.waits_on);
+            const label = if (first) |wt| if (wt.ticket) |t|
                 std.fmt.bufPrint(&lbuf, "\u{f0c1} waits #{d}", .{t}) catch "waits"
             else
-                std.fmt.bufPrint(&lbuf, "\u{f0c1} after #{d}", .{item.waits_on[0].until orelse 0}) catch "waits";
+                std.fmt.bufPrint(&lbuf, "\u{f0c1} after #{d}", .{wt.until.?}) catch "waits" else "ready";
             const chip_x = x0 + ww -| (cellCount(label) + 3);
             const title_x = x0 + 7 + cellCount(id);
             const pin_w: usize = if (item.pinned()) 2 else 0;
-            _ = try bench.chipInk(w, r, chip_x, y, label, if (item.waits_on.len == 0) r.landed else r.dim, if (item.waits_on.len == 0) r.text else r.dim, false);
+            _ = try bench.chipInk(w, r, chip_x, y, label, if (first == null) r.landed else r.dim, if (first == null) r.text else r.dim, false);
             if (item.pinned()) try bench.say(w, chip_x -| 2, y, "\u{f08d}", r.accent, bg, false);
             try bench.say(w, title_x, y, clip(item.title, chip_x -| title_x -| 1 -| pin_w), r.text, bg, false);
             try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);

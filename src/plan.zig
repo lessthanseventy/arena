@@ -293,16 +293,16 @@ pub const Sheet = struct {
 
     /// What an item waits on, as babylon says it: a ticket, or its repo's lane until one lands.
     fn waits(s: *Sheet, on: []const tickets.Wait) []const u8 {
-        if (on.len == 0) return "free now";
         const start = s.used;
-        for (on, 0..) |wait, i| {
-            const sep: []const u8 = if (i == 0) "← " else ", ";
+        for (on) |wait| {
+            const sep: []const u8 = if (s.used == start) "← " else ", ";
             if (wait.ticket) |t| {
                 _ = s.print("{s}needs #{d}", .{ sep, t });
-            } else if (wait.lane) |lane| {
-                _ = s.print("{s}after #{d} lands: one {s}", .{ sep, wait.until orelse 0, lane });
-            }
+            } else if (wait.until) |until| if (wait.lane) |lane| {
+                _ = s.print("{s}after #{d} lands: one {s}", .{ sep, until, lane });
+            };
         }
+        if (s.used == start) return "free now";
         return s.buf[start..s.used];
     }
 
@@ -499,6 +499,16 @@ test "an unfolded stage is a row to a ticket" {
     s.build(b.plan().?, &b, 100, 0, 1 << queued_fold, false, false);
     try std.testing.expect(rowText(&s, .folded, 1) == null);
     try std.testing.expect(std.mem.indexOf(u8, rowText(&s, .now, 5).?, "» #429") != null);
+}
+
+test "a wait with no ticket and no landing to wait for is no wait" {
+    const bare = [_]tickets.Wait{ .{ .lane = "arena" }, .{} };
+    try std.testing.expect(tickets.Wait.first(&bare) == null);
+    const mixed = [_]tickets.Wait{ .{ .lane = "arena" }, .{ .lane = "arena", .until = 818 } };
+    try std.testing.expectEqual(@as(?u32, 818), tickets.Wait.first(&mixed).?.until);
+    var s: Sheet = undefined;
+    s.used = 0;
+    try std.testing.expectEqualStrings("free now", s.waits(&bare));
 }
 
 test "next says what each waits on and why, goals their steps, and the picks run through every row that can be" {
