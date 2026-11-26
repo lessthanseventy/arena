@@ -1121,7 +1121,7 @@ key ' '
 see 'the whole of it'
 foot_at=(${(z)$(close_at)})
 mouse 0 $(( foot_at[1] - 20 )) $(( foot_at[2] - 3 )) M
-check "a click inside the modal leaves it open" shows 'the whole of it'
+check "a click inside the modal leaves it open" eval 'settled | grep -qE "the whole of it"'
 mouse 0 70 39 M
 check "and a click outside it closes it" gone 'the whole of it'
 $bin -L $in plan 7
