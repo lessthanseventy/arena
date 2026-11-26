@@ -5521,7 +5521,7 @@ pub const App = struct {
                 return true;
             }
             const closed = open.detail;
-            const closed_item = open.item_open;
+            const closed_item = app.itemNeed();
             open.help = false;
             open.detail = null;
             open.item_open = false;
@@ -5533,10 +5533,10 @@ pub const App = struct {
                     if (sheet.rows[at].kind == .need and sheet.rows[at].ticket != id) try app.planClick(m);
                 };
             }
-            if (closed_item) {
+            if (closed_item) |was| {
                 var sheet: sheets.Sheet = undefined;
                 if (m.y >= 2 and app.planSheet(&sheet)) if (app.planRowAt(&sheet, m.x, m.y)) |at| {
-                    if (sheet.rows[at].kind == .need and sheet.rows[at].ticket == null) try app.planClick(m);
+                    if (sheet.rows[at].kind == .need and sheet.rows[at].ticket == null and sheet.rows[at].item != was) try app.planClick(m);
                 };
             }
             return true;
