@@ -20,7 +20,6 @@ always did; arena draws them and leaves them running when it quits.
   window's size and arena's commit. The screen as text (with the styles around
   the pointer) and the last input are saved beside it in `$XDG_STATE_HOME/arena/reports/`, so a
   bug arrives reproducible. What is typed into a pane is counted there, never kept.
-
 - **Marks on windows running Claude Code**: `◐` turning while it works, or while a subagent it
   started works, `◔` between turns while only a shell it started runs, `◉` once it is done and
   until you look, `▲` while it waits on an answer; a session's mark has a count when several of
@@ -202,7 +201,6 @@ In normal mode:
 | `B` | the board |
 | `n` | the needs-you inbox |
 | `g` | the gate's modal, for the run in progress |
-
 | `m` | the menu |
 | `?` | these keys |
 | `Q` | leave; the sessions keep running |
@@ -217,7 +215,6 @@ With the mouse:
 - Click a column or a dot under the strip to go there. With the pointer
   on the row of dots it has each window's number and name instead, to click, and the wheel there
   steps through the windows.
-
 - In the overview, drag a window's picture onto another to take its place, in its own session or
   any other, or onto the rest of a session's row to put it at that session's end.
 - Click a pane to select it; drag the line between panes to resize them: over it, the pointer
