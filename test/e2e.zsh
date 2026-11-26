@@ -810,7 +810,7 @@ check "a session ending moves arena to one that is left" see '╭─ 3 three '
 check "and the session is gone" await sessions 1
 
 # Plan drives what the board drove: the tickets, their modals, the keys on a row, the orchestrator's column beside it.
-# Workbench's look (a palette) gives Plan its windows and rows for not planned; the plain look keeps what the typing
+# Workbench's look (a palette) gives Plan its windows and rows for no goal; the plain look keeps what the typing
 # races need, the column's lit state.
 one=$(inner display -p -t alpha:one '#{pane_id}')
 mkdir -p $tmp/run/babylon $tmp/.config/ficciones/theme
@@ -839,11 +839,11 @@ last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
 outer resize-window -t o -x 200 -y 40
 zselect -t 100
 $bin -L $in plan 7
-see "not planned"
+see "no goal"
 : >$tmp/babylon
 key ' '
 key ' '
-check "a ticket's modal opened from a not planned row shows the question and its options by number" see '2 blue'
+check "a ticket's modal opened from a no goal row shows the question and its options by number" see '2 blue'
 key 2
 checked() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == 'answer 5 2' ]] }
 check "and a number answers it through babylon" await checked
@@ -887,7 +887,7 @@ check "a click inside the modal leaves it open" eval 'settled | grep -qE "the wh
 mouse 0 70 39 M
 check "and a click outside it closes it" gone 'the whole of it'
 $bin -L $in plan 7
-check "arena plan and a ticket's id, run elsewhere, opens Plan with the pick on it" see 'not planned'
+check "arena plan and a ticket's id, run elsewhere, opens Plan with the pick on it" see 'no goal'
 key ' '
 check "so that space opens its row" see '⏎ start'
 key ' '
@@ -908,7 +908,7 @@ two=$(inner list-panes -s -t alpha -F '#{pane_id}' | sed -n 2p)
 $bin -L $in show $two
 check "arena show and a pane puts its window in front, Plan put away" await dots '○●○'
 $bin -L $in plan 7
-see 'not planned'
+see 'no goal'
 $bin -L $in show $two
 check "and a show with Plan open puts it away for the pane" await dots '○●○'
 shows '^NORMAL' || key C-Space
@@ -921,12 +921,12 @@ key Escape
 check "Esc puts the modal away" gone 'the whole of it'
 zselect -t 10
 key Escape
-check "and Plan" gone 'not planned'
+check "and Plan" gone 'no goal'
 outer resize-window -t o -x 200 -y 40
 zselect -t 200
 last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
 $bin -L $in plan 7
-see 'not planned'
+see 'no goal'
 key /
 key -l zzz
 check "/ opens a find line on Plan, the typing in it" see '/ zzz'
@@ -945,7 +945,7 @@ zselect -t 100
 key p
 check "p raises the picked row's priority through babylon" await last 'update 7 --priority high'
 key w
-check "w on a not planned row asks its why at the foot" see '❯ +⏎ save  esc drop'
+check "w on a no goal row asks its why at the foot" see '❯ +⏎ save  esc drop'
 key Escape
 check "and Escape drops it" gone '⏎ save  esc drop'
 key w
@@ -967,12 +967,13 @@ check "and the fold is gone from the repo folds" await eval '! grep -qx tlon $fo
 inner set -p -t alpha:one @arena_claude_since $(date +%s)
 inner new-window -d -t alpha: -n spare sh
 inner set -p -t alpha:spare @arena_claude_since $(date +%s)
+key Tab
 see 'other Claudes 1'
 inner kill-window -t alpha:spare
 $bin -L $in plan 7
 zselect -t 200
 key G
-check "G on a not planned row shows the running Claudes it can be given to" see '│? *[1-9] +alpha · one'
+check "G on a no goal row shows the running Claudes it can be given to" see '│? *[1-9] +alpha · one'
 key Escape
 check "and Escape puts them away" gone 'give #7 to'
 key G
@@ -991,20 +992,15 @@ rm $tmp/refuse
 inner set -pu -t alpha:one @arena_claude_since
 outer resize-window -t o -x 200 -y 40
 $bin -L $in plan 7
-see 'not planned'
+see 'no goal'
 : >$tmp/babylon
 key J
-check "J on a not planned row moves it down its repo's order through babylon" await last 'move 7 down --repo tlon'
-key k
-key l
-key Enter
-check "⏎ on the backlog chip shows the backlog rows in place of the todo ones" see '#12 Someday'
+check "J on a no goal row moves it down its repo's order through babylon" await last 'move 7 down --repo tlon'
+check "the backlog is a window of its own on Planning, listing what is kept for later" see '#12 Someday'
 key j
 : >$tmp/babylon
 key t
 check "t on a backlog row moves it to todo through babylon" await last 'update 12 --status todo'
-key k
-key Enter
 key Escape
 cp $tmp/run/babylon/board.json $tmp/board.noauto
 $bin -L $in plan 7
@@ -1028,20 +1024,20 @@ check "with nothing of the orchestrator in babylon's file, Plan's head has no bu
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":4,"working":4,"tools":{"working":1,"cap":1}}}' >$tmp/run/babylon/board.json
 check "with room, Plan's head says the tools slots when babylon's file gives them" see ' ◐ auto 4/4 · tools 1/1( |$)'
 outer resize-window -t o -x 56
-check "and with less room, without the tools slots" see ' ◐ auto 4/4 +▲ 0'
+check "and with less room, without the tools slots" see ' ◐ auto 4/4 +≡'
 outer resize-window -t o -x 200
 cp $tmp/board.noauto $tmp/run/babylon/board.json
 outer resize-window -t o -x 200 -y 40
 zselect -t 200
 key Escape
-plan_up='◆ in flight'
+plan_up='◆ (in flight|no goal)'
 plan_home() { normal; key b; see "$plan_up" }
 plan_at() { $bin -L $in plan $1; see "$plan_up" }
 plan_home
 touch $tmp/refuse-start
 plan_at 7
 key Enter
-check "⏎ on a not planned row babylon refuses to start says why on the foot, Plan still open" see 'babylon: ticke'
+check "⏎ on a no goal row babylon refuses to start says why on the foot, Plan still open" see 'babylon: ticke'
 rm $tmp/refuse-start
 : >$tmp/babylon
 key Enter
@@ -1068,9 +1064,9 @@ gone ' ▲ 1'
 plan_at 7
 : >$tmp/babylon
 key '>'
-check "> on a not planned row closes a ticket still to do" await last 'update 7 --status done'
+check "> on a no goal row closes a ticket still to do" await last 'update 7 --status done'
 key e
-check "e on a not planned row edits it in a window of its own" await last 'edit 7'
+check "e on a no goal row edits it in a window of its own" await last 'edit 7'
 plan_at 8
 key ' '
 key ' '
@@ -1078,7 +1074,7 @@ check "a modal opened from an in flight row shows its body" see 'the whole of it
 check "and its holder's state" see 'its Claude: '
 key Enter
 check "and ⏎ in it goes to the Claude holding it" see '╭─ 1 one '
-plan_up='◆ in flight'
+plan_up='◆ (in flight|no goal)'
 plan_home() { normal; key b; see "$plan_up" }
 plan_at() { $bin -L $in plan $1; see "$plan_up" }
 in_session() { [[ $(inner list-clients -F '#{session_name}') == $1 ]] }
@@ -1106,6 +1102,7 @@ key q
 key q
 print -r -- '{"tickets":[{"id":13,"repo":"babylon","title":"Gatekeeping","kind":"ticket","status":"todo","priority":"med","blocked_by":[]}],"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":1,"follow_ups":0,"by_repo":{"babylon":1}}}}' >$tmp/run/babylon/board.json
 plan_home
+key Tab
 see 'Gatekeeping'
 plan_at 13
 key Enter
@@ -1113,6 +1110,7 @@ check "⏎ on a babylon row starts it through babylon" await last 'start 13'
 check "and closes Plan" gone "$plan_up"
 cp $tmp/board.kept $tmp/run/babylon/board.json
 plan_home
+key Tab
 see '#7 Lights'
 plan_at 7
 key o
@@ -1267,7 +1265,7 @@ check "and arena inbox does too" none inbox
 check "arena --help lists the doors" test -n "$($bin --help | grep -F 'arena [-L socket] show')"
 outer new-window -t o \
   "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 $bin -L $in; echo EXIT \$?; cat"
-check "arena with no session named opens home: the plan alone, its head saying the orchestrator's state" see '◆ plan'
+check "arena with no session named opens home: the plan alone, its head saying the orchestrator's state" see '◆ +doing'
 check "and no column beside it" gone '╭─ ○ orchestrator'
 check "the orchestrator in the plan's head" see '◆ orch idle'
 check "next as babylon gives it" see '1 #7 +tlon +Lights +free now'
@@ -1302,14 +1300,14 @@ key O
 check "O opens the overview" see '╭─ 1 one '
 key Escape
 outer resize-window -t o -x 105
-check "at half the screen the plan keeps the screen, with a link to the orchestrator in its head" see '◆ plan.*o orchestrator'
+check "at half the screen the plan keeps the screen, with a link to the orchestrator in its head" see '◆ +doing.*o orchestrator'
 check "its next without a row for its why, the picked row's whole title and why at the foot" see '#7 tlon +Lights — the light switch'
 key o
 check "o opens the drawer over the whole width" see '╭─ ○ orchestrator .* o close'
 key M-h
 check "and Alt+h closes it" gone '╭─ ○ orchestrator'
 outer resize-window -t o -x 121
-check "at more width the plan is as it was" see '◆ plan'
+check "at more width the plan is as it was" see '◆ +doing'
 key e
 check "e on a next row opens its why, to edit" see '❯ the light switch'
 key -l ' now'
@@ -1324,7 +1322,7 @@ cp $tmp/run/babylon/board.json $tmp/board.slots
 mkdir -p $tmp/.config/ficciones/theme
 for name in AMBER VIOLET AMBERDIM EMBERDIM INK DIM GREY SURFACE0 SURFACE2 SURFACE3 SURFACE4 BG CYAN MOSS PINK RED; do print -r -- "PALETTE_$name=#808080"; done >$tmp/.config/ficciones/theme/palette.sh
 print -r -- '{"tickets":[{"id":703,"repo":"arena","title":"Landed one","kind":"ticket","status":"done","closed_at":"2026-11-24T10:00:00Z","priority":"med","blocked_by":[]},{"id":701,"repo":"arena","title":"First building","kind":"ticket","status":"doing","priority":"med","blocked_by":[]}],"plan":{"now":[{"ticket":701,"repo":"arena","title":"First building","state":"building","since":"2026-11-24T10:00:00Z"},{"ticket":702,"repo":"arena","title":"Second landing","state":"landing","stage":"verifying","since":"2026-11-24T10:00:00Z"}],"next":[{"ticket":7,"repo":"tlon","title":"Lights","why":"","set_by":"orchestrator","waits_on":[]}],"goals":[],"landed_today":{"count":1,"newest":[703]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}' >$tmp/run/babylon/board.json
-check "in Workbench's look the plan's windows have their title bars" await shows '◆ in flight.*◆ goal'
+check "in Workbench's look the plan's windows have their title bars" await shows '◆ in flight.*◆ landed'
 check "in flight holds the ticket being built" see 'First buil'
 check "and the pipeline's, with its stage" see 'Second lan'
 check "landed holds today's landing, a row to a ticket" see '✓ #703'
@@ -1408,8 +1406,9 @@ key e
 check "e on a now row edits its ticket" await last 'edit 701'
 normal
 key b
+key Tab
 print -r -- '{"tickets":[{"id":801,"repo":"q","title":"Alp","kind":"ticket","status":"todo","priority":"high","blocked_by":[]},{"id":802,"repo":"z","title":"Bet","kind":"ticket","status":"todo","priority":"med","blocked_by":[]}],"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":2,"follow_ups":0,"by_repo":{"q":1,"z":1}}}}' >$tmp/run/babylon/board.json
-check "not planned lists the open repos' todo tickets under its chips" await shows 'Alp'
+check "no goal lists the open repos' todo tickets under its chips" await shows 'Alp'
 check "with a chip for every repo" see 'q 1.*z 1'
 chip_click() { local row=$(settled | grep -n "$1" | head -1 | cut -d: -f1); local line=$(settled | sed -n "${row}p"); mouse 0 $(( ${#${line%%$1*}} + 2 )) $row M; mouse 0 $(( ${#${line%%$1*}} + 2 )) $row m }
 chip_click 'q 1'
@@ -1428,13 +1427,13 @@ check "and its row is in view in the small window" see 'Alp'
 : >$tmp/babylon
 click ${(z)$(spot Alp)}
 key w
-check "w on a not planned row asks why it goes to next" see '❯'
+check "w on a no goal row asks why it goes to next" see '❯'
 key -l 'it is next'
 key Enter
 check "and Enter adds it to next, through babylon" await last 'next 801 --why it is next'
 : >$tmp/babylon
 key +
-check "+ in not planned opens the new ticket window" await last 'new'
+check "+ in no goal opens the new ticket window" await last 'new'
 normal
 key b
 cp $tmp/run/babylon/board.json $tmp/board.foot

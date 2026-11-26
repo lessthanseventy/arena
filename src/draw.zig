@@ -1663,7 +1663,13 @@ fn planView(app: *App, w: *Writer, view: app_mod.HomeView) !void {
     try pen.set(w, .{}, null);
     try w.writeAll(" ");
     try pen.set(w, heading(app), null);
-    try w.writeAll(App.plan_title[1..]);
+    try w.writeAll("◆ ");
+    for ([_]sheets.Screen{ .doing, .planning }, [_][]const u8{ App.doing_tab, App.planning_tab }) |screen, name| {
+        try pen.set(w, if (view.screen == screen) chip(app) else dim, null);
+        try w.writeAll(name);
+        try pen.set(w, .{}, null);
+        if (screen == .doing) try w.writeAll(" ");
+    }
     if (app.oneColumn()) {
         try pen.set(w, .{}, null);
         try w.writeAll("  ");
@@ -1963,13 +1969,15 @@ pub fn benchState(app: *const App, card: *const tickets.Card, r: theme.Roles, bu
 }
 
 const plan_keys = [_][2][]const u8{
-    .{ "j k, arrows", "pick a row: now, next, goals, ideas, landed, not planned" },
+    .{ "tab", "the other screen: Doing, or Planning" },
+    .{ "j k, arrows", "pick a row: on Doing your move, in flight, next, landed; on Planning goals, no goal, next, backlog" },
     .{ "⏎, click it", "go: its Claude, the gate, start it, plan an idea, unfold a row, the board on it" },
     .{ "space", "open the row in place; on an open row, its whole ticket" },
     .{ "f", "the picked window whole, over the plan; q closes it" },
     .{ "+", "a new goal: plan it now, or just keep it" },
     .{ "d", "drive towards the picked goal; 1…9 answer a landed goal's what next" },
     .{ "J K x e", "on next: move it down or up, take it out, edit its why" },
+    .{ "z", "on Planning: fold a goal's tickets away, or list them" },
     .{ "x e", "on a kept idea: withdraw it, edit it" },
     .{ "B, b", "the board, and back to the plan" },
     .{ "] [", "your move, first or last" },
@@ -2552,7 +2560,7 @@ fn epicApp(roles: bool, view_h: u16, width: u16) !App {
     return app;
 }
 
-test "Home in Workbench's look: the focal goal is the one with a step building, and a goal's card has its bar in its repo's hue" {
+test "Home in Workbench's look: the focal goal is the one with a step building, and Planning's goal row has its bar in its repo's hue" {
     var board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[
         \\{"id":326,"repo":"arena","kind":"epic","status":"doing","title":"The board, redesigned"},
@@ -2582,20 +2590,22 @@ test "Home in Workbench's look: the focal goal is the one with a step building, 
     // the goal with a step building, not the first listed
     try std.testing.expectEqual(@as(usize, 1), sheet.rows[sheet.span(.driving).start].item);
 
+    app.home.?.screen = .planning;
+    try std.testing.expect(app.planSheet(&sheet));
     var buf: [65536]u8 = undefined;
     var out: Writer = .fixed(&buf);
     try planView(&app, &out, app.home.?);
     const f = out.buffered();
 
-    // the first goal's card in the goals window: its bar row, 2 of 7 in menard's hue on the well
+    // the first goal's row in the goals window: its bar, 2 of 7 in menard's hue on the well
     var at: usize = 0;
     for (sheet.rows[0..sheet.n], 0..) |row, i| {
-        if (row.kind == .goal_bar and row.item == 0) at = i;
+        if (row.kind == .goal and row.item == 0) at = i;
     }
     const slot = app.planSlot(.goals);
     const y = slot.y + 1 + (at - sheet.span(.goals).start);
-    const x = slot.x + 2 + 2;
-    const bar_w = (slot.w - 1 - 4) - 4 - "2/7  28%".len;
+    const x = slot.x + 1 + (slot.w - 3) - 22;
+    const bar_w = (22 - 2) - 1 - "2/7  28%".len;
     const filled = try bench.probe(f, x, y);
     try std.testing.expectEqual(@as(u21, '█'), filled.cp);
     try std.testing.expectEqual(r.repo[3], filled.fg);
@@ -2605,10 +2615,11 @@ test "Home in Workbench's look: the focal goal is the one with a step building, 
     try std.testing.expectEqual(r.well, empty.bg);
 }
 
-test "a goal with a step to try reads ▲ 1 to try after its bar in the you colour, and the step's chip reads ▲ to try" {
+test "a goal's ticket to try reads ▲ to try in the you colour, and the step's chip reads ▲ to try" {
     var board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[
-        \\{"id":326,"repo":"arena","kind":"epic","status":"doing","title":"The board, redesigned"}],
+        \\{"id":326,"repo":"arena","kind":"epic","status":"doing","title":"The board, redesigned"},
+        \\{"id":7,"repo":"arena","status":"try","title":"a step","epic_id":326}],
         \\"plan":{"now":[],"next":[],
         \\"goals":[{"epic":326,"title":"The board, redesigned","landed":2,"total":3,"steps":[{"ticket":7,"state":"to_try"}]}],
         \\"landed_today":{"count":0,"newest":[]},
@@ -2621,7 +2632,7 @@ test "a goal with a step to try reads ▲ 1 to try after its bar in the you colo
     app.view_w = 80;
     app.view_h = 31;
     app.roles = bench.roles();
-    app.home = .{ .alone = false, .focus = .plan };
+    app.home = .{ .alone = false, .focus = .plan, .screen = .planning };
     app.side_folded = true;
     const r = bench.roles();
 
@@ -2634,17 +2645,15 @@ test "a goal with a step to try reads ▲ 1 to try after its bar in the you colo
 
     var at: usize = 0;
     for (sheet.rows[0..sheet.n], 0..) |row, i| {
-        if (row.kind == .goal_bar and row.item == 0) at = i;
+        if (row.kind == .goal_ticket) at = i;
     }
     const rect = app.planSlot(.goals);
     const y = rect.y + 1 + (at - sheet.span(.goals).start) - app.planWindowTop(&sheet, .goals, rect.h - sheets.window_chrome);
-    const cw = rect.w - 1 - 4;
-    const label_x = rect.x + 2 + 3 + cw -| 4 -| "2/3  66%".len -| 10 -| 2;
-    const words_x = label_x + "2/3  66%".len + 2;
+    const words_x = rect.x + 1 + (rect.w - 3) - cellCount("▲ to try") - 1;
     const mark = try bench.probe(f, words_x, y);
     try std.testing.expectEqual(@as(u21, '▲'), mark.cp);
     try std.testing.expectEqual(r.you, mark.fg);
-    const last = try bench.probe(f, words_x + 9, y);
+    const last = try bench.probe(f, words_x + 7, y);
     try std.testing.expectEqual(@as(u21, 'y'), last.cp);
 
     var chip_buf: [4096]u8 = undefined;
@@ -3154,22 +3163,27 @@ test "a peek row too long for its slot is cut at a whole character and ends in �
     try std.testing.expectEqualStrings("short", p.rows[2].text);
 }
 
-test "the plan's head is one title, ◆ plan, with no tabs after it" {
+test "the plan's head names Doing and Planning, in the same places whichever is shown" {
     var board = try tickets.Board.parse(std.testing.allocator, epic_board);
     defer board.deinit();
     var app = homeApp(&board);
     defer app.grab.deinit(std.testing.allocator);
     app.view_w = 80;
     app.term_w = 80;
-    app.home = .{ .alone = false, .focus = .plan };
     app.side_folded = true;
-    var buf: [1 << 17]u8 = undefined;
-    var out: Writer = .fixed(&buf);
-    try planView(&app, &out, app.home.?);
-    const drawn = out.buffered();
-    try std.testing.expectEqual(@as(u21, '◆'), (try bench.probe(drawn, 1, 0)).cp);
-    try std.testing.expectEqual(@as(u21, 'p'), (try bench.probe(drawn, 3, 0)).cp);
-    try std.testing.expect(std.mem.indexOf(u8, drawn, "B board") == null);
+    for ([_]sheets.Screen{ .doing, .planning }) |screen| {
+        app.home = .{ .alone = false, .focus = .plan, .screen = screen };
+        var buf: [1 << 17]u8 = undefined;
+        var out: Writer = .fixed(&buf);
+        try planView(&app, &out, app.home.?);
+        const drawn = out.buffered();
+        const doing = App.screenTab(.doing);
+        const planning = App.screenTab(.planning);
+        try std.testing.expectEqual(@as(u21, '◆'), (try bench.probe(drawn, 1, 0)).cp);
+        try std.testing.expectEqual(@as(u21, 'd'), (try bench.probe(drawn, doing.x + 1, 0)).cp);
+        try std.testing.expectEqual(@as(u21, 'p'), (try bench.probe(drawn, planning.x + 1, 0)).cp);
+        try std.testing.expect(std.mem.indexOf(u8, drawn, "B board") == null);
+    }
 }
 
 test "with the drawer open Plan ends at the drawer's left edge: in flight's right column ends before it and no Plan cell is under it" {
@@ -3350,19 +3364,22 @@ test "every Plan window is a box with its ◆ title in its top border, whatever 
         app.view_w = 80;
         app.view_h = 24;
         app.roles = bench.roles();
-        app.home = .{ .alone = false, .focus = .plan };
         app.side_folded = true;
-        var buf: [262144]u8 = undefined;
-        var out: Writer = .fixed(&buf);
-        try planView(&app, &out, app.home.?);
-        for (std.enums.values(sheets.Window)) |win| {
-            const slot = app.planSlot(win);
-            const corner = try bench.probe(out.buffered(), slot.x, slot.y);
-            try eq(@as(u21, '┌'), corner.cp);
-            const diamond = try bench.probe(out.buffered(), slot.x + 3, slot.y);
-            try eq(@as(u21, '◆'), diamond.cp);
-            const foot = try bench.probe(out.buffered(), slot.x, slot.y + slot.h - 1);
-            try eq(@as(u21, '└'), foot.cp);
+        for ([_]sheets.Screen{ .doing, .planning }) |screen| {
+            app.home = .{ .alone = false, .focus = .plan, .screen = screen };
+            var buf: [262144]u8 = undefined;
+            var out: Writer = .fixed(&buf);
+            try planView(&app, &out, app.home.?);
+            for (std.enums.values(sheets.Window)) |win| {
+                if (!win.on(screen)) continue;
+                const slot = app.planSlot(win);
+                const corner = try bench.probe(out.buffered(), slot.x, slot.y);
+                try eq(@as(u21, '┌'), corner.cp);
+                const diamond = try bench.probe(out.buffered(), slot.x + 3, slot.y);
+                try eq(@as(u21, '◆'), diamond.cp);
+                const foot = try bench.probe(out.buffered(), slot.x, slot.y + slot.h - 1);
+                try eq(@as(u21, '└'), foot.cp);
+            }
         }
     }
 }
@@ -3407,12 +3424,15 @@ test "Plan's rows start with a ▌ in their repo's colour, and a goal's card has
     try eq(@as(u21, '▌'), edge.cp);
     try eq(r.repo[3], edge.fg);
 
-    // the card's rows, its title, bar, next and blocker, wear the colour of the goal's repo
+    // a goal's tickets, on Planning, wear the colour of their own repos
+    app.home.?.screen = .planning;
+    var planning: Writer = .fixed(&buf);
+    try planView(&app, &planning, app.home.?);
     const goals = app.planSlot(.goals);
-    for (2..4) |line| {
-        const mark = try bench.probe(drawn, goals.x + 2, goals.y + @as(u16, @intCast(line)));
+    for ([_]usize{ 0, 3 }, 2..) |hue, line| {
+        const mark = try bench.probe(planning.buffered(), goals.x + 5, goals.y + @as(u16, @intCast(line)));
         try eq(@as(u21, '▌'), mark.cp);
-        try eq(r.repo[0], mark.fg);
+        try eq(r.repo[hue], mark.fg);
     }
 }
 
@@ -3537,7 +3557,7 @@ test "Plan and a pane view start at column 0 at 220 and 110 cells" {
         var out: Writer = .fixed(&buf);
         try planView(&app, &out, app.home.?);
         const head = try screenRow(out.buffered(), cols, 0, &row);
-        try std.testing.expect(std.mem.startsWith(u8, head, " ◆ plan"));
+        try std.testing.expect(std.mem.startsWith(u8, head, " ◆  doing   planning"));
         const underline = try screenRow(out.buffered(), cols, 1, &row);
         try std.testing.expect(std.mem.startsWith(u8, underline, "──"));
 
@@ -3620,7 +3640,7 @@ test "Your move with 8 items scrolls inside its five rows to the picked one" {
     defer app.grab.deinit(std.testing.allocator);
     app.term_w = 80;
     app.view_w = 80;
-    app.view_h = 31;
+    app.view_h = 22;
     app.roles = bench.roles();
     app.home = .{ .alone = false, .focus = .plan, .plan_pick = 7 };
     var screen: [262144]u8 = undefined;
@@ -3642,16 +3662,19 @@ test "on the e2e's 24-row screen every Plan window keeps its title and a body ro
     app.view_w = 60;
     app.view_h = 24;
     app.roles = bench.roles();
-    app.home = .{ .alone = false, .focus = .plan };
     app.side_folded = true;
-    var screen: [262144]u8 = undefined;
-    var out: Writer = .fixed(&screen);
-    try planView(&app, &out, app.home.?);
-    for (std.enums.values(sheets.Window)) |win| {
-        try std.testing.expect(app.planSlot(win).h > sheets.window_chrome);
-        // goals' `+ goal` button covers the end of its title at this width
-        const shown = if (win == .goals) win.title()[0..4] else win.title();
-        try std.testing.expect(std.mem.indexOf(u8, out.buffered(), shown) != null);
+    for ([_]sheets.Screen{ .doing, .planning }) |on| {
+        app.home = .{ .alone = false, .focus = .plan, .screen = on };
+        var screen: [262144]u8 = undefined;
+        var out: Writer = .fixed(&screen);
+        try planView(&app, &out, app.home.?);
+        for (std.enums.values(sheets.Window)) |win| {
+            if (!win.on(on)) continue;
+            try std.testing.expect(app.planSlot(win).h > sheets.window_chrome);
+            // goals' `+ goal` button covers the end of its title at this width
+            const shown = if (win == .goals) win.title()[0..4] else win.title();
+            try std.testing.expect(std.mem.indexOf(u8, out.buffered(), shown) != null);
+        }
     }
 }
 
@@ -3748,14 +3771,20 @@ const grid_board =
 ;
 
 /// Plan drawn on a `width` by 38 screen from `grid_board`, read back as a grid of cells.
-fn planGrid(board: *tickets.Board, width: u16) !struct { app: App, grid: bench.Grid } {
+fn planGrid(board: *tickets.Board, width: u16) !Shot {
+    return planGridOn(board, width, .doing);
+}
+
+const Shot = struct { app: App, grid: bench.Grid };
+
+fn planGridOn(board: *tickets.Board, width: u16, screen: sheets.Screen) !Shot {
     var app = homeApp(board);
     app.term_w = 120;
     app.view_w = width;
     app.view_h = 38;
     app.epoch = tickets.epochOf("2026-11-23T07:10:00Z").?;
     app.roles = bench.roles();
-    app.home = .{ .alone = false, .focus = .plan };
+    app.home = .{ .alone = false, .focus = .plan, .screen = screen };
     app.side_folded = true;
     var buf: [262144]u8 = undefined;
     var out: Writer = .fixed(&buf);
@@ -3771,11 +3800,11 @@ fn rowWith(g: *const bench.Grid, slot: sheets.Rect, needle: []const u8) ?usize {
     return null;
 }
 
-test "in a goals window every value starts at one x, and a bar's ends sit on the text column and the count's left edge" {
+test "in Planning's goals window the goals' ids start at one x and their tickets' at another, and a bar's end sits on the count's left edge" {
     const eq = std.testing.expectEqual;
     var board = try tickets.Board.parse(std.testing.allocator, grid_board);
     defer board.deinit();
-    var shot = try planGrid(&board, 100);
+    var shot = try planGridOn(&board, 100, .planning);
     defer shot.app.grab.deinit(std.testing.allocator);
     const g = &shot.grid;
     const r = bench.roles();
@@ -3783,21 +3812,28 @@ test "in a goals window every value starts at one x, and a bar's ends sit on the
     const x0: usize = slot.x + 1;
     const to = slot.x + slot.w;
 
-    const blocked = rowWith(g, slot, "blocked").?;
-    const next = blocked - 1;
-    const bar = blocked - 2;
-    const title = blocked - 3;
-    try eq(x0 + 2, g.find(title, x0, to, "#9").?);
-    try eq(x0 + 2, g.find(next, x0, to, "next").?);
-    try eq(x0 + 2, g.find(blocked, x0, to, "blocked").?);
-    try eq(g.find(next, x0, to, "#703").?, g.find(blocked, x0, to, "nothing").?);
+    const second = rowWith(g, slot, "#9").?;
+    const first = rowWith(g, slot, "#410").?;
+    try eq(x0 + 4, g.find(second, x0, to, "#9").?);
+    try eq(x0 + 6, g.find(first, x0, to, "#410").?);
+    try eq(@as(u21, '▾'), g.cps[first][x0 + 2]);
+    const ticket = rowWith(g, slot, "#703").?;
+    try eq(x0 + 8, g.find(ticket, x0, to, "#703").?);
+    try eq(g.find(rowWith(g, slot, "#702").?, x0, to, "#702").?, x0 + 8);
 
-    const count = g.find(bar, x0, to, "14/15").?;
-    try eq(r.well, g.bgs[bar][x0 + 2]);
-    try std.testing.expect(!std.meta.eql(r.well, g.bgs[bar][x0 + 1]));
-    try eq(r.well, g.bgs[bar][count - 2]);
-    try std.testing.expect(!std.meta.eql(r.well, g.bgs[bar][count - 1]));
+    const count = g.find(second, x0, to, "14/15").?;
+    try eq(r.well, g.bgs[second][count - 2]);
+    try std.testing.expect(!std.meta.eql(r.well, g.bgs[second][count - 1]));
+}
 
+test "driving's bar starts at its title's column and its count has a bar's end before it" {
+    const eq = std.testing.expectEqual;
+    var board = try tickets.Board.parse(std.testing.allocator, grid_board);
+    defer board.deinit();
+    var shot = try planGrid(&board, 100);
+    defer shot.app.grab.deinit(std.testing.allocator);
+    const g = &shot.grid;
+    const r = bench.roles();
     const driving = shot.app.planSlot(.driving);
     const dbar = rowWith(g, driving, "5/12").?;
     const dtitle = rowWith(g, driving, "menard goal").?;
@@ -3812,21 +3848,27 @@ test "every Plan window has its ◆ title and its count in the same places, no �
     const eq = std.testing.expectEqual;
     var board = try tickets.Board.parse(std.testing.allocator, grid_board);
     defer board.deinit();
+    for ([_]sheets.Screen{ .doing, .planning }) |screen| {
+        var shot = try planGridOn(&board, 100, screen);
+        defer shot.app.grab.deinit(std.testing.allocator);
+        const g = &shot.grid;
+        for (std.enums.values(sheets.Window)) |win| {
+            if (!win.on(screen)) continue;
+            const slot = shot.app.planSlot(win);
+            const ww = slot.w - 1;
+            const named = if (win == .driving) sheets.drivingTitle(shot.app.board.?.plan().?, &shot.app.board.?) else win.title();
+            try eq(@as(u21, '┌'), g.cps[slot.y][slot.x]);
+            try eq(@as(u21, '◆'), g.cps[slot.y][slot.x + 3]);
+            try eq(slot.x + 5, g.find(slot.y, slot.x, slot.x + ww, named).?);
+            try std.testing.expect(g.find(slot.y, slot.x, slot.x + ww, "▾") == null);
+            if (win_plan.windowCount(&shot.app.board.?, shot.app.board.?.plan().?, win) != null) {
+                try eq(slot.x + 6 + cellCount(named), g.find(slot.y, slot.x, slot.x + ww, "│").?);
+            }
+        }
+    }
     var shot = try planGrid(&board, 100);
     defer shot.app.grab.deinit(std.testing.allocator);
     const g = &shot.grid;
-    for (std.enums.values(sheets.Window)) |win| {
-        const slot = shot.app.planSlot(win);
-        const ww = slot.w - 1;
-        const named = if (win == .driving) sheets.drivingTitle(shot.app.board.?.plan().?, &shot.app.board.?) else win.title();
-        try eq(@as(u21, '┌'), g.cps[slot.y][slot.x]);
-        try eq(@as(u21, '◆'), g.cps[slot.y][slot.x + 3]);
-        try eq(slot.x + 5, g.find(slot.y, slot.x, slot.x + ww, named).?);
-        try std.testing.expect(g.find(slot.y, slot.x, slot.x + ww, "▾") == null);
-        if (win_plan.windowCount(&shot.app.board.?, shot.app.board.?.plan().?, win) != null) {
-            try eq(slot.x + 6 + cellCount(named), g.find(slot.y, slot.x, slot.x + ww, "│").?);
-        }
-    }
     const driving = shot.app.planSlot(.driving);
     const pick = g.find(driving.y, driving.x, driving.x + driving.w, "your pick").?;
     try eq(pick + 9 + 2, g.find(driving.y, driving.x, driving.x + driving.w, "epic #410").?);
@@ -3867,8 +3909,11 @@ test "a repo mark, a text line and a bar start on one column inside a window" {
     const landed = shot.app.planSlot(.landed);
     const row = rowWith(g, landed, "#701").?;
     try eq(@as(u21, '✓'), g.cps[row][landed.x + 3]);
-    const unplanned = shot.app.planSlot(.unplanned);
-    try eq(unplanned.x + 3, g.find(rowWith(g, unplanned, "nothing to do").?, unplanned.x, unplanned.x + unplanned.w, "nothing to do").?);
+    var planning = try planGridOn(&board, 100, .planning);
+    defer planning.app.grab.deinit(std.testing.allocator);
+    const no_goal = planning.app.planSlot(.no_goal);
+    const loose = rowWith(&planning.grid, no_goal, "#703").?;
+    try eq(no_goal.x + 2, planning.grid.find(loose, no_goal.x, no_goal.x + no_goal.w, "▌").?);
 }
 
 test "home with no plan draws why, and the way back" {
@@ -3891,7 +3936,8 @@ test "every title cut to fit ends in …" {
     defer board.deinit();
     var shot = try planGrid(&board, 100);
     defer shot.app.grab.deinit(std.testing.allocator);
-    const g = &shot.grid;
+    var planning = try planGridOn(&board, 100, .planning);
+    defer planning.app.grab.deinit(std.testing.allocator);
 
     const cut = [_]struct { win: sheets.Window, id: []const u8, whole: []const u8 }{
         .{ .win = .now, .id = "#701", .whole = "A step that is building right now and long, with more words to push it past the edge of any window" },
@@ -3899,7 +3945,9 @@ test "every title cut to fit ends in …" {
         .{ .win = .landed, .id = "#701", .whole = "A step that is building right now and long, with more words to push it past the edge of any window" },
     };
     for (cut) |c| {
-        const slot = shot.app.planSlot(c.win);
+        const on = if (c.win == .goals) &planning else &shot;
+        const g = &on.grid;
+        const slot = on.app.planSlot(c.win);
         const y = rowWith(g, slot, c.id).?;
         var buf: [512]u8 = undefined;
         const text = g.line(&buf, y, slot.x, slot.x + slot.w - 1);
@@ -3918,15 +3966,17 @@ test "driving and goals draw progress in one shape, N/M then a percent, ending t
     defer board.deinit();
     var shot = try planGrid(&board, 100);
     defer shot.app.grab.deinit(std.testing.allocator);
-    const g = &shot.grid;
+    var planning = try planGridOn(&board, 100, .planning);
+    defer planning.app.grab.deinit(std.testing.allocator);
     const driving = shot.app.planSlot(.driving);
-    const goals = shot.app.planSlot(.goals);
+    const goals = planning.app.planSlot(.goals);
     const cases = [_]struct { slot: sheets.Rect, label: []const u8, tail: []const u8 }{
         .{ .slot = driving, .label = "5/12  41%", .tail = "" },
-        .{ .slot = goals, .label = "14/15  93%", .tail = "  ▲ 1 to try" },
+        .{ .slot = goals, .label = "14/15  93%", .tail = "" },
     };
     var from_edge: ?usize = null;
     for (cases) |c| {
+        const g = if (c.slot.x == driving.x and c.slot.y == driving.y) &shot.grid else &planning.grid;
         const y = rowWith(g, c.slot, c.label).?;
         const at = g.find(y, c.slot.x, c.slot.x + c.slot.w, c.label).?;
         const gap = c.slot.x + c.slot.w - (at + cellCount(c.label) + cellCount(c.tail));

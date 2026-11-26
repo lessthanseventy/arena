@@ -5,7 +5,6 @@ const bench = @import("parts.zig");
 const app_mod = @import("app.zig");
 const tickets = @import("board.zig");
 const sheets = @import("plan.zig");
-const menu = @import("menu.zig");
 const draw = @import("draw.zig");
 const keys = @import("keys.zig");
 const anyKey = app_mod.anyKey;
@@ -46,15 +45,10 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             const chips_n = app.chipsOf(&chips_buf).len;
             for (chips_buf[0..chips_n], 0..) |c, i| {
                 var buf: [64]u8 = undefined;
-                const name = c.repo orelse "backlog";
                 const look = repoHue(r, c.repo);
-                const label = if (c.repo != null)
-                    std.fmt.bufPrint(&buf, "{s} {s} {d}", .{ look.glyph, name, c.n }) catch ""
-                else
-                    std.fmt.bufPrint(&buf, "{s} {d}", .{ name, c.n }) catch "";
-                const open = if (c.repo) |repo| !app.folded(repo) else view.plan_backlog;
-                const hue = if (c.repo == null) r.accent else look.hue;
-                _ = try bench.chipInk(w, r, c.x, y, label, if (open) hue else r.dim, if (open) r.on_accent else r.dim, open);
+                const label = std.fmt.bufPrint(&buf, "{s} {s} {d}", .{ look.glyph, c.repo, c.n }) catch "";
+                const open = !app.folded(c.repo);
+                _ = try bench.chipInk(w, r, c.x, y, label, if (open) look.hue else r.dim, if (open) r.on_accent else r.dim, open);
                 if (picked and view.plan_chip == i) try bench.say(w, c.x + c.w, y, "◂", mark, bg, true);
             }
             var buf: [32]u8 = undefined;
@@ -65,7 +59,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             } else x0 + 2;
             if (after > used) try bench.say(w, after, y, follow, r.dim, bg, false);
         },
-        .todo, .backlog => {
+        .todo => {
             const card = app.cardById(row.ticket orelse return) orelse return;
             try bench.fill(w, x0, y, ww, bg);
             if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
@@ -76,11 +70,12 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             try bench.say(w, x0 + 2, y, repo.glyph, repo.hue, bg, false);
             try bench.say(w, x0 + 4, y, id, repo.hue, bg, true);
             var lbuf: [64]u8 = undefined;
-            var age: [16]u8 = undefined;
-            const how = sheets.ago(&age, card.inserted_at, app.epoch);
-            const label = if (card.blocked_by.len > 0)
+            const label = if (sheets.nextPlace(given, card.id)) |place|
+                std.fmt.bufPrint(&lbuf, "next {d}", .{place}) catch ""
+            else if (card.blocked_by.len > 0)
                 std.fmt.bufPrint(&lbuf, "{s}  ← #{d}", .{ card.priority, card.blocked_by[0] }) catch card.priority
-            else if (row.kind == .backlog and how.len > 0) std.fmt.bufPrint(&lbuf, "{s}  {s}", .{ card.priority, how }) catch card.priority else card.priority;
+            else
+                card.priority;
             const label_x = x0 + ww -| (cellCount(label) + 1);
             const title_x = x0 + 5 + cellCount(id);
             const dim = card.blocked_by.len > 0;
@@ -114,16 +109,6 @@ pub fn moveTodo(app: *App, sheet: *const sheets.Sheet, row: *const sheets.Row, d
     if (sheet.picked(to)) |near| if (near.kind == .todo) {
         view.plan_pick = to;
     };
-}
-
-/// `x` on a backlog row: a line for why it is closed, which Enter sends with the close.
-pub fn openClose(app: *App, id: u32) void {
-    var prompt: menu.Prompt = .{ .what = .why };
-    const said = std.fmt.bufPrint(&prompt.target, "close:{d}", .{id}) catch return;
-    prompt.target_len = said.len;
-    app.prompt = prompt;
-    app.normal = false;
-    app.dirty = true;
 }
 
 /// A click on the title bar: on `+ new`, a new ticket.
@@ -161,21 +146,18 @@ pub fn chipKey(app: *App, key: []const u8) !bool {
         return true;
     }
     if (!anyKey(key, &.{"Z"})) return false;
-    if (all[view.plan_chip].repo) |repo| try app.focusFold(repo) else try toggleChip(app, view.plan_chip);
+    try app.focusFold(all[view.plan_chip].repo);
     return true;
 }
 
-/// Chip `at` of not planned's row folded or opened: a repo's through #849's fold, the backlog's
-/// its cards in the rows' place.
+/// Chip `at` of no goal's row folded or opened, through #849's fold.
 pub fn toggleChip(app: *App, at: usize) !void {
     const view = &app.home.?;
     var chips: [sheets.max_chips]sheets.Chip = undefined;
     const all = app.chipsOf(&chips);
     if (at >= all.len) return;
     view.plan_chip = at;
-    if (all[at].repo) |repo| return app.toggleRepoFold(repo);
-    view.plan_backlog = !view.plan_backlog;
-    app.dirty = true;
+    return app.toggleRepoFold(all[at].repo);
 }
 
 /// A click on the chip row: the chip under it folded or opened.

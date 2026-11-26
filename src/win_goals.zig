@@ -1,21 +1,21 @@
 const std = @import("std");
-const color = @import("color.zig");
 const theme = @import("theme.zig");
 const bench = @import("parts.zig");
 const app_mod = @import("app.zig");
 const tickets = @import("board.zig");
 const sheets = @import("plan.zig");
 const draw = @import("draw.zig");
-const anyKey = app_mod.anyKey;
-const captured = app_mod.captured;
 const App = app_mod.App;
 const Writer = std.Io.Writer;
-const clip = draw.clip;
 const sayCut = draw.sayCut;
 const cellCount = draw.cellCount;
 const goalHue = draw.goalHue;
-const goalChips = draw.goalChips;
-const stepChip = draw.stepChip;
+const repoHue = draw.repoHue;
+
+/// The cells a goal's bar and its count take against the right edge.
+fn barCells(ww: usize) usize {
+    return if (ww >= 70) 28 else 22;
+}
 
 pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, at: usize, y: u16, x0: usize, ww: usize, lit: bool) !void {
     const b = &app.board.?;
@@ -24,118 +24,77 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
     const picked = lit and app.planRowLit(row);
     const mark = if (app.columnFocused()) r.dim else r.accent;
     const bg = if (picked) r.raised else r.panel;
-    const room = ww - 4;
+    try bench.fill(w, x0, y, ww, bg);
+    if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
     switch (row.kind) {
-        .idea => {
-            const idea = given.ideas[row.item];
-            const state = sheets.Sheet.ideaState(idea);
-            try bench.fill(w, x0, y, ww, bg);
-            if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
-            const lead = switch (state) {
-                .idea => r.dim,
-                .planning => r.building,
-                .draft => r.you,
-            };
-            var idb: [16]u8 = undefined;
-            const id = std.fmt.bufPrint(&idb, "#{d}", .{idea.epic}) catch "";
-            try bench.say(w, x0 + 2, y, sheets.Sheet.ideaMark(state), lead, bg, false);
-            try bench.say(w, x0 + 4, y, id, r.dim, bg, true);
-            var lbuf: [64]u8 = undefined;
-            const label = sheets.Sheet.ideaLabel(&lbuf, idea, app.epoch);
-            const asks = state == .planning and idea.asks > 0;
-            const ask_text = "▲ asks you";
-            const right = x0 + ww -| 1;
-            const chip_x = right -| (cellCount(label) + 2) -| (if (asks) cellCount(ask_text) + 1 else 0);
-            const title_x = x0 + 5 + cellCount(id);
-            if (asks) try bench.say(w, right -| cellCount(ask_text), y, ask_text, r.you, bg, true);
-            if (chip_x > title_x + 4) {
-                _ = try bench.chipInk(w, r, chip_x, y, label, lead, r.text, false);
-                try sayCut(w, title_x, y, idea.name(), chip_x - title_x - 1, if (row.dim) r.dim else r.text, bg, false);
-            } else try sayCut(w, title_x, y, idea.name(), right -| title_x, if (row.dim) r.dim else r.text, bg, false);
-        },
-        .ideas_more => {
-            try bench.fill(w, x0, y, ww, bg);
-            if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
-            try bench.say(w, x0 + 2, y, clip(std.mem.trim(u8, row.text, " "), room), r.dim, bg, false);
-        },
-        .card_top, .goal, .goal_bar, .goal_next, .goal_block => {
+        .goal => {
             const goal = given.goals[row.item];
-            const base = at - @as(usize, switch (row.kind) {
-                .card_top => @as(usize, 0),
-                .goal => 1,
-                .goal_bar => 2,
-                .goal_next => 3,
-                else => 4,
-            });
-            const card_picked = lit and sheet.rows[base + 1].pick == app.home.?.plan_pick;
-            const face = if (card_picked) r.raised else r.tile;
-            try bench.fill(w, x0, y, ww, r.panel);
-            const cx = x0 + 1;
-            const cw = ww - 2;
-            switch (row.kind) {
-                .card_top => try bench.bevel(w, cx, y, cw, if (card_picked) r.text.mix(face, 0.5) else r.raised, face),
-                .goal => {
-                    try bench.fill(w, cx, y, cw, face);
-                    if (card_picked) try bench.say(w, x0, y, "▌", mark, face, true);
-                    var idb: [16]u8 = undefined;
-                    const id = std.fmt.bufPrint(&idb, "#{d} ", .{goal.epic}) catch "";
-                    const hue = goalHue(b, r, goal);
-                    const shares = try goalChips(w, r, b, goal, cx + cw, y);
-                    try bench.say(w, cx + 1, y, id, hue, face, true);
-                    try sayCut(w, cx + 1 + cellCount(id), y, goal.name(), cw -| 3 -| cellCount(id) -| shares, if (row.dim) r.dim else r.text, face, true);
-                },
-                .goal_bar => {
-                    try bench.fill(w, cx, y, cw, face);
-                    const trying = sheets.goalTrying(goal);
-                    var tb: [24]u8 = undefined;
-                    const words = if (trying > 0) std.fmt.bufPrint(&tb, "▲ {d} to try", .{trying}) catch "" else "";
-                    try draw.goalBar(w, r, cx + 1, y, cw -| 2, goal, goalHue(b, r, goal), face, r.dim, words, r.you);
-                },
-                .goal_next => {
-                    try bench.fill(w, cx, y, cw, face);
-                    try bench.say(w, cx + 1, y, "next", r.dim, face, false);
-                    if (sheets.goalNext(goal)) |step| _ = try stepChip(w, r, cx + 9, y, step) else try bench.say(w, cx + 10, y, "nothing", r.dim, face, false);
-                },
-                else => {
-                    try bench.fill(w, cx, y, cw, face);
-                    try bench.say(w, cx + 1, y, "blocked", r.dim, face, false);
-                    if (sheets.goalBlock(goal)) |block| {
-                        var buf: [40]u8 = undefined;
-                        _ = try bench.chipInk(w, r, cx + 9, y, std.fmt.bufPrint(&buf, "\u{f0c1} #{d} waits on #{d}", .{ block.step, block.on }) catch "", r.dim, r.dim, false);
-                    } else try bench.say(w, cx + 10, y, "nothing", r.dim, face, false);
-                },
+            const hue = goalHue(b, r, goal);
+            const driving = given.driving == goal.epic;
+            try bench.say(w, x0 + 2, y, if (row.part == 1) "▸" else "▾", r.dim, bg, false);
+            var x = x0 + 4;
+            if (driving) {
+                try bench.say(w, x, y, "◆", hue, bg, true);
+                x += 2;
             }
-            if (row.kind != .card_top) try bench.say(w, cx, y, "▌", goalHue(b, r, goal), face, false);
+            var idb: [16]u8 = undefined;
+            const id = std.fmt.bufPrint(&idb, "#{d}", .{goal.epic}) catch "";
+            try bench.say(w, x, y, id, hue, bg, true);
+            x += cellCount(id) + 1;
+            const bar = barCells(ww);
+            const word = "◆ driving";
+            const word_w = if (driving) cellCount(word) + 2 else 0;
+            const title_room = ww -| (x - x0) -| bar -| word_w -| 1;
+            try sayCut(w, x, y, goal.name(), title_room, if (row.dim) r.dim else r.text, bg, true);
+            if (driving) try bench.say(w, x0 + ww - bar - word_w, y, word, hue, bg, false);
+            try draw.goalBar(w, r, x0 + ww - bar, y, bar - 2, goal, hue, bg, r.dim, "", r.you);
+        },
+        .goal_ticket => {
+            const card = app.cardById(row.ticket orelse return) orelse return;
+            const step = given.goals[row.item].steps[row.count];
+            const repo = repoHue(r, card.repo);
+            var idb: [16]u8 = undefined;
+            const id = std.fmt.bufPrint(&idb, "#{d}", .{card.id}) catch "";
+            try bench.say(w, x0 + 4, y, "▌", repo.hue, bg, false);
+            try bench.say(w, x0 + 5, y, repo.glyph, repo.hue, bg, false);
+            try bench.say(w, x0 + 8, y, id, repo.hue, bg, true);
+            var lbuf: [64]u8 = undefined;
+            const state = stateWords(&lbuf, given, step);
+            const label_x = x0 + ww -| (cellCount(state.text) + 1);
+            try bench.say(w, label_x, y, state.text, if (state.attention) r.you else r.dim, bg, false);
+            const title_x = x0 + 9 + cellCount(id);
+            try sayCut(w, title_x, y, card.name(), label_x -| title_x -| 1, if (row.dim) r.dim else r.text, bg, false);
         },
         else => {},
     }
 }
 
-/// Enter on an idea: plans it, or goes to the Claude planning it. On a goal: the detail of its
-/// first step that has not landed.
-pub fn act(app: *App, row: *const sheets.Row) !void {
-    const given = app.board.?.plan().?;
-    switch (row.kind) {
-        .idea => {
-            const idea = given.ideas[row.item];
-            switch (sheets.Sheet.ideaState(idea)) {
-                .idea => try app.send(.ignore, app_mod.captured("babylon idea {d} --plan"), .{idea.epic}),
-                .planning => if (idea.holder()) |held| if (app.paneWindow(held) != null) return app.showPane(held),
-                .draft => unreachable,
-            }
-        },
-        .goal, .focal => {
-            for (given.goals) |goal| {
-                if (goal.epic != row.ticket) continue;
-                for (goal.steps) |step| {
-                    if (std.mem.eql(u8, step.state, "landed")) continue;
-                    _ = try app.openDetail(step.ticket);
-                    return;
-                }
-            }
-        },
-        else => {},
+/// What a goal's ticket says of itself on the right: where it is in the pipeline, `← #N` while it
+/// waits on one, or its place in next.
+fn stateWords(buf: []u8, given: *const tickets.Plan, step: tickets.Step) struct { text: []const u8, attention: bool } {
+    for (step.waits_on) |wait| if (wait.ticket) |on| {
+        return .{ .text = std.fmt.bufPrint(buf, "○ ← #{d}", .{on}) catch "", .attention = false };
+    };
+    const word = switch (std.meta.stringToEnum(enum { building, landing, reviewing, verifying, to_try, failed, sent_back, other }, step.state) orelse .other) {
+        .building => "building",
+        .landing => "landing",
+        .reviewing => "reviewing",
+        .verifying => "verifying",
+        .to_try => "to try",
+        .failed, .sent_back => "sent back",
+        .other => "",
+    };
+    if (word.len == 0) {
+        if (sheets.nextPlace(given, step.ticket)) |place| return .{ .text = std.fmt.bufPrint(buf, "next {d}", .{place}) catch "", .attention = false };
+        return .{ .text = "○ todo", .attention = false };
     }
+    const attention = std.mem.eql(u8, step.state, "to_try") or std.mem.eql(u8, step.state, "failed") or std.mem.eql(u8, step.state, "sent_back");
+    return .{ .text = std.fmt.bufPrint(buf, "{s} {s}", .{ sheets.Sheet.stepMark(step.state), word }) catch "", .attention = attention };
+}
+
+/// Enter on a goal or one of its tickets: its card, in the middle column.
+pub fn act(app: *App, row: *const sheets.Row) !void {
+    _ = try app.openDetail(row.ticket orelse return);
 }
 
 /// A click on the title bar: on `+ goal`, a new goal.
@@ -152,11 +111,14 @@ pub fn frame(app: *App, w: *Writer, r: theme.Roles) !void {
     try bench.headButton(w, r, head.x, head.y, " + goal ", r.accent, false);
 }
 
-/// `e` and `x` on an idea row: a kept idea's text edited in $EDITOR as a card's is, or the idea
-/// withdrawn. One with a Claude on it or a draft is left to its own keys.
-pub fn ideaKey(app: *App, row: *const sheets.Row, key: []const u8) !void {
-    const idea = app.board.?.plan().?.ideas[row.item];
-    if (sheets.Sheet.ideaState(idea) != .idea) return;
-    if (anyKey(key, &.{"e"})) return app.ticketWindow("babylon edit {d}", .{idea.epic});
-    if (anyKey(key, &.{"x"})) try app.send(.ignore, captured("babylon withdraw {d}"), .{idea.epic});
+/// `z` on a goal or one of its tickets: that goal's tickets folded away, or listed again.
+pub fn fold(app: *App, epic: u32) void {
+    if (std.mem.indexOfScalar(u32, app.goals_shut[0..app.goals_shut_n], epic)) |at| {
+        app.goals_shut[at] = app.goals_shut[app.goals_shut_n - 1];
+        app.goals_shut_n -= 1;
+    } else if (app.goals_shut_n < app.goals_shut.len) {
+        app.goals_shut[app.goals_shut_n] = epic;
+        app.goals_shut_n += 1;
+    }
+    app.dirty = true;
 }

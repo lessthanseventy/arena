@@ -15,6 +15,7 @@ const win_move = @import("win_move.zig");
 const win_next = @import("win_next.zig");
 const win_goals = @import("win_goals.zig");
 const win_unplanned = @import("win_unplanned.zig");
+const win_backlog = @import("win_backlog.zig");
 const Writer = std.Io.Writer;
 const clip = draw.clip;
 const repoHue = draw.repoHue;
@@ -87,13 +88,12 @@ pub fn hitIn(app: *const App, sheet: *const sheets.Sheet, win: sheets.Window, re
 pub fn planBeside(app: *const App, sheet: *const sheets.Sheet, right: bool) ?usize {
     const view = app.home.?;
     const here = (sheet.picked(view.plan_pick) orelse return null).win;
-    const left_col = here == .now or here == .next;
-    if (here == .driving or left_col != right) return null;
-    const at = app.planSlot(here).y;
-    const side: []const sheets.Window = if (right) &.{ .goals, .unplanned, .landed } else &.{ .now, .next };
-    for (side) |win| {
+    const from = app.planSlot(here);
+    for (std.enums.values(sheets.Window)) |win| {
         const rect = app.planSlot(win);
-        if (at >= rect.y and at < rect.y + rect.h) return (sheet.pickRange(win) orelse return null).first;
+        const beside = if (right) rect.x >= from.x + from.w else rect.x + rect.w <= from.x;
+        if (rect.h == 0 or !beside) continue;
+        if (from.y >= rect.y and from.y < rect.y + rect.h) return (sheet.pickRange(win) orelse return null).first;
     }
     return null;
 }
@@ -118,10 +118,13 @@ pub fn windowCount(b: *const tickets.Board, given: *const tickets.Plan, win: she
         .move => b.needsYou().len,
         .now => given.now.len,
         .next => given.next.len,
-        .goals => given.goals.len - @intFromBool(for (given.goals) |goal| {
-            if (given.driving == goal.epic) break true;
-        } else false),
-        .unplanned => given.not_planned.count,
+        .goals => given.goals.len,
+        .no_goal => given.not_planned.count,
+        .backlog => blk: {
+            var n = given.ideas.len;
+            for (b.backlog()) |*card| n += @intFromBool(!card.isEpic());
+            break :blk n;
+        },
         .landed => given.landed_today.count,
     };
 }
@@ -142,7 +145,7 @@ pub fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.S
     if (whole) {
         try bench.say(w, rect.x + ww - 10, rect.y, " q close ", r.dim, bar, false);
     }
-    if (win == .unplanned and !whole) try win_unplanned.frame(app, w, r);
+    if (win == .no_goal and !whole) try win_unplanned.frame(app, w, r);
     if (win == .goals and !whole) try win_goals.frame(app, w, r);
     if (win == .driving) try win_driving.frame(app, w, r, rect, ww, bar);
     if (lit) {
@@ -210,12 +213,18 @@ pub fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.
         .focal, .drove => try win_driving.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .now, .other => try win_now.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .next => try win_next.paint(app, w, r, sheet, at, y, x0, ww, lit),
-        .idea, .ideas_more, .card_top, .goal, .goal_bar, .goal_next, .goal_block => try win_goals.paint(app, w, r, sheet, at, y, x0, ww, lit),
+        .goal, .goal_ticket => try win_goals.paint(app, w, r, sheet, at, y, x0, ww, lit),
+        .idea, .backlog => try win_backlog.paint(app, w, r, sheet, at, y, x0, ww, lit),
+        .ideas_more => {
+            try bench.fill(w, x0, y, ww, bg);
+            if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
+            try bench.say(w, x0 + 2, y, clip(std.mem.trim(u8, row.text, " "), room), r.dim, bg, false);
+        },
         .why, .more, .goals_more => {
             try bench.fill(w, x0, y, ww, r.panel);
             try bench.say(w, x0 + 7, y, clip(std.mem.trim(u8, row.text, " "), room -| 5), r.dim, r.panel, false);
         },
-        .unplanned, .chips, .todo, .backlog => try win_unplanned.paint(app, w, r, sheet, at, y, x0, ww, lit),
+        .unplanned, .chips, .todo => try win_unplanned.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .landed => try win_landed.paint(app, w, r, sheet, at, y, x0, ww, lit),
     }
 }

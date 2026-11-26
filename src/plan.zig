@@ -4,7 +4,7 @@ const std = @import("std");
 const tickets = @import("board.zig");
 const text_mod = @import("text.zig");
 
-pub const max_rows = 160;
+pub const max_rows = 320;
 
 /// The pipeline's stages in the order in flight lists them; queued goes by place.
 const stages = [_][]const u8{ "landing", "reviewing", "verifying", "queued" };
@@ -19,17 +19,22 @@ const ideas_shown = 3;
 /// The bit of `unfolded` that holds the ideas open.
 pub const ideas_fold: u3 = 0;
 
-pub const Kind = enum { head, blank, other, need, now, next, why, more, goals_more, goal, landed, unplanned, chips, todo, backlog, focal, drove, card_top, goal_bar, goal_next, goal_block, idea, ideas_more, note, buttons, held, wrap };
+pub const Kind = enum { head, blank, other, need, now, next, why, more, goals_more, goal, goal_ticket, landed, unplanned, chips, todo, backlog, focal, drove, idea, ideas_more, note, buttons, held, wrap };
 pub const Style = enum { normal, dim, heading, attention };
 
-/// Workbench's plan is six windows, each a fixed slot of the screen.
+/// The plan is two screens: Doing, what needs the human and what is moving, and Planning, where
+/// tickets are arranged.
+pub const Screen = enum { doing, planning };
+
+/// Workbench's plan is windows, each a fixed slot of the screen it is on.
 pub const Window = enum {
     move,
     driving,
     now,
     next,
     goals,
-    unplanned,
+    no_goal,
+    backlog,
     landed,
 
     pub fn title(win: Window) []const u8 {
@@ -37,8 +42,17 @@ pub const Window = enum {
             .move => "your move",
             .driving => "driving towards",
             .now => "in flight",
-            .unplanned => "not planned",
+            .no_goal => "no goal",
             else => @tagName(win),
+        };
+    }
+
+    /// Whether `win` is drawn on `screen`: next is on both.
+    pub fn on(win: Window, screen: Screen) bool {
+        return switch (win) {
+            .move, .driving, .now, .landed => screen == .doing,
+            .goals, .no_goal, .backlog => screen == .planning,
+            .next => true,
         };
     }
 };
@@ -62,11 +76,22 @@ pub const move_rows_full = 5;
 /// Rows of driving towards' slot (its borders included) in one column: its one-line summary.
 const stacked_folded_h = window_chrome + 1;
 
-/// Where `win` sits on a plan area `w` by `h` cells: its top border, body and bottom border.
-/// Worked out from the area alone, so nothing in a window or its fold moves another; in one
-/// column (`stack`) from the area and the rows each window holds.
-pub fn slot(win: Window, w: u16, h: u16, stack: bool, rows: Rows) Rect {
-    if (stack) return stacked(win, w, h, rows);
+/// Where `win` sits on a plan area `w` by `h` cells of `screen`: its top border, body and bottom
+/// border; nothing for a window the screen does not have. Worked out from the area alone, so
+/// nothing in a window or its fold moves another; in one column (`stack`) from the area and the
+/// rows each window holds.
+pub fn slot(win: Window, screen: Screen, w: u16, h: u16, stack: bool, rows: Rows) Rect {
+    if (!win.on(screen)) return .{ .x = 0, .y = 0, .w = 0, .h = 0 };
+    if (stack) return stacked(win, screen, w, h, rows);
+    if (screen == .planning) {
+        const left = w * 3 / 5;
+        return switch (win) {
+            .goals => .{ .x = 0, .y = 0, .w = left, .h = h * 6 / 10 },
+            .no_goal => .{ .x = 0, .y = h * 6 / 10, .w = left, .h = h - h * 6 / 10 },
+            .next => .{ .x = left, .y = 0, .w = w - left, .h = h * 4 / 10 },
+            else => .{ .x = left, .y = h * 4 / 10, .w = w - left, .h = h - h * 4 / 10 },
+        };
+    }
     const move_rows = move_rows_full;
     // on a short screen Your move gives rows to the windows under it, down to one
     const shown: u16 = if (h < short_area) @as(u16, 1) else move_rows;
@@ -80,33 +105,43 @@ pub fn slot(win: Window, w: u16, h: u16, stack: bool, rows: Rows) Rect {
         .driving => .{ .x = 0, .y = move_h, .w = w, .h = drive_h },
         .now => .{ .x = 0, .y = top, .w = half, .h = rest * 6 / 10 },
         .next => .{ .x = 0, .y = top + rest * 6 / 10, .w = half, .h = rest - rest * 6 / 10 },
-        .goals => .{ .x = half, .y = top, .w = w - half, .h = rest * 4 / 10 },
-        .unplanned => .{ .x = half, .y = top + rest * 4 / 10, .w = w - half, .h = rest * 3 / 10 },
-        .landed => .{ .x = half, .y = top + rest * 7 / 10, .w = w - half, .h = rest - rest * 7 / 10 },
+        else => .{ .x = half, .y = top, .w = w - half, .h = rest },
     };
 }
 
 /// The rows each window holds, counted before a pick adds any.
 pub const Rows = std.EnumArray(Window, usize);
 
-/// The most body rows a window of the one column takes of its own rows: spare height goes to the
-/// windows whose rows don't fit, in this order.
-const stacked_order = [_]struct { Window, usize }{
-    .{ .move, 5 }, .{ .now, 6 }, .{ .next, 7 }, .{ .unplanned, 4 }, .{ .landed, 5 }, .{ .goals, 4 },
-};
-
+/// The most body rows a window of the one column takes of its own rows.
 fn stackedCap(win: Window) usize {
-    for (stacked_order) |pair| if (pair[0] == win) return pair[1];
-    return 0;
+    return switch (win) {
+        .move => 5,
+        .now => 6,
+        .next => 7,
+        .no_goal => 4,
+        .landed => 5,
+        .goals => 8,
+        .backlog => 5,
+        .driving => 0,
+    };
 }
 
-/// One column, top to bottom: your move, driving towards, in flight, next, not planned, landed,
-/// goals. Each window is as tall as its rows, up to its cap; spare height goes to the windows
-/// whose rows don't fit, and what is left lies under the last window. Too little height takes
-/// from the last windows first, down to one body row.
-fn stacked(win: Window, w: u16, h: u16, rows: Rows) Rect {
-    const order = [_]Window{ .move, .driving, .now, .next, .unplanned, .landed, .goals };
-    var heights: [order.len]usize = undefined;
+/// The windows of the one column, top to bottom.
+fn stackOrder(screen: Screen) []const Window {
+    return switch (screen) {
+        .doing => &.{ .move, .driving, .now, .next, .landed },
+        .planning => &.{ .goals, .next, .no_goal, .backlog },
+    };
+}
+
+/// One column, top to bottom: on Doing your move, driving towards, in flight, next and landed; on
+/// Planning goals, next, no goal and backlog. Each window is as tall as its rows, up to its cap;
+/// spare height goes to the windows whose rows don't fit, in that order, and what is left lies
+/// under the last window. Too little height takes from the last windows first, down to one body
+/// row.
+fn stacked(win: Window, screen: Screen, w: u16, h: u16, rows: Rows) Rect {
+    const order = stackOrder(screen);
+    var heights: [8]usize = undefined;
     var total: usize = 0;
     for (order, 0..) |each, i| {
         heights[i] = if (each == .driving) stacked_folded_h else window_chrome + @max(1, @min(rows.get(each), stackedCap(each)));
@@ -120,10 +155,10 @@ fn stacked(win: Window, w: u16, h: u16, rows: Rows) Rect {
         heights[at] -= cut;
         total -= cut;
     }
-    for (stacked_order) |pair| {
+    for (order, 0..) |each, i| {
         if (total >= h) break;
-        const i = std.mem.indexOfScalar(Window, &order, pair[0]).?;
-        const room = window_chrome + rows.get(pair[0]) -| heights[i];
+        if (each == .driving) continue;
+        const room = window_chrome + rows.get(each) -| heights[i];
         const give = @min(room, h - total);
         heights[i] += give;
         total += give;
@@ -142,14 +177,13 @@ test "in one column each window is as tall as its rows up to its cap, and what i
     const eq = std.testing.expectEqual;
     var rows = Rows.initFill(1);
     rows.set(.now, 1);
-    try eq(@as(u16, window_chrome + 1), slot(.now, 103, 50, true, rows).h);
+    try eq(@as(u16, window_chrome + 1), slot(.now, .doing, 103, 50, true, rows).h);
     rows.set(.now, 30);
     rows.set(.move, 2);
-    try eq(@as(u16, window_chrome + 2), slot(.move, 103, 50, true, rows).h);
-    const order = [_]Window{ .move, .driving, .now, .next, .unplanned, .landed, .goals };
+    try eq(@as(u16, window_chrome + 2), slot(.move, .doing, 103, 50, true, rows).h);
     var y: u16 = 0;
-    for (order) |win| {
-        const at = slot(win, 103, 50, true, rows);
+    for (stackOrder(.doing)) |win| {
+        const at = slot(win, .doing, 103, 50, true, rows);
         try eq(y, at.y);
         y += at.h;
     }
@@ -157,8 +191,26 @@ test "in one column each window is as tall as its rows up to its cap, and what i
     var spare = Rows.initFill(1);
     spare.set(.now, 40);
     spare.set(.next, 40);
-    try std.testing.expect(slot(.now, 103, 50, true, spare).h > window_chrome + 6);
-    try eq(@as(u16, window_chrome + 7), slot(.next, 103, 50, true, spare).h);
+    try std.testing.expect(slot(.now, .doing, 103, 50, true, spare).h > window_chrome + 6);
+    try eq(@as(u16, window_chrome + 7), slot(.next, .doing, 103, 50, true, spare).h);
+}
+
+test "each screen has its own windows, and next is on both" {
+    const eq = std.testing.expectEqual;
+    for (std.enums.values(Window)) |win| {
+        const on_doing = win.on(.doing);
+        const on_planning = win.on(.planning);
+        try eq(win == .next, on_doing and on_planning);
+        try eq(on_doing, slot(win, .doing, 220, 49, false, Rows.initFill(0)).h > 0);
+        try eq(on_planning, slot(win, .planning, 220, 49, false, Rows.initFill(0)).h > 0);
+    }
+    const goals = slot(.goals, .planning, 220, 49, false, Rows.initFill(0));
+    const no_goal = slot(.no_goal, .planning, 220, 49, false, Rows.initFill(0));
+    try eq(goals.y + goals.h, no_goal.y);
+    try eq(@as(u16, 49), no_goal.y + no_goal.h);
+    const landed = slot(.landed, .doing, 220, 49, false, Rows.initFill(0));
+    try eq(@as(u16, 220 * 3 / 5), landed.x);
+    try eq(@as(u16, 49), landed.y + landed.h);
 }
 
 /// The first of `len` rows a window of `body` rows shows, the row at `at` kept in view with the
@@ -266,48 +318,36 @@ pub fn goalTrying(goal: tickets.Goal) usize {
     return n;
 }
 
-/// A goal's next step: the first being built, else landing, else next, else the first waiting.
-pub fn goalNext(goal: tickets.Goal) ?tickets.Step {
-    for ([_][]const u8{ "◐", "◒", "●", "○" }) |want| for (goal.steps) |step| {
-        if (std.mem.eql(u8, Sheet.stepMark(step.state), want)) return step;
-    };
+/// The place from 1 of ticket `id` in next, none when it is not in it.
+pub fn nextPlace(given: *const tickets.Plan, id: u32) ?usize {
+    for (given.next, 1..) |item, place_n| if (item.ticket == id) return place_n;
     return null;
 }
 
-/// The first step of a goal that waits on a ticket, and that ticket.
-pub fn goalBlock(goal: tickets.Goal) ?struct { step: u32, on: u32 } {
-    for (goal.steps) |step| for (step.waits_on) |wait| if (wait.ticket) |on| return .{ .step = step.ticket, .on = on };
-    return null;
-}
-
-/// What not planned shows: the repos folded to their chips, and the backlog in the rows' place.
+/// What the plan shows: the screen, the repos folded to their chips in no goal, and the goals
+/// whose tickets are folded away.
 pub const See = struct {
+    screen: Screen = .doing,
     repos_shut: []const []const u8 = &.{},
-    backlog: bool = false,
+    goals_shut: []const u32 = &.{},
 };
 
 pub const max_chips = 16;
 
-/// A chip of not planned's top row: a repo's with its count of todo tickets, or the backlog's.
-pub const Chip = struct { x: usize, w: usize, repo: ?[]const u8, n: usize };
+/// A chip of no goal's top row: a repo's with its count of todo tickets.
+pub const Chip = struct { x: usize, w: usize, repo: []const u8, n: usize };
 
-/// The chips of not planned's top row, from `x0`, as many as fit in `width` cells: a repo's each,
-/// then the backlog's.
-pub fn chipsAt(given: *const tickets.Plan, backlog_n: usize, x0: usize, width: usize, out: []Chip) []Chip {
+/// The chips of no goal's top row, from `x0`, as many as fit in `width` cells.
+pub fn chipsAt(given: *const tickets.Plan, x0: usize, width: usize, out: []Chip) []Chip {
     var n: usize = 0;
     var x = x0;
     const not = given.not_planned;
     for (not.by_repo.map.keys(), not.by_repo.map.values()) |name, count| {
         const w = chipWidth(name, count);
-        if (n == out.len or x + w > x0 + width) return out[0..n];
+        if (n == out.len or x + w > x0 + width) break;
         out[n] = .{ .x = x, .w = w, .repo = name, .n = count };
         n += 1;
         x += w + 1;
-    }
-    const w = chipWidth("backlog", backlog_n) - 2;
-    if (n < out.len and x + w <= x0 + width) {
-        out[n] = .{ .x = x, .w = w, .repo = null, .n = backlog_n };
-        n += 1;
     }
     return out[0..n];
 }
@@ -535,7 +575,13 @@ pub const Sheet = struct {
         const id, const title, const repo_of, const in_repo = switch (row.kind) {
             .now => .{ given.now[row.item].ticket, given.now[row.item].title, given.now[row.item].repo orelse "", std.mem.eql(u8, given.now[row.item].repo orelse "", repo) },
             .next => .{ given.next[row.item].ticket, given.next[row.item].title, given.next[row.item].repo orelse "", std.mem.eql(u8, given.next[row.item].repo orelse "", repo) },
-            .goal, .card_top, .goal_bar, .goal_next, .goal_block => .{ given.goals[row.item].epic, given.goals[row.item].title, "", goalIn(b, given.goals[row.item], repo) },
+            .goal => .{ given.goals[row.item].epic, given.goals[row.item].title, "", goalIn(b, given.goals[row.item], repo) },
+            .goal_ticket => blk: {
+                const card = for (b.cards()) |*card| {
+                    if (card.id == row.ticket.?) break card;
+                } else return .keep;
+                break :blk .{ card.id, card.title, card.repo orelse "", std.mem.eql(u8, card.repo orelse "", repo) };
+            },
             .idea => .{ given.ideas[row.item].epic, given.ideas[row.item].title, "", true },
             else => return .keep,
         };
@@ -645,8 +691,31 @@ pub const Sheet = struct {
         if (s.n == s.from) s.add(.{ .kind = .note, .style = .dim, .text = empty });
     }
 
-    /// Workbench's plan: each window's rows, in the order the pick walks them.
+    /// Workbench's plan: the rows of each window of the screen, in the order the pick walks them.
     fn windowRows(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64, see: See) void {
+        switch (see.screen) {
+            .doing => s.doingRows(given, b, width, epoch),
+            .planning => s.planningRows(given, b, width, epoch, see),
+        }
+    }
+
+    fn planningRows(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64, see: See) void {
+        s.begin(.goals);
+        s.goalTicketRows(given, see);
+        s.end("no goals");
+        s.begin(.no_goal);
+        s.noGoalRows(given, b, width, epoch, see);
+        s.end("none");
+        s.begin(.next);
+        s.nextRows(given, width);
+        s.end("none");
+        s.begin(.backlog);
+        s.ideaRows(given, width, epoch, 0);
+        for (b.backlog()) |*card| if (!card.isEpic()) s.ticketRow(.backlog, card, width, epoch);
+        s.end("the backlog is empty");
+    }
+
+    fn doingRows(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64) void {
         s.begin(.move);
         for (b.needsYou(), 0..) |need, at| {
             s.add(.{ .kind = .need, .pick = 0, .ticket = need.ticket, .item = at });
@@ -670,13 +739,6 @@ pub const Sheet = struct {
         s.end("none");
         s.begin(.next);
         s.nextRows(given, width);
-        s.end("none");
-        s.begin(.goals);
-        s.goalRows(given, width);
-        s.ideaRows(given, width, epoch, 0);
-        s.end("none");
-        s.begin(.unplanned);
-        s.unplannedRows(given, b, width, epoch, see);
         s.end("none");
         s.begin(.landed);
         for (given.landed_today.newest, 0..) |id, at| {
@@ -801,18 +863,10 @@ pub const Sheet = struct {
         if (!s.narrow) for (given.goals) |goal| {
             name_w = @max(name_w, @min(text_mod.cells(goal.name()), 26));
         };
-        const per: usize = if (s.bench) 5 else 1;
         const ideas_room: usize = if (given.ideas.len == 0) 0 else idea_rows;
         const room_rows = max_rows -| s.n -| foot_rows -| ideas_room;
-        const shown = if (given.goals.len * per <= room_rows) given.goals.len else (room_rows -| 1) / per;
-        for (given.goals[0..shown], 0..) |goal, i| {
-            if (s.bench) {
-                if (given.driving == goal.epic) continue;
-                inline for (.{ .card_top, .goal, .goal_bar, .goal_next, .goal_block }) |kind| {
-                    s.add(.{ .kind = kind, .item = i, .pick = if (kind == .goal) 0 else null, .ticket = if (kind == .goal) goal.epic else null });
-                }
-                continue;
-            }
+        const shown = if (given.goals.len <= room_rows) given.goals.len else room_rows -| 1;
+        for (given.goals[0..shown]) |goal| {
             var extra: [96]u8 = undefined;
             const trying = goalTrying(goal);
             const after = if (trying > 0)
@@ -841,13 +895,30 @@ pub const Sheet = struct {
         if (shown < given.goals.len) s.add(.{ .kind = .goals_more, .pick = 0, .style = .dim, .text = s.print("  +{d} more goals", .{given.goals.len - shown}) });
     }
 
+    /// Planning's goals, the one driven first, then babylon's order: a row to each, then a row
+    /// to each of its tickets that has not landed, unless the goal is folded.
+    fn goalTicketRows(s: *Sheet, given: *const tickets.Plan, see: See) void {
+        for ([_]bool{ true, false }) |driven| for (given.goals, 0..) |goal, i| {
+            if ((given.driving == goal.epic) != driven) continue;
+            const shut = std.mem.indexOfScalar(u32, see.goals_shut, goal.epic) != null;
+            s.add(.{ .kind = .goal, .pick = 0, .ticket = goal.epic, .item = i, .part = @intFromBool(shut) });
+            if (shut) continue;
+            for (goal.steps, 0..) |step, at| {
+                if (std.mem.eql(u8, step.state, "landed")) continue;
+                s.add(.{ .kind = .goal_ticket, .pick = 0, .ticket = step.ticket, .item = i, .count = at });
+            }
+        };
+    }
+
     /// Under a rule, a row to each idea in the order babylon gives them, oldest first; past
-    /// three, one row that unfolds them.
+    /// three, one row that unfolds them. In a window of its own they are all rows.
     fn ideaRows(s: *Sheet, given: *const tickets.Plan, width: usize, epoch: i64, unfolded: u8) void {
         if (given.ideas.len == 0) return;
-        if (!s.bench) s.add(.{ .kind = .blank });
-        s.headRow("ideas", given.ideas.len);
-        if (given.ideas.len > ideas_shown and unfolded & (@as(u8, 1) << ideas_fold) == 0) {
+        if (!s.bench) {
+            s.add(.{ .kind = .blank });
+            s.headRow("ideas", given.ideas.len);
+        }
+        if (!s.bench and given.ideas.len > ideas_shown and unfolded & (@as(u8, 1) << ideas_fold) == 0) {
             s.add(.{ .kind = .ideas_more, .pick = 0, .fold = ideas_fold, .style = .dim, .text = s.print(" +{d} ideas", .{given.ideas.len}) });
             return;
         }
@@ -880,33 +951,25 @@ pub const Sheet = struct {
 
     pub fn ideaMark(state: IdeaState) []const u8 {
         return switch (state) {
-            .idea => "○",
+            .idea => "◇",
             .planning => "◐",
-            .draft => "☐",
+            .draft => "✎",
         };
     }
 
-    /// What an idea says of itself on its row, in `buf`: kept for how long, planning for how
-    /// long, or its steps drafted and waiting on a look.
+    /// What an idea says of itself on its row, in `buf`: its state, and how long a Claude has
+    /// been planning it.
     pub fn ideaLabel(buf: []u8, idea: tickets.Idea, epoch: i64) []const u8 {
         var age: [16]u8 = undefined;
         const out = switch (ideaState(idea)) {
-            .idea => std.fmt.bufPrint(buf, "idea · kept {s}", .{kept(&age, idea.since, epoch)}),
+            .idea => std.fmt.bufPrint(buf, "idea", .{}),
             .planning => blk: {
                 const how = ago(&age, idea.since, epoch);
-                break :blk std.fmt.bufPrint(buf, "planning{s}{s}", .{ if (how.len > 0) " · " else "", how });
+                break :blk std.fmt.bufPrint(buf, "planning{s}{s}", .{ if (how.len > 0) " " else "", how });
             },
-            .draft => std.fmt.bufPrint(buf, "draft · {d} steps · look", .{idea.steps}),
+            .draft => std.fmt.bufPrint(buf, "draft", .{}),
         };
         return out catch "";
-    }
-
-    /// How long an idea has been kept, in whole days once past one.
-    fn kept(buf: []u8, since: ?[]const u8, epoch: i64) []const u8 {
-        const then = tickets.epochOf(since) orelse return "";
-        const days = @divFloor(@max(epoch - then, 0), 86400);
-        if (days >= 1) return std.fmt.bufPrint(buf, "{d}d", .{days}) catch "";
-        return ago(buf, since, epoch);
     }
 
     pub fn stepMark(state: []const u8) []const u8 {
@@ -964,29 +1027,26 @@ pub const Sheet = struct {
         s.add(.{ .kind = .landed, .pick = 0, .text = s.clipped(width, s.buf[start..s.used]) });
     }
 
-    fn inNext(given: *const tickets.Plan, id: u32) bool {
-        for (given.next) |item| if (item.ticket == id) return true;
-        return false;
-    }
-
     fn repoShut(see: See, repo: ?[]const u8) bool {
         for (see.repos_shut) |name| if (std.mem.eql(u8, name, repo orelse "")) return true;
         return false;
     }
 
-    /// Not planned's rows: the chip row, then the open repos' todo tickets that are not in next in
-    /// babylon's order (those that can start before those that wait), or the backlog's in their place.
-    fn unplannedRows(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64, see: See) void {
+    /// Whether `card` is a step of a goal.
+    fn inGoal(given: *const tickets.Plan, card: *const tickets.Card) bool {
+        const epic = card.epic_id orelse return false;
+        for (given.goals) |goal| if (goal.epic == epic) return true;
+        return false;
+    }
+
+    /// No goal's rows: the chip row, then the open repos' todo tickets that are in no goal in
+    /// babylon's order (those that can start before those that wait).
+    fn noGoalRows(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64, see: See) void {
         s.add(.{ .kind = .chips, .pick = 0, .count = given.not_planned.count });
         const rows_from = s.n;
-        if (see.backlog) {
-            for (b.backlog()) |*card| if (!card.isEpic()) s.ticketRow(.backlog, card, width, epoch);
-            if (s.n == rows_from) s.add(.{ .kind = .note, .style = .dim, .text = "the backlog is empty" });
-            return;
-        }
         for ([_]bool{ false, true }) |waiting| for (b.cards()) |*card| {
             if (card.status != .todo or card.isEpic() or (card.blocked_by.len > 0) != waiting) continue;
-            if (repoShut(see, card.repo) or inNext(given, card.id)) continue;
+            if (repoShut(see, card.repo) or inGoal(given, card)) continue;
             s.ticketRow(.todo, card, width, epoch);
         };
         if (s.n != rows_from) return;
@@ -1167,11 +1227,11 @@ test "ideas draw a row each under their rule, one in each state, and fold past t
     try ok(std.mem.eql(u8, rowText(&s, .head, 3).?, "ideas 3"));
     const planning = rowText(&s, .idea, 0).?;
     try ok(std.mem.indexOf(u8, planning, "◐ #830 money") != null);
-    try ok(std.mem.indexOf(u8, planning, "planning · 4m  ▲ asks you") != null);
-    try ok(std.mem.indexOf(u8, rowText(&s, .idea, 1).?, "☐ #831 retro") != null);
-    try ok(std.mem.indexOf(u8, rowText(&s, .idea, 1).?, "draft · 7 steps · look") != null);
-    try ok(std.mem.indexOf(u8, rowText(&s, .idea, 2).?, "○ #829 garden") != null);
-    try ok(std.mem.indexOf(u8, rowText(&s, .idea, 2).?, "idea · kept 2d") != null);
+    try ok(std.mem.indexOf(u8, planning, "planning 4m  ▲ asks you") != null);
+    try ok(std.mem.indexOf(u8, rowText(&s, .idea, 1).?, "✎ #831 retro") != null);
+    try ok(std.mem.endsWith(u8, rowText(&s, .idea, 1).?, "draft"));
+    try ok(std.mem.indexOf(u8, rowText(&s, .idea, 2).?, "◇ #829 garden") != null);
+    try ok(std.mem.endsWith(u8, rowText(&s, .idea, 2).?, "idea"));
     try ok(rowText(&s, .ideas_more, 0) == null);
 
     var four = try tickets.Board.parse(std.testing.allocator,
@@ -1197,7 +1257,6 @@ test "a goal with a step to try reads ▲ N to try, and the step is neither next
     var s: Sheet = undefined;
     s.build(b.plan().?, &b, 100, 0, 0, false, false, .{});
     try std.testing.expect(std.mem.indexOf(u8, rowText(&s, .goal, 0).?, "1 of 2  ○ #2  ▲ 1 to try") != null);
-    try std.testing.expectEqual(@as(u32, 2), goalNext(b.plan().?.goals[0]).?.ticket);
 }
 
 test "a row too wide is cut, its right side kept" {
@@ -1209,22 +1268,20 @@ test "a row too wide is cut, its right side kept" {
     try std.testing.expect(std.mem.endsWith(u8, rowText(&s, .now, 0).?, "building · now"));
 }
 
-test "the focal goal is the first with a step being built, a card is five rows, and its next and blocker are its steps" {
+test "the focal goal is the first with a step being built, and Doing has no goals window" {
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
     const given = b.plan().?;
     try std.testing.expectEqual(@as(?usize, 0), focalGoal(given));
-    try std.testing.expectEqual(@as(u32, 453), goalNext(given.goals[0]).?.ticket);
-    try std.testing.expectEqual(@as(u32, 454), goalBlock(given.goals[0]).?.step);
-    try std.testing.expectEqual(@as(u32, 453), goalBlock(given.goals[0]).?.on);
+
     var s: Sheet = undefined;
     s.build(given, &b, 100, 0, 0, false, true, .{});
     const at = s.span(.driving).start;
     try std.testing.expectEqual(Kind.focal, s.rows[at].kind);
     try std.testing.expectEqual(@as(usize, 0), s.rows[at].pick.?);
-    var cards: usize = 0;
-    for (s.rows[0..s.n]) |row| cards += @intFromBool(row.kind == .card_top);
-    try std.testing.expectEqual(@as(usize, 2), cards);
+    try std.testing.expectEqual(@as(usize, 0), s.span(.goals).len);
+    try std.testing.expectEqual(@as(usize, 0), s.span(.no_goal).len);
+    try std.testing.expectEqual(@as(usize, 0), s.span(.backlog).len);
 }
 
 test "the focal window follows plan.driving, says whose pick it is, and asks what next when that goal has landed" {
@@ -1253,9 +1310,7 @@ test "the focal window follows plan.driving, says whose pick it is, and asks wha
         try std.testing.expectEqualStrings(case.title, drivingTitle(given, &b));
         try std.testing.expect(driveLanded(given, &b) == null);
         s.build(given, &b, 100, 0, 0, false, true, .{});
-        var cards: usize = 0;
-        for (s.rows[0..s.n]) |row| cards += @intFromBool(row.kind == .card_top);
-        try std.testing.expectEqual(@as(usize, if (case.driving.len == 0) 2 else 1), cards);
+        for (s.rows[0..s.n]) |row| try std.testing.expect(row.kind != .goal and row.kind != .goal_ticket);
     }
 
     const text = try std.fmt.allocPrint(std.testing.allocator, "{s}\"driving\":14,{s}", .{ open, goals });
@@ -1279,7 +1334,7 @@ test "the focal window follows plan.driving, says whose pick it is, and asks wha
     try std.testing.expectEqualStrings("driving towards · landed", drivingTitle(given, &b));
 }
 
-test "goals past what fits fold into one row, and landed and not planned keep theirs" {
+test "Planning lists every goal with its open ticket, and Doing keeps landed" {
     var buf: [8192]u8 = undefined;
     var used = (try std.fmt.bufPrint(&buf, "{{\"tickets\":[],\"plan\":{{\"now\":[],\"next\":[],\"goals\":[", .{})).len;
     for (0..32) |i| {
@@ -1291,8 +1346,11 @@ test "goals past what fits fold into one row, and landed and not planned keep th
     var s: Sheet = undefined;
     s.build(b.plan().?, &b, 100, 0, 0, false, true, .{});
     try std.testing.expect(rowText(&s, .landed, 0) != null);
+    try std.testing.expectEqual(@as(usize, 0), s.span(.goals).len);
+    s.build(b.plan().?, &b, 100, 0, 0, false, true, .{ .screen = .planning });
     try std.testing.expect(rowText(&s, .chips, 0) != null);
-    try std.testing.expect(std.mem.indexOf(u8, rowText(&s, .goals_more, 0).?, "more goals") != null);
+    try std.testing.expectEqual(@as(usize, 64), s.span(.goals).len);
+    try std.testing.expect(rowText(&s, .goals_more, 0) == null);
 }
 
 test "a now row waiting on a ticket says so, with its own mark, and is not drawn as stalled" {
@@ -1353,36 +1411,61 @@ test "a second line under each in-flight row whose pane is known, and no pick of
     };
 }
 
-test "not planned's rows are the open repos' todo tickets that are not in next, startable first; the backlog chip shows the backlog" {
+test "no goal holds the open repos' todo tickets that are in no goal, startable first, and the backlog is a window of its own" {
     var b = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[
         \\{"id":1,"repo":"arena","title":"blocked","status":"todo","blocked_by":[9]},
         \\{"id":2,"repo":"arena","title":"free","status":"todo","priority":"high"},
         \\{"id":3,"repo":"tlon","title":"folded repo","status":"todo"},
         \\{"id":4,"repo":"arena","title":"in next","status":"todo"},
-        \\{"id":5,"repo":"arena","title":"doing","status":"doing"}],
+        \\{"id":5,"repo":"arena","title":"doing","status":"doing"},
+        \\{"id":8,"repo":"arena","title":"a step","status":"todo","epic_id":20}],
         \\"backlog":[{"id":6,"repo":"arena","title":"later","status":"backlog","kind":"ticket"},{"id":7,"title":"an idea","status":"backlog","kind":"epic"}],
         \\"plan":{"next":[{"ticket":4,"repo":"arena","title":"in next","why":""}],
+        \\"goals":[{"epic":20,"title":"goal","total":1,"landed":0,"steps":[{"ticket":8,"state":"todo"}]}],
+        \\"ideas":[{"epic":7,"title":"an idea"}],
         \\"not_planned":{"count":3,"follow_ups":0,"by_repo":{"arena":2,"tlon":1}}}}
     );
     defer b.deinit();
     var s: Sheet = undefined;
     const shut = [_][]const u8{"tlon"};
-    s.build(b.plan().?, &b, 100, 0, 0, false, true, .{ .repos_shut = &shut });
-    const win = s.span(.unplanned);
+    s.build(b.plan().?, &b, 100, 0, 0, false, true, .{ .screen = .planning, .repos_shut = &shut });
+    const win = s.span(.no_goal);
     try std.testing.expectEqual(Kind.chips, s.rows[win.start].kind);
-    try std.testing.expectEqual(@as(usize, 3), win.len);
+    try std.testing.expectEqual(@as(usize, 4), win.len);
     try std.testing.expectEqual(@as(?u32, 2), s.rows[win.start + 1].ticket);
-    try std.testing.expectEqual(@as(?u32, 1), s.rows[win.start + 2].ticket);
-    try std.testing.expect(std.mem.endsWith(u8, s.rows[win.start + 2].text, "med  ← #9"));
-    s.build(b.plan().?, &b, 100, 0, 0, false, true, .{ .backlog = true });
-    const back = s.span(.unplanned);
+    try std.testing.expectEqual(@as(?u32, 4), s.rows[win.start + 2].ticket);
+    try std.testing.expectEqual(@as(?u32, 1), s.rows[win.start + 3].ticket);
+    try std.testing.expect(std.mem.endsWith(u8, s.rows[win.start + 3].text, "med  ← #9"));
+    const back = s.span(.backlog);
     try std.testing.expectEqual(@as(usize, 2), back.len);
+    try std.testing.expectEqual(Kind.idea, s.rows[back.start].kind);
     try std.testing.expectEqual(Kind.backlog, s.rows[back.start + 1].kind);
     try std.testing.expectEqual(@as(?u32, 6), s.rows[back.start + 1].ticket);
     var chips: [max_chips]Chip = undefined;
-    const got = chipsAt(b.plan().?, 1, 10, 80, &chips);
-    try std.testing.expectEqual(@as(usize, 3), got.len);
-    try std.testing.expect(got[2].repo == null);
+    const got = chipsAt(b.plan().?, 10, 80, &chips);
+    try std.testing.expectEqual(@as(usize, 2), got.len);
     try std.testing.expect(got[1].x == got[0].x + got[0].w + 1);
+}
+
+test "Planning lists each open goal's tickets under it, the one driven first, and a folded goal lists none" {
+    var b = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"plan":{"driving":9,"next":[],
+        \\"goals":[{"epic":8,"title":"first","total":2,"landed":1,"steps":[{"ticket":1,"state":"landed"},{"ticket":2,"state":"todo"}]},
+        \\{"epic":9,"title":"driven","total":3,"landed":1,"steps":[{"ticket":3,"state":"landed"},{"ticket":4,"state":"building"},{"ticket":5,"state":"todo","waits_on":[{"ticket":4}]}]}]}}
+    );
+    defer b.deinit();
+    var s: Sheet = undefined;
+    s.build(b.plan().?, &b, 100, 0, 0, false, true, .{ .screen = .planning });
+    const win = s.span(.goals);
+    const want = [_]struct { Kind, u32 }{ .{ .goal, 9 }, .{ .goal_ticket, 4 }, .{ .goal_ticket, 5 }, .{ .goal, 8 }, .{ .goal_ticket, 2 } };
+    try std.testing.expectEqual(want.len, win.len);
+    for (want, s.rows[win.start..][0..want.len]) |expect, row| {
+        try std.testing.expectEqual(expect[0], row.kind);
+        try std.testing.expectEqual(@as(?u32, expect[1]), row.ticket);
+    }
+    const shut = [_]u32{9};
+    s.build(b.plan().?, &b, 100, 0, 0, false, true, .{ .screen = .planning, .goals_shut = &shut });
+    try std.testing.expectEqual(@as(usize, 3), s.span(.goals).len);
+    try std.testing.expectEqual(@as(u8, 1), s.rows[s.span(.goals).start].part);
 }

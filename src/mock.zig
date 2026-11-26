@@ -9,13 +9,13 @@ const RGB = color.RGB;
 const Card = tickets.Card;
 const posix = std.posix;
 
-const usage = "usage: arena-mock phosphor|workbench|neon home|popup|orch|alone BOARD.json PALETTE.sh [COLSxROWS OUT.html]\n";
+const usage = "usage: arena-mock phosphor|workbench|neon home|popup|orch|alone|doing|planning BOARD.json PALETTE.sh [COLSxROWS OUT.html]\n";
 
 /// The moment the fixture is seen at: every age is counted from here.
 const now_at = "2026-11-24T05:00:00Z";
 
 pub const Direction = enum { phosphor, workbench, neon };
-pub const Screen = enum { home, popup, orch, alone };
+pub const Screen = enum { home, popup, orch, alone, doing, planning };
 
 const Ink = struct {
     fg: RGB,
@@ -847,6 +847,8 @@ fn footBar(sc: *Scene, screen: Screen) void {
         .popup => &.{ .{ "1-3", "answer" }, .{ "⏎", "go to its Claude" }, .{ "G", "give" }, .{ "e", "edit" }, .{ "j k", "scroll" }, .{ "q", "close" } },
         .orch => &.{ .{ "1-3", "answer" }, .{ "c", "in words" }, .{ "⏎", "go" }, .{ "x", "no" }, .{ "j k", "pick" }, .{ "i", "tell it" }, .{ "h", "back to the plan" } },
         .alone => &.{ .{ "⏎", "go" }, .{ "1-3", "answer" }, .{ "space", "open" }, .{ "j k", "pick" }, .{ "] [", "next needing you" }, .{ "z", "fold" }, .{ "o", "overview" }, .{ "?", "keys" } },
+        .doing => &.{ .{ "⏎", "go" }, .{ "space", "open" }, .{ "H", "hand off" }, .{ "j k", "pick" }, .{ "h l", "window" }, .{ "tab", "planning" }, .{ "/", "find" }, .{ "o", "orchestrator" }, .{ "?", "keys" } },
+        .planning => &.{ .{ "space", "open" }, .{ "w", "next" }, .{ ">", "close" }, .{ "e", "edit" }, .{ "p", "priority" }, .{ "j k", "pick" }, .{ "h l", "window" }, .{ "+", "new" }, .{ "tab", "doing" }, .{ "/", "find" }, .{ "?", "keys" } },
     };
     const bg = switch (s.dir) {
         .phosphor => s.raised,
@@ -1444,12 +1446,197 @@ fn peekColumn(sc: *Scene) void {
     _ = sc.button(bx, fy, "space", "whole", false);
 }
 
+// ---- Doing and Planning: the plan's two screens ----
+
+/// The head of Doing or Planning: both screens' names, the one shown on the accent, then the repo
+/// filter and, against the right edge, babylon's state.
+fn planHead(sc: *Scene, screen: Screen) void {
+    const s = sc.skin;
+    const c = sc.c;
+    c.fill(0, 0, c.w, 1, s.raised);
+    _ = c.print(1, 0, "◆", .{ .fg = s.accent, .bg = s.raised, .bold = true }, 2);
+    var x: usize = 3;
+    for ([_]Screen{ .doing, .planning }) |name| {
+        const word = sc.fmt(" {s} ", .{@tagName(name)});
+        const on = name == screen;
+        x += c.print(x, 0, word, .{ .fg = if (on) s.on_accent else s.dim, .bg = if (on) s.accent else s.raised, .bold = on }, 12) + 1;
+    }
+    x += 2;
+    x += c.print(x, 0, "every · arena · babylon · tlon · …   / find", .{ .fg = s.dim, .bg = s.raised }, 60);
+    const plan = sc.board.plan().?;
+    const tail = sc.fmt("◐ auto 4/6   ◆ orch working 12s   ✓ {d} today   ▲ {d}   ≡", .{ plan.landed_today.count, sc.board.needsYou().len });
+    _ = c.print(c.w - text_mod.cells(tail) - 1, 0, tail, .{ .fg = s.text, .bg = s.raised }, 80);
+}
+
+/// A ticket's row at `x`, `y`: its repo's mark and icon, its number, its title cut to the room the
+/// `right` words leave, and the words against the edge.
+fn ticketRow(sc: *Scene, x: usize, y: usize, w: usize, id: u32, right: []const u8, ink: RGB, picked: bool) void {
+    const s = sc.skin;
+    const c = sc.c;
+    const cd = sc.card(id);
+    const repo = if (cd) |card| card.repo orelse "" else "";
+    if (picked) c.fill(x, y, w, 1, s.raised);
+    c.put(x, y, '▌', .{ .fg = s.repoInk(repo), .bg = if (picked) s.raised else null });
+    _ = c.print(x + 1, y, repo_glyphs[repoIndex(repo)], .{ .fg = s.repoInk(repo), .bg = if (picked) s.raised else null }, 1);
+    var at = x + 3;
+    at += c.print(at, y, sc.fmt("#{d}", .{id}), .{ .fg = s.repoInk(repo), .bold = true, .bg = if (picked) s.raised else null }, 6) + 1;
+    const room = w -| (at - x) -| text_mod.cells(right) -| 3;
+    _ = c.print(at, y, if (cd) |card| card.title else "", .{ .fg = s.text, .bg = if (picked) s.raised else null }, room);
+    _ = c.print(x + w - text_mod.cells(right) - 1, y, right, .{ .fg = ink, .bg = if (picked) s.raised else null }, text_mod.cells(right));
+}
+
+/// Next on both screens: a place, then the same row as the rest.
+fn nextWindow(sc: *Scene, x: usize, y: usize, w: usize, h: usize, focused: bool) void {
+    const s = sc.skin;
+    const plan = sc.board.plan().?;
+    var ly = sc.panel(x, y, w, h, "next", plan.next.len, focused);
+    for (plan.next, 1..) |item, place| {
+        if (ly + 1 >= y + h) break;
+        _ = sc.c.print(x + 1, ly, sc.fmt("{d}", .{place}), .{ .fg = s.accent, .bold = true }, 2);
+        const waits = item.waits_on.len > 0 and item.waits_on[0].ticket != null;
+        ticketRow(sc, x + 3, ly, w - 4, item.ticket, if (waits) sc.fmt("← #{d}", .{item.waits_on[0].ticket.?}) else "ready", if (waits) s.dim else s.landed, false);
+        ly += 1;
+    }
+}
+
+/// Doing: what needs the human and what is moving. Your move, the goal being driven, in flight and
+/// next on the left, landed the whole height of the right.
+fn doing(sc: *Scene) void {
+    const s = sc.skin;
+    const c = sc.c;
+    const plan = sc.board.plan().?;
+    const needs = sc.board.needsYou();
+    const w = c.w - 2;
+    const foot = c.h - 2;
+    var y: usize = 2;
+
+    const move_h = @max(needs.len, 1) + 3;
+    var ny = sc.panel(1, y, w, move_h, "your move", needs.len, true);
+    for (needs, 0..) |need, i| {
+        if (i == 5) break;
+        ticketRow(sc, 2, ny, w - 2, need.ticket orelse 0, "asks you", s.you, i == 0);
+        ny += 1;
+    }
+    y += move_h + 2;
+
+    const goal = plan.goals[0];
+    c.fill(1, y, w, 1, s.tile);
+    _ = c.print(3, y, sc.fmt("◆ towards #{d} {s}", .{ goal.epic, goal.title }), .{ .fg = s.text, .bg = s.tile, .bold = true }, w / 2);
+    const pct = goal.landed * 100 / goal.total;
+    sc.bar(w - 40, y, 20, goal.landed, goal.total, s.accent);
+    _ = c.print(w - 18, y, sc.fmt("{d}/{d}  {d}%", .{ goal.landed, goal.total, pct }), .{ .fg = s.text, .bg = s.tile }, 14);
+    y += 2;
+
+    const left = w * 3 / 5;
+    const rows = foot - y;
+    const flight_h = rows * 6 / 10;
+    var fy = sc.panel(1, y, left - 1, flight_h, "in flight", plan.now.len, false);
+    for (plan.now) |item| {
+        if (fy + 1 >= y + flight_h) break;
+        const stalled = item.stalled != null;
+        const state = item.stage orelse item.state;
+        ticketRow(sc, 2, fy, left - 3, item.ticket, sc.fmt("{s} {s} {s}", .{ stateGlyph(state), if (stalled) "stalled" else state, sc.ago(item.since) }), if (stalled) s.failed else s.stateInk(state), false);
+        fy += 1;
+    }
+    nextWindow(sc, 1, y + flight_h + 1, left - 1, rows - flight_h - 1, false);
+
+    const lx = left + 1;
+    var ly = sc.panel(lx, y, w - left, rows, "landed", plan.landed_today.count, false);
+    for (plan.landed_today.newest) |id| {
+        if (ly + 1 >= y + rows) break;
+        const cd = sc.card(id) orelse continue;
+        ticketRow(sc, lx + 1, ly, w - left - 2, id, sc.fmt("✓ {s}", .{sc.ago(cd.closed_at)}), s.landed, false);
+        ly += 1;
+    }
+}
+
+/// Planning: where tickets are arranged. Goals with their tickets and no goal on the left, next and
+/// the backlog on the right.
+fn planning(sc: *Scene) void {
+    const s = sc.skin;
+    const c = sc.c;
+    const plan = sc.board.plan().?;
+    const w = c.w - 2;
+    const rows = c.h - 4;
+    const left = w * 3 / 5;
+    const goals_h = rows * 6 / 10;
+
+    var gy = sc.panel(1, 2, left - 1, goals_h, "goals", plan.goals.len, true);
+    const gx = 2;
+    const gw = left - 3;
+    for (plan.goals, 0..) |goal, i| {
+        if (gy + 1 >= 2 + goals_h) break;
+        const repo = if (sc.card(goal.epic)) |cd| cd.repo orelse "" else "";
+        const open = i != 1;
+        const row_bg: ?RGB = if (i == 0) s.raised else null;
+        if (i == 0) c.fill(gx, gy, gw, 1, s.raised);
+        _ = c.print(gx + 1, gy, if (open) "▾" else "▸", .{ .fg = s.dim, .bg = row_bg }, 1);
+        var at: usize = gx + 3;
+        if (i == 0) at += c.print(at, gy, "◆ ", .{ .fg = s.repoInk(repo), .bg = row_bg }, 2);
+        at += c.print(at, gy, sc.fmt("#{d}", .{goal.epic}), .{ .fg = s.repoInk(repo), .bold = true, .bg = row_bg }, 6) + 1;
+        const bw: usize = 16;
+        const label = sc.fmt("{d}/{d}  {d}%", .{ goal.landed, goal.total, goal.landed * 100 / goal.total });
+        const bx = gx + gw - bw - text_mod.cells(label) - 3;
+        _ = c.print(at, gy, goal.title, .{ .fg = s.text, .bold = true, .bg = row_bg }, bx -| at -| 12);
+        if (i == 0) _ = c.print(bx - 10, gy, "◆ driving", .{ .fg = s.repoInk(repo), .bg = row_bg }, 9);
+        sc.bar(bx, gy, bw, goal.landed, goal.total, s.repoInk(repo));
+        _ = c.print(bx + bw + 1, gy, label, .{ .fg = s.dim, .bg = row_bg }, 14);
+        gy += 1;
+        if (!open) continue;
+        for (goal.steps) |step| {
+            if (gy + 1 >= 2 + goals_h) break;
+            const waits = step.waits_on.len > 0 and step.waits_on[0].ticket != null;
+            const word = if (waits) sc.fmt("○ ← #{d}", .{step.waits_on[0].ticket.?}) else sc.fmt("{s} {s}", .{ stateGlyph(step.state), step.state });
+            ticketRow(sc, gx + 4, gy, gw - 4, step.ticket, word, if (waits) s.dim else s.stateInk(step.state), false);
+            gy += 1;
+        }
+    }
+
+    const no_y = 2 + goals_h + 1;
+    var ny = sc.panel(1, no_y, left - 1, rows - goals_h - 1, "no goal", plan.not_planned.count, false);
+    var npx: usize = 3;
+    var by_repo = plan.not_planned.by_repo.map.iterator();
+    while (by_repo.next()) |entry| {
+        npx += sc.chip(npx, ny, sc.fmt("{s} {s} {d}", .{ repo_glyphs[repoIndex(entry.key_ptr.*)], entry.key_ptr.*, entry.value_ptr.* }), s.repoInk(entry.key_ptr.*), false) + 1;
+    }
+    ny += 1;
+    var shown: usize = 0;
+    for (sc.board.cards()) |card| {
+        if (ny + 1 >= no_y + rows - goals_h - 1) break;
+        if (card.status != .todo or card.isEpic() or card.epic_id != null) continue;
+        const place = for (plan.next, 1..) |item, k| {
+            if (item.ticket == card.id) break k;
+        } else 0;
+        ticketRow(sc, 2, ny, left - 3, card.id, if (place > 0) sc.fmt("next {d}", .{place}) else card.priority, s.dim, false);
+        ny += 1;
+        shown += 1;
+    }
+
+    const rx = left + 1;
+    const next_h = rows * 4 / 10;
+    nextWindow(sc, rx, 2, w - left, next_h, false);
+    var by = sc.panel(rx, 2 + next_h + 1, w - left, rows - next_h - 1, "backlog", sc.board.backlog().len, false);
+    for (sc.board.backlog()) |card| {
+        if (by + 1 >= 2 + rows) break;
+        if (card.isEpic()) continue;
+        ticketRow(sc, rx + 1, by, w - left - 2, card.id, "later", s.dim, false);
+        by += 1;
+    }
+}
+
 pub fn draw(c: *Canvas, board: *const tickets.Board, p: Palette, dir: Direction, screen: Screen) void {
     var sc: Scene = .{ .board = board, .skin = Skin.of(dir, p), .c = c, .now = tickets.epochOf(now_at).? };
     c.fill(0, 0, c.w, c.h, sc.skin.ground);
+    if (screen == .doing or screen == .planning) {
+        planHead(&sc, screen);
+        if (screen == .doing) doing(&sc) else planning(&sc);
+        footBar(&sc, screen);
+        return;
+    }
     if (screen != .alone) titleBar(&sc);
     rail(&sc, screen);
     switch (screen) {
+        .doing, .planning => unreachable,
         .home => {
             home(&sc, true);
             column(&sc, false, 0);

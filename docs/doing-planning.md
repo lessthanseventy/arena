@@ -2,12 +2,13 @@
 
 > Partly superseded by [What arena is](what-arena-is.md). These parts are replaced: `⏎` on a
 > Claude's row opens its pane in the middle column, and Your move also holds the orchestrator's
-> suggestions. The mocks' window folds (`▾` on window titles, `z`) are gone (#1108). The rest
-> stands: both screens' windows, their keys and every move on Planning.
+> suggestions. Windows do not fold (#1108): no `▾` on a window's title, and `z` folds only a
+> goal's tickets on Planning, so it is not in the key line. The rest stands: both screens'
+> windows, their keys and every move on Planning.
 
 This design is for #1111, step 1 of #1110. It follows [the principles](principles.md) and
 [No rail](no-rail.md), and it builds on #1109, which opens everything from Plan in one middle
-column. Nothing in it is built yet.
+column. The two screens' windows and the way between them are built (#1112); the moves are not.
 
 The human, 2026-11-26: "for the landed goal one, i was thinking maybe we split out like doing and
 planning if that makes sense. the backlog (not planned is a dumb name they are planned just not in
@@ -48,15 +49,15 @@ where it is ordered.
 
 ```
  ◆ [doing]  planning    every · arena · babylon · tlon · …   / find                                                                                                  ◐ auto 4/6   ◆ orch working 12s   ✓ 23 today   ▲ 3   ≡
-┌─ ◆ YOUR MOVE │ 3 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ▾ ┐
+┌─ ◆ YOUR MOVE │ 3 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ ▌>_ ▲ #1029 approve docs/no-rail.md: arena without the side rail                                                                                                                                           asks you   2m │
 │ ▌>_ ◆ #896  landed: pick the goal to drive next                                                                                                                                                               ⏎ planning │
 │ ▌⌂  ✗ #612  sent back: the gate's money test fails on the first of the month                                                                                                                                         14m │
 │                                                                                                                                                                                                                          │
 │                                                                                                                                                                                                                          │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌─ ◆ towards #1110 Doing and Planning: Plan splits into a Doing and a Planning screen   ▌>_ 1/5   ████▒▒▒▒▒▒▒▒▒▒▒▒   1/5  20% ────────────────────────────────────────────────────────────────────────────────────────── ▸ ┐
-┌─ ◆ in flight │ 6 ───────────────────────────────────────────────────────────────────────────────────────────────────────────── ▾ ┐ ┌─ ◆ landed │ 23 today ──────────────────────────────────────────────────────────── ▾ ┐
+┌─ ◆ towards #1110 Doing and Planning: Plan splits into a Doing and a Planning screen   ▌>_ 1/5   ████▒▒▒▒▒▒▒▒▒▒▒▒   1/5  20% ─────────────────────────────────────────────────────────────────────────────────────────────┐
+┌─ ◆ in flight │ 6 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ ┌─ ◆ landed │ 23 today ───────────────────────────────────────────────────────────────┐
 │ ▌>_ #1111 Doing and Planning 1: the design doc: each screen's windows, keys and moves                             ◐ building  4m │ │ ✓ #1105 Your move: a picked item says its first key                              2h │
 │ ▌>_ #992  Copy text out of arena: drag to select in the ticket modal                                              ◐ building 33m │ │ ✓ #1083 the auto switch reads its cell from one picture                          3h │
 │ ▌☗  #588  babylon start N: worktree and branch in one step                                                        ◇ stalled   9m │ │ ✓ #1029 Design: arena without the side rail                                      5h │
@@ -66,14 +67,14 @@ where it is ordered.
 │ ── other Claudes 2 ────────────────────────────────────────────────────────────────────────────────────────────────────────────  │ │                                                                                     │
 │ ▌⌸  ◐ menard · indexing the repo                                                                                menard:1      4m │ │                                                                                     │
 │ ▌✎  ○ ficciones · your shell                                                                                    ficciones:2   1h │ │                                                                                     │
-├─ ◆ next │ 5 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ▾ ┤ │                                                                                     │
+├─ ◆ next │ 5 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤ │                                                                                     │
 │ 1 ▌>_ #761  arena crashes with integer overflow on a 0-width pane                                                        ready   │ │                                                                                     │
 │ 2 ▌⌂  #612  Money: a safe-to-spend-per-day on the bar                                                                    ← #588  │ │                                                                                     │
 │ 3 ▌>_ #346  Board 13: / finds cards                                                                                      ready   │ │                                                                                     │
 │ 4 ▌☗  #590  Restarts become a Your move item                                                                             ← #588  │ │                                                                                     │
 │ 5 ▌✎  #433  The bar says ▲ N and opens arena's inbox                                                                     ready   │ │                                                                                     │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ └─────────────────────────────────────────────────────────────────────────────────────┘
- NORMAL  ⏎ go  space open  H hand off   │   j k pick  h l window  z fold  tab planning  / find  o orchestrator   │   ? keys
+ NORMAL  ⏎ go  space open  H hand off   │   j k pick  h l window  tab planning  / find  o orchestrator   │   ? keys
 ```
 
 (The drawing is shortened in height.) Below the head and above the foot bar, the 49 rows are
@@ -102,28 +103,28 @@ landed. The three lists split what is left: in flight 2/5, next 3/10, landed 3/1
 
 ```
  ◆ [doing]  planning   every · arena · …   / find                           ◐ auto 4/6   ◆ orch 12s   ▲ 3   ≡
-┌─ ◆ YOUR MOVE │ 3 ─────────────────────────────────────────────────────────────────────────────────────── ▾ ┐
+┌─ ◆ YOUR MOVE │ 3 ──────────────────────────────────────────────────────────────────────────────────────────┐
 │ ▌>_ ▲ #1029 approve docs/no-rail.md                                                          asks you   2m │
 │ ▌>_ ◆ #896  landed: pick the goal to drive next                                                 ⏎ planning │
 │ ▌⌂  ✗ #612  sent back: the money test fails on the 1st                                                 14m │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌─ ◆ towards #1110 Doing and Planning   ████▒▒▒▒▒▒▒▒   1/5  20% ────────────────────────────────────────── ▸ ┐
-┌─ ◆ in flight │ 6 ─────────────────────────────────────────────────────────────────────────────────────── ▾ ┐
+┌─ ◆ towards #1110 Doing and Planning   ████▒▒▒▒▒▒▒▒   1/5  20% ─────────────────────────────────────────────┐
+┌─ ◆ in flight │ 6 ──────────────────────────────────────────────────────────────────────────────────────────┐
 │ ▌>_ #1111 Doing and Planning 1: the design doc                                              ◐ building  4m │
 │ ▌>_ #992  Copy text out of arena: drag to select                                            ◐ building 33m │
 │ ▌☗  #588  babylon start N: worktree and branch                                              ◇ stalled   9m │
 │ ▌>_ #904  Plan 8: workspace link: a held row's chip                                         ◒ reviewing 9m │
 │ ── other Claudes 2 ──────────────────────────────────────────────────────────────────────────────────────  │
 │ ▌⌸  ◐ menard · indexing the repo                                                          menard:1      4m │
-├─ ◆ next │ 5 ──────────────────────────────────────────────────────────────────────────────────────────── ▾ ┤
+├─ ◆ next │ 5 ───────────────────────────────────────────────────────────────────────────────────────────────┤
 │ 1 ▌>_ #761  arena crashes with integer overflow on a 0-width pane                                   ready  │
 │ 2 ▌⌂  #612  Money: a safe-to-spend-per-day on the bar                                               ← #588 │
 │ 3 ▌>_ #346  Board 13: / finds cards                                                                 ready  │
-├─ ◆ landed │ 23 today ─────────────────────────────────────────────────────────────────────────────────── ▾ ┤
+├─ ◆ landed │ 23 today ──────────────────────────────────────────────────────────────────────────────────────┤
 │ ✓ #1105 Your move: a picked item says its first key                                                     2h │
 │ ✓ #1083 the auto switch reads its cell from one picture                                                 3h │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- NORMAL  ⏎ go  space open  …   │   j k pick  z fold  tab planning  o orch   │   ? keys
+ NORMAL  ⏎ go  space open  …   │   j k pick  tab planning  o orch   │   ? keys
 ```
 
 ## Planning
@@ -132,18 +133,18 @@ landed. The three lists split what is left: in flight 2/5, next 3/10, landed 3/1
 
 ```
  ◆ doing  [planning]    every · arena · babylon · tlon · …   / find                                                                                                  ◐ auto 4/6   ◆ orch working 12s   ✓ 23 today   ▲ 3   ≡
-┌─ ◆ goals │ 3 ────────────────────────────────────────────────────────────────────────────────────────────────────────── + goal ▾ ┐ ┌─ ◆ next │ 5 ───────────────────────────────────────────────────────────────────── ▾ ┐
+┌─ ◆ goals │ 3 ────────────────────────────────────────────────────────────────────────────────────────────────────────── + goal ──┐ ┌─ ◆ next │ 5 ────────────────────────────────────────────────────────────────────────┐
 │ ▾ ◆ #1110 Doing and Planning: Plan splits into a Doing and a Planning screen   ◆ driving             ████▒▒▒▒▒▒▒▒▒▒▒▒   1/5  20% │ │ 1 ▌>_ #761  arena crashes with integer overflow on a…                        ready  │
 │     ▌>_ #1111 Doing and Planning 1: the design doc                                                                ◐ building  4m │ │ 2 ▌⌂  #612  Money: a safe-to-spend-per-day on the bar                        ← #588 │
 │     ▌>_ #1112 Doing and Planning 2: the Planning screen, read only, and tab                                        ○ ← #1111     │ │ 3 ▌>_ #346  Board 13: / finds cards                                          ready  │
 │     ▌>_ #1113 Doing and Planning 3: Planning's moves                                                               ○ ← #1112     │ │ 4 ▌☗  #590  Restarts become a Your move item                                 ← #588 │
 │     ▌>_ #1114 Doing and Planning 4: Doing trimmed                                                                  ○ ← #1113     │ │ 5 ▌✎  #433  The bar says ▲ N and opens arena's inbox                         ready  │
 │ ▸ #896  Plan replaces the board: every board feature on Plan, then the board removed                 ████████▒▒▒▒▒▒▒▒   8/13 62% │ │                                                                                     │
-│ ▾ #500  The orchestrator is the front door                                                           ███████████▒▒▒▒▒   9/12 75% │ ├─ ◆ backlog │ 6 ────────────────────────────────────────────────────────────────── ▾ ┤
+│ ▾ #500  The orchestrator is the front door                                                           ███████████▒▒▒▒▒   9/12 75% │ ├─ ◆ backlog │ 6 ─────────────────────────────────────────────────────────────────────┤
 │     ▌>_ #1046 The orchestrator's choices become asks in Your move                                                 ◒ reviewing 2m │ │ ◇ #830  Money on the bar: a safe-to-spend-per-day                              idea │
 │     ▌☗  #1036 A desktop notice for a Claude that waits                                                            ○ todo         │ │ ◐ #842  tlon: the house on a phone                                     planning  3m │
 │     ▌>_ #1048 The drawer remembers where it was scrolled                                                          ○ todo         │ │ ✎ #850  Asterion: a mail filter per sender                                    draft │
-├─ ◆ no goal │ 21 ──────────────────────────────────────────────────────────────────────────────────────────────────────── + new ▾ ┤ │ · #712  tlon: a second bathroom on the plan                                   later │
+├─ ◆ no goal │ 21 ──────────────────────────────────────────────────────────────────────────────────────────────────────── + new ──┤ │ · #712  tlon: a second bathroom on the plan                                   later │
 │ ▐>_ arena 11▌  ☗ babylon 3   ⌂ tlon 4   ✎ ficciones 2   ⌸ menard 1                                                               │ │ · #733  babylon: a week view of what landed                                   later │
 │ ▌>_ #761  arena crashes with integer overflow on a 0-width pane                                                          next 1  │ │ · #740  arena: a light theme                                                  later │
 │ ▌>_ #346  Board 13: / finds cards                                                                                        next 3  │ │                                                                                     │
@@ -151,7 +152,7 @@ landed. The three lists split what is left: in flight 2/5, next 3/10, landed 3/1
 │ ▌>_ #1052 The help screen lists keys by window                                                                           todo    │ │                                                                                     │
 │ ▌>_ #1060 A goal's bar shows what is in review                                                                           todo    │ │                                                                                     │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ └─────────────────────────────────────────────────────────────────────────────────────┘
- NORMAL  space open  a goal…  w next  > close  e edit  p priority   │   j k pick  h l window  z fold  + new  tab doing  / find  o orchestrator   │   ? keys
+ NORMAL  space open  a goal…  w next  > close  e edit  p priority   │   j k pick  h l window  + new  tab doing  / find  o orchestrator   │   ? keys
 ```
 
 The same head and foot bar, and the same grid. The left three fifths (132 cells) hold the two
@@ -164,7 +165,7 @@ windows whose rows are titles you will act on:
     indented, in babylon's order. The column on the right says each one's state: `◐ building
     4m`, `◒ reviewing`, `» queued 1st`, `○ todo`, or `○ ← #N` while blocked by #N. A ticket also
     in next says `next K`. Landed steps are counted in `N/M`, not listed.
-  - `space` on a goal opens its card in the middle column with every step, landed ones included
+  - `space` or `⏎` on a goal opens its card in the middle column with every step, landed ones included
     (principle 13).
   - The driven goal is first, then the others in babylon's order. `z` folds and unfolds the goal
     the pick is on, and the folds hold for the session. Folding changes rows inside the window
@@ -185,7 +186,7 @@ One column, top to bottom: goals 2/5 of the rows, then next, no goal and backlog
 
 ```
  ◆ doing  [planning]   every · arena · …   / find                           ◐ auto 4/6   ◆ orch 12s   ▲ 3   ≡
-┌─ ◆ goals │ 3 ──────────────────────────────────────────────────────────────────────────────────── + goal ▾ ┐
+┌─ ◆ goals │ 3 ──────────────────────────────────────────────────────────────────────────────────── + goal ──┐
 │ ▾ ◆ #1110 Doing and Planning   ◆ driving                                           ████▒▒▒▒▒▒▒▒   1/5  20% │
 │     ▌>_ #1111 Doing and Planning 1: the design doc                                          ◐ building  4m │
 │     ▌>_ #1112 Doing and Planning 2: the Planning screen                                      ○ ← #1111     │
@@ -193,15 +194,15 @@ One column, top to bottom: goals 2/5 of the rows, then next, no goal and backlog
 │     ▌>_ #1114 Doing and Planning 4: Doing trimmed                                            ○ ← #1113     │
 │ ▸ #896  Plan replaces the board                                                    ████████▒▒▒▒   8/13 62% │
 │ ▸ #500  The orchestrator is the front door                                         █████████▒▒▒   9/12 75% │
-├─ ◆ next │ 5 ──────────────────────────────────────────────────────────────────────────────────────────── ▾ ┤
+├─ ◆ next │ 5 ───────────────────────────────────────────────────────────────────────────────────────────────┤
 │ 1 ▌>_ #761  arena crashes with integer overflow on a 0-width pane                                   ready  │
 │ 2 ▌⌂  #612  Money: a safe-to-spend-per-day on the bar                                               ← #588 │
 │ 3 ▌>_ #346  Board 13: / finds cards                                                                 ready  │
-├─ ◆ no goal │ 21 ────────────────────────────────────────────────────────────────────────────────── + new ▾ ┤
+├─ ◆ no goal │ 21 ────────────────────────────────────────────────────────────────────────────────── + new ──┤
 │ ▐>_ arena 11▌  ☗ babylon 3   ⌂ tlon 4   ✎ 2   ⌸ 1                                                          │
 │ ▌>_ #761  arena crashes with integer overflow on a 0-width pane                                    next 1  │
 │ ▌>_ #1058 Copy a ticket's branch name from its card                                                todo    │
-├─ ◆ backlog │ 6 ───────────────────────────────────────────────────────────────────────────────────────── ▾ ┤
+├─ ◆ backlog │ 6 ────────────────────────────────────────────────────────────────────────────────────────────┤
 │ ◇ #830  Money on the bar: a safe-to-spend-per-day                                                     idea │
 │ ◐ #842  tlon: the house on a phone                                                            planning  3m │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -216,8 +217,9 @@ One column, top to bottom: goals 2/5 of the rows, then next, no goal and backlog
   `◆ plan`. The screen you're on wears the accent box (the pick, principle 6), drawn `[ ]` in the
   mocks. A click on the other name switches. Both labels are fixed width, so the head doesn't
   move when you switch.
-- **Each screen keeps its own pick, folds and scroll.** Switching back finds the screen as you
-  left it. A middle column that is open closes on a switch, because it belongs to what was picked.
+- **Each screen keeps its own pick and scroll, and Planning its goals' folds.** Switching back
+  finds the screen as you left it. A middle column that is open closes on a switch, because it
+  belongs to what was picked.
 - **Home is Doing.** `b`, `Alt+b`, `◆ home` and `arena plan` open Doing, which answers "does
   anything need me?" first. `arena planning [N]` opens Planning, with the pick on #N when given
   (principle 7).
@@ -304,7 +306,7 @@ links already chain them, so no two touch the same file at once.
 1. **This doc** (#1111).
 2. **Planning, read only, and switching** (#1112), after #1109 and this doc.
    - A `doing | planning` screen on the home view, with its own pick, folds and scroll for each.
-   - `tab`, the head's picker, and `arena planning [N]`.
+   - `tab`, the head's picker. `arena planning [N]` is #1166.
    - `plan.zig`: `Window` gains `backlog`, `unplanned` becomes `no_goal` titled `no goal`, and
      `slot()` takes the screen. Doing's slots lose goals and not planned, and landed takes the
      right column.
