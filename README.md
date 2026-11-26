@@ -6,7 +6,7 @@ Each tmux window is a column. The focused one sits in the middle and its neighbo
 the sides, the way a scrolling window manager lays out a desktop. Sessions are stacked: left and
 right move between windows, up and down between sessions.
 
-![The strip: one window focused, its neighbours peeking, the sessions in a rail](docs/screenshots/strip.png)
+![The strip: one window focused, its neighbours peeking](docs/screenshots/strip.png)
 
 arena is a tmux client, not a replacement for it. Your sessions live in the tmux server as they
 always did; arena draws them and leaves them running when it quits.
@@ -17,12 +17,10 @@ always did; arena draws them and leaves them running when it quits.
   turning gradient. The first and last columns sit flush against the edges.
 - **Report this.** `Alt+!` (or Report this in the menu) asks one line, "what's wrong?", and files a
   babylon ticket in arena with it: what the pointer is over, what is picked, the view, the
-  window's size, the rail's width and arena's commit. The screen as text (with the styles around
+  window's size and arena's commit. The screen as text (with the styles around
   the pointer) and the last input are saved beside it in `$XDG_STATE_HOME/arena/reports/`, so a
   bug arrives reproducible. What is typed into a pane is counted there, never kept.
-- **A rail of sessions** down the left, with each one's window count. `w` in normal mode or a click on its
-  top narrows it to two letters a session and a mark and time a Claude; resting the pointer on
-  the narrow rail draws it wide over the strip until the pointer leaves.
+
 - **Marks on windows running Claude Code**: `◐` turning while it works, or while a subagent it
   started works, `◔` between turns while only a shell it started runs, `◉` once it is done and
   until you look, `▲` while it waits on an answer; a session's mark has a count when several of
@@ -30,10 +28,7 @@ always did; arena draws them and leaves them running when it quits.
   rang its bell or `#` for one with output where `monitor-activity` is on. One out of view that comes to wait or is done
   is a desktop notification too, through `notify-send` where there is one. arena's Claude Code plugin sets the pane option `@arena_claude` to
   `working`, `background`, `done`, `waiting` or `stalled` (its turn ended on an API error) ([Install](#install)).
-- **Its Claudes listed** under the sessions in the rail, each session's together: the session whose
-  Claude most wants looking at first, and in it the most pressing, or, a click on their rule
-  away, the one heard from last first; the session in view has its name in amber there, and the
-  Claude in view its title. A Claude has its mark, what its conversation is about
+- **Its Claudes listed** on the plan, in flight, and in the go-to list. A Claude has its mark, what its conversation is about
   and how long it has been in its state; under that what it is doing, waits for or last said,
   with how long its last turn took, or `quiet` and how long when it has worked ten minutes with
   nothing heard from it; under that its branch (or `no repo`, `detached` and the commit), its
@@ -52,7 +47,7 @@ always did; arena draws them and leaves them running when it quits.
 - **Home is the plan**, from [babylon](https://github.com/lessthanseventy/babylon)'s tickets, which every
   Claude on the machine shares: what is running, what comes next and why, how far each goal has
   got, and what landed. `arena` with no session named opens it, and `b` in normal mode, a click on
-  the board's row atop the rail and `arena inbox` go there. The orchestrator's column is pinned on
+  `◆ home` in the foot row and `arena inbox` go there. The orchestrator's column is pinned on
   its right (60 cells, less on a narrow screen), and at half a screen home shows one of the two,
   `p` for the plan and `o` for the column.
 
@@ -159,7 +154,7 @@ arena             # home: the plan and the orchestrator's column; with no board,
 arena work        # the session called work, made if it is not there
 arena -L socket   # a tmux server other than the default one
 arena plan 240    # the plan with its pick on ticket 240, in the arena that is running (`arena board 240` is the same)
-arena show %290   # pane 290 in front: its session and window, picked in the rail
+arena show %290   # pane 290 in front: its session and window
 arena show '#324' # the pane of the Claude holding ticket 324
 arena inbox       # home, with what needs you atop the orchestrator's column
 ```
@@ -181,7 +176,7 @@ There are two modes, and a single letter is never arena's in the first. In inser
 every key goes to the shown pane, apart from a few Alt chords. `Ctrl+Space` makes it normal,
 where no key is typed into a pane, `NORMAL` shows at the bottom-left and the row under the strip
 says the keys; `i`, `Esc` or `Ctrl+Space` is insert again. A click on a pane is insert, and one
-on the rail is normal. With the board open, `Ctrl+Space` focuses the orchestrator's column, as
+on the foot row is normal. With the board open, `Ctrl+Space` focuses the orchestrator's column, as
 `Alt+l`.
 
 Alt+j, Alt+m, Alt+o, Alt+p and Alt+w are not arena's, so they reach Claude Code: Alt+o toggles
@@ -191,12 +186,12 @@ In normal mode:
 
 | Key | Does |
 |---|---|
-| `j` `k` | the pick down or up the rail; `⏎` goes to it, `space` opens it |
+| `j` `k` | the session below, above |
 | `]` `[` | the next or previous Claude that waits or is done |
 | `h` `l` | the window to the left, to the right |
 | `1` … `9` | that window |
 | `H` `L` | move the window left, right |
-| `J` `K` | move the session down, up the rail |
+| `J` `K` | move the session down, up |
 | `;` `'` | make the window narrower, wider; tmux keeps the width |
 | `c` | a new window |
 | `x` | close the window, after asking |
@@ -207,7 +202,7 @@ In normal mode:
 | `B` | the board |
 | `n` | the needs-you inbox |
 | `g` | the gate's modal, for the run in progress |
-| `w` | the rail narrow, and wide again |
+
 | `m` | the menu |
 | `?` | these keys |
 | `Q` | leave; the sessions keep running |
@@ -219,26 +214,20 @@ history), `Alt+q` and `Alt+!`.
 
 With the mouse:
 
-- Click a column, a dot under the strip, or a session in the rail to go there. With the pointer
+- Click a column or a dot under the strip to go there. With the pointer
   on the row of dots it has each window's number and name instead, to click, and the wheel there
   steps through the windows.
-- Click a Claude in the rail to go to its window, the rule over them to change their order, the
-  rail's top to narrow or widen it. Click a subagent's row under it and that Claude shows the
-  subagent too: arena types Down into it until its list of agents has the pointer, then to the
-  subagent's row, and Enter.
+
 - In the overview, drag a window's picture onto another to take its place, in its own session or
   any other, or onto the rest of a session's row to put it at that session's end.
 - Click a pane to select it; drag the line between panes to resize them: over it, the pointer
   shows which way it goes.
-- Drag a column's title onto another column and its window takes that place; onto a session in
-  the rail and it goes there. Click a title twice to rename; middle-click it to close.
-- Drag a session up or down the rail to move it; the order is kept in the tmux server.
-  Middle-click a session to close it, after asking; click `+ new` under the last for another.
+- Drag a column's title onto another column and its window takes that place. Click a title twice
+  to rename; middle-click it to close.
 - Drag in a pane to select text, which is copied when you let go. Two clicks copy a word.
   Where the program in the pane uses the mouse itself, it gets the mouse instead.
-- The wheel scrolls the pane under it. Over the rail it steps through sessions; sideways it steps
-  through windows.
-- Right-click, or the button at the foot of the rail, opens the menu.
+- The wheel scrolls the pane under it; sideways it steps through windows.
+- Right-click, or `≡` in the foot row, opens the menu.
 
 ## Notes
 

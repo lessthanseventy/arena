@@ -28,13 +28,7 @@ const build_options = @import("build_options");
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 
-pub const rail_button = "≡ menu";
-pub const rail_new = "+ new";
 const history_lines = 5000;
-const rail_wide = 36;
-const rail_narrow = 10;
-/// How long the pointer rests on the narrow rail before it is drawn wide over the strip.
-const dwell_ms = 300;
 /// How long the pointer or the pick rests on a ticket or a Claude before a peek opens, and how often an open one is drawn again.
 const look_ms = 400;
 const look_live_ms = 500;
@@ -58,8 +52,6 @@ pub const max_tabs = 32;
 pub const tab_name = 16;
 /// Wheel and swipe steps that move between windows or sessions are taken this far apart.
 const nav_gap_ms = 150;
-/// A turn of the wheel over the rail's agents scrolls them this many Claudes.
-const wheel_agents = 3;
 
 /// A sideways swipe steps once it has gone this many wheel events one way.
 const swipe_events = 3;
@@ -319,7 +311,7 @@ pub const Window = struct {
 pub const Session = struct {
     id: u32,
     name: []u8 = &.{},
-    /// Its place on the rail, as arena last left it in tmux; none for a session not yet moved.
+    /// Its place in the order, as arena last left it in tmux; none for a session not yet moved.
     order: u32 = std.math.maxInt(u32),
     wins: std.ArrayList(*Window) = .empty,
     focus: usize = 0,
@@ -329,18 +321,18 @@ pub const Session = struct {
     /// Columns take the whole view, with no neighbour peeking.
     full: bool = false,
 
-    /// babylon's own session, where its pipeline runs gates: kept last, off the rail and the
+    /// babylon's own session, where its pipeline runs gates: kept last, off the lists and the
     /// agents, and reached from the board.
     pub fn gate(s: *const Session) bool {
         return std.mem.eql(u8, s.name, "babylon-gate");
     }
 
-    /// The orchestrator's session (`babylon orchestrator` starts it): kept off the rail with the gate.
+    /// The orchestrator's session (`babylon orchestrator` starts it): kept off the lists with the gate.
     pub fn orchestrator(s: *const Session) bool {
         return std.mem.eql(u8, s.name, "orchestrator");
     }
 
-    pub fn offRail(s: *const Session) bool {
+    pub fn unlisted(s: *const Session) bool {
         return s.gate() or s.orchestrator();
     }
 
@@ -441,7 +433,7 @@ const max_ask_options = 9;
 /// The Claudes a card can be given to, each picked by its number.
 pub const give_rows = 9;
 pub const max_repos = 32;
-/// The orchestrator's column's width beside the board, kept to 2/5 of what the rail leaves.
+/// The orchestrator's column's width beside the board, kept to 2/5 of the width.
 pub const side_w = 60;
 
 fn anyKey(pressed: []const u8, names: []const []const u8) bool {
@@ -483,30 +475,20 @@ pub const App = struct {
     switches: u32 = 0,
     /// The orchestrator's column was folded away: the board opens without it until it is unfolded.
     side_folded: bool = false,
-    rail: enum { wide, narrow } = .wide,
-    /// The narrow rail drawn wide over the strip, while the pointer is on it.
-    peek: bool = false,
+
     /// The pointer is on the row under the strip, which then has the windows' names for dots.
     over_dots: bool = false,
     /// Normal mode: keys drive arena and none is typed into a pane. Only held while nothing lies
     /// over the strip, or the orchestrator's column beside the board is focused; otherwise the
     /// overlay is the mode.
     normal: bool = false,
-    /// Where the rail's pick was moved to in normal mode; none puts it on what is in view.
-    rail_pick: ?RailPick = null,
+
     /// The popup over the strip in normal mode, which holds the keys while it is open.
     popup: ?Popup = null,
     /// The digits typed after `#` in normal mode, a ticket's number to open, while one is being typed.
     hash: [8]u8 = undefined,
     hash_len: ?u8 = null,
-    agent_sort: AgentSort = .urgency,
-    /// The rail's list of Claudes was scrolled to start at the `n`th, beside the window `at` that
-    /// was in view then; going to another puts it back to following the Claude in view.
-    agent_skip: ?struct { n: usize, at: ?*const Window } = null,
-    /// The repos whose pipeline folds are open, as hashes; 0 for a free place.
-    pipeline_open: [8]u64 = @splat(0),
-    /// When the pointer came to rest on the narrow rail; 0 while it is elsewhere.
-    hover_at: i64 = 0,
+
     /// The peek open, what the pointer rests on and since when, what Esc put away, where the
     /// pointer was as it opened (none: it follows the pick), when it was last drawn and when a
     /// key was last typed.
@@ -533,7 +515,7 @@ pub const App = struct {
     motion: bool = true,
     phase: f32 = 0,
     term_w: u16 = 80,
-    /// The strip's width: the terminal's, less the session rail and its gap.
+    /// The strip's width: the terminal's, or with the orchestrator beside the board, its window's.
     view_w: u16 = 80,
     /// The strip's height: the terminal's, less the row of dots under it.
     view_h: u16 = 23,
@@ -585,14 +567,13 @@ pub const App = struct {
     /// When `report_said` goes by itself, in `now`'s milliseconds; 0 for one that stays until a key.
     report_until: i64 = 0,
     /// What the held left button is moving: the line after a pane, to resize it, a window by
-    /// its title, along the strip, or a session by its name, along the rail.
+    /// its title, along the strip.
     drag: union(enum) {
         none,
         divider: struct { pane: u32, upright: bool, asked: i32 = -1 },
         title: u32,
         /// A window by its picture in the overview.
         thumb: u32,
-        session: u32,
         /// Text being selected in a pane, from the cell of it the button went down on.
         select: struct { pane: u32, x: u16, y: u16 },
         /// A click that focused a window: its program gets none of it, not even the let go.
@@ -828,16 +809,13 @@ pub const App = struct {
     }
 
     pub const Agent = struct { session: usize, win: *Window };
-    /// How lists of agents are ordered: the one that most wants looking at first, the one heard
-    /// from last, or by repo and ticket number, which no change of state moves.
-    pub const AgentSort = enum { urgency, recent, ticket };
 
-    /// The windows with a Claude, as many as `out` holds, grouped by session, as `agent_sort`
-    /// has them: the session with the first of its Claudes first, then in the rail's order.
+    /// The windows with a Claude, as many as `out` holds, grouped by session, the one with the
+    /// first of its Claudes that most wants looking at first.
     pub fn agents(app: *const App, out: []Agent) usize {
         var n: usize = 0;
         for (app.sessions.items, 0..) |s, si| for (s.wins.items) |win| {
-            if (s.offRail()) break;
+            if (s.unlisted()) break;
             if (!win.agent() or n == out.len) continue;
             out[n] = .{ .session = si, .win = win };
             n += 1;
@@ -877,24 +855,12 @@ pub const App = struct {
     }
 
     fn agentBefore(app: *const App, a: Agent, b: Agent) bool {
-        if (app.agent_sort == .ticket) return app.ticketBefore(a, b);
         if (a.session != b.session) {
             const ra = app.sessionRank(a.session);
             const rb = app.sessionRank(b.session);
             return ra > rb or (ra == rb and a.session < b.session);
         }
-        return app.agentRank(a.win) > app.agentRank(b.win);
-    }
-
-    /// Where a Claude goes in a list, as `agent_sort` has it: the higher, the sooner.
-    fn agentRank(app: *const App, win: *const Window) u64 {
-        // a Claude never heard from counts as the newest
-        const last = @max(win.at, win.since);
-        return switch (app.agent_sort) {
-            .urgency => urgency(win),
-            .recent => if (last == 0) std.math.maxInt(u32) else last,
-            .ticket => 0,
-        };
+        return urgency(a.win) > urgency(b.win);
     }
 
     /// The ticket a window's Claude works, by its branch, and its repo as the board has it.
@@ -981,26 +947,6 @@ pub const App = struct {
         return best;
     }
 
-    /// The stable order: by repo, then ticket number, sessions with no ticket last by name. It
-    /// reads only what a session's life does not change.
-    fn ticketBefore(app: *const App, a: Agent, b: Agent) bool {
-        if (a.session != b.session) {
-            const ka = app.sessionTicket(a.session);
-            const kb = app.sessionTicket(b.session);
-            if (ka != null and kb != null) {
-                if (keyBefore(ka.?, kb.?)) return true;
-                if (keyBefore(kb.?, ka.?)) return false;
-            } else if (ka != null or kb != null) return ka != null;
-            const order = std.mem.order(u8, app.sessions.items[a.session].name, app.sessions.items[b.session].name);
-            return order == .lt or (order == .eq and a.session < b.session);
-        }
-        const ka = app.ticketKey(a.win);
-        const kb = app.ticketKey(b.win);
-        if (ka != null and kb != null) return keyBefore(ka.?, kb.?);
-        if (ka != null or kb != null) return ka != null;
-        return a.win.id < b.win.id;
-    }
-
     /// The more pressing its state, the higher; of those alike, the longer in it.
     fn urgency(win: *const Window) u64 {
         const since: u64 = if (win.since == 0) std.math.maxInt(u32) else win.since;
@@ -1010,7 +956,7 @@ pub const App = struct {
     fn sessionRank(app: *const App, si: usize) u64 {
         var best: u64 = 0;
         for (app.sessions.items[si].wins.items) |win| if (win.agent()) {
-            best = @max(best, app.agentRank(win));
+            best = @max(best, urgency(win));
         };
         return best;
     }
@@ -1018,298 +964,9 @@ pub const App = struct {
     /// A subagent of a window's Claude, by its place among those in the background.
     pub const Sub = struct { agent: Agent, index: usize };
 
-    /// A repo's Claudes whose tickets are only waiting in babylon's pipeline, folded into one row
-    /// until it is opened.
-    pub const Fold = struct { repo: []const u8, count: usize, open: bool, session: ?usize = null };
-    pub const max_folds = 8;
-
-    /// A row of a list of agents: a session's name over its own, a window with a Claude, its
-    /// `Window.detail`, its branch, review and context, a subagent of its, what else it has
-    /// running in the background, how many Claudes are scrolled off above, a fold of the
-    /// pipeline's, or how many more there are than rows.
-    pub const AgentLine = union(enum) { session: usize, agent: Agent, detail: Agent, meta: Agent, sub: Sub, background: Agent, above: usize, pipeline: Fold, more: usize };
-
     /// The pane of the Claude asked for a subagent and the subagent's description, when arena
     /// stops trying, when it last sent a key, and how many Downs it has sent to reach the list.
     const Pick = struct { pane: u32, name: [320]u8 = undefined, len: usize, until: i64, sent_at: i64 = 0, downs: u8 = 0 };
-
-    /// Whether a ticket's Claude has nothing to do until babylon is done with it.
-    fn inPipeline(card: *const tickets.Card) bool {
-        if (card.status != .review) return false;
-        const stage = card.stage orelse return false;
-        for ([_][]const u8{ "queued", "verifying", "reviewing" }) |waiting| {
-            if (std.mem.eql(u8, stage, waiting)) return true;
-        }
-        return false;
-    }
-
-    pub fn repoHash(repo: []const u8) u64 {
-        return std.hash.Wyhash.hash(0, repo) | 1;
-    }
-
-    /// What a fold is picked and kept open by: its repo's hash, or for a session's, its id's.
-    pub fn foldKey(app: *const App, fold: Fold) u64 {
-        const si = fold.session orelse return repoHash(fold.repo);
-        return std.hash.Wyhash.hash(1, std.mem.asBytes(&app.sessions.items[si].id)) | 1;
-    }
-
-    fn foldOpen(app: *const App, key: u64) bool {
-        return std.mem.indexOfScalar(u64, &app.pipeline_open, key) != null;
-    }
-
-    /// Whether the rail folds each session's Claudes that are not moving: narrow, at home.
-    fn restFolded(app: *const App) bool {
-        const view = app.board_view orelse return false;
-        return view.home and app.rail == .narrow;
-    }
-
-    fn toggleFold(app: *App, hash: u64) void {
-        if (std.mem.indexOfScalar(u64, &app.pipeline_open, hash)) |at| {
-            app.pipeline_open[at] = 0;
-        } else if (std.mem.indexOfScalar(u64, &app.pipeline_open, 0)) |free| {
-            app.pipeline_open[free] = hash;
-        }
-        app.dirty = true;
-    }
-
-    /// The rail's Claudes: those whose tickets have landed or closed are left out, and those only
-    /// waiting in the pipeline are folded a row to a repo, in order of name, unless the repo is
-    /// open. The Claude in view stays, whatever its ticket, and so does one whose repo finds no
-    /// fold left. Returns how many Claudes and folds.
-    fn railList(app: *const App, out: []Agent, folds: []Fold) struct { usize, usize } {
-        var all: [64]Agent = undefined;
-        const total = app.agents(&all);
-        const rest = app.restFolded();
-        var n: usize = 0;
-        var nf: usize = 0;
-        for (all[0..total]) |a| {
-            const card = if (app.agentSelected(a)) null else if (std.fmt.parseInt(u32, branchTicket(a.win.text(.branch)) orelse "", 10)) |id| app.ticketCard(id) else |_| null;
-            if (card) |c| if (c.status == .done) continue;
-            if (rest) {
-                if (a.win.claude != .working and a.win.claude != .waiting) {
-                    const at = for (folds[0..nf], 0..) |f, i| {
-                        if (f.session == a.session) break i;
-                    } else if (nf < folds.len) blk: {
-                        const fold: Fold = .{ .repo = "", .count = 0, .open = false, .session = a.session };
-                        folds[nf] = .{ .repo = "", .count = 0, .open = app.foldOpen(app.foldKey(fold)), .session = a.session };
-                        nf += 1;
-                        break :blk nf - 1;
-                    } else null;
-                    if (at) |i| {
-                        folds[i].count += 1;
-                        if (!folds[i].open) continue;
-                    }
-                }
-            } else if (card) |c| if (inPipeline(c)) {
-                const repo = c.repo orelse "";
-                const at = for (folds[0..nf], 0..) |f, i| {
-                    if (std.mem.eql(u8, f.repo, repo)) break i;
-                } else if (nf < folds.len) blk: {
-                    const fold: Fold = .{ .repo = repo, .count = 0, .open = false };
-                    folds[nf] = .{ .repo = repo, .count = 0, .open = app.foldOpen(app.foldKey(fold)) };
-                    nf += 1;
-                    break :blk nf - 1;
-                } else null;
-                if (at) |i| {
-                    folds[i].count += 1;
-                    if (!folds[i].open) continue;
-                }
-            };
-            out[n] = a;
-            n += 1;
-        }
-        std.mem.sort(Fold, folds[0..nf], {}, struct {
-            fn before(_: void, a: Fold, b: Fold) bool {
-                if (a.session != null and b.session != null) return a.session.? < b.session.?;
-                return std.mem.order(u8, a.repo, b.repo) == .lt;
-            }
-        }.before);
-        return .{ n, nf };
-    }
-
-    /// The agents in at most `room` rows of `out`, as `agents` orders them, with each one's
-    /// detail, its branch, review and context, and its background under it when `details`, where
-    /// it has them.
-    pub fn agentLines(app: *const App, out: []AgentLine, room: usize, details: bool) usize {
-        var found: [64]Agent = undefined;
-        var folds: [max_folds]Fold = undefined;
-        const count, const nf = app.railList(&found, &folds);
-        const from = app.listFrom(found[0..count], folds[0..nf], room, details);
-        return linesFrom(out, room, details, found[0..count], folds[0..nf], from);
-    }
-
-    /// The first Claude listed: where the human scrolled to while the Claude they scrolled
-    /// beside is still in view, else the first from which the selected one shows.
-    fn listFrom(app: *const App, found: []const Agent, folds: []const Fold, room: usize, details: bool) usize {
-        if (app.agent_skip) |skip| {
-            if (skip.at == if (app.cur()) |s| s.focused() else null) return @min(skip.n, found.len -| 1);
-        }
-        const selected = for (found) |a| {
-            if (app.agentSelected(a)) break true;
-        } else false;
-        var scratch: [64]AgentLine = undefined;
-        var from: usize = 0;
-        while (true) : (from += 1) {
-            const n = linesFrom(&scratch, room, details, found, folds, from);
-            if (!selected or from + 1 >= found.len) return from;
-            for (scratch[0..n]) |line| {
-                if (line == .agent and app.agentSelected(line.agent)) return from;
-            }
-        }
-    }
-
-    fn linesFrom(out: []AgentLine, room: usize, details: bool, found: []const Agent, folds: []const Fold, from: usize) usize {
-        if (from == 0 or room == 0 or out.len == 0) return agentLinesFrom(out, room, details, found, folds);
-        out[0] = .{ .above = from };
-        return 1 + agentLinesFrom(out[1..], room - 1, details, found[from..], folds);
-    }
-
-    /// Whether `a` is the Claude in view: its window is its session's focus, and that session
-    /// is the current one, with no board over it.
-    pub fn agentSelected(app: *const App, a: Agent) bool {
-        const s = app.sessions.items[a.session];
-        return s.id == app.current and app.board_view == null and s.focused() == a.win;
-    }
-
-    /// The line of `session`'s fold of what is not moving, when it has one not yet listed and a row for it.
-    fn restLine(out: []AgentLine, n: *usize, rows: usize, folds: []const Fold, session: usize, emitted: *u16) void {
-        for (folds, 0..) |fold, i| {
-            if (fold.session != session or n.* == rows or emitted.* >> @intCast(i) & 1 == 1) continue;
-            out[n.*] = .{ .pipeline = fold };
-            n.* += 1;
-            emitted.* |= @as(u16, 1) << @intCast(i);
-        }
-    }
-
-    fn agentLinesFrom(out: []AgentLine, room: usize, details: bool, found: []const Agent, folds: []const Fold) usize {
-        const count = found.len;
-        const rows = @min(out.len, room);
-        if (rows == 0) return 0;
-        var n: usize = 0;
-        var last: ?usize = null;
-        var emitted: u16 = 0;
-        for (found[0..count]) |a| {
-            if (n == rows) break;
-            if (last) |l| if (l != a.session) restLine(out, &n, rows, folds, l, &emitted);
-            if (n == rows) break;
-            // a Claude's rows go together: past the first, one they do not all fit is left to the count
-            const rest = @as(usize, @intFromBool(details and a.win.detail().len > 0)) +
-                @intFromBool(details and (a.win.text(.branch).len > 0 or a.win.review != .none or a.win.tokens > 0)) +
-                (if (details) a.win.subs() else 0) +
-                @intFromBool(details and a.win.text(.background).len > 0);
-            if (n > 0 and n + @intFromBool(last != a.session) + 1 + rest > rows) break;
-            if (last != a.session) {
-                out[n] = .{ .session = a.session };
-                n += 1;
-                last = a.session;
-            }
-            if (n == rows) break;
-            out[n] = .{ .agent = a };
-            n += 1;
-            if (details and n < rows and a.win.detail().len > 0) {
-                out[n] = .{ .detail = a };
-                n += 1;
-            }
-            if (details and n < rows and (a.win.text(.branch).len > 0 or a.win.review != .none or a.win.tokens > 0)) {
-                out[n] = .{ .meta = a };
-                n += 1;
-            }
-            if (details) for (0..a.win.subs()) |i| {
-                if (n == rows) break;
-                out[n] = .{ .sub = .{ .agent = a, .index = i } };
-                n += 1;
-            };
-            if (details and n < rows and a.win.text(.background).len > 0) {
-                out[n] = .{ .background = a };
-                n += 1;
-            }
-        }
-        if (last) |l| restLine(out, &n, rows, folds, l, &emitted);
-        var shown: usize = 0;
-        for (out[0..n]) |line| shown += @intFromBool(line == .agent or line == .pipeline);
-        // a session's fold comes after its Claudes, one with none moving under its own header; the
-        // pipeline's folds after all of them, once all have been listed
-        if (shown - @popCount(emitted) == count) {
-            for (folds, 0..) |fold, i| if (fold.session) |si| {
-                if (emitted >> @intCast(i) & 1 == 1) continue;
-                if (n + 2 > rows) break;
-                out[n] = .{ .session = si };
-                out[n + 1] = .{ .pipeline = fold };
-                n += 2;
-                shown += 1;
-            };
-            for (folds) |fold| if (fold.session == null) {
-                if (n == rows) break;
-                out[n] = .{ .pipeline = fold };
-                n += 1;
-                shown += 1;
-            };
-        }
-        if (shown < count + folds.len) {
-            if (n == rows) {
-                if (out[n - 1] == .agent or out[n - 1] == .pipeline) shown -= 1;
-                n -= 1;
-            }
-            out[n] = .{ .more = count + folds.len - shown };
-            n += 1;
-        }
-        return n;
-    }
-
-    /// Scrolls the rail's list of Claudes by `by`, up while the wheel turns up, as far as there
-    /// is more to show. Going to another Claude puts the list back to following it.
-    fn scrollAgents(app: *App, by: i32) void {
-        var found: [64]Agent = undefined;
-        var folds: [max_folds]Fold = undefined;
-        const count, const nf = app.railList(&found, &folds);
-        const rows = app.railAgentRows();
-        const details = app.railDrawnW() == app.railWideW();
-        const from = app.listFrom(found[0..count], folds[0..nf], rows, details);
-        const to: usize = @intCast(std.math.clamp(@as(i64, @intCast(from)) + by, 0, @as(i64, @intCast(count -| 1))));
-        app.agent_skip = .{ .n = to, .at = if (app.cur()) |s| s.focused() else null };
-        app.dirty = true;
-    }
-
-    /// Whether the rail's list has Claudes scrolled off above it, and whether below.
-    fn agentsOverflow(app: *const App) struct { above: bool, below: bool } {
-        var lines: [64]AgentLine = undefined;
-        const n = app.railAgents(&lines);
-        return .{ .above = n > 0 and lines[0] == .above, .below = n > 0 and lines[n - 1] == .more };
-    }
-
-    /// The rail's agents, as many as have rows, with their details while the rail is drawn wide.
-    pub fn railAgents(app: *const App, out: []AgentLine) usize {
-        return app.agentLines(out, app.railAgentRows(), app.railDrawnW() == app.railWideW());
-    }
-
-    /// Whether row `y` of the rail is one of its agents' rows.
-    fn inRailAgents(app: *const App, y: u16) bool {
-        const top = app.railAgentsRow() + 1;
-        return y >= top and y - top < app.railAgentRows();
-    }
-
-    /// The row of the rail's agents at row `y`, null for any other row.
-    fn railAgentAt(app: *const App, y: u16) ?AgentLine {
-        var lines: [64]AgentLine = undefined;
-        const n = app.railAgents(&lines);
-        const top = app.railAgentsRow() + 1;
-        return if (y >= top and y - top < n) lines[y - top] else null;
-    }
-
-    /// A click on the row `line` of the rail's agents that goes nowhere but along the list.
-    fn clickList(app: *App, line: AgentLine) void {
-        var lines: [64]AgentLine = undefined;
-        const n = app.railAgents(&lines);
-        var shown: i32 = 0;
-        for (lines[0..n]) |l| shown += @intFromBool(l == .agent);
-        const page: i32 = @max(1, shown);
-        switch (line) {
-            .above => app.scrollAgents(-page),
-            .more => app.scrollAgents(page),
-            .pipeline => |fold| app.toggleFold(app.foldKey(fold)),
-            else => {},
-        }
-    }
 
     fn goAgent(app: *App, a: Agent) !void {
         app.dirty = true;
@@ -1408,49 +1065,10 @@ pub const App = struct {
         return n;
     }
 
-    /// What the rail's pick is on, by id: a session in its list, a Claude's window in its own, or
-    /// a fold by its key (`foldKey`): its repo's hash, or its session's id's.
-    pub const RailPick = union(enum) { session: u32, agent: u32, fold: u64 };
-
-    /// The rail as one list, as it is drawn: each session, then its Claudes, then the pipeline's folds.
-    fn railPicks(app: *const App, out: []RailPick) usize {
-        var n: usize = 0;
-        for (app.sessions.items[0..app.railShown()]) |s| {
-            if (n == out.len) return n;
-            out[n] = .{ .session = s.id };
-            n += 1;
-        }
-        var found: [64]Agent = undefined;
-        var folds: [max_folds]Fold = undefined;
-        const count, const nf = app.railList(&found, &folds);
-        for (found[0..count]) |a| {
-            if (n == out.len) break;
-            out[n] = .{ .agent = a.win.id };
-            n += 1;
-        }
-        for (folds[0..nf]) |fold| {
-            if (n == out.len) break;
-            out[n] = .{ .fold = app.foldKey(fold) };
-            n += 1;
-        }
-        return n;
-    }
-
-    /// The rail's pick in normal mode over the strip: where the human put it, else on what is in
-    /// view, the Claude in the list or its session. Null otherwise.
-    pub fn railPicked(app: *const App) ?RailPick {
-        if (!app.normal or app.board_view != null) return null;
-        if (app.rail_pick) |pick| return pick;
-        const s = app.cur() orelse return null;
-        if (s.focused()) |win| if (win.agent()) return .{ .agent = win.id };
-        return .{ .session = s.id };
-    }
-
-    /// The popup over the strip: what it shows, the pick the rail had when it opened, and the
+    /// The popup over the strip: the window of the Claude it shows, and the
     /// viewport of the pane it shows, which it scrolls and puts back.
     pub const Popup = struct {
-        entry: RailPick,
-        from: ?RailPick,
+        entry: u32,
         /// How many rows of the pane's viewport are cut off its top: those under its last line of
         /// text are not shown, and this stays while it is scrolled.
         anchor: usize = 0,
@@ -1473,12 +1091,8 @@ pub const App = struct {
         boxed: bool = false,
     };
 
-    fn entryWindow(app: *const App, entry: RailPick) ?*Window {
-        return switch (entry) {
-            .agent => |id| (app.agentById(id) orelse return null).win,
-            .session => |id| (app.sessionById(id) orelse return null).focused(),
-            .fold => null,
-        };
+    fn entryWindow(app: *const App, entry: u32) ?*Window {
+        return (app.agentById(entry) orelse return null).win;
     }
 
     /// The question the popup's Claude waits on, if it waits on one.
@@ -1540,19 +1154,10 @@ pub const App = struct {
         }
     }
 
-    /// The pane an entry of the rail stands for: a Claude's, or a session's focused window's active one.
-    fn entryPane(app: *App, entry: RailPick) ?*Pane {
-        switch (entry) {
-            .agent => |id| {
-                const a = app.agentById(id) orelse return null;
-                return app.paneById(a.win.agent_pane) orelse a.win.activePane();
-            },
-            .session => |id| {
-                const s = app.sessionById(id) orelse return null;
-                return (s.focused() orelse return null).activePane();
-            },
-            .fold => return null,
-        }
+    /// The pane of the Claude in window `entry`.
+    fn entryPane(app: *App, entry: u32) ?*Pane {
+        const a = app.agentById(entry) orelse return null;
+        return app.paneById(a.win.agent_pane) orelse a.win.activePane();
     }
 
     /// The pane the popup shows.
@@ -1566,18 +1171,16 @@ pub const App = struct {
         return bar.offset + bar.len >= bar.total;
     }
 
-    fn openPopup(app: *App, entry: RailPick) void {
+    fn openPopup(app: *App, entry: u32) void {
         if (app.entryPane(entry) == null) return;
-        app.popup = .{ .entry = entry, .from = app.rail_pick };
+        app.popup = .{ .entry = entry };
         app.popupShow(entry);
     }
 
-    /// Shows `entry` in the popup: the pane before it has its viewport back, and this one's is kept
-    /// and put at its newest. A pane of a session tmux does not stream is captured again.
-    fn popupShow(app: *App, entry: RailPick) void {
+    /// Shows `entry` in the popup: its pane's viewport is kept and put at its newest. A pane of a
+    /// session tmux does not stream is captured again.
+    fn popupShow(app: *App, entry: u32) void {
         const pop = &app.popup.?;
-        app.popupRestore();
-        pop.entry = entry;
         const pane = app.entryPane(entry) orelse return;
         const bar = pane.term.screens.active.pages.scrollbar();
         pop.saved = .{ .pane = pane.id, .offset = bar.offset, .bottom = following(pane) };
@@ -1597,17 +1200,16 @@ pub const App = struct {
         pane.term.scrollViewport(if (saved.bottom) .bottom else .{ .row = saved.offset });
     }
 
-    /// Puts away the popup: the pane has its viewport back and the pick is where it was.
+    /// Puts away the popup: the pane has its viewport back.
     fn closePopup(app: *App) void {
         if (app.popup == null) return;
         app.popupRestore();
-        app.rail_pick = app.popup.?.from;
         app.popup = null;
         app.dirty = true;
     }
 
     /// A key in the popup: `j` `k` `C-d` `C-u` `g` `G` scroll the pane's history, `/` searches it,
-    /// `h` `l` leaf through the rail, Enter goes there into insert, and `q` or Esc close it.
+    /// Enter goes there into insert, and `q` or Esc close it.
     fn popupKey(app: *App, key: []const u8) !void {
         const pop = &app.popup.?;
         const pane = app.entryPane(pop.entry) orelse return app.closePopup();
@@ -1620,8 +1222,8 @@ pub const App = struct {
         } else if (anyKey(key, &.{"\r"})) {
             const entry = pop.entry;
             app.closePopup();
-            app.rail_pick = entry;
-            _ = try app.railKey("\r");
+            app.normal = false;
+            if (app.agentById(entry)) |a| try app.goAgent(a);
         } else if (anyKey(key, &.{ "j", "\x1b[B", "\x1bOB" })) {
             pane.term.scrollViewport(.{ .delta = 1 });
         } else if (anyKey(key, &.{ "k", "\x1b[A", "\x1bOA" })) {
@@ -1642,17 +1244,6 @@ pub const App = struct {
         } else if (anyKey(key, &.{"r"})) {
             pop.mode = .reply;
             pop.reply_len = 0;
-        } else if (anyKey(key, &.{ "h", "l" })) {
-            var list: [96]RailPick = undefined;
-            const n = app.railPicks(&list);
-            const at = for (list[0..n], 0..) |entry, i| {
-                if (std.meta.eql(entry, pop.entry)) break i;
-            } else return;
-            const to = if (key[0] == 'l') @min(at + 1, n - 1) else at -| 1;
-            if (to != at and list[to] != .fold) {
-                pop.mode = .view;
-                app.popupShow(list[to]);
-            }
         }
     }
 
@@ -1688,113 +1279,29 @@ pub const App = struct {
         }
     }
 
-    /// A key on the rail's pick, in normal mode over the strip: `j` `k` step to the session below or
-    /// above while nothing is picked, else the pick through the rail,
-    /// `]` `[` to the next or previous Claude waiting or done, and Enter goes to it, into insert.
-    /// Moving it changes nothing in the strip. Whether the key was the pick's.
-    fn railKey(app: *App, key: []const u8) !bool {
+    /// A key in normal mode over the strip: `j` `k` step to the session below or above, `]` `[` go
+    /// to the next or previous Claude waiting or done, space opens the Claude in view and Enter
+    /// goes into insert. Whether the key was one of them.
+    fn sessionKey(app: *App, key: []const u8) !bool {
         if (app.board_view != null) return false;
-        const down = anyKey(key, &.{ "j", "\x1b[B", "\x1bOB" });
-        const up = anyKey(key, &.{ "k", "\x1b[A", "\x1bOA" });
-        if ((down or up) and app.rail_pick == null) {
-            try app.sessionBy(if (down) 1 else -1);
-            return true;
-        }
-        var list: [96]RailPick = undefined;
-        const n = app.railPicks(&list);
-        if (n == 0) return false;
-        const here = app.railPicked();
-        const at = for (list[0..n], 0..) |entry, i| {
-            if (here != null and std.meta.eql(entry, here.?)) break i;
-        } else null;
-        if (down) {
-            app.rail_pick = list[if (at) |i| @min(i + 1, n - 1) else 0];
-        } else if (up) {
-            app.rail_pick = list[if (at) |i| i -| 1 else n - 1];
+        if (anyKey(key, &.{ "j", "\x1b[B", "\x1bOB" })) {
+            try app.sessionBy(1);
+        } else if (anyKey(key, &.{ "k", "\x1b[A", "\x1bOA" })) {
+            try app.sessionBy(-1);
         } else if (anyKey(key, &.{ "]", "[" })) {
-            var found: [64]Agent = undefined;
-            const m = app.needy(&found);
-            if (m == 0) return true;
-            const from = if (here) |pick| switch (pick) {
-                .agent => |id| for (found[0..m], 0..) |a, i| {
-                    if (a.win.id == id) break i;
-                } else null,
-                .session, .fold => null,
-            } else null;
-            const len: i32 = @intCast(m);
-            const by: i32 = if (key[0] == ']') 1 else -1;
-            const to: i32 = if (from) |i| @mod(@as(i32, @intCast(i)) + by, len) else if (by > 0) 0 else len - 1;
-            app.rail_pick = .{ .agent = found[@intCast(to)].win.id };
+            try app.stepAgent(if (key[0] == ']') 1 else -1);
         } else if (anyKey(key, &.{" "})) {
-            app.openPopup(here orelse return true);
-            return true;
+            const win = (app.cur() orelse return true).focused() orelse return true;
+            if (win.agent()) app.openPopup(win.id);
         } else if (anyKey(key, &.{"\r"})) {
-            const pick = here orelse return true;
-            if (pick == .fold) {
-                var found: [64]Agent = undefined;
-                var folds: [max_folds]Fold = undefined;
-                _, const nf = app.railList(&found, &folds);
-                for (folds[0..nf]) |fold| if (app.foldKey(fold) == pick.fold) app.toggleFold(pick.fold);
-                return true;
-            }
             app.normal = false;
-            app.rail_pick = null;
-            app.dirty = true;
-            switch (pick) {
-                .agent => |id| if (app.agentById(id)) |a| try app.goAgent(a),
-                .session => |id| if (app.sessionIndex(id)) |i| try app.sessionTo(i),
-                .fold => unreachable,
-            }
-            return true;
         } else return false;
         app.dirty = true;
-        app.showPick();
         return true;
     }
 
-    /// Scrolls the rail's list of Claudes to start at the pick when it is one the list has scrolled off.
-    fn showPick(app: *App) void {
-        const pick = app.rail_pick orelse return;
-        if (pick == .session) return;
-        var lines: [64]AgentLine = undefined;
-        const shown = app.railAgents(&lines);
-        for (lines[0..shown]) |line| switch (line) {
-            .agent => |a| if (pick == .agent and a.win.id == pick.agent) return,
-            .pipeline => |fold| if (pick == .fold and app.foldKey(fold) == pick.fold) return,
-            else => {},
-        };
-        var found: [64]Agent = undefined;
-        var folds: [max_folds]Fold = undefined;
-        const count, _ = app.railList(&found, &folds);
-        const to = switch (pick) {
-            .agent => |id| for (found[0..count], 0..) |a, i| {
-                if (a.win.id == id) break i;
-            } else return,
-            .fold => count -| 1,
-            .session => return,
-        };
-        app.agent_skip = .{ .n = to, .at = if (app.cur()) |s| s.focused() else null };
-    }
-
-    fn toggleRail(app: *App) void {
-        app.rail = if (app.rail == .wide) .narrow else .wide;
-        app.peek = false;
-        app.fit();
-        app.want_list = true;
-        app.dirty = true;
-    }
-
-    fn toggleSort(app: *App) void {
-        app.agent_sort = switch (app.agent_sort) {
-            .urgency => .recent,
-            .recent => .ticket,
-            .ticket => .urgency,
-        };
-        app.dirty = true;
-    }
-
     /// The peek's target is the ticket's card or the Claude's window.
-    pub const Look = union(enum) { ticket: u32, window: u32, fold: u64 };
+    pub const Look = union(enum) { ticket: u32, window: u32 };
 
     /// What a peek holds: the ticket and the Claude, either of which may be missing.
     pub const Peek = struct { card: ?*const tickets.Card, win: ?*const Window };
@@ -1803,14 +1310,6 @@ pub const App = struct {
     fn lookUnder(app: *const App, x: u16, y: u16) ?Look {
         if (app.menu != null or app.prompt != null or app.overview != null) return null;
         if (app.board_view) |view| if (view.boxed()) return null;
-        if (x < app.railDrawnW()) {
-            const line = app.railAgentAt(y) orelse return null;
-            return switch (line) {
-                .agent, .detail, .meta, .background => |a| .{ .window = a.win.id },
-                .pipeline => |fold| .{ .fold = app.foldKey(fold) },
-                else => null,
-            };
-        }
         if (app.feedUnder(x, y)) |look| return look;
         if (app.planShown()) {
             var sheet: sheets.Sheet = undefined;
@@ -1850,32 +1349,6 @@ pub const App = struct {
         return if (item.ticket) |id| .{ .ticket = id } else null;
     }
 
-    /// The fold of the rail that holds Claude `a`, if one does.
-    fn agentFold(app: *const App, a: Agent) ?u64 {
-        const card = if (app.agentSelected(a)) null else if (std.fmt.parseInt(u32, branchTicket(a.win.text(.branch)) orelse "", 10)) |id| app.ticketCard(id) else |_| null;
-        if (card) |c| if (c.status == .done) return null;
-        if (app.restFolded()) {
-            if (a.win.claude == .working or a.win.claude == .waiting) return null;
-            return app.foldKey(.{ .repo = "", .count = 0, .open = false, .session = a.session });
-        }
-        const c = card orelse return null;
-        return if (inPipeline(c)) repoHash(c.repo orelse "") else null;
-    }
-
-    /// The Claudes the rail's fold `key` holds, as many as `out` has room for.
-    pub fn foldMembers(app: *const App, key: u64, out: []Agent) usize {
-        var all: [64]Agent = undefined;
-        const total = app.agents(&all);
-        var n: usize = 0;
-        for (all[0..total]) |a| {
-            if (n == out.len) break;
-            if ((app.agentFold(a) orelse continue) != key) continue;
-            out[n] = a;
-            n += 1;
-        }
-        return n;
-    }
-
     /// The pointer moved with no button held: what it rests on starts its pause, and leaving
     /// what a peek is of closes it.
     fn hoverLook(app: *App, m: keys.Mouse) void {
@@ -1900,17 +1373,9 @@ pub const App = struct {
         } else if (app.look_rest) |rest| app.look_off = rest;
     }
 
-    /// What the pick is on, the board's card or the rail's entry, which a peek follows after a
-    /// pause with no key.
+    /// What the pick is on, the board's card, which a peek follows after a pause with no key.
     fn focusLook(app: *const App) ?Look {
-        const view = app.board_view orelse {
-            if (!app.key_typed or app.menu != null or app.prompt != null) return null;
-            return switch (app.railPicked() orelse return null) {
-                .agent => |id| .{ .window = id },
-                .fold => |key| .{ .fold = key },
-                .session => null,
-            };
-        };
+        const view = app.board_view orelse return null;
         if (!app.key_typed or view.boxed() or view.focus != .board or app.menu != null or app.prompt != null) return null;
         const card = app.pickedCard() orelse return null;
         return .{ .ticket = card.id };
@@ -1952,7 +1417,6 @@ pub const App = struct {
                 const card = app.ticketCard(id) orelse return null;
                 return .{ .card = card, .win = app.claudeOf(card) };
             },
-            .fold => return null,
             .window => |id| {
                 const a = app.agentById(id) orelse return null;
                 const card = if (std.fmt.parseInt(u32, branchTicket(a.win.text(.branch)) orelse "", 10)) |n| app.ticketCard(n) else |_| null;
@@ -2021,37 +1485,6 @@ pub const App = struct {
         return false;
     }
 
-    /// The pointer moved with no button held: resting on the narrow rail draws it wide over the
-    /// strip, after `dwell`, and leaving it draws it narrow again.
-    fn hoverRail(app: *App, x: u16) void {
-        if (app.rail == .wide or app.railW() == 0) return;
-        if (x < app.railDrawnW()) {
-            if (app.hover_at == 0 and !app.peek) app.hover_at = app.now;
-            return;
-        }
-        app.hover_at = 0;
-        if (app.peek) {
-            app.peek = false;
-            app.dirty = true;
-        }
-    }
-
-    /// Draws the narrow rail wide once the pointer has rested on it long enough. Returns how
-    /// long until it would.
-    pub fn dwell(app: *App) i64 {
-        return @min(app.railDwell(), app.lookStep());
-    }
-
-    fn railDwell(app: *App) i64 {
-        if (app.hover_at == 0 or app.overlay()) return std.math.maxInt(i64);
-        const left = app.hover_at + dwell_ms - app.now;
-        if (left > 0) return left;
-        app.hover_at = 0;
-        app.peek = true;
-        app.dirty = true;
-        return std.math.maxInt(i64);
-    }
-
     /// Whether a Claude is working in any window, its mark spinning.
     pub fn working(app: *const App) bool {
         for (app.sessions.items) |s| for (s.wins.items) |win| if (win.claude == .working or win.stirring) return true;
@@ -2080,41 +1513,14 @@ pub const App = struct {
         app.dirty = true;
     }
 
-    /// The session rail's width, the same whatever its names, so the strip does not move when a
-    /// Claude comes or goes. A terminal too narrow for it has none.
-    /// Narrow, the rail shows a session by a short name, and a Claude by its mark and ticket.
-    pub fn railW(app: *const App) u16 {
-        if (app.term_w < 48 or app.sessions.items.len == 0) return 0;
-        return if (app.rail == .wide) app.railWideW() else rail_narrow;
-    }
-
-    pub fn railWideW(app: *const App) u16 {
-        return @min(rail_wide, @max(rail_narrow, app.term_w / 3));
-    }
-
-    /// Where the rail's top row says how many need the human, right of `▤ board`.
-    pub const rail_needs_x = 9;
-
     /// How many items are the human's move.
     pub fn needsCount(app: *const App) usize {
         return if (app.board) |*b| b.needsYou().len else 0;
     }
 
-    /// The rail's top row's count of what needs the human, as ` ▲ N`; nothing with none, so the
-    /// row keeps its room for the rest.
-    pub fn railNeeds(app: *const App, buf: []u8) []const u8 {
-        if (app.needsCount() == 0) return "";
-        return std.fmt.bufPrint(buf, " ▲ {d}", .{app.needsCount()}) catch "";
-    }
-
-    /// The rail's width as drawn, which a narrow one peeking is not.
-    pub fn railDrawnW(app: *const App) u16 {
-        return if (app.peek and app.railW() > 0) app.railWideW() else app.railW();
-    }
-
     /// The strip's width, or with the orchestrator beside the board, its window's.
     pub fn fit(app: *App) void {
-        const full = app.fullW();
+        const full = app.term_w;
         app.view_w = if (app.columnAlone()) full else if (app.sided()) @min(side_w, full * 2 / 5) else full;
     }
 
@@ -3212,20 +2618,9 @@ pub const App = struct {
         return view.focus == .orchestrator and !view.boxed() and app.sideDue();
     }
 
-    /// The width right of the rail, the strip's or the board's and its side's.
-    pub fn fullW(app: *const App) u16 {
-        const rail = app.railW();
-        return app.term_w - if (rail > 0) rail + 1 else 0;
-    }
-
-    /// The board's left edge and width: right of the rail, and left of the side when it shows.
-    pub fn boardX(app: *const App) u16 {
-        return app.term_w - app.fullW();
-    }
-
     pub fn boardW(app: *const App) u16 {
-        if (app.planShown()) return app.fullW();
-        return if (app.sided()) app.fullW() -| app.view_w -| 1 else app.view_w;
+        if (app.planShown()) return app.term_w;
+        return if (app.sided()) app.term_w -| app.view_w -| 1 else app.view_w;
     }
 
     /// A new terminal size, with its cells' in pixels when the terminal says (0 when not):
@@ -3401,7 +2796,7 @@ pub const App = struct {
         for (old.items) |s| app.destroySession(s);
         std.sort.insertion(*Session, app.sessions.items, {}, struct {
             fn before(_: void, a: *Session, b: *Session) bool {
-                if (a.offRail() != b.offRail()) return b.offRail();
+                if (a.unlisted() != b.unlisted()) return b.unlisted();
                 // tmux lists sessions by name: with no place of their own, the oldest first
                 return a.order < b.order or (a.order == b.order and a.id < b.id);
             }
@@ -3606,7 +3001,7 @@ pub const App = struct {
     fn sessionBy(app: *App, delta: i32) !void {
         const at = app.sessionIndex(app.current) orelse return;
         const next = @as(i32, @intCast(at)) + delta;
-        if (next < 0 or next >= app.railSessions()) return;
+        if (next < 0 or next >= app.listedSessions()) return;
         try app.sessionTo(@intCast(next));
     }
 
@@ -3662,7 +3057,7 @@ pub const App = struct {
         app.dirty = true;
     }
 
-    const Name = union(enum) { window: u32, session: u32, pane: u32 };
+    const Name = union(enum) { window: u32, pane: u32 };
 
     /// What ends a word picked by two clicks.
     const word_ends = [_]u21{ ' ', '\t', '\'', '"', '`', '|', '│', ':', ';', ',', '(', ')', '[', ']', '{', '}', '<', '>', '$' };
@@ -3773,7 +3168,7 @@ pub const App = struct {
         const block = thumb_h + 1;
         const shown: usize = @max(1, app.view_h / block);
         const first = if (spot.session >= shown) spot.session - shown + 1 else 0;
-        if (session < first or session >= first + shown or session >= app.railSessions()) return null;
+        if (session < first or session >= first + shown or session >= app.listedSessions()) return null;
         return @intCast((session - first) * block);
     }
 
@@ -3807,7 +3202,7 @@ pub const App = struct {
     /// Escape and q close.
     fn overviewKey(app: *App, key: []const u8) !void {
         app.dirty = true;
-        const count = app.railSessions();
+        const count = app.listedSessions();
         if (count == 0) {
             app.overview = null;
             return;
@@ -4529,12 +3924,6 @@ pub const App = struct {
         return b.work(status, app.findText());
     }
 
-    /// The cards in `status` on the whole board, epics not counted: the rail's chip, which no find narrows.
-    pub fn railCount(app: *const App, status: tickets.Status) usize {
-        const b = if (app.board) |*b| b else return 0;
-        return b.work(status, "");
-    }
-
     pub fn boardCard(app: *const App, col: usize, row: usize) ?*const tickets.Card {
         var out: [max_cards]*const tickets.Card = undefined;
         const n = app.boardColumn(col, &out);
@@ -4595,7 +3984,7 @@ pub const App = struct {
     }
 
     pub fn boardColX(app: *const App, col: usize) u16 {
-        var x = app.boardX();
+        var x: u16 = 0;
         for (0..col) |c| x += app.boardColW(c);
         return x;
     }
@@ -4694,8 +4083,8 @@ pub const App = struct {
             items[m] = .{ .what = .{ .key = "\x1b" }, .key = "esc", .word = "close", .group = 2 };
             m += 1;
         }
-        const right = app.boardX() + app.boardW();
-        var x = app.boardX() + 1;
+        const right = app.boardW();
+        var x: u16 = 1;
         var n: usize = 0;
         for (items[0..m], 0..) |item, i| {
             const group = i > 0 and items[i - 1].group != item.group;
@@ -4775,8 +4164,8 @@ pub const App = struct {
     /// The card of the strip under (`x`, `y`), where the strip is drawn.
     fn stripCardAt(app: *const App, x: u16, y: u16) ?CardAt {
         const foot = app.footRows();
-        if (foot == 0 or y <= app.listH() or y + 1 >= app.view_h -| app.barRows() or x < app.boardX()) return null;
-        const k = (x - app.boardX()) / @max(1, app.stripCell());
+        if (foot == 0 or y <= app.listH() or y + 1 >= app.view_h -| app.barRows()) return null;
+        const k = x / @max(1, app.stripCell());
         var cards: [strip_n]*const tickets.Card = undefined;
         if (k >= app.stripCards(&cards)) return null;
         const done = for (tickets.statuses, 0..) |status, c| {
@@ -5034,8 +4423,8 @@ pub const App = struct {
         var repos: [max_repos][]const u8 = undefined;
         const count = b.repos(&repos);
         const orch: usize = if (app.halfHome()) cellCount(orch_link) + 2 else 0;
-        var x: u16 = app.boardX() + @as(u16, @intCast(cellCount(plan_title) + orch)) + 3;
-        const limit: u16 = app.boardX() + @as(u16, @intCast(draw.planHeadStart(app) -| 1));
+        var x: u16 = @as(u16, @intCast(cellCount(plan_title) + orch)) + 3;
+        const limit: u16 = @as(u16, @intCast(draw.planHeadStart(app) -| 1));
         var n: usize = 0;
         for (0..count + 1) |i| {
             if (n == out.len) break;
@@ -5110,7 +4499,7 @@ pub const App = struct {
 
     /// The plan's windows are laid out on this: the cells under the head's rule to the last row.
     fn planArea(app: *const App) sheets.Rect {
-        return .{ .x = app.boardX() + 1, .y = 2, .w = app.boardW() -| 2, .h = (app.view_h -| @intFromBool(app.halfHome())) -| 2 };
+        return .{ .x = 1, .y = 2, .w = app.boardW() -| 2, .h = (app.view_h -| @intFromBool(app.halfHome())) -| 2 };
     }
 
     /// Where `win` is on the screen: its title bar, body and shadow.
@@ -5272,18 +4661,18 @@ pub const App = struct {
     pub const orch_link = "o orchestrator";
 
     /// Where the plan tab is drawn and clicked, on the plan and on the board.
-    pub fn planTab(app: *const App) struct { x: u16, w: u16 } {
-        return .{ .x = app.boardX() + 1, .w = @intCast(cellCount(plan_tab)) };
+    pub fn planTab(_: *const App) struct { x: u16, w: u16 } {
+        return .{ .x = 1, .w = @intCast(cellCount(plan_tab)) };
     }
 
     /// Where the board tab is drawn and clicked, on the plan and on the board.
-    pub fn planLink(app: *const App) struct { x: u16, w: u16 } {
-        return .{ .x = app.boardX() + 1 + @as(u16, @intCast(cellCount(plan_tab) + cellCount(tab_sep))), .w = @intCast(cellCount(board_tab)) };
+    pub fn planLink(_: *const App) struct { x: u16, w: u16 } {
+        return .{ .x = 1 + @as(u16, @intCast(cellCount(plan_tab) + cellCount(tab_sep))), .w = @intCast(cellCount(board_tab)) };
     }
 
     /// Where the head's `o orchestrator` is drawn and clicked, at half a screen.
-    pub fn orchLink(app: *const App) struct { x: u16, w: u16 } {
-        return .{ .x = app.boardX() + @as(u16, @intCast(cellCount(plan_title))) + 2, .w = @intCast(cellCount(orch_link)) };
+    pub fn orchLink(_: *const App) struct { x: u16, w: u16 } {
+        return .{ .x = @as(u16, @intCast(cellCount(plan_title))) + 2, .w = @intCast(cellCount(orch_link)) };
     }
 
     /// A key on the plan, while it has the keys: `j` `k` pick through every row; Enter goes, and
@@ -5510,7 +4899,7 @@ pub const App = struct {
             try app.closeBoard();
             if (std.mem.eql(u8, key, "\r")) return app.goAgent(a);
             app.normal = true;
-            return app.openPopup(.{ .agent = a.win.id });
+            return app.openPopup(a.win.id);
         }
         if (row.kind == .idea and sheets.Sheet.ideaState(given.ideas[row.item]) == .draft) return app.openDraft(given.ideas[row.item].epic);
         if (!std.mem.eql(u8, key, "\r")) {
@@ -5971,7 +5360,7 @@ pub const App = struct {
         const bottom = app.view_h -| 2;
         if (width < 30 or bottom < first_line + 7) return null;
         const h: u16 = @intCast(@min(7 + app.autoRepos(), bottom - first_line + 1));
-        return .{ .x = app.boardX() + (app.boardW() -| width) / 2, .y = first_line, .w = width, .h = h };
+        return .{ .x = (app.boardW() -| width) / 2, .y = first_line, .w = width, .h = h };
     }
 
     /// How many repo rows auto's modal has room for.
@@ -6047,7 +5436,7 @@ pub const App = struct {
         const bottom = app.view_h -| 2;
         if (width < 40 or bottom < first_line + 7) return null;
         const h: u16 = @intCast(@min(6 + n + app.draftAsks(epic).len, bottom - first_line + 1));
-        return .{ .x = app.boardX() + (app.boardW() -| width) / 2, .y = first_line, .w = width, .h = h };
+        return .{ .x = (app.boardW() -| width) / 2, .y = first_line, .w = width, .h = h };
     }
 
     fn openDraft(app: *App, epic: u32) void {
@@ -6158,7 +5547,7 @@ pub const App = struct {
         const width: u16 = @min(app.boardW() -| 4, 64);
         const h: u16 = 12;
         if (width < 30 or app.view_h < first_line + h + 2) return null;
-        return .{ .x = app.boardX() + (app.boardW() -| width) / 2, .y = first_line + (app.view_h - first_line - h) / 2, .w = width, .h = h };
+        return .{ .x = (app.boardW() -| width) / 2, .y = first_line + (app.view_h - first_line - h) / 2, .w = width, .h = h };
     }
 
     pub const GoalButton = struct { key: []const u8, label: []const u8, x: u16, w: u16 };
@@ -6536,7 +5925,7 @@ pub const App = struct {
         const top: u16 = first_line;
         const bottom = app.view_h -| 2;
         if (bottom < top + 3 or width.inner == 0) return null;
-        return .{ .x = app.boardX() + (app.boardW() -| width.box) / 2, .y = top, .w = width.box, .h = bottom - top + 1 };
+        return .{ .x = (app.boardW() -| width.box) / 2, .y = top, .w = width.box, .h = bottom - top + 1 };
     }
 
     /// What a card's modal says of it above its body, a line each.
@@ -6885,7 +6274,7 @@ pub const App = struct {
                 const win = app.claudeOf(app.modalCard() orelse return) orelse return;
                 try app.closeBoard();
                 app.normal = true;
-                app.openPopup(.{ .agent = win.id });
+                app.openPopup(win.id);
             },
         }
     }
@@ -7023,7 +6412,7 @@ pub const App = struct {
         var buf: [64]u8 = undefined;
         var repos: [max_repos][]const u8 = undefined;
         const count = if (app.board) |*b| b.repos(&repos) else 0;
-        const ox = app.boardX();
+        const ox: u16 = 0;
         const right = ox + app.boardW();
         const title_end = ox + @as(u16, @intCast(cellCount(board_title))) + 1;
         const start = ox + 1;
@@ -7144,7 +6533,7 @@ pub const App = struct {
             const k = for (cards[0..shown_n], 0..) |c, i| {
                 if (c.id == card.id) break i;
             } else return out[0..n];
-            x = app.boardX() + @as(u16, @intCast(k)) * app.stripCell() + 1;
+            x = @as(u16, @intCast(k)) * app.stripCell() + 1;
             edge = x + app.stripCell();
         } else if (bench) edge -= 1;
         for (cardActions(card, &have)) |action| {
@@ -7275,18 +6664,13 @@ pub const App = struct {
 
     /// The mouse on the board: a click on a card picks it, and on the card picked goes to the
     /// Claude holding it; the wheel moves along the column. Whether it was the board's: on the
-    /// rail it is the rail's, and closes the board but for its own row there; on the
     /// orchestrator's column beside it a click focuses the column, as one on any window out of
     /// focus, and the wheel, or anything once it is focused, is the column's.
     fn boardMouse(app: *App, m: keys.Mouse) !bool {
         // a card's let go that never came: a new press ends that drag unseen
         if ((app.drag == .card or app.drag == .next_row or app.drag == .todo_row) and m.leftPress()) app.drag = .none;
         if (app.drag != .none) return false;
-        if (m.x < app.boardX()) {
-            if (m.leftPress() and m.y != 1) try app.closeBoard();
-            app.dirty = true;
-            return false;
-        }
+
         const view = &app.board_view.?;
         if (m.x >= app.term_w - app.view_w and app.sided() and !view.boxed()) {
             if (m.y >= app.view_h) return true;
@@ -7354,7 +6738,7 @@ pub const App = struct {
             try app.goHome();
             return true;
         }
-        if (m.y == 0 and m.x < app.boardX() + cellCount(board_title)) return true;
+        if (m.y == 0 and m.x < cellCount(board_title)) return true;
         var bar: [24]BarKey = undefined;
         for (app.keyBar(&bar)) |k| if (k.hit(app, m.x, m.y)) {
             switch (k.what) {
@@ -7418,7 +6802,7 @@ pub const App = struct {
             .repo => if (app.boardBacklog()) .todo else null,
             else => null,
         };
-        if (x < app.boardX() or x >= app.boardX() + app.boardW()) return null;
+        if (x >= app.boardW()) return null;
         if (app.footRows() > 0 and y >= app.listH() and y < app.listH() + app.footRows()) return .done;
         if (y < app.colTop() or y + 1 >= app.listH()) return null;
         for (0..app.boardCols()) |c| if (app.boardColW(c) > 0 and x < app.boardColX(c) + app.boardColW(c)) {
@@ -7620,7 +7004,7 @@ pub const App = struct {
     pub fn switcherRows(app: *const App, query: []const u8, out: []Row) usize {
         var found: [max_rows]Agent = undefined;
         var count: usize = 0;
-        const sessions = app.railSessions();
+        const sessions = app.listedSessions();
         for (app.sessions.items[0..sessions], 0..) |s, si| for (s.wins.items) |win| {
             if (!win.agent() or count == found.len) continue;
             found[count] = .{ .session = si, .win = win };
@@ -7696,11 +7080,11 @@ pub const App = struct {
             ' ' => if (row) |r| if (r == .claude) {
                 app.prompt = null;
                 app.normal = true;
-                app.openPopup(.{ .agent = r.claude.win.id });
+                app.openPopup(r.claude.win.id);
             },
             'J', 'K' => if (row) |r| if (r == .session) {
                 const to = if (key[0] == 'J') r.session + 1 else r.session -| 1;
-                if (to < app.railSessions() and to != r.session) {
+                if (to < app.listedSessions() and to != r.session) {
                     try app.moveSession(r.session, to);
                     prompt.selected = if (key[0] == 'J') prompt.selected + 1 else prompt.selected - 1;
                 }
@@ -7809,7 +7193,6 @@ pub const App = struct {
             },
             // Nothing moves until it is let go: where it would go is drawn.
             .title => app.dirty = true,
-            .session => |id| try app.dragSession(id, m),
         }
     }
 
@@ -7861,75 +7244,35 @@ pub const App = struct {
     }
 
     /// Where a window held by its title would go, let go now: the place of the column under
-    /// the pointer, or a session on the rail.
-    pub const Drop = union(enum) { none, column: usize, session: usize };
+    /// the pointer.
+    pub const Drop = union(enum) { none, column: usize };
 
     pub fn dropAt(app: *const App) Drop {
         if (app.drag != .title) return .none;
         const s = app.cur() orelse return .none;
         const ox = app.term_w - app.view_w;
-        if (app.pointer.x < ox) {
-            const row = app.railSession(app.pointer.y) orelse return .none;
-            return if (app.sessions.items[row].id == s.id) .none else .{ .session = row };
-        }
+        if (app.pointer.x < ox) return .none;
         const hit = app.colAt(s, @as(i32, app.pointer.x) - ox + s.scroll) orelse return .none;
         return if (s.wins.items[hit.index].id == app.drag.title) .none else .{ .column = hit.index };
     }
 
-    /// The rail's rows: its sessions one under another from the second, then a rule over the button
-    /// for a new session and the menu button, above its bottom border.
-    pub fn railRuleRow(app: *const App) u16 {
-        return app.view_h -| 4;
-    }
-
-    pub fn railNewRow(app: *const App) u16 {
-        return app.view_h -| 3;
-    }
-
-    pub fn railMenuRow(app: *const App) u16 {
-        return app.view_h -| 2;
-    }
-
-    /// How many sessions fit above the rule, with a row free under the last.
-    pub fn railShown(app: *const App) usize {
-        const room = app.railRuleRow() -| 1;
-        return @min(app.railSessions(), room -| 2);
-    }
-
-    /// The sessions the rail and the overview list: all but babylon's, which sorts last.
-    pub fn railSessions(app: *const App) usize {
+    /// The sessions the switcher and the overview list: all but babylon's, which sorts last.
+    pub fn listedSessions(app: *const App) usize {
         var n: usize = 0;
-        while (n < app.sessions.items.len and !app.sessions.items[n].offRail()) n += 1;
+        while (n < app.sessions.items.len and !app.sessions.items[n].unlisted()) n += 1;
         return n;
     }
 
     /// Where babylon's session is, when it is there.
     pub fn gateSession(app: *const App) ?usize {
-        for (app.railSessions()..app.sessions.items.len) |i| if (app.sessions.items[i].gate()) return i;
+        for (app.listedSessions()..app.sessions.items.len) |i| if (app.sessions.items[i].gate()) return i;
         return null;
     }
 
     /// Where the orchestrator's session is, when it is running.
     pub fn orchestratorSession(app: *const App) ?usize {
-        for (app.railSessions()..app.sessions.items.len) |i| if (app.sessions.items[i].orchestrator()) return i;
+        for (app.listedSessions()..app.sessions.items.len) |i| if (app.sessions.items[i].orchestrator()) return i;
         return null;
-    }
-
-    /// The rule over the rail's agents, a row free under the last session, and the rows they can
-    /// have under it, with one free over the rule at its foot.
-    pub fn railAgentsRow(app: *const App) u16 {
-        return @intCast(2 + app.railShown() + 1);
-    }
-
-    pub fn railAgentRows(app: *const App) u16 {
-        return app.railRuleRow() -| 1 -| (app.railAgentsRow() + 1);
-    }
-
-    /// Which session is on row `y` of the rail.
-    fn railSession(app: *const App, y: u16) ?usize {
-        if (y < 2) return null;
-        const index = y - 2;
-        return if (index < app.railShown()) index else null;
     }
 
     fn dropWindow(app: *App, s: *Session, id: u32, drop: Drop) !void {
@@ -7941,7 +7284,6 @@ pub const App = struct {
         switch (drop) {
             .none => {},
             .column => |to| try app.moveWin(s, from, to),
-            .session => |to| try app.sendWin(s, from, app.sessions.items[to], null),
         }
     }
 
@@ -7971,14 +7313,7 @@ pub const App = struct {
         app.want_list = true;
     }
 
-    /// The held button moved to `m` with a session, which goes to the row under the pointer.
-    fn dragSession(app: *App, id: u32, m: keys.Mouse) !void {
-        const at = app.sessionIndex(id) orelse return;
-        const over = @min(app.railShown() -| 1, m.y -| 2);
-        if (over != at) try app.moveSession(at, over);
-    }
-
-    /// Puts the session at `at` of the rail at `to`, and has tmux keep every session's place.
+    /// Puts the session at `at` at `to`, and has tmux keep every session's place.
     fn moveSession(app: *App, at: usize, to: usize) !void {
         app.sessions.insertAssumeCapacity(to, app.sessions.orderedRemove(at));
         for (app.sessions.items, 1..) |s, place| {
@@ -7988,11 +7323,11 @@ pub const App = struct {
         app.dirty = true;
     }
 
-    /// Moves the current session up or down the rail.
+    /// Moves the current session up or down the order.
     fn sessionSwapBy(app: *App, delta: i32) !void {
         const at = app.sessionIndex(app.current) orelse return;
         const next = @as(i32, @intCast(at)) + delta;
-        if (at >= app.railSessions() or next < 0 or next >= app.railSessions()) return;
+        if (at >= app.listedSessions() or next < 0 or next >= app.listedSessions()) return;
         try app.moveSession(at, @intCast(next));
     }
 
@@ -8134,12 +7469,11 @@ pub const App = struct {
             // its chrome must not leave the focused column in normal mode, drawn as insert
             if (app.paneClick(m)) {
                 app.normal = false;
-            } else if (app.board_view == null or m.x < app.railDrawnW()) app.normal = true;
+            } else if (app.board_view == null) app.normal = true;
             app.dirty = true;
         }
         try app.pointAs(m);
         if (m.hover()) {
-            app.hoverRail(m.x);
             app.hoverLook(m);
         } else if (m.leftPress() or m.rightPress()) {
             app.lookAway();
@@ -8183,12 +7517,8 @@ pub const App = struct {
         if (!try app.mouseHit(m) and m.rightPress()) app.openMenu(&menu.main);
     }
 
-    /// Whether the mouse event was for something. On the rail: a click picks a session or the
-    /// menu, a second one on the current session renames it, one under the last makes a new
-    /// one, a session is dragged to move it and middle clicked to close it, the wheel steps
-    /// through sessions.
-    /// On the strip: a click goes to that window, dot or pane; a title is dragged onto another
-    /// column, to take its place, or onto a session of the rail, to go there, clicked twice to
+    /// Whether the mouse event was for something. On the strip: a click goes to that window, dot
+    /// or pane; a title is dragged onto another column, clicked twice to
     /// rename its window, middle clicked to close it; the line between panes is dragged to
     /// resize them; a sideways wheel steps through windows; and anything inside a pane is its
     /// program's or scrolls it, but for a shift drag, which selects, a middle click, which
@@ -8200,68 +7530,7 @@ pub const App = struct {
             try app.dragTo(m);
             return true;
         }
-        if (m.x < @max(ox, app.railDrawnW())) {
-            if (m.wheel()) {
-                const up = m.code & 1 == 0;
-                if (app.inRailAgents(m.y)) {
-                    const more = app.agentsOverflow();
-                    // a list that scrolls keeps the wheel, even at its ends: it steps no session
-                    if (more.above or more.below) {
-                        if (if (up) more.above else more.below) app.scrollAgents(if (up) -wheel_agents else wheel_agents);
-                        return true;
-                    }
-                }
-                if (app.navStep()) try app.sessionBy(if (up) -1 else 1);
-                return true;
-            }
-            if (m.middlePress()) if (app.railSession(m.y)) |row| {
-                app.doomed = app.sessions.items[row].id;
-                app.openMenu(&menu.confirm_session);
-                return true;
-            };
-            if (!m.leftPress()) return false;
-            if (app.railAgentAt(m.y)) |line| {
-                switch (line) {
-                    .agent, .detail, .meta, .background => |a| try app.goAgent(a),
-                    .sub => |sub| try app.goSub(sub),
-                    .session => |si| try app.sessionTo(si),
-                    .above, .pipeline, .more => app.clickList(line),
-                }
-                return true;
-            }
-            if (m.y == app.railAgentsRow() and app.railAgentAt(m.y + 1) != null) {
-                app.toggleSort();
-                return true;
-            }
-            if (m.y == 0) {
-                app.toggleRail();
-                return true;
-            }
-            if (m.y == 1 and app.board != null) {
-                var text: [16]u8 = undefined;
-                const needs = app.railNeeds(&text);
-                if (app.railDrawnW() == app.railWideW() and app.needsCount() > 0 and m.x >= rail_needs_x and m.x < rail_needs_x + cellCount(needs)) {
-                    if (app.board_view == null) try app.goHome();
-                    try app.toFeed("]", null);
-                    return true;
-                }
-                try app.goHome();
-                return true;
-            }
-            if (m.y == app.railMenuRow()) app.openMenu(&menu.main);
-            if (m.y == app.railNewRow()) try app.send(.ignore, "new-session", .{});
-            if (app.railSession(m.y)) |row| {
-                const id = app.sessions.items[row].id;
-                if (app.doubleClick(.{ .session = id }) and id == app.current) {
-                    app.prompt = .{ .what = .session };
-                    app.dirty = true;
-                } else {
-                    try app.sessionTo(row);
-                    app.drag = .{ .session = id };
-                }
-            }
-            return true;
-        }
+        if (m.x < ox) return m.wheel() or m.leftPress();
         const s = app.cur() orelse return false;
         if (app.yoff != 0) return false;
         if (m.y == app.view_h) {
@@ -8429,10 +7698,10 @@ pub const App = struct {
     }
 
     /// Whether a left click at `m` is on the strip or the board's side column, which it makes
-    /// insert; the rail and the board are chrome.
+    /// insert; the board is chrome.
     fn paneClick(app: *const App, m: keys.Mouse) bool {
         if (app.board_view) |view| return app.sideShown() and !view.boxed() and m.y < app.view_h and m.x >= app.term_w - app.view_w;
-        return m.y < app.view_h and m.x >= @max(app.term_w - app.view_w, app.railDrawnW());
+        return m.y < app.view_h and m.x >= app.term_w - app.view_w;
     }
 
     /// Normal mode ends where an overlay has the keys: it is the mode there, and closing it is
@@ -8442,7 +7711,6 @@ pub const App = struct {
         if (!app.normal) {
             app.hash_len = null;
             app.closePopup();
-            app.rail_pick = null;
         }
     }
 
@@ -8475,7 +7743,7 @@ pub const App = struct {
             'c' => try app.onChord('\r'),
             'o' => try app.openDrawer(),
             'O' => app.openOverview(),
-            'w' => app.toggleRail(),
+
             'm' => app.openMenu(&menu.main),
             '/', 's' => app.openSwitcher(),
             'n' => try app.showInbox(),
@@ -8542,7 +7810,7 @@ pub const App = struct {
                     try app.closeDrawer();
                     continue;
                 }
-                if (try app.railKey(key)) continue;
+                if (try app.sessionKey(key)) continue;
                 if (std.mem.eql(u8, key, "i") or std.mem.eql(u8, key, "\x1b")) {
                     app.normal = false;
                     app.dirty = true;
@@ -8636,7 +7904,7 @@ pub const App = struct {
                     .jump => app.openSwitcher(),
                     .overview => app.openOverview(),
                     .board => try app.toggleBoard(),
-                    .rail_width => app.toggleRail(),
+
                     .report => try app.startReport(),
                     .split_right => try app.send(.ignore, "split-window -h -c '#{{pane_current_path}}'", .{}),
                     .split_below => try app.send(.ignore, "split-window -v -c '#{{pane_current_path}}'", .{}),
@@ -8694,21 +7962,9 @@ pub const App = struct {
             const s = app.sessions.items[spot.session];
             return w.print("the overview's picture of window {s} of session {s}", .{ s.wins.items[spot.win].name, s.name });
         }
-        if (p.x < app.railDrawnW()) {
-            if (app.railSession(p.y)) |i| return w.print("rail: session {s}", .{app.sessions.items[i].name});
-            if (app.railAgentAt(p.y)) |line| switch (line) {
-                .agent, .detail, .meta, .background => |a| return w.print("rail: the Claude in window {s}", .{a.win.name}),
-                .session => |i| return w.print("rail: session {s}", .{app.sessions.items[i].name}),
-                else => return w.writeAll("rail: the list of Claudes"),
-            };
-            if (p.y == app.railNewRow()) return w.writeAll("rail: + new");
-            if (p.y == app.railMenuRow()) return w.writeAll("rail: ≡ menu");
-            if (p.y == 1 and app.board != null) return w.writeAll("rail: the board row");
-            return w.writeAll("the rail");
-        }
         if (app.board_view) |view| {
             if (view.boxed()) return w.writeAll("a box over the board");
-            if (p.x >= app.boardX() + app.boardW()) return w.writeAll(if (app.sided()) "the orchestrator column" else "the board's edge");
+            if (p.x >= app.boardW()) return w.writeAll(if (app.sided()) "the orchestrator column" else "the board's edge");
             var buttons: [48]Button = undefined;
             for (app.boardButtons(&buttons)) |button| if (button.hit(p.x, p.y)) {
                 var label: [48]u8 = undefined;
@@ -8794,7 +8050,7 @@ pub const App = struct {
             .commit = build_options.commit,
             .cols = app.term_w,
             .rows = app.view_h + 1,
-            .rail = if (app.rail == .wide) "wide" else "narrow",
+
             .mode = if (app.normal) "normal" else "insert",
             .view = strings.of(&view, app, writeView),
             .picked = strings.of(&picked, app, writePicked),
@@ -8899,7 +8155,7 @@ pub const App = struct {
     }
 
     /// With Alt: h and l move along the strip, k to the session before, 1 to 9 go to a window,
-    /// J and K move the session down and up the rail,
+    /// J and K move the session down and up,
     /// H and L move the window, ; and ' make it narrower and wider, Enter opens one, x closes
     /// it, z gives it the whole width, b babylon's board, n and N step the Claudes, /
     /// searches the pane's history and q leaves. The rest is normal mode's.
@@ -9531,7 +8787,7 @@ test "a dragged card moves todo↔backlog and todo↔done, and a drop babylon wo
     try std.testing.expect(std.mem.startsWith(u8, app.report_said.?, "only a todo card"));
     app.pointer = .{ .x = app.boardColX(1) + 2, .y = app.colTop() + 1 };
     try eq(@as(?tickets.Status, .doing), app.cardTarget());
-    app.pointer = .{ .x = app.boardX(), .y = 0 };
+    app.pointer = .{ .x = 0, .y = 0 };
     try eq(@as(?tickets.Status, null), app.cardTarget());
 }
 
@@ -9785,7 +9041,7 @@ test "the board's first row: tabs with their counts, then babylon's state agains
     const head = app.header(&buttons);
     try std.testing.expectEqual(@as(?u16, null), head.more);
     const last = buttons[head.n - 1];
-    try std.testing.expectEqual(app.boardX() + app.boardW(), last.x + last.w);
+    try std.testing.expectEqual(app.boardW(), last.x + last.w);
 
     // with less room the right group loses its words first, then tabs go, ending in …
     app.view_w = 40;
@@ -9886,7 +9142,7 @@ test "the every view's done column is a strip: narrow, a card a row, its reopen 
     try eq(@min(App.recent_w, app.boardW() / 4), app.boardColW(3));
     try std.testing.expect(app.boardColW(0) > app.boardColW(3));
     try eq(app.boardColX(2) + app.boardColW(2), app.boardColX(3));
-    try std.testing.expect(app.boardColX(3) + app.boardColW(3) <= app.boardX() + app.boardW());
+    try std.testing.expect(app.boardColX(3) + app.boardColW(3) <= app.boardW());
 
     try app.boardKey("l");
     try app.boardKey("l");
@@ -9926,7 +9182,7 @@ test "in the every view a click on a recent entry whose repo has no open card pi
 
     var recent: [App.strip_n]*const tickets.Card = undefined;
     try eq(@as(usize, 1), app.stripCards(&recent));
-    const x = app.boardX() + 1;
+    const x = 1;
     try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = app.listH() + 1, .release = false }));
     try eq(@as(usize, 3), app.board_view.?.col);
     try eq(@as(u32, 6), app.boardCard(3, app.board_view.?.row).?.id);
@@ -9957,7 +9213,7 @@ test "in the every view a find leaves a recent entry outside the last five close
 
     var recent: [App.strip_n]*const tickets.Card = undefined;
     try eq(@as(usize, 1), app.stripCards(&recent));
-    const x = app.boardX() + 1;
+    const x = 1;
     try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = app.listH() + 1, .release = false }));
     try eq(@as(usize, 3), app.board_view.?.col);
     try eq(@as(u32, 15), app.boardCard(3, app.board_view.?.row).?.id);
@@ -10016,7 +9272,7 @@ test "in the every view with epic bars shown, each drawn recent entry is picked 
     const n = app.stripCards(&recent);
     try eq(@as(usize, 2), n);
     for (0..n) |k| {
-        const x = app.boardX() + 1 + @as(u16, @intCast(k)) * app.stripCell();
+        const x = 1 + @as(u16, @intCast(k)) * app.stripCell();
         try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = app.listH() + 1, .release = false }));
         try eq(recent[k].id, app.boardCard(3, app.board_view.?.row).?.id);
     }
@@ -10090,7 +9346,7 @@ test "in Workbench's look a click on the picked tile's button does its action, a
     var recent: [App.strip_n]*const tickets.Card = undefined;
     try eq(@as(usize, 2), app.stripCards(&recent));
     const second = recent[1].id;
-    const x = app.boardX() + app.stripCell() + 1;
+    const x = app.stripCell() + 1;
     try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = app.listH() + 1, .release = false }));
     try eq(@as(usize, 3), app.board_view.?.col);
     try eq(second, app.boardCard(3, app.board_view.?.row).?.id);
@@ -10099,7 +9355,7 @@ test "in Workbench's look a click on the picked tile's button does its action, a
         if (b.what == .card and b.what.card == .reopen) break b;
     } else return error.NoReopen;
     try eq(app.listH() + 3, reopen.y);
-    try eq(app.boardX() + app.stripCell() + 1, reopen.x);
+    try eq(app.stripCell() + 1, reopen.x);
 }
 
 test "⏎ on a card's peek picks that card and is left to the board, not sent to a Claude's pane" {
@@ -10120,21 +9376,6 @@ test "⏎ on a card's peek picks that card and is left to the board, not sent to
     try std.testing.expect(app.look == null);
     try std.testing.expect(app.board_view.?.focus == .board);
     try std.testing.expectEqual(@as(u32, 6), app.boardCard(app.board_view.?.col, app.board_view.?.row).?.id);
-}
-
-test "the pick on a rail entry opens its peek after the pause, once a key has moved it" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.normal = true;
-    app.rail_pick = .{ .agent = 5 };
-    try std.testing.expect(app.focusLook() == null);
-    app.key_typed = true;
-    app.key_at = 1000;
-    app.now = 1000;
-    try std.testing.expect(app.lookStep() > 0);
-    try std.testing.expect(app.look == null);
-    app.now = 1000 + look_ms;
-    _ = app.lookStep();
-    try std.testing.expectEqual(@as(u32, 5), app.look.?.window);
 }
 
 test "the board opens on a ticket by its id: its lane, its repo's columns or the backlog, its question shown" {
@@ -10544,7 +9785,7 @@ test "babylon's own session, sorted last, is off the list and lists no agents" {
     var sessions = [_]*Session{ &work, &babylon };
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     app.sessions = .fromOwnedSlice(&sessions);
-    try std.testing.expectEqual(@as(usize, 1), app.railSessions());
+    try std.testing.expectEqual(@as(usize, 1), app.listedSessions());
     try std.testing.expectEqual(@as(?usize, 1), app.gateSession());
     var found: [4]App.Agent = undefined;
     try std.testing.expectEqual(@as(usize, 1), app.agents(&found));
@@ -10554,7 +9795,7 @@ test "babylon's own session, sorted last, is off the list and lists no agents" {
     var orch: Session = .{ .id = 3, .name = @constCast("orchestrator") };
     var three = [_]*Session{ &work, &babylon, &orch };
     app.sessions = .fromOwnedSlice(&three);
-    try std.testing.expectEqual(@as(usize, 1), app.railSessions());
+    try std.testing.expectEqual(@as(usize, 1), app.listedSessions());
     try std.testing.expectEqual(@as(?usize, 1), app.gateSession());
     try std.testing.expectEqual(@as(?usize, 2), app.orchestratorSession());
 }
@@ -10577,156 +9818,7 @@ test "a session shows the review state that most wants looking at" {
     try std.testing.expectEqual(Review.changes, App.sessionReview(&s));
 }
 
-test "a Claude whose card is off the board sorts after the named repos, and a landing one stays listed" {
-    const gpa = std.testing.allocator;
-    var board = try tickets.Board.parse(gpa,
-        \\{"tickets":[
-        \\{"id":7,"repo":"tlon","title":"a","status":"doing"},
-        \\{"id":8,"repo":"tlon","title":"b","status":"review","stage":"landing"}]}
-    );
-    defer board.deinit();
-    const branches = [_][]const u8{ "\t\t\t\tt99-gone", "\t\t\t\tt7-a", "\t\t\t\tt8-b" };
-    var wins: [3]Window = undefined;
-    var sessions: [3]Session = undefined;
-    var slots: [3]*Window = undefined;
-    var pointers: [3]*Session = undefined;
-    for (0..3) |i| {
-        wins[i] = .{ .id = @intCast(i + 1), .claude = .working, .info = @constCast(branches[i]) };
-        slots[i] = &wins[i];
-        sessions[i] = .{ .id = @intCast(i + 1), .name = @constCast("s"), .wins = .fromOwnedSlice(slots[i .. i + 1]) };
-        pointers[i] = &sessions[i];
-    }
-    var app: App = .{ .gpa = gpa, .io = undefined, .tmux_in = undefined, .board = board, .agent_sort = .ticket };
-    app.sessions = .fromOwnedSlice(&pointers);
-    app.board = board;
-
-    var found: [3]App.Agent = undefined;
-    var folds: [App.max_folds]App.Fold = undefined;
-    const count, const nf = app.railList(&found, &folds);
-    try std.testing.expectEqual(@as(usize, 3), count);
-    try std.testing.expectEqual(@as(usize, 0), nf);
-    try std.testing.expectEqual(@as(u32, 2), found[0].win.id);
-    try std.testing.expectEqual(@as(u32, 3), found[1].win.id);
-    try std.testing.expectEqual(@as(u32, 1), found[2].win.id);
-}
-
-test "a pipeline Claude whose repo finds no fold left is listed as itself" {
-    const gpa = std.testing.allocator;
-    const n = App.max_folds + 1;
-    var json: std.ArrayList(u8) = .empty;
-    defer json.deinit(gpa);
-    try json.appendSlice(gpa, "{\"tickets\":[");
-    for (0..n) |i| try json.print(gpa, "{s}{{\"id\":{d},\"repo\":\"r{d}\",\"title\":\"t\",\"status\":\"review\",\"stage\":\"queued\"}}", .{ if (i > 0) "," else "", i + 1, i });
-    try json.appendSlice(gpa, "]}");
-    var board = try tickets.Board.parse(gpa, json.items);
-    defer board.deinit();
-    var infos: [n][]u8 = undefined;
-    var wins: [n]Window = undefined;
-    var sessions: [n]Session = undefined;
-    var slots: [n]*Window = undefined;
-    var pointers: [n]*Session = undefined;
-    for (0..n) |i| {
-        infos[i] = try std.fmt.allocPrint(gpa, "\t\t\t\tt{d}-x", .{i + 1});
-        wins[i] = .{ .id = @intCast(i + 1), .claude = .working, .info = infos[i] };
-        slots[i] = &wins[i];
-        sessions[i] = .{ .id = @intCast(i + 1), .name = @constCast("s"), .wins = .fromOwnedSlice(slots[i .. i + 1]) };
-        pointers[i] = &sessions[i];
-    }
-    defer for (infos) |info| gpa.free(info);
-    var app: App = .{ .gpa = gpa, .io = undefined, .tmux_in = undefined, .board = board, .agent_sort = .ticket };
-    app.sessions = .fromOwnedSlice(&pointers);
-    app.board = board;
-
-    var found: [n]App.Agent = undefined;
-    var folds: [App.max_folds]App.Fold = undefined;
-    const count, const nf = app.railList(&found, &folds);
-    try std.testing.expectEqual(@as(usize, 1), count);
-    try std.testing.expectEqual(App.max_folds, nf);
-}
-
-test "the ticket order holds a Claude's place through its state, and the pipeline's and the landed's are folded away" {
-    const gpa = std.testing.allocator;
-    var board = try tickets.Board.parse(gpa,
-        \\{"tickets":[
-        \\{"id":9,"repo":"tlon","title":"a","status":"doing"},
-        \\{"id":4,"repo":"tlon","title":"b","status":"doing"},
-        \\{"id":7,"repo":"arena","title":"c","status":"doing"},
-        \\{"id":5,"repo":"arena","title":"d","status":"review","stage":"verifying"},
-        \\{"id":6,"repo":"arena","title":"e","status":"review","stage":"queued"},
-        \\{"id":3,"repo":"arena","title":"f","status":"done"}]}
-    );
-    defer board.deinit();
-    const branches = [_][]const u8{ "\t\t\t\tt9-a", "\t\t\t\tt4-b", "\t\t\t\tt7-c", "\t\t\t\tt5-d", "\t\t\t\tt6-e", "\t\t\t\tt3-f", "" };
-    const names = [_][]const u8{ "s9", "s4", "s7", "s5", "s6", "s3", "loose" };
-    var wins: [7]Window = undefined;
-    var sessions: [7]Session = undefined;
-    var slots: [7]*Window = undefined;
-    var pointers: [7]*Session = undefined;
-    for (0..7) |i| {
-        wins[i] = .{ .id = @intCast(i + 1), .claude = .working, .info = @constCast(branches[i]) };
-        slots[i] = &wins[i];
-        sessions[i] = .{ .id = @intCast(i + 1), .name = @constCast(names[i]), .wins = .fromOwnedSlice(slots[i .. i + 1]) };
-        pointers[i] = &sessions[i];
-    }
-    var app: App = .{ .gpa = gpa, .io = undefined, .tmux_in = undefined, .board = board, .agent_sort = .ticket };
-    app.sessions = .fromOwnedSlice(&pointers);
-    app.board = board;
-
-    var found: [8]App.Agent = undefined;
-    var folds: [App.max_folds]App.Fold = undefined;
-    var count, var nf = app.railList(&found, &folds);
-    try std.testing.expectEqual(@as(usize, 4), count);
-    try std.testing.expectEqual(@as(usize, 1), nf);
-    try std.testing.expectEqual(@as(usize, 2), folds[0].count);
-    // arena's #7 first, then tlon's #4 and #9, the one with no ticket last
-    try std.testing.expectEqual(@as(u32, 3), found[0].win.id);
-    try std.testing.expectEqual(@as(u32, 2), found[1].win.id);
-    try std.testing.expectEqual(@as(u32, 1), found[2].win.id);
-    try std.testing.expectEqual(@as(u32, 7), found[3].win.id);
-
-    wins[0].claude = .waiting;
-    wins[0].since = 100;
-    count, nf = app.railList(&found, &folds);
-    try std.testing.expectEqual(@as(u32, 3), found[0].win.id);
-    try std.testing.expectEqual(@as(u32, 1), found[2].win.id);
-
-    // folded: one row for the pipeline's two; scrolled down a row, one above
-    var lines: [16]App.AgentLine = undefined;
-    const n = app.agentLines(&lines, 16, false);
-    try std.testing.expectEqual(App.AgentLine{ .pipeline = folds[0] }, lines[n - 1]);
-    app.agent_skip = .{ .n = 1, .at = null };
-    const m = app.agentLines(&lines, 3, false);
-    try std.testing.expectEqual(@as(usize, 3), m);
-    try std.testing.expectEqual(@as(usize, 1), lines[0].above);
-    try std.testing.expect(lines[2] == .more);
-}
-
-test "at home the narrow rail lists a session's working and waiting Claudes and folds the rest into one line" {
-    const gpa = std.testing.allocator;
-    const marks = [_]Mark{ .working, .waiting, .done, .done, .none };
-    var wins: [5]Window = undefined;
-    var slots: [5]*Window = undefined;
-    for (0..5) |i| {
-        wins[i] = .{ .id = @intCast(i + 1), .claude = marks[i], .since = 1 };
-        slots[i] = &wins[i];
-    }
-    var s: Session = .{ .id = 1, .name = @constCast("arena"), .wins = .fromOwnedSlice(&slots) };
-    var pointers = [_]*Session{&s};
-    var app: App = .{ .gpa = gpa, .io = undefined, .tmux_in = undefined, .rail = .narrow, .board_view = .{ .home = true } };
-    app.sessions = .fromOwnedSlice(&pointers);
-
-    var lines: [16]App.AgentLine = undefined;
-    const n = app.agentLines(&lines, 16, false);
-    try std.testing.expectEqual(@as(usize, 4), n);
-    try std.testing.expect(lines[0] == .session);
-    try std.testing.expectEqual(@as(u32, 3), lines[1].agent.win.id + lines[2].agent.win.id);
-    try std.testing.expectEqual(@as(usize, 3), lines[3].pipeline.count);
-
-    app.toggleFold(app.foldKey(lines[3].pipeline));
-    try std.testing.expectEqual(@as(usize, 7), app.agentLines(&lines, 16, false));
-}
-
-test "a find of a hundred bytes narrows the same before and after Enter, and the rail ignores it" {
+test "a find of a hundred bytes narrows the same before and after Enter" {
     var typed_buf: [100]u8 = undefined;
     @memset(&typed_buf, 'x');
     @memcpy(typed_buf[0..6], "needle");
@@ -10750,7 +9842,6 @@ test "a find of a hundred bytes narrows the same before and after Enter, and the
     try std.testing.expectEqual(typed.len, app.find_len);
     try std.testing.expectEqual(typing, app.boardCount(.todo));
     try std.testing.expectEqual(@as(usize, 1), app.boardCount(.todo));
-    try std.testing.expectEqual(@as(usize, 2), app.railCount(.todo));
 }
 
 test "a card's modal lists every option of its ask and its words, and ⏎ answers the lit one" {
@@ -11161,7 +10252,7 @@ test "a row of next dragged onto another takes its place, and a todo card let go
         n += 1;
     };
     try eq(@as(usize, 2), n);
-    const x = app.boardX() + 3;
+    const x = 3;
     try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = ys[1], .release = false }));
     try eq(@as(usize, 1), app.drag.next_row.from);
     try app.dragTo(.{ .code = 32, .x = x, .y = ys[0], .release = false });
@@ -11173,7 +10264,7 @@ test "a row of next dragged onto another takes its place, and a todo card let go
 
     app.board_view = .{};
     app.drag = .{ .card = .{ .id = 8, .opens = false, .moved = true } };
-    app.pointer = .{ .x = app.boardX() + 2, .y = 0 };
+    app.pointer = .{ .x = 2, .y = 0 };
     try app.dragTo(.{ .code = 0, .x = app.pointer.x, .y = 0, .release = true });
     try std.testing.expect(app.report_failed);
     try std.testing.expect(app.prompt == null);
@@ -11885,7 +10976,7 @@ test "only a Claude come to wait or stall is a notice" {
     try std.testing.expect(!App.notifies(.waiting, .waiting));
 }
 
-test "⏎ on a subagent row in a card's modal shows that subagent, as the rail's click did" {
+test "⏎ on a subagent row in a card's modal shows that subagent, as a click on its row did" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
@@ -12016,7 +11107,7 @@ test "⏎ on a Claude with no ticket in in flight's foot shows its window, space
 
     try app.planKey(" ");
     try eq(@as(?BoardView, null), app.board_view);
-    try std.testing.expect(app.popup != null and app.popup.?.entry == .agent and app.popup.?.entry.agent == 2);
+    try std.testing.expect(app.popup != null and app.popup.?.entry == 2);
     app.closePopup();
 
     app.board_view = .{ .home = true, .plan = true, .focus = .board, .plan_pick = first.pick.? };

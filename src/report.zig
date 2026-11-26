@@ -10,7 +10,6 @@ pub const Info = struct {
     commit: []const u8,
     cols: u16,
     rows: u16,
-    rail: []const u8,
     mode: []const u8,
     view: []const u8,
     picked: []const u8,
@@ -21,7 +20,6 @@ pub const Info = struct {
 pub fn writeSummary(w: *Writer, info: Info) !void {
     try w.print("version: {s}\n", .{info.commit});
     try w.print("size: {d}x{d}\n", .{ info.cols, info.rows });
-    try w.print("rail: {s}\n", .{info.rail});
     try w.print("mode: {s}\n", .{info.mode});
     try w.print("view: {s}\n", .{info.view});
     try w.print("picked: {s}\n", .{info.picked});

@@ -274,13 +274,6 @@ fn footAt(app: *const App, w: *Writer, x: usize) !void {
 const normal_label = "NORMAL";
 const normal_keys = "j k session  ] [ next waiting  ⏎ go  s go to  b home  B board  i insert";
 
-/// The first cell of a rail row: the pick's bar in the accent, else a space.
-fn pickBar(app: *const App, w: *Writer, pen: *Pen, picked: bool, base: vt.Style) !void {
-    try pen.set(w, if (picked) ink(app, "amber", 4) else base, null);
-    try w.writeAll(if (picked) "▌" else " ");
-    if (picked) try pen.set(w, base, null);
-}
-
 /// `NORMAL` in the accent at the bottom-left corner of the screen while in normal mode, and the
 /// cells it takes blank otherwise.
 fn modeCorner(app: *const App, w: *Writer, pen: *Pen) !void {
@@ -349,8 +342,6 @@ fn tabs(app: *const App, w: *Writer, pen: *Pen, s: *const Session) !bool {
     return true;
 }
 
-const rail_title = " sessions ";
-
 /// How long ago `since` was, in its largest whole unit: 45s, 4m, 2h, 3d.
 pub fn ago(buf: []u8, epoch: i64, since: u32) []const u8 {
     if (since == 0) return "";
@@ -391,400 +382,6 @@ fn tokenCount(buf: []u8, n: u32) []const u8 {
         std.fmt.bufPrint(buf, "{d}.{d}M", .{ n / 1_000_000, n / 100_000 % 10 })) catch "";
 }
 
-/// The session rail, a bordered panel down the left edge: a session a row with how many windows
-/// it has, the current one a chip, its Claudes under a rule of their own, and the menu button on
-/// its last row. Narrow, it has no titles, and its rows show less.
-fn rail(app: *const App, w: *Writer) !void {
-    const width = app.railDrawnW();
-    if (width == 0) return;
-    const wide = width == app.railWideW();
-    const h = app.view_h;
-    const inner = width - 2;
-    const dim = ink(app, "dim", 8);
-    var lines: [64]App.AgentLine = undefined;
-    const agents = app.railAgents(&lines);
-    const agents_row = app.railAgentsRow();
-    const agents_title: []const u8 = if (!wide) "" else switch (app.agent_sort) {
-        .urgency => " agents · urgency ",
-        .recent => " agents · recent ",
-        .ticket => " agents · ticket ",
-    };
-    var pen: Pen = .{};
-    var y: u16 = 0;
-    while (y < h) : (y += 1) {
-        try w.print("\x1b[{d};1H", .{y + 1});
-        const top = y == 0;
-        const bottom = y == h - 1;
-        const over_agents = y == agents_row and agents > 0;
-        const ruled = (y == app.railRuleRow() or over_agents) and !top;
-        const title: []const u8 = if (top and wide) rail_title else if (over_agents) agents_title else "";
-        var x: u16 = 0;
-        var at_title: usize = 0;
-        while (x < width) : (x += 1) {
-            if (!top and !bottom and !ruled and x == 1) {
-                const at = y -| (agents_row + 1);
-
-                if (y > agents_row and at < agents) {
-                    try agentRow(app, w, &pen, lines[at], inner, wide);
-                } else try railRow(app, w, &pen, y, inner, wide);
-                x = width - 2;
-                continue;
-            }
-            // a title is written a character at a time from the third cell, the multibyte · too
-            if (x >= 2 and at_title < title.len) {
-                try pen.set(w, dim, null);
-                const len = std.unicode.utf8ByteSequenceLength(title[at_title]) catch 1;
-                try w.writeAll(title[at_title..][0..len]);
-                at_title += len;
-                continue;
-            }
-            const edge: vt.Style = if (app.theme) |t|
-                rgbStyle(theme.gradient(t.amberdim, t.emberdim, theme.around(width, h, x, y), 0))
-            else
-                .{ .fg_color = .palette(8) };
-            try pen.set(w, edge, null);
-            const left = x == 0;
-            const right = x == width - 1;
-            try put(w, if (top)
-                (if (left) '╭' else if (right) '╮' else '─')
-            else if (bottom)
-                (if (left) '╰' else if (right) '╯' else '─')
-            else if (ruled)
-                (if (left) '├' else if (right) '┤' else '─')
-            else
-                '│');
-        }
-    }
-}
-
-/// The `inner` cells of the rail's row `y` between its borders.
-fn railRow(app: *const App, w: *Writer, pen: *Pen, y: u16, inner: u16, wide: bool) !void {
-    const dim = ink(app, "dim", 8);
-    var filled: usize = 0;
-    const index: usize = y -| 2;
-    if (y == app.railMenuRow()) {
-        try pen.set(w, dim, null);
-        const button = if (wide) app_mod.rail_button else "≡";
-        try w.writeAll(" ");
-        try w.writeAll(button);
-        filled = 1 + cellCount(button);
-    } else if (y == app.railNewRow()) {
-        try pen.set(w, dim, null);
-        const button = if (wide) app_mod.rail_new else "+";
-        try w.writeAll(" ");
-        try w.writeAll(button);
-        filled = 1 + cellCount(button);
-    } else if (y == 1 and app.board != null) {
-        const open = app.board_view != null;
-        const todo = app.railCount(.todo);
-        const doing = app.railCount(.doing);
-        var buf: [48]u8 = undefined;
-        try pen.set(w, if (open) chip(app) else ink(app, "amber", 4), null);
-        var runs: [1]*const tickets.Card = undefined;
-        const run_count = if (app.board) |*b| b.running(&runs) else 0;
-        const running: ?*const tickets.Card = if (run_count > 0) runs[0] else null;
-        if (wide) {
-            // the pipeline's work in hand stands in for the counts while there is any
-            var spun: [8]u8 = undefined;
-            const mark = spun[0 .. std.unicode.utf8Encode(glyph(app, .working), &spun) catch 0];
-            const counts = if (running) |card|
-                (if (run_count > 1)
-                    std.fmt.bufPrint(&buf, "{s} #{d} {s} +{d} ", .{ mark, card.id, card.stage.?, run_count - 1 })
-                else
-                    std.fmt.bufPrint(&buf, "{s} #{d} {s} ", .{ mark, card.id, card.stage.? })) catch ""
-            else
-                std.fmt.bufPrint(&buf, "{d} todo  {d} doing ", .{ todo, doing }) catch "";
-            try w.writeAll(" ▤ board");
-            var needs_buf: [16]u8 = undefined;
-            const needs = app.railNeeds(&needs_buf);
-            if (!open) try pen.set(w, if (app.needsCount() > 0) heading(app) else dim, null);
-            try w.writeAll(needs);
-            const orch_state = app.orchestrator();
-            const runs_orch = if (orch_state) |state| state.running else false;
-            const orch: []const u8 = if (orch_state) |state| (if (state.running or state.on) " orch" else " orch off") else "";
-            // it gives way to the counts on a rail too narrow
-            const room = inner -| (8 + cellCount(needs) + 1 + cellCount(counts));
-            const orch_w = if (cellCount(orch) <= room) cellCount(orch) else 0;
-            const head = 8 + cellCount(needs) + orch_w;
-            if (orch_w > 0) {
-                if (!open) try pen.set(w, if (runs_orch) ink(app, "violet", 5) else ink(app, "dim", 8), null);
-                try w.writeAll(orch);
-            }
-            try pen.set(w, if (open) chip(app) else ink(app, "dim", 8), null);
-            const shown = clip(counts, inner -| head);
-            try fitted(w, "", inner -| head -| cellCount(shown));
-            try w.writeAll(shown);
-            filled = @min(inner, head + (inner -| head -| cellCount(shown)) + cellCount(shown));
-        } else {
-            var spun: [8]u8 = undefined;
-            const mark = spun[0 .. std.unicode.utf8Encode(glyph(app, .working), &spun) catch 0];
-            const count = if (running != null) std.fmt.bufPrint(&buf, "{s} ", .{mark}) catch "" else std.fmt.bufPrint(&buf, "{d} ", .{doing}) catch "";
-            try w.writeAll(" ▤");
-            try fitted(w, "", inner -| 2 -| cellCount(count));
-            try w.writeAll(count);
-            filled = inner;
-        }
-    } else if (y >= 2 and index < app.railShown()) {
-        const s = app.sessions.items[index];
-        const drop = app.dropAt();
-        // lit as the current one is: a window held by its title would go to it
-        const here = (s.id == app.current and app.board_view == null) or (drop == .session and drop.session == index);
-        const picked = if (app.railPicked()) |pick| pick == .session and pick.session == s.id else false;
-        if (!wide) {
-            const name = shortName(s.name);
-            try repoBar(app, w, pen, app.sessionRepo(index), picked, if (here) chip(app) else .{});
-            try w.writeAll(name);
-            for (0..inner - 3 - cellCount(name)) |_| try w.writeAll(" ");
-            try pen.set(w, if (here) chip(app) else ink(app, "amber", 4), null);
-            try put(w, sessionGlyph(app, s));
-            try pen.set(w, if (here) chip(app) else dim, null);
-            try w.print("{d}", .{@min(s.wins.items.len, 9)});
-            filled = inner;
-        } else {
-            const review = App.sessionReview(s);
-            const many = App.sessionMark(s) != .none and App.sessionCount(s) > 1;
-            const repo = app.sessionRepo(index);
-            const icon = repoIcon(app, repo);
-            const lead = if (icon != null) @as(usize, 2) else 0;
-            const room = inner - 6 - lead - @intFromBool(review != .none) - @intFromBool(many);
-            const cut = cellCount(s.name) > room;
-            const name = clip(s.name, room - @intFromBool(cut));
-            const base = if (here) chip(app) else vt.Style{};
-            try repoBar(app, w, pen, repo, picked, base);
-            if (icon) |mark| {
-                var hue = repoEdge(app, repo).?;
-                if (here) hue.bg_color = chip(app).bg_color;
-                try pen.set(w, hue, null);
-                try w.writeAll(mark);
-                try pen.set(w, base, null);
-                try w.writeAll(" ");
-            }
-            try w.writeAll(name);
-            if (cut) try w.writeAll("…");
-            for (0..inner - 5 - lead - @intFromBool(review != .none) - @intFromBool(many) - cellCount(name) - @intFromBool(cut)) |_| try w.writeAll(" ");
-            if (review != .none) {
-                try pen.set(w, if (here) chip(app) else reviewInk(app, review), null);
-                try put(w, reviewGlyph(review));
-            }
-            try pen.set(w, if (here) chip(app) else ink(app, "amber", 4), null);
-            try put(w, sessionGlyph(app, s));
-            if (many) try w.print("{d}", .{@min(App.sessionCount(s), 9)});
-            try pen.set(w, if (here) chip(app) else dim, null);
-            try w.print("{d:>2} ", .{@min(s.wins.items.len, 99)});
-            filled = inner;
-        }
-    } else try pen.set(w, .{}, null);
-    for (@min(filled, inner)..inner) |_| try w.writeAll(" ");
-}
-
-/// The `inner` cells of a row of the rail's agents. Wide, a Claude's row has its mark, name,
-/// review mark, context and time, and its detail under it with its branch; narrow, its mark and
-/// time alone.
-fn agentRow(app: *const App, w: *Writer, pen: *Pen, line: App.AgentLine, inner: u16, wide: bool) !void {
-    const dim = ink(app, "dim", 8);
-    var filled: usize = 0;
-    // the selected Claude's rows are one solid bar, its shown subagent's in bold; its session's
-    // header only says it holds it
-    switch (line) {
-        .agent, .detail, .meta, .background => |a| if (app.agentSelected(a)) {
-            pen.over = chip(app);
-        },
-        .sub => |sub| if (app.agentSelected(sub.agent)) {
-            var bar = chip(app);
-            bar.flags.bold = app.subShown(sub);
-            pen.over = bar;
-        },
-        else => {},
-    }
-    defer pen.over = null;
-    switch (line) {
-        .session => |si| {
-            const s = app.sessions.items[si];
-            // the current session's header is lit only while no Claude's row says so
-            const holds = if (s.focused()) |win| win.agent() else false;
-            const repo = app.sessionRepo(si);
-            const lit = s.id == app.current and app.board_view == null and !holds;
-            const base = if (lit) heading(app) else if (!wide and repo.len > 0) repoStyle(repo) else dim;
-            try pen.set(w, base, null);
-            if (wide) {
-                const icon = repoIcon(app, repo);
-                const lead: usize = if (icon != null) 2 else 0;
-                const name = clip(s.name, inner - 2 - lead);
-                if (repoEdge(app, repo)) |edge| {
-                    try pen.set(w, edge, null);
-                    try w.writeAll("▌");
-                    if (icon) |mark| {
-                        try w.writeAll(mark);
-                        try pen.set(w, base, null);
-                        try w.writeAll(" ");
-                    } else try pen.set(w, base, null);
-                } else try w.writeAll(" ");
-                try w.writeAll(name);
-                filled = 1 + lead + cellCount(name);
-            } else {
-                // a rule with the name in it, so it does not read as an entry
-                const name = shortName(s.name);
-                try w.writeAll("─");
-                try w.writeAll(name);
-                for (0..inner - 1 - cellCount(name)) |_| try w.writeAll("─");
-                filled = inner;
-            }
-        },
-        .agent => |a| {
-            const win = a.win;
-            var buf: [8]u8 = undefined;
-            const time = ago(&buf, app.epoch, win.since);
-            const picked = if (app.railPicked()) |pick| pick == .agent and pick.agent == win.id else false;
-            try repoBar(app, w, pen, app.sessionRepo(a.session), picked, if (win.claude == .none) dim else ink(app, "amber", 4));
-            try pen.set(w, if (win.claude == .none) dim else ink(app, "amber", 4), null);
-            try put(w, agentGlyph(app, win));
-            filled = 2;
-            if (!wide) {
-                // its ticket's number, else its window's place in its session
-                var num: [8]u8 = undefined;
-                const s = app.sessions.items[a.session];
-                const at = std.mem.indexOfScalar(*Window, s.wins.items, win) orelse 0;
-                const label = app_mod.branchTicket(win.text(.branch)) orelse
-                    (std.fmt.bufPrint(&num, "w{d}", .{at + 1}) catch "");
-                try pen.set(w, dim, null);
-                try w.writeAll(" ");
-                try w.writeAll(label);
-                filled = 3 + cellCount(label);
-            } else {
-                // the time and a space at the right end
-                const room = inner - 3 - 5;
-                const s = app.sessions.items[a.session];
-                try pen.set(w, if (s.id == app.current and s.focused() == win) ink(app, "amber", 4) else .{}, null);
-                try w.writeAll(" ");
-                try fitted(w, win.label(), room);
-                filled = 3 + room;
-            }
-            if (wide) {
-                try pen.set(w, dim, null);
-                try w.writeAll(" ");
-                for (time.len..3) |_| try w.writeAll(" ");
-                try w.writeAll(time);
-                filled += 4;
-            }
-        },
-        .detail => |a| {
-            const win = a.win;
-            try repoBar(app, w, pen, app.sessionRepo(a.session), false, dim);
-            // at the right: how long a quiet one has said nothing, or how long a done one worked
-            var buf: [16]u8 = undefined;
-            var since: [8]u8 = undefined;
-            const quiet = win.quiet(app.epoch);
-            const right: []const u8 = if (quiet)
-                std.fmt.bufPrint(&buf, "quiet {s}", .{ago(&since, app.epoch, win.at)}) catch ""
-            else if ((win.claude == .done or win.claude == .none) and win.took > 0)
-                span(&buf, win.took)
-            else
-                "";
-            try pen.set(w, dim, null);
-            try w.writeAll("  ");
-            try fitted(w, win.detail(), inner - 4 - if (right.len > 0) right.len + 1 else 0);
-            if (right.len > 0) {
-                try pen.set(w, if (quiet) ink(app, "emberdim", 1) else dim, null);
-                try w.writeAll(" ");
-                try w.writeAll(right);
-            }
-            filled = inner - 1;
-        },
-        .sub => |sub| {
-            const win = sub.agent.win;
-            try repoBar(app, w, pen, app.sessionRepo(sub.agent.session), false, dim);
-            try pen.set(w, dim, null);
-            try w.writeAll("  ");
-            try pen.set(w, ink(app, "amber", 4), null);
-            try put(w, if (win.stirring) glyph(app, .working) else '◔');
-            // lit as its Claude's title is in view, while that Claude shows it
-            try pen.set(w, if (app.subShown(sub)) ink(app, "amber", 4) else dim, null);
-            try w.writeAll(" ");
-            try fitted(w, win.sub(sub.index), inner - 6);
-            filled = inner - 1;
-        },
-        .background => |a| {
-            try repoBar(app, w, pen, app.sessionRepo(a.session), false, dim);
-            try pen.set(w, dim, null);
-            try w.writeAll("  ");
-            try pen.set(w, ink(app, "amber", 4), null);
-            // its subagents' rows spin for them; with none listed, this row is a subagent's
-            try put(w, if (a.win.stirring and a.win.subs() == 0) glyph(app, .working) else '◔');
-            try pen.set(w, dim, null);
-            try w.writeAll(" ");
-            try fitted(w, a.win.text(.background), inner - 6);
-            filled = inner - 1;
-        },
-        .meta => |a| {
-            const win = a.win;
-            try repoBar(app, w, pen, app.sessionRepo(a.session), false, dim);
-            try pen.set(w, dim, null);
-            try w.writeAll("  ");
-            var count: [8]u8 = undefined;
-            // the share of its budget, when its status line says, else the tokens
-            const tokens = if (win.ctx > 0)
-                std.fmt.bufPrint(&count, "{d}%", .{@min(win.ctx, 999)}) catch ""
-            else
-                tokenCount(&count, win.tokens);
-            // the context at the right end, kept clear of the rest by two cells at least
-            const ctx: usize = if (tokens.len > 0) tokens.len + 4 else 0;
-            var left: usize = inner - 4 - if (ctx > 0) ctx + 2 else 0;
-            // the hook says "no repo" or "detached" and a commit for no branch; nothing, until it says
-            const said = win.text(.branch);
-            const named = said.len > 0 and !std.mem.eql(u8, said, "no repo") and !std.mem.startsWith(u8, said, "detached ");
-            const branch = clip(if (said.len > 0) said else "branch unknown", left);
-            try pen.set(w, if (named) ink(app, "violet", 5) else dim, null);
-            try w.writeAll(branch);
-            left -= cellCount(branch);
-            var gap: usize = if (branch.len > 0) 2 else 0;
-            if (win.review != .none and left >= gap + 3) {
-                const word = clip(reviewWord(win.review), left - gap - 2);
-                try pen.set(w, reviewInk(app, win.review), null);
-                for (0..gap) |_| try w.writeAll(" ");
-                try put(w, reviewGlyph(win.review));
-                try w.writeAll(" ");
-                try w.writeAll(word);
-                left -= gap + 2 + cellCount(word);
-                gap = 2;
-            }
-            if (ctx > 0) {
-                try pen.set(w, if (win.ctx >= ctx_warn) ink(app, "emberdim", 1) else dim, null);
-                for (0..left + 2) |_| try w.writeAll(" ");
-                try w.writeAll(tokens);
-                try w.writeAll(" ctx");
-                left = 0;
-            }
-            filled = inner - 1 - left;
-        },
-        .above => |count| {
-            try pen.set(w, dim, null);
-            if (wide) try w.print(" ↑ {d} above", .{count}) else try w.print(" ↑{d}", .{count});
-            filled = (if (wide) @as(usize, 9) else 2) + std.fmt.count("{d}", .{count});
-        },
-        .pipeline => |fold| {
-            const picked = if (app.railPicked()) |pick| pick == .fold and pick.fold == app.foldKey(fold) else false;
-            try repoBar(app, w, pen, if (fold.session) |si| app.sessionRepo(si) else fold.repo, picked, dim);
-            try pen.set(w, dim, null);
-            var buf: [96]u8 = undefined;
-            const text = if (fold.session != null)
-                std.fmt.bufPrint(&buf, " · {d}{s}", .{ fold.count, if (wide) " more" else "" }) catch ""
-            else if (wide)
-                std.fmt.bufPrint(&buf, " {s} {d} in the pipeline{s}{s}", .{ if (fold.open) "▾" else "◌", fold.count, if (fold.repo.len > 0) " · " else "", fold.repo }) catch ""
-            else
-                std.fmt.bufPrint(&buf, " ◌{d}", .{fold.count}) catch "";
-            const shown = clip(text[@min(1, text.len)..], inner - 1);
-            try w.writeAll(shown);
-            filled = 1 + cellCount(shown);
-        },
-        .more => |count| {
-            try pen.set(w, dim, null);
-            if (wide) try w.print(" +{d} more", .{count}) else try w.print(" +{d}", .{count});
-            filled = @min(inner, (if (wide) @as(usize, 7) else 2) + std.fmt.count("{d}", .{count}));
-        },
-    }
-    for (filled..inner) |_| try w.writeAll(" ");
-}
-
 /// `repo`'s colour in Workbench's look, for the `▌` that starts its rows; none for a repo it has
 /// no colour for, or without a palette.
 fn repoEdge(app: *const App, repo: []const u8) ?vt.Style {
@@ -792,24 +389,6 @@ fn repoEdge(app: *const App, repo: []const u8) ?vt.Style {
     for (theme.Roles.repo_names, 0..) |name, i| if (std.mem.eql(u8, name, repo)) return rgbStyle(r.repo[i]);
     return null;
 }
-
-/// The rail's first cell of a row: the picked mark, else `repo`'s `▌`, else a space in `base`.
-fn repoBar(app: *const App, w: *Writer, pen: *Pen, repo: []const u8, picked: bool, base: vt.Style) !void {
-    if (!picked) if (repoEdge(app, repo)) |edge| {
-        // a selected Claude's bar keeps its ground under the edge, not its ink
-        const over = pen.over;
-        pen.over = null;
-        var drawn = edge;
-        drawn.bg_color = (over orelse base).bg_color;
-        try pen.set(w, drawn, null);
-        try w.writeAll("▌");
-        pen.over = over;
-        try pen.set(w, base, null);
-        return;
-    };
-    try pickBar(app, w, pen, picked, base);
-}
-
 /// `repo`'s icon, none where `repoEdge` has no colour for it.
 fn repoIcon(app: *const App, repo: []const u8) ?[]const u8 {
     if (repoEdge(app, repo) == null) return null;
@@ -1159,7 +738,7 @@ fn switcherRow(b: *Box, row: App.Row, picked: bool) !void {
 
 /// The line a ticket's why is typed into, at the board's foot. Returns where its cursor goes.
 fn wordsLine(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
-    const x = app.boardX();
+    const x: u16 = 0;
     const y = app.view_h -| 2;
     const inner = app.boardW() -| 4;
     var buf: [256]u8 = undefined;
@@ -1281,7 +860,7 @@ fn findLine(app: *const App, w: *Writer) !?Cursor {
     if (!typing and text.len == 0) return null;
     var pen: Pen = .{};
     var slots: [33]App.RepoTab = undefined;
-    const x: usize = if (app.planShown()) app.planRepoTabs(&slots).end + 2 else app.boardX() + cellCount(App.board_title) + 2;
+    const x: usize = if (app.planShown()) app.planRepoTabs(&slots).end + 2 else cellCount(App.board_title) + 2;
     const hint = if (typing) "  ⏎ keep  esc clear" else "  esc clear";
     if (app.roles) |r| return benchFind(app, w, r, x, text, hint, typing);
     const room = @as(usize, app.boardW()) -| cellCount(App.board_title) -| 3;
@@ -1305,8 +884,8 @@ fn findLine(app: *const App, w: *Writer) !?Cursor {
 /// first when it does not fit, then the text, cut with `…`.
 fn benchFind(app: *const App, w: *Writer, r: theme.Roles, x: usize, text: []const u8, hint: []const u8, typing: bool) !?Cursor {
     var heads: [48]App.Button = undefined;
-    var right: usize = app.boardX() + app.boardW();
-    if (app.planShown()) right = app.boardX() + planHeadStart(app) else for (heads[0..app.header(&heads).n]) |b| {
+    var right: usize = app.boardW();
+    if (app.planShown()) right = planHeadStart(app) else for (heads[0..app.header(&heads).n]) |b| {
         if (b.y == 0) right = @min(right, b.x);
     }
     const room = right -| x -| 1;
@@ -1895,7 +1474,7 @@ fn rowHasText(row: anytype) bool {
     return false;
 }
 
-const popup_keys = " j k scroll  / find  h l next  a ask  r reply  ⏎ go  q ";
+const popup_keys = " j k scroll  / find  a ask  r reply  ⏎ go  q ";
 const popup_reply_keys = " ⏎ send  esc back ";
 
 /// The popup, about three quarters of the strip each way and centred on it: its head, what the
@@ -1915,11 +1494,10 @@ fn popupBox(app: *App, w: *Writer, pop: App.Popup) !void {
     var pen: Pen = .{};
     var buf: [192]u8 = undefined;
 
-    const win: ?*const Window, const session: ?*const Session = switch (pop.entry) {
-        .agent => |id| if (app.agentById(id)) |a| .{ a.win, app.sessions.items[a.session] } else .{ null, null },
-        .session => |id| .{ if (app.sessionById(id)) |s| s.focused() else null, app.sessionById(id) },
-        .fold => .{ null, null },
-    };
+    const win: ?*const Window, const session: ?*const Session = if (app.agentById(pop.entry)) |a|
+        .{ a.win, app.sessions.items[a.session] }
+    else
+        .{ null, null };
     var title: Writer = .fixed(&buf);
     title.writeAll(" ") catch {};
     if (win) |it| if (it.agent()) {
@@ -2080,7 +1658,7 @@ fn planFoot(app: *App, w: *Writer, sheet: *const sheets.Sheet, pick: usize) !voi
         };
     };
     var pen: Pen = .{};
-    try w.print("\x1b[{d};{d}H", .{ app.view_h, app.boardX() + 1 });
+    try w.print("\x1b[{d};{d}H", .{ app.view_h, 1 });
     try pen.set(w, ink(app, "dim", 8), null);
     try fitted(w, text, app.boardW());
 }
@@ -2160,7 +1738,7 @@ pub fn planHeadHit(app: *const App, x: u16) ?enum { orch, menu } {
     var bufs: PlanHeadBufs = undefined;
     const head = planHead(app, &bufs);
     if (head.start <= head.left_w) return null;
-    var at: usize = app.boardX() + head.start;
+    var at: usize = head.start;
     for (head.pieces, 0..) |piece, i| {
         if (!head.shows(i)) continue;
         const end = at + cellCount(piece.text);
@@ -2187,7 +1765,7 @@ pub fn planAutoSwitch(app: *const App) ?struct { x: u16, w: u16 } {
     var bufs: PlanHeadBufs = undefined;
     const head = planHead(app, &bufs);
     if (head.start <= head.left_w) return null;
-    return .{ .x = app.boardX() + @as(u16, @intCast(head.start)), .w = @intCast(cellCount(head.pieces[0].text)) };
+    return .{ .x = @as(u16, @intCast(head.start)), .w = @intCast(cellCount(head.pieces[0].text)) };
 }
 
 /// The repo filter in the plan's head: `every` and each repo, the one the plan is narrowed to lit.
@@ -2214,7 +1792,7 @@ fn repoTabs(app: *App, w: *Writer, view: app_mod.BoardView) !void {
 fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     var sheet: sheets.Sheet = undefined;
     if (!app.planSheet(&sheet)) return;
-    const ox = app.boardX();
+    const ox: u16 = 0;
     const width = app.boardW();
     const dim = ink(app, "dim", 8);
     var pen: Pen = .{};
@@ -2392,7 +1970,7 @@ fn repeat(w: *Writer, x: usize, y: usize, cell_glyph: []const u8, n: usize, fg: 
 /// them, and what is behind it is drawn as it was.
 fn benchPlan(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, view: app_mod.BoardView, rows_end: u16) !void {
     var y: u16 = 2;
-    while (y < rows_end) : (y += 1) try bench.fill(w, app.boardX(), y, app.boardW(), r.ground);
+    while (y < rows_end) : (y += 1) try bench.fill(w, 0, y, app.boardW(), r.ground);
     if (view.whole == null) {
         for (std.enums.values(sheets.Window)) |win| try benchWindow(app, w, r, sheet, view, win, true);
         return;
@@ -2572,7 +2150,7 @@ pub fn repoHue(r: theme.Roles, repo: ?[]const u8) struct { glyph: []const u8, hu
 /// The board in Workbench's look: its columns windows, their cards tiles, and the last closed a
 /// strip along its foot.
 fn benchBoard(app: *App, w: *Writer, r: theme.Roles, view: app_mod.BoardView) !void {
-    const ox = app.boardX();
+    const ox: u16 = 0;
     for (App.first_line - 1..app.view_h) |y| try bench.tabRow(w, r, ox, @intCast(y), app.boardW());
     try benchEpics(app, w, r);
     const lanes = app.boardLanes();
@@ -2602,7 +2180,7 @@ fn benchEpics(app: *const App, w: *Writer, r: theme.Roles) !void {
     const slot = (app.boardW() -| 2 - gap * (n - 1)) / n;
     const y = App.first_line - 1;
     for (goals, 0..) |goal, i| {
-        const x = app.boardX() + 1 + i * (slot + gap);
+        const x = 1 + i * (slot + gap);
         const progress = b.epicProgress(goal.epic) orelse continue;
         const hue = goalHue(b, r, goal);
         var building: usize = 0;
@@ -2630,10 +2208,10 @@ fn benchEpics(app: *const App, w: *Writer, r: theme.Roles) !void {
 fn benchBar(app: *const App, w: *Writer, r: theme.Roles) !void {
     if (app.barRows() == 0) return;
     const y = app.view_h - 1;
-    try bench.fill(w, app.boardX(), y, app.boardW(), r.ground);
+    try bench.fill(w, 0, y, app.boardW(), r.ground);
     if (app.report_said != null and !app.feedFocused()) {
         const room = app.boardW() -| 2;
-        try bench.say(w, app.boardX() + 1, y, clip(app.report_said.?, room), if (app.report_failed) r.failed else r.accent, r.ground, false);
+        try bench.say(w, 1, y, clip(app.report_said.?, room), if (app.report_failed) r.failed else r.accent, r.ground, false);
         return;
     }
     var keys: [24]App.BarKey = undefined;
@@ -2831,7 +2409,7 @@ fn benchChips(app: *const App, w: *Writer, r: theme.Roles, card: *const tickets.
 /// each, and under it each one's number and title. The picked one is lit and has its button.
 fn benchRecent(app: *App, w: *Writer, r: theme.Roles, view: app_mod.BoardView) !void {
     const y0 = app.listH();
-    const x = app.boardX();
+    const x: u16 = 0;
     const focused = view.col == 3 and !app.columnFocused();
     var total: usize = 0;
     if (app.board != null) total = app.columnOf(.done, app.boardRepo(), app.findText(), &.{});
@@ -2869,7 +2447,7 @@ fn benchRecent(app: *App, w: *Writer, r: theme.Roles, view: app_mod.BoardView) !
 /// the picked one's border lit.
 fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     if (app.planShown()) return planView(app, w, view);
-    const ox = app.boardX();
+    const ox: u16 = 0;
     const dim = ink(app, "dim", 8);
     const edge: vt.Style = .{ .fg_color = .palette(8) };
     var pen: Pen = .{};
@@ -3547,8 +3125,8 @@ fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     var buf: [64]u8 = undefined;
     var buttons: [48]App.Button = undefined;
     const shown = app.boardButtons(&buttons);
-    var end: u16 = app.boardX() + @as(u16, @intCast(cellCount(App.board_title)));
-    var right = app.boardX() + app.boardW();
+    var end: u16 = @as(u16, @intCast(cellCount(App.board_title)));
+    var right = app.boardW();
     var refusal_at: ?App.Button = null;
     const said: ?[]const u8 = if (app.start_refused) |text| text else if (app.report_said != null and !app.feedFocused() and app.barRows() == 0) app.report_said else null;
     const said_ink = if (app.start_refused != null) ink(app, "emberdim", 1) else reportInk(app);
@@ -3658,11 +3236,11 @@ const plan_keys = [_][2][]const u8{
 fn helpBox(app: *App, w: *Writer) !void {
     const list: []const [2][]const u8 = if (app.planShown()) &plan_keys else &board_keys;
     const title = if (app.planShown()) " the plan's keys " else " the board's keys ";
-    return keysBox(app, w, list, title, app.boardX(), app.boardW());
+    return keysBox(app, w, list, title, 0, app.boardW());
 }
 
 const strip_keys = [_][2][]const u8{
-    .{ "j k", "the pick down or up the rail; ⏎ goes, space opens" },
+    .{ "j k", "the session below or above; ⏎ is insert, space opens the Claude" },
     .{ "] [", "the next or previous Claude that waits or is done" },
     .{ "h l  1…9", "the window left or right; that window" },
     .{ "H L  J K", "move the window; move the session" },
@@ -3670,7 +3248,7 @@ const strip_keys = [_][2][]const u8{
     .{ "c  x  z", "a new window; close it; the whole width" },
     .{ "/", "jump: windows, Claudes and tickets" },
     .{ "b n g", "the board; the inbox; the gate's modal" },
-    .{ "o w m", "the overview; the rail narrow; the menu" },
+    .{ "O m", "the overview; the menu" },
     .{ "i Esc", "insert again" },
     .{ "Q", "leave; the sessions keep running" },
 };
@@ -3721,7 +3299,7 @@ fn keysBox(app: *App, w: *Writer, list: []const [2][]const u8, title: []const u8
 fn askBox(app: *App, w: *Writer, id: u32, ask: tickets.Ask) !void {
     const bw: u16 = @min(app.boardW() -| 4, 64);
     const inner = bw -| 4;
-    const x = app.boardX() + (app.boardW() -| bw) / 2;
+    const x = (app.boardW() -| bw) / 2;
     const edge = ink(app, "amber", 4);
     var pen: Pen = .{};
     var buf: [48]u8 = undefined;
@@ -3771,7 +3349,7 @@ fn askBox(app: *App, w: *Writer, id: u32, ask: tickets.Ask) !void {
 fn giveBox(app: *App, w: *Writer, id: u32, picked: usize) !void {
     const bw: u16 = @min(app.boardW() -| 4, 64);
     const inner = bw -| 4;
-    const x = app.boardX() + (app.boardW() -| bw) / 2;
+    const x = (app.boardW() -| bw) / 2;
     const edge = ink(app, "amber", 4);
     var pen: Pen = .{};
     var buf: [48]u8 = undefined;
@@ -4166,7 +3744,7 @@ fn cardActionsShown(app: *const App) bool {
     return false;
 }
 
-/// One frame: the rail, the current session's strip (and, mid-slide, the one being left) or the
+/// One frame: the current session's strip (and, mid-slide, the one being left) or the
 /// overview in its place, the menu or prompt when open, and the cursor.
 pub fn frame(app: *App, w: *Writer, what: What) !void {
     app.settleLit();
@@ -4175,8 +3753,7 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
     if (what == .all) {
         // Not 2J: erasing the whole display takes the terminal's kitty pictures with it.
         try w.writeAll("\x1b[H\x1b[J");
-        try rail(app, w);
-    } else if (app.working()) try rail(app, w);
+    }
     var cursor: ?Cursor = null;
     if (app.overview) |spot| {
         try overview(app, w, spot);
@@ -4198,8 +3775,7 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
             try dots(app, w, s);
         }
     }
-    // a narrow rail drawn wide lies over the strip
-    if (app.peek) try rail(app, w);
+
     if (app.look) |look| try lookBox(app, w, look);
     if (app.strip_help and app.overlay() == false) try stripHelp(app, w);
     if (app.popup) |pop| {
@@ -4415,7 +3991,7 @@ test "the board's head in Workbench's look: a striped title bar, tabs under it t
     try eq(@as(u21, '●'), knob.cp);
     try eq(r.accent, knob.bg);
     try eq(@as(u21, '2'), (try bench.probe(drawn, sw.x + 10, 0)).cp);
-    try eq(app.boardX() + app.boardW(), sw.x + sw.w);
+    try eq(app.boardW(), sw.x + sw.w);
 }
 
 test "the board in Workbench's look: windows, the picked tile raised with its chips, buttons and shadow, and the recent strip" {
@@ -4566,9 +4142,9 @@ test "with the roles set, the find line is on the bar's face, clipped before the
     const eq = std.testing.expectEqual;
 
     var heads: [48]App.Button = undefined;
-    var right: u16 = app.boardX() + app.boardW();
+    var right: u16 = app.boardW();
     for (heads[0..app.header(&heads).n]) |b| right = @min(right, b.x);
-    try std.testing.expect(right < app.boardX() + app.boardW());
+    try std.testing.expect(right < app.boardW());
     const slash = try bench.probe(drawn, 19, 0);
     try eq(@as(u21, '/'), slash.cp);
     try eq(r.raised, slash.bg);
@@ -4589,7 +4165,7 @@ test "with the roles set, the find line is on the bar's face, clipped before the
 test "the board's keys end on a card's edge and its marks, and a 24-row terminal has them whole" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     app.view_w = 80;
-    const x = app.boardX() + 10;
+    const x = 10;
     var buf: [8192]u8 = undefined;
     var at: [24]u8 = undefined;
 
@@ -5219,21 +4795,6 @@ const PeekRows = struct {
 /// what its Claude is doing, and the last lines of its pane, with the keys at its foot.
 fn lookBox(app: *App, w: *Writer, look: App.Look) !void {
     var p: PeekRows = .{};
-    if (look == .fold) {
-        var members: [16]App.Agent = undefined;
-        const n = app.foldMembers(look.fold, &members);
-        if (n == 0) return;
-        p.add(.head, "{d} Claude{s} not moving", .{ n, if (n == 1) "" else "s" });
-        for (members[0..n]) |a| {
-            const id = std.fmt.parseInt(u32, app_mod.branchTicket(a.win.text(.branch)) orelse "", 10) catch null;
-            const card = if (id) |i| app.ticketCard(i) else null;
-            if (card) |c| {
-                p.add(.plain, "{u} #{d} {s}{s}{s}", .{ agentGlyph(app, a.win), c.id, c.title, if (c.stage != null) " · " else "", c.stage orelse "" });
-            } else p.add(.plain, "{u} {s}", .{ agentGlyph(app, a.win), a.win.label() });
-        }
-        p.add(.head, "esc away", .{});
-        return peekBox(app, w, &p);
-    }
     const peek = app.peekOf(look) orelse return;
     var age_buf: [8]u8 = undefined;
     if (peek.card) |card| {
@@ -5607,65 +5168,6 @@ test "Plan's rows start with a ▌ in their repo's colour, and a goal's card has
     }
 }
 
-test "the rail's sessions and Claudes wear their repo's ▌ and icon, one repo's colour to a row" {
-    const eq = std.testing.expectEqual;
-    var board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":701,"repo":"arena","status":"doing","title":"A"},
-        \\{"id":702,"repo":"babylon","status":"doing","title":"B"}]}
-    );
-    defer board.deinit();
-    var first: Session = .{ .id = 2, .name = @constCast("alpha") };
-    var second: Session = .{ .id = 3, .name = @constCast("beta") };
-    var a: Window = .{ .id = 1, .name = @constCast("a"), .claude = .working, .since = 1, .info = @constCast("\t\t\t\tt701-x") };
-    var b: Window = .{ .id = 2, .name = @constCast("b"), .claude = .working, .since = 1, .info = @constCast("\t\t\t\tt702-y") };
-    var wa = [_]*Window{&a};
-    var wb = [_]*Window{&b};
-    first.wins = .fromOwnedSlice(&wa);
-    second.wins = .fromOwnedSlice(&wb);
-    var sessions = [_]*Session{ &first, &second };
-    var app = homeApp(&board);
-    app.board_view = null;
-    app.term_w = 80;
-    app.view_w = 80;
-    app.view_h = 24;
-    app.sessions = .fromOwnedSlice(&sessions);
-    app.current = 2;
-    app.roles = bench.roles();
-    const r = bench.roles();
-    var buf: [65536]u8 = undefined;
-    var out: Writer = .fixed(&buf);
-    try rail(&app, &out);
-    const drawn = out.buffered();
-
-    for (0..2) |i| {
-        const edge = try bench.probe(drawn, 1, 2 + i);
-        try eq(@as(u21, '▌'), edge.cp);
-        try eq(r.repo[i], edge.fg);
-        const icon = try bench.probe(drawn, 2, 2 + i);
-        try eq(try std.unicode.utf8Decode(repo_glyphs[i]), icon.cp);
-        try eq(r.repo[i], icon.fg);
-    }
-
-    var lines: [64]App.AgentLine = undefined;
-    const n = app.railAgents(&lines);
-    var seen: usize = 0;
-    for (lines[0..n], 0..) |line, at| {
-        const si = switch (line) {
-            .session => |si| si,
-            .agent, .detail, .meta, .background => |ag| ag.session,
-            .sub => |sub| sub.agent.session,
-            else => continue,
-        };
-        const y = app.railAgentsRow() + 1 + at;
-        const edge = try bench.probe(drawn, 1, y);
-        try eq(@as(u21, '▌'), edge.cp);
-        try eq(r.repo[si], edge.fg);
-        seen += 1;
-    }
-    try std.testing.expect(seen >= 4);
-}
-
 test "an in-flight row with a Claude says its session, window and pane on a second line, in the session's repo colour" {
     var board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[{"id":701,"repo":"arena","status":"doing","title":"A","claimed_by":"%5"}],
@@ -5757,6 +5259,42 @@ test "the foot row has home, the session with a dot and number per window, go to
     try std.testing.expect(std.mem.indexOf(u8, short, " ◆ home") != null);
     try std.testing.expect(std.mem.indexOf(u8, short, "arena    ●◉○ │ s go to  ≡") != null);
     try std.testing.expect(std.mem.indexOf(u8, short, "INSERT") == null);
+}
+
+test "Plan and a pane view start at column 0 at 220 and 110 cells" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"plan":{"now":[],"next":[],"goals":[],
+        \\"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer board.deinit();
+    var s: Session = .{ .id = 2, .name = @constCast("arena") };
+    var a: Window = .{ .id = 1, .name = @constCast("a") };
+    var wins = [_]*Window{&a};
+    s.wins = .fromOwnedSlice(&wins);
+    var sessions = [_]*Session{&s};
+    var buf: [262144]u8 = undefined;
+    var row: [4096]u8 = undefined;
+    for ([_]u16{ 220, 110 }) |cols| {
+        var app = homeApp(&board);
+        app.term_w = cols;
+        app.view_w = cols;
+        app.sessions = .fromOwnedSlice(&sessions);
+        app.roles = bench.roles();
+        app.current = s.id;
+        app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
+        var out: Writer = .fixed(&buf);
+        try planView(&app, &out, app.board_view.?);
+        const head = try screenRow(out.buffered(), cols, 0, &row);
+        try std.testing.expect(std.mem.startsWith(u8, head, " b plan"));
+        const underline = try screenRow(out.buffered(), cols, 1, &row);
+        try std.testing.expect(std.mem.startsWith(u8, underline, "──"));
+
+        app.board_view = null;
+        out = .fixed(&buf);
+        _ = try strip(&app, &out, &s, 0, .all);
+        const pane = try screenRow(out.buffered(), cols, 0, &row);
+        try std.testing.expect(std.mem.startsWith(u8, pane, "╭─"));
+    }
 }
 
 test "the empty switcher lists Claudes by urgency, then sessions in tmux's order, then + new session" {

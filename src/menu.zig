@@ -17,7 +17,6 @@ pub const Action = enum {
     jump,
     overview,
     board,
-    rail_width,
     report,
     detach,
     confirm_close,
@@ -53,7 +52,6 @@ pub const main = [_]Item{
     .{ .icon = "→", .label = "Go to", .key = 'p', .action = .jump },
     .{ .icon = "▦", .label = "Overview", .key = 'o', .action = .overview },
     .{ .icon = "▤", .label = "Board", .key = 't', .action = .board },
-    .{ .icon = "◧", .label = "Wide or narrow rail", .key = 'w', .action = .rail_width },
     .{ .icon = "!", .label = "Report this", .key = '!', .action = .report },
     .{ .icon = "⎋", .label = "Detach", .key = 'q', .action = .detach },
 };

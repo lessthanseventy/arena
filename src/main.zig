@@ -611,7 +611,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
                 last_spin = now;
             }
             // the menu lies over the border, so a border-only frame would cut through it
-            const what: draw.What = if (whole or app.overlay() or app.peek or app.look != null) .all else .focused_border;
+            const what: draw.What = if (whole or app.overlay() or app.look != null) .all else .focused_border;
             if (whole) last_frame = now;
             app.dirty = false;
             frame.clearRetainingCapacity();
@@ -631,7 +631,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
         const lone = keys.lone(typed.items);
         const pick_ms = try app.pickStep();
         const auto_ms = try app.sendAuto();
-        _ = try posix.poll(&fds, @intCast(@min(wait_ms, idle_ms, @max(1, app.dwell()), @max(1, pick_ms), @max(1, auto_ms), if (lone) @as(i64, keys.lone_wait_ms) else idle_ms)));
+        _ = try posix.poll(&fds, @intCast(@min(wait_ms, idle_ms, @max(1, app.lookStep()), @max(1, pick_ms), @max(1, auto_ms), if (lone) @as(i64, keys.lone_wait_ms) else idle_ms)));
 
         if (fds[0].revents & posix.POLL.IN != 0) {
             const n = try posix.read(posix.STDIN_FILENO, &buf);
