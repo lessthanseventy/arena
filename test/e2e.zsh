@@ -39,7 +39,8 @@ cleanup() {
   # a group kill that repeats its TERM would end this, or its kill-server client, half done
   trap '' HUP INT TERM
   [[ -n $server ]] && kill -CONT $server 2>/dev/null
-  # the outer server first: arena in its pane attaches again to a server it finds gone
+  # the outer server first: an arena still starting in its pane would otherwise run its
+  # `new-session -A` against the killed inner server and start a fresh one that outlives the run
   [[ -n $outer_pid ]] && kill $outer_pid 2>/dev/null
   outer kill-server 2>/dev/null
   [[ -n $inner_pid ]] && kill $inner_pid 2>/dev/null
