@@ -6047,8 +6047,9 @@ pub const App = struct {
     }
 
     /// The mouse over the text of the window drawn over the rest: a drag selects, and copies on
-    /// let go; a second press on the same cell picks its word, a third its line. A first press is
-    /// still the press of what is under it. Whether the event was the selection's.
+    /// let go; in a modal a second press on the same cell picks its word, a third its line (in
+    /// Plan's windows a repeated press is a repeated click). A first press is still the press of
+    /// what is under it. Whether the event was the selection's.
     pub fn grabMouse(app: *App, m: keys.Mouse) !bool {
         const g = &app.grab;
         if (g.n_areas == 0 or (!g.modal and (app.menu != null or app.prompt != null or app.popup != null))) {
@@ -6077,7 +6078,7 @@ pub const App = struct {
             }
             if (g.paneAt(at) == null) return false;
             const clicks = g.press(app.now, at);
-            if (clicks == 1) {
+            if (clicks == 1 or !g.modal) {
                 g.pressed = at;
                 return false;
             }
