@@ -958,7 +958,7 @@ pub const Sheet = struct {
                 if (card.id == id) break card;
             } else null;
             if (card) |c| {
-                _ = s.print("#{d} {s} {s}", .{ id, c.repo orelse "", c.title });
+                _ = s.print("#{d} {s} {s}", .{ id, c.repo orelse "", c.name() });
             } else _ = s.print("#{d}", .{id});
         }
         s.add(.{ .kind = .landed, .pick = 0, .text = s.clipped(width, s.buf[start..s.used]) });
