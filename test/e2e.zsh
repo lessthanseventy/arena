@@ -1517,26 +1517,20 @@ print -r -- '{"tickets":[],"needs_you":[{"id":"ask:6","kind":"look","ticket":307
 check "a look at is an item with its doc named and o to open it" see 'o open   y looks good'
 key ']'
 key o
-check "o opens its doc in a window of its own" await doc_window
-check "which says so when the file is not in the ticket's repo" await eval 'inner capture-pane -p -t "$(inner list-windows -a -F "#{window_id} #{window_name}" | awk "\$2 ~ /^doc/{print \$1}")" | grep -q "no such file: .*projects/tlon/docs/none-jkdufltb.md"'
-for s in $(inner list-sessions -F '#{session_name}'); do inner set-environment -t $s HOME $tmp; done
+check "o opens its doc in the middle column, with no window of its own" await eval '! doc_window'
+check "which says so when the file is not in the ticket's repo" see 'no such file: docs/none'
+key Escape
+gone 'no such file'
 mkdir -p $tmp/projects/tlon/.worktrees/t307-design/docs
 print -r -- 'only-on-the-branch' >$tmp/projects/tlon/.worktrees/t307-design/docs/none-jkdufltb.md
-inner set-option -g remain-on-exit on
-gone 'o open   y looks good'
-key M-b
 key ']'
 see '▌ #307 tlon  look at'
 key o
-doc_windows_show() { local w; for w in $(inner list-windows -a -F '#{window_id} #{window_name}' | awk '$2 ~ /^doc/{print $1}'); do inner capture-pane -p -t $w | grep -q "$1" && return 0; done; return 1 }
-check "a doc only in the ticket's worktree opens from there" await doc_windows_show only-on-the-branch
-# tmux has the window before arena has gone to it: an Alt+b ahead of that would be undone by it
-see '╭─ [0-9]+ doc'
-for s in $(inner list-sessions -F '#{session_name}'); do inner set-environment -t $s HOME $HOME; done
-inner set-option -g remain-on-exit off
+check "a doc only in the ticket's worktree opens from there" see 'only-on-the-branch'
+key Escape
+gone 'only-on-the-branch'
 # an item of any kind runs its action: a digest has no ticket and no repo, and ⏎ is its seen
 print -r -- '{"tickets":[],"needs_you":[{"id":"digest:1795536000","kind":"digest","ticket":null,"repo":"","text":"digest: 3 landed","doc":"/tmp/none-jkdufltb.md","actions":[{"key":"⏎","label":"seen","argv":["babylon","digest","ok"]}]}]}' | addplan
-key M-b
 key ']'
 see 'o open   ⏎ seen'
 : >$tmp/babylon

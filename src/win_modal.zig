@@ -195,7 +195,7 @@ pub fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
 /// The open Your move item with no ticket, in the middle column: its text (a digest's doc, a
 /// push's commits) scrolled `scroll` rows down, its actions as buttons and `q close` at the foot.
 pub fn itemBox(app: *App, w: *Writer, scroll: usize) !void {
-    const r = app.roles orelse return;
+    const r = app.roles orelse bench.roles();
     const at = app.itemNeed() orelse return;
     const rect = app.columnRect() orelse return;
     const need = app.board.?.needsYou()[at];

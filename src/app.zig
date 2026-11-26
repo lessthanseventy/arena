@@ -6611,6 +6611,10 @@ pub const App = struct {
                     app.dirty = true;
                     continue;
                 }
+                if (app.sideFocused()) if (app.home) |view| if (view.item_open) {
+                    try app.itemKey(key);
+                    continue;
+                };
                 if (app.sideFocused() and app.drawerOpen() and anyKey(key, &.{"\x1b"})) {
                     try app.closeDrawer();
                     continue;
