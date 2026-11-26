@@ -92,12 +92,38 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
     }
 }
 
+/// `babylon drive N`: the goal Plan drives towards.
+pub fn drive(app: *App, epic: u32) !void {
+    app.dirty = true;
+    try app.send(.ignore, app_mod.captured("babylon drive {d}"), .{epic});
+}
+
+/// Button `at` under a landed goal: the drive item's action run as babylon gave it, or
+/// `+ a new goal` one past them. Nothing when no goal has landed.
+pub fn answer(app: *App, at: usize) !void {
+    const b = &app.board.?;
+    const need = sheets.driveLanded(b.plan().?, b) orelse return;
+    app.dirty = true;
+    if (at == need.actions.len) return app.openGoal();
+    if (at > need.actions.len) return;
+    const argv = need.actions[at].argv orelse return;
+    _ = try app.runNeed(need.id, argv);
+}
+
+/// A click on the buttons row under a landed goal.
+pub fn click(app: *App, m: anytype) !void {
+    const b = &app.board.?;
+    const need = sheets.driveLanded(b.plan().?, b) orelse return;
+    const button = sheets.driveButtonAt(need, app.planRect(.driving).x, m.x) orelse return;
+    return answer(app, button);
+}
+
 /// A click on the title bar: with a goal in focus and none landed, drives it.
 pub fn titleClick(app: *App) !bool {
     const given = app.board.?.plan().?;
     if (sheets.driveLanded(given, &app.board.?) != null) return false;
     const at = sheets.focalGoal(given) orelse return false;
-    try app.driveGoal(given.goals[at].epic);
+    try drive(app, given.goals[at].epic);
     return true;
 }
 

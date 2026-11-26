@@ -2271,7 +2271,7 @@ pub const App = struct {
 
     /// `argv`, run for Your move item `id` through tmux: babylon's refusal is written beside its
     /// board, for the feed to say in place of the item's buttons.
-    fn runNeed(app: *App, id: []const u8, argv: []const []const u8) !bool {
+    pub fn runNeed(app: *App, id: []const u8, argv: []const []const u8) !bool {
         return app.runWith(id, argv, false);
     }
 
@@ -3953,9 +3953,9 @@ pub const App = struct {
             }
         }
         if (is(key, &.{"d"})) if (sheet.picked(view.plan_pick)) |row| {
-            if (row.kind == .goal or row.kind == .focal) return app.driveGoal(row.ticket.?);
+            if (row.kind == .goal or row.kind == .focal) return win_driving.drive(app, row.ticket.?);
         };
-        if (key.len == 1 and key[0] >= '1' and key[0] <= '9') return app.driveAnswer(key[0] - '1');
+        if (key.len == 1 and key[0] >= '1' and key[0] <= '9') return win_driving.answer(app, key[0] - '1');
 
         if (is(key, &.{ "J", "K", "x", "e" })) {
             const row = sheet.picked(view.plan_pick) orelse return;
@@ -4092,24 +4092,6 @@ pub const App = struct {
         return null;
     }
 
-    /// `babylon drive N`: the goal Plan drives towards.
-    pub fn driveGoal(app: *App, epic: u32) !void {
-        app.dirty = true;
-        try app.send(.ignore, captured("babylon drive {d}"), .{epic});
-    }
-
-    /// Button `at` under a landed goal: the drive item's action run as babylon gave it, or
-    /// `+ a new goal` one past them. Nothing when no goal has landed.
-    fn driveAnswer(app: *App, at: usize) !void {
-        const b = &app.board.?;
-        const need = sheets.driveLanded(b.plan().?, b) orelse return;
-        app.dirty = true;
-        if (at == need.actions.len) return app.openGoal();
-        if (at > need.actions.len) return;
-        const argv = need.actions[at].argv orelse return;
-        _ = try app.runNeed(need.id, argv);
-    }
-
     /// `e` and `x` on an idea row: a kept idea's text edited in $EDITOR as a card's is, or the idea
     /// withdrawn. One with a Claude on it or a draft is left to its own keys.
     fn ideaKey(app: *App, row: *const sheets.Row, key: []const u8) !void {
@@ -4194,12 +4176,7 @@ pub const App = struct {
         }
         const at = app.planRowAt(&sheet, m.x, m.y) orelse return;
         const row = sheet.rows[at];
-        if (row.kind == .drove and row.part == 3) {
-            const b = &app.board.?;
-            const need = sheets.driveLanded(b.plan().?, b) orelse return;
-            const button = sheets.driveButtonAt(need, app.planRect(.driving).x, m.x) orelse return;
-            return app.driveAnswer(button);
-        }
+        if (row.kind == .drove and row.part == 3) return win_driving.click(app, m);
         if (row.kind == .need_card) return win_move.click(app, &sheet, at, m);
         if (row.kind == .buttons) return app.planButtonClick(&sheet, at, m);
         if (row.kind == .held) {
