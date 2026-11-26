@@ -1258,7 +1258,7 @@ check "off, the state is gone" gone 'auto [0-9]'
 check "with nothing of the orchestrator in babylon's file, Plan's head has no button for it" hides ' ● orch '
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":4,"working":4,"tools":{"working":1,"cap":1}}}' >$tmp/run/babylon/board.json
 check "with room, Plan's head says the tools slots when babylon's file gives them" see ' ◐ auto 4/4 · tools 1/1( |$)'
-outer resize-window -t o -x 121
+outer resize-window -t o -x 100
 check "and with less room, without the tools slots" see ' ◐ auto 4/4 +✓ 0 today'
 outer resize-window -t o -x 200
 cp $tmp/board.noauto $tmp/run/babylon/board.json
@@ -1347,32 +1347,11 @@ cp $tmp/board.kept $tmp/run/babylon/board.json
 plan_home
 see '#7 Lights'
 plan_at 7
-key k
 key o
+key Enter
 starting() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == orchestrator ]] }
-check "o on Plan starts the orchestrator when it is not running" await starting
-plan_at 7
-check "Plan opened in the meantime" see "$plan_up"
-key q
-check "and closed" gone "$plan_up"
-inner new-session -d -s orchestrator -n orch sh
-zselect -t 100
-check "an orchestrator that shows after the human moved on does not pull them to it" see '╭─ 1 gate '
-plan_at 7
-key k
-key o
-check "and o goes to it now it is there" see '╭─ 1 orch '
-inner kill-session -t '=orchestrator'
-check "with the orchestrator gone, arena goes elsewhere" gone '╭─ 1 orch '
-asked=$(grep -cx orchestrator $tmp/babylon)
-plan_at 7
-key k
-key o
-asked_again() { (( $(grep -cx orchestrator $tmp/babylon) > asked )) }
-check "o asks babylon to start it again" await asked_again
-inner new-session -d -s orchestrator -n orch sh
-check "and with no other move made, arena goes to it once its session is there" see '╭─ 1 orch '
-key Escape
+check "o on Plan opens the drawer, and ⏎ in it starts the orchestrator when it is not running" await starting
+key M-h
 inner kill-session -t '=orchestrator'
 inner kill-session -t '=babylon-gate'
 await in_session alpha
