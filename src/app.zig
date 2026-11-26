@@ -3095,9 +3095,9 @@ pub const App = struct {
 
     /// Home's plan opened with the pick on ticket `id`: what `arena plan <id>` asks for. The find
     /// line and the repo filter are cleared, and a window folded over the ticket is opened. A
-    /// ticket the plan shows in no window opens its detail instead; with no plan, nothing opens.
+    /// ticket the plan shows in no window opens its detail instead; with no plan, home says why.
     pub fn showPlan(app: *App, id: u32) !void {
-        if (!app.hasPlan()) return;
+        if (!app.hasPlan()) return app.goHome();
         app.menu = null;
         app.prompt = null;
         app.overview = null;
@@ -3960,10 +3960,6 @@ pub const App = struct {
     fn homeKey(app: *App, key: []const u8) !void {
         app.clearStartRefusal();
         app.dirty = true;
-        if (app.board == null) {
-            if (anyKey(key, &.{ "q", "\x1b", "b" })) try app.closeBoard();
-            return;
-        }
         const view = &app.home.?;
         if (view.goal_open) return app.goalKey(key);
         if (view.draft != null) return app.draftKey(key);
@@ -3976,6 +3972,10 @@ pub const App = struct {
         if (view.detail != null) return app.modalKey(key);
         if (anyKey(key, &.{"s"})) return app.openSwitcher();
         if (app.columnFocused()) return app.columnKey(key);
+        if (!app.hasPlan()) {
+            if (anyKey(key, &.{ "q", "\x1b", "b" })) try app.closeBoard();
+            return;
+        }
         return app.planKey(key);
     }
 
@@ -7586,7 +7586,16 @@ test "home with a board that did not parse says why, closes on q, and draws the 
     try app.homeKey("q");
     try expect(app.home == null);
 
+    try app.setBoard(
+        \\{"tickets":[]}
+    );
     try app.goHome();
+    try std.testing.expectEqualStrings("babylon's board has no plan yet", app.boardWhy(&buf));
+    try app.homeKey("q");
+    try expect(app.home == null);
+    try app.showPlan(1);
+    try expect(app.home != null and !app.planShown());
+
     try app.setBoard(
         \\{"tickets":[],"plan":{"now":[{"ticket":1,"repo":null}]}}
     );
