@@ -16,6 +16,7 @@ const sheets = @import("plan.zig");
 const grab_mod = @import("grab.zig");
 const capture = @import("report.zig");
 const draw = @import("draw.zig");
+const win_feed = @import("win_feed.zig");
 const win_driving = @import("win_driving.zig");
 const win_goals = @import("win_goals.zig");
 const win_landed = @import("win_landed.zig");
@@ -421,7 +422,7 @@ pub const max_repos = 32;
 /// The orchestrator's column's width beside the board, kept to 2/5 of the width.
 pub const side_w = 60;
 
-fn anyKey(pressed: []const u8, names: []const []const u8) bool {
+pub fn anyKey(pressed: []const u8, names: []const []const u8) bool {
     for (names) |name| if (std.mem.eql(u8, pressed, name)) return true;
     return false;
 }
@@ -1615,7 +1616,7 @@ pub const App = struct {
 
     /// Sends option `key` of the question box on the pane of Your move item `need`'s ticket to it:
     /// the human's own keypress, as if typed there. Whether it was one.
-    fn answerBox(app: *App, need: tickets.Need, key: []const u8) !bool {
+    pub fn answerBox(app: *App, need: tickets.Need, key: []const u8) !bool {
         if (key.len != 1 or key[0] < '1' or key[0] > '9') return false;
         const id = need.ticket orelse return false;
         const pane = app.paneById((app.ticketCard(id) orelse return false).holder() orelse return false) orelse return false;
@@ -1680,7 +1681,7 @@ pub const App = struct {
     }
 
     /// The plan's pick put on the row of ticket `id` in now or next, when the plan is shown.
-    fn pickPlan(app: *App, id: u32) void {
+    pub fn pickPlan(app: *App, id: u32) void {
         var sheet: sheets.Sheet = undefined;
         if (!app.planSheet(&sheet)) return;
         for (sheet.rows[0..sheet.n]) |row| {
@@ -1696,188 +1697,6 @@ pub const App = struct {
         const view = app.home orelse return null;
         const n = f.itemCount();
         return if (n == 0) null else f.item(@min(view.pick, n - 1));
-    }
-
-    /// A key on the feed, while the orchestrator's column has the keys in normal mode: `j` `k`
-    /// move the pick through Your move's items and `]` `[` from need to need, the picked card lit
-    /// on the board; an action's key runs it as babylon gives it. Whether the key was the feed's.
-    fn feedKey(app: *App, key: []const u8) !bool {
-        var f: feed.Feed = undefined;
-        if (!app.feedOf(&f)) return false;
-        const view = &app.home.?;
-        const n = f.itemCount();
-        if (n == 0) return false;
-        view.pick = @min(view.pick, n - 1);
-        const moves = f.items_shown;
-        const was = view.pick;
-        if (anyKey(key, &.{ "j", "\x1b[B", "\x1bOB" })) {
-            view.pick = @min(view.pick + 1, n - 1);
-        } else if (anyKey(key, &.{ "k", "\x1b[A", "\x1bOA" })) {
-            view.pick -|= 1;
-        } else if (anyKey(key, &.{"]"})) {
-            if (moves > 0) view.pick = nextTile(&f, view.pick, moves);
-        } else if (anyKey(key, &.{"["})) {
-            if (moves > 0) view.pick = prevTile(&f, view.pick, moves);
-        } else if (anyKey(key, &.{" "})) {
-            const id = f.item(view.pick).?.ticket orelse return true;
-            if (f.item(view.pick).?.need) |at| if (std.mem.eql(u8, app.board.?.needsYou()[at].kind, "draft")) {
-                app.openDraft(id);
-                return true;
-            };
-            app.pickPlan(id);
-            _ = try app.openDetail(id);
-        } else if (anyKey(key, &.{"Y"}) and try app.feedCopy(f.item(view.pick).?)) {
-            return true;
-        } else return app.feedAct(f.item(view.pick).?, key);
-        app.dirty = true;
-        if (view.pick != was) if (f.item(view.pick).?.ticket) |id| {
-            app.pickPlan(id);
-        };
-        return true;
-    }
-
-    /// The first of the `moves` items of Your move that is of the need after `at`'s, or the first.
-    fn nextTile(f: *const feed.Feed, at: usize, moves: usize) usize {
-        if (at >= moves) return 0;
-        var to = at + 1;
-        while (to < moves and f.item(to).?.need == f.item(at).?.need) to += 1;
-        return if (to < moves) to else 0;
-    }
-
-    /// The first item of the need before `at`'s, or of the last when `at` is of the first or is
-    /// not of Your move.
-    fn prevTile(f: *const feed.Feed, at: usize, moves: usize) usize {
-        var to = moves - 1;
-        if (at < moves) {
-            var from = at;
-            while (from > 0 and f.item(from - 1).?.need == f.item(from).?.need) from -= 1;
-            if (from > 0) to = from - 1;
-        }
-        while (to > 0 and f.item(to - 1).?.need == f.item(to).?.need) to -= 1;
-        return to;
-    }
-
-    /// Copies the picked check of a to-try tile, whole. Whether the pick was one.
-    fn feedCopy(app: *App, item: feed.Item) !bool {
-        const b = if (app.board) |*b| b else return false;
-        const need = b.needsYou()[item.need orelse return false];
-        const step = item.step orelse return false;
-        if (step >= need.steps.len) return false;
-        try app.copyText(need.steps[step].text);
-        return true;
-    }
-
-    pub fn feedAct(app: *App, item: feed.Item, key: []const u8) !bool {
-        const b = if (app.board) |*b| b else return false;
-        const named: []const u8 = if (std.mem.eql(u8, key, "\r")) "⏎" else key;
-
-        if (app.check_ask) |ask| {
-            var same = false;
-            if (item.need) |at| if (item.step) |s| {
-                const need = b.needsYou()[at];
-                same = s < need.steps.len and need.ticket == ask.ticket and need.steps[s].n == ask.n;
-            };
-            if (same and std.mem.eql(u8, named, "⏎")) {
-                try app.checkStart();
-                return true;
-            }
-            app.checkCancel();
-            if (anyKey(key, &.{"\x1b"})) return true;
-        }
-        const at = item.need orelse {
-            if (!std.mem.eql(u8, named, "⏎")) return false;
-            const id = item.ticket orelse return true;
-            for (b.cards()) |card| if (card.id == id) if (card.holder()) |pane| try app.showPane(pane);
-            return true;
-        };
-        const need = b.needsYou()[at];
-        if (std.mem.eql(u8, need.kind, "pane")) {
-            if (!std.mem.eql(u8, named, "⏎")) return false;
-            const win = std.fmt.parseInt(u32, need.id["pane:".len..], 10) catch return true;
-            for (app.sessions.items) |s| for (s.wins.items) |w| if (w.id == win) try app.showPane(w.agent_pane);
-            return true;
-        }
-        if (std.mem.eql(u8, need.kind, "drive") and anyKey(key, &.{"+"})) {
-            try app.openGoal();
-            return true;
-        }
-        if (std.mem.eql(u8, need.kind, "draft") and anyKey(key, &.{" "})) {
-            app.openDraft(need.ticket orelse return true);
-            return true;
-        }
-        if (item.step) |s| if (s < need.steps.len) {
-            if (anyKey(key, &.{"o"}) and feed.isLook(need.steps[s])) return app.lookAtDiff(need, need.steps[s]);
-            if (need.ticket) |ticket| {
-                const step = need.steps[s];
-                if (anyKey(key, &.{"r"}) and try app.checkOffer(ticket, step.n, step.text)) return true;
-                if (std.mem.eql(u8, named, "⏎")) if (app.checkRunOf(ticket, step.n)) |run| if (run.pane) |pane| {
-                    try app.showPane(pane);
-                    return true;
-                };
-            }
-        };
-        if (item.step) |s| if (s < need.steps.len) for (need.steps[s].actions) |action| {
-            if (!std.mem.eql(u8, action.key, named)) continue;
-            if (action.needs) |needs| if (std.mem.eql(u8, needs, "words")) {
-                var id: [32]u8 = undefined;
-                return app.openWords(std.fmt.bufPrint(&id, "{s}#{d}", .{ need.id, need.steps[s].n }) catch return true);
-            };
-            if (action.argv) |argv| return app.runNeed(need.id, argv);
-            return true;
-        };
-        const found = for (need.actions) |action| {
-            if (std.mem.eql(u8, action.key, named)) break action;
-        } else null;
-        // an action on a key is babylon's: opening the doc only has the keys it leaves
-        if (need.doc != null and found == null and anyKey(key, &.{ "o", "\r" })) return app.openDoc(need);
-        const action = found orelse return app.answerBox(need, key);
-        if (action.needs) |needs| if (std.mem.eql(u8, needs, "words")) return app.openWords(need.id);
-        if (action.argv) |argv| return app.runNeed(need.id, argv);
-        const ticket = need.ticket orelse return true;
-        const needs = action.needs orelse return true;
-        if (std.mem.eql(u8, needs, "surface")) {
-            var id_buf: [12]u8 = undefined;
-            return app.runNeed(need.id, &.{ "babylon", "start", std.fmt.bufPrint(&id_buf, "{d}", .{ticket}) catch return true });
-        }
-        if (std.mem.eql(u8, needs, "pick")) {
-            app.pickPlan(ticket);
-            app.home.?.giving = 0;
-            app.dirty = true;
-        }
-        return true;
-    }
-
-    /// A click on the feed's Your move: its item is the pick, and on a button, what the button's
-    /// key does. Whether the click was on one of its items.
-    fn feedClick(app: *App, m: keys.Mouse) !bool {
-        if (!app.sided() or m.y < 1) return false;
-        const left = app.term_w - app.view_w;
-        if (m.x < left + 2 or m.x + 2 > app.term_w) return false;
-        var f: feed.Feed = undefined;
-        if (!app.feedOf(&f)) return false;
-        const row = m.y - 1;
-        if (row >= f.shown) return false;
-        if (isTryRow(f.line(row).kind) or f.line(row).kind == .try_head) return app.tryClick(&f, row, m.x - (left + 2));
-        var at: ?usize = null;
-        for (0..f.items_shown) |i| {
-            if (f.item(i).?.line <= row) at = i;
-        }
-        const i = at orelse return false;
-        const view = &app.home.?;
-        view.focus = .orchestrator;
-        if (app.sideDue()) app.normal = true;
-        view.pick = i;
-        app.dirty = true;
-        const item = f.item(i).?;
-        if (item.ticket) |id| {
-            app.pickPlan(id);
-        }
-        const line = f.line(row);
-        if (line.kind != .buttons) return true;
-        const chip = feed.chipKeyAt(line.text, m.x - (left + 2), app.roles != null) orelse return true;
-        const key: []const u8 = if (std.mem.eql(u8, chip, "⏎")) "\r" else if (std.mem.eql(u8, chip, "space")) " " else chip;
-        _ = try app.feedAct(item, key);
-        return true;
     }
 
     /// Whether `prompt` is the words of a to-try check that failed.
@@ -1970,62 +1789,16 @@ pub const App = struct {
         return .{ .title = title, .quote = quote, .send = "send" };
     }
 
-    fn isTryRow(kind: feed.Kind) bool {
+    pub fn isTryRow(kind: feed.Kind) bool {
         return switch (kind) {
             .try_title, .try_machine, .try_step, .try_buttons => true,
             else => false,
         };
     }
 
-    /// A click on a to-try tile, `col` cells from the feed's text: a check's row picks that check,
-    /// a button does what its key does, and the tile's number and title open its modal.
-    fn tryClick(app: *App, f: *const feed.Feed, row: usize, col: usize) !bool {
-        const line = f.line(row);
-        if (line.kind == .try_head) return true;
-        const view = &app.home.?;
-        const need_at = line.need orelse return true;
-        // the item it picks: the check's own, else the tile's, the one picked already when it is in it
-        var first: ?usize = null;
-        var mine: ?usize = null;
-        for (0..f.items_shown) |i| {
-            const item = f.item(i).?;
-            if (item.need != need_at) continue;
-            if (first == null) first = i;
-            if (line.step != null and item.step == line.step) mine = i;
-            if (line.step == null and i == view.pick) mine = i;
-        }
-        const i = mine orelse (if (first) |k| (if (view.pick >= k and f.item(view.pick) != null and f.item(view.pick).?.need == need_at) view.pick else k) else return true);
-        view.focus = .orchestrator;
-        if (app.sideDue()) app.normal = true;
-        view.pick = i;
-        app.dirty = true;
-        const item = f.item(i).?;
-        if (item.ticket) |id| {
-            app.pickPlan(id);
-        }
-        const inner = app.view_w -| 2;
-        switch (line.kind) {
-            .try_title => {
-                const id = item.ticket orelse return true;
-                // the chip takes the cells before the title, the age those after it
-                if (col + 1 >= 8 and col + 1 + line.alt.len + 2 < inner) _ = try app.openDetail(id);
-            },
-            .try_machine => {
-                if (line.alt.len > 0 and col + 1 + cellCount(line.alt) + 5 >= inner) return app.feedAct(item, "x");
-            },
-            .try_buttons => {
-                if (line.failed) return true;
-                const chip = feed.chipKeyAt(line.text, col, true) orelse return true;
-                _ = try app.feedAct(item, chip);
-            },
-            else => {},
-        }
-        return true;
-    }
-
     /// A line opened at the column's foot for the human's words on Your move item `id`: Enter
     /// runs its words action with them, Escape drops it.
-    fn openWords(app: *App, id: []const u8) bool {
+    pub fn openWords(app: *App, id: []const u8) bool {
         if (id.len > @typeInfo(@FieldType(menu.Prompt, "target")).array.len) return true;
         var prompt: menu.Prompt = .{ .what = .words };
         @memcpy(prompt.target[0..id.len], id);
@@ -2171,7 +1944,7 @@ pub const App = struct {
 
     /// The doc of a row, opened: a link by `xdg-open`, a file of the ticket's worktree (its repo's
     /// checkout when it has none) in a window of its own, in `glow` else `less`.
-    fn openDoc(app: *App, need: tickets.Need) !bool {
+    pub fn openDoc(app: *App, need: tickets.Need) !bool {
         const doc = need.doc orelse return true;
         if (std.mem.startsWith(u8, doc, "http://") or std.mem.startsWith(u8, doc, "https://")) {
             return app.runNeed(need.id, &.{ "xdg-open", doc });
@@ -2216,7 +1989,7 @@ pub const App = struct {
 
     /// `o` on a check to look at the diff: meatcheck on the landed change, in a window of its own
     /// so no Claude waits on it, its comments back as the ✗'s words, none as ✓.
-    fn lookAtDiff(app: *App, need: tickets.Need, step: tickets.TryStep) !bool {
+    pub fn lookAtDiff(app: *App, need: tickets.Need, step: tickets.TryStep) !bool {
         const ticket = need.ticket orelse return true;
         if (!plainName(need.repo)) return true;
         const script =
@@ -2573,7 +2346,7 @@ pub const App = struct {
 
     /// Whether arena is in its session once tmux has made the switches asked of it: what is typed
     /// goes by this, so none of it by where arena was while a switch is unanswered.
-    fn sideDue(app: *const App) bool {
+    pub fn sideDue(app: *const App) bool {
         const s = app.sessionById(app.bound()) orelse return false;
         return app.sided() and s.orchestrator();
     }
@@ -3040,7 +2813,7 @@ pub const App = struct {
     }
 
     /// Puts `text` on the clipboard and says how much, in the foot, for a moment.
-    fn copyText(app: *App, text: []const u8) !void {
+    pub fn copyText(app: *App, text: []const u8) !void {
         if (text.len == 0) return;
         try app.osc52(text);
         var said: [32]u8 = undefined;
@@ -4314,7 +4087,7 @@ pub const App = struct {
             return app.send(.ignore, captured("babylon orchestrator"), .{});
         }
         if (anyKey(key, &.{"\x1b"})) return if (app.drawerOpen()) app.closeDrawer() else app.closeBoard();
-        if (try app.feedKey(key)) return;
+        if (try win_feed.press(app, key)) return;
         if (anyKey(key, &.{"o"}) and app.drawerOpen()) return app.closeDrawer();
     }
 
@@ -4531,7 +4304,7 @@ pub const App = struct {
         return .{ .x = (app.boardW() -| width) / 2, .y = first_line, .w = width, .h = h };
     }
 
-    fn openDraft(app: *App, epic: u32) void {
+    pub fn openDraft(app: *App, epic: u32) void {
         const view = &app.home.?;
         view.draft = epic;
         view.draft_pick = 0;
@@ -5455,7 +5228,7 @@ pub const App = struct {
         const view = &app.home.?;
         if (m.x >= app.term_w - app.view_w and app.sided() and !view.boxed()) {
             if (m.y >= app.view_h) return true;
-            if (m.leftPress() and try app.feedClick(m)) return true;
+            if (m.leftPress() and try win_feed.click(app, m)) return true;
 
             if (app.sideShown() and (app.sideFocused() or m.wheel())) return false;
             if (m.leftPress()) {
@@ -6453,7 +6226,7 @@ pub const App = struct {
                     try app.closeDrawer();
                     continue;
                 }
-                if (app.sideFocused() and try app.feedKey(key)) continue;
+                if (app.sideFocused() and try win_feed.press(app, key)) continue;
                 if (app.sideFocused() and app.drawerOpen() and anyKey(key, &.{"o"})) {
                     try app.closeDrawer();
                     continue;
@@ -7987,7 +7760,7 @@ test "the plan's pick lights its ticket's Your move item dim in the feed, and th
 
     // moving in the feed moves the plan's pick to the ticket's row, when it has one
     view.pick = 0;
-    try std.testing.expect(try app.feedKey("j"));
+    try std.testing.expect(try win_feed.press(&app, "j"));
     try eq(@as(usize, 1), view.plan_pick);
 }
 
@@ -8109,7 +7882,7 @@ test "space on a draft's tile opens its modal, j picks a step, y runs adopt and 
     const eq = std.testing.expectEqual;
     const view = &app.home.?;
 
-    try std.testing.expect(try app.feedKey(" "));
+    try std.testing.expect(try win_feed.press(&app, " "));
     try eq(@as(?u32, 830), view.draft);
     try eq(@as(@TypeOf(view.focus), .plan), view.focus);
     try app.homeKey("j");
@@ -8169,7 +7942,7 @@ test "an item of any kind runs its action's argv: ⏎ on a digest with no ticket
     );
     defer app.board.?.deinit();
     app.home = .{ .focus = .orchestrator };
-    try std.testing.expect(try app.feedKey("\r"));
+    try std.testing.expect(try win_feed.press(&app, "\r"));
     var got: [512]u8 = undefined;
     var len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'digest' 'ok'") != null);
@@ -8469,27 +8242,27 @@ test "in a to-try tile y settles the picked check, ] and [ go from tile to tile,
 
     // the pick goes check to check with j, tile to tile with ] and [, round at either end
     view.pick = 1;
-    try std.testing.expect(try app.feedKey("j"));
+    try std.testing.expect(try win_feed.press(&app, "j"));
     try eq(@as(usize, 2), view.pick);
-    try std.testing.expect(try app.feedKey("]"));
+    try std.testing.expect(try win_feed.press(&app, "]"));
     try eq(@as(usize, 3), view.pick);
-    try std.testing.expect(try app.feedKey("]"));
+    try std.testing.expect(try win_feed.press(&app, "]"));
     try eq(@as(usize, 4), view.pick);
-    try std.testing.expect(try app.feedKey("]"));
+    try std.testing.expect(try win_feed.press(&app, "]"));
     try eq(@as(usize, 0), view.pick);
-    try std.testing.expect(try app.feedKey("]"));
+    try std.testing.expect(try win_feed.press(&app, "]"));
     try eq(@as(usize, 1), view.pick);
-    try std.testing.expect(try app.feedKey("["));
+    try std.testing.expect(try win_feed.press(&app, "["));
     try eq(@as(usize, 0), view.pick);
-    try std.testing.expect(try app.feedKey("["));
+    try std.testing.expect(try win_feed.press(&app, "["));
     try eq(@as(usize, 4), view.pick);
-    try std.testing.expect(try app.feedKey("["));
+    try std.testing.expect(try win_feed.press(&app, "["));
     try eq(@as(usize, 3), view.pick);
-    try std.testing.expect(try app.feedKey("["));
+    try std.testing.expect(try win_feed.press(&app, "["));
     try eq(@as(usize, 1), view.pick);
 
     // y runs the check's ok argv; once babylon says it settled, the pick is on the next open one
-    try std.testing.expect(try app.feedKey("y"));
+    try std.testing.expect(try win_feed.press(&app, "y"));
     try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'tried' '825' '1' 'ok'") != null);
     app.board.?.deinit();
     const after = try std.mem.replaceOwned(u8, std.testing.allocator, feed.try_sample, "with buttons\",\"result\":null", "with buttons\",\"result\":\"ok\"");
@@ -8499,11 +8272,11 @@ test "in a to-try tile y settles the picked check, ] and [ go from tile to tile,
     try eq(@as(?usize, 2), app.feedPick(&f).?.step);
 
     // x runs the tile's close untried
-    try std.testing.expect(try app.feedKey("x"));
+    try std.testing.expect(try win_feed.press(&app, "x"));
     try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'tried' '825' 'skip'") != null);
 
     // space opens the ticket's modal
-    try std.testing.expect(try app.feedKey(" "));
+    try std.testing.expect(try win_feed.press(&app, " "));
     try eq(@as(?u32, 825), view.detail);
 }
 
@@ -8518,7 +8291,7 @@ test "n on a check asks what went wrong, ⏎ sends the no argv with the words, e
     app.home.?.pick = 2;
     var got: [2048]u8 = undefined;
 
-    try std.testing.expect(try app.feedKey("n"));
+    try std.testing.expect(try win_feed.press(&app, "n"));
     try std.testing.expectEqual(menu.Prompt.What.words, app.prompt.?.what);
     try std.testing.expect(App.stepWords(app.prompt.?));
     for ("two minutes late") |byte| _ = app.prompt.?.press(&.{byte});
@@ -8528,7 +8301,7 @@ test "n on a check asks what went wrong, ⏎ sends the no argv with the words, e
 
     // esc closes the line and runs nothing
     const before = (try sentText(sent, &got)).len;
-    try std.testing.expect(try app.feedKey("n"));
+    try std.testing.expect(try win_feed.press(&app, "n"));
     for ("x") |byte| _ = app.prompt.?.press(&.{byte});
     app.endWords();
     try std.testing.expect(app.prompt == null);
@@ -8606,7 +8379,7 @@ test "o on a check to look at the diff opens meatcheck on the landed range in a 
     try std.testing.expect(app.feedOf(&f));
     try std.testing.expectEqualStrings("o look   y ✓   n ✗", f.line(rowOf(&f, .try_buttons, 0)).text);
 
-    try std.testing.expect(try app.feedKey("o"));
+    try std.testing.expect(try win_feed.press(&app, "o"));
     var got: [4096]u8 = undefined;
     const said = try sentText(sent, &got);
     try std.testing.expect(std.mem.indexOf(u8, said, "new-window -a -n look") != null);
@@ -9110,7 +8883,7 @@ test "a Claude waiting in its pane is a Your move item after babylon's, ⏎ show
     try std.testing.expectEqualStrings("arena", needs[1].repo);
     try std.testing.expectEqualStrings("arena:2 waits in its pane", needs[2].text);
 
-    try std.testing.expect(try app.feedAct(.{ .line = 0, .ticket = 7, .need = 1 }, "\r"));
+    try std.testing.expect(try win_feed.act(&app, .{ .line = 0, .ticket = 7, .need = 1 }, "\r"));
     var got: [128]u8 = undefined;
     const len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "select-pane -t %5") != null);

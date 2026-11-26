@@ -6,6 +6,7 @@ const tickets = @import("board.zig");
 const sheets = @import("plan.zig");
 const feed = @import("feed.zig");
 const draw = @import("draw.zig");
+const win_feed = @import("win_feed.zig");
 const App = app_mod.App;
 const Writer = std.Io.Writer;
 const clip = draw.clip;
@@ -157,7 +158,7 @@ pub fn click(app: *App, sheet: *const sheets.Sheet, at: usize, m: anytype) !void
     if (row.part == 2) {
         var buf: [512]u8 = undefined;
         const hit = keyAt(chips(app, need, &buf), rect.x, m.x) orelse return;
-        _ = try app.feedAct(itemOf(need, row.item, null), named(hit));
+        _ = try win_feed.act(app, itemOf(need, row.item, null), named(hit));
         return;
     }
     if (row.part < 3 or row.part - 3 >= need.steps.len) return;
@@ -169,7 +170,7 @@ pub fn click(app: *App, sheet: *const sheets.Sheet, at: usize, m: anytype) !void
     for (need.steps[step].actions) |action| {
         const used = cellCount(action.key) + cellCount(action.label) + 3;
         if (m.x >= at_x and m.x < at_x + used) {
-            _ = try app.feedAct(itemOf(need, row.item, step), action.key);
+            _ = try win_feed.act(app, itemOf(need, row.item, step), action.key);
             return;
         }
         at_x += used + 1;
@@ -190,7 +191,7 @@ pub fn answer(app: *App, row: *const sheets.Row, pressed: []const u8) !bool {
         open = i;
         break;
     };
-    return app.feedAct(itemOf(need, row.item, open), pressed);
+    return win_feed.act(app, itemOf(need, row.item, open), pressed);
 }
 
 /// Enter on a Your move item nothing of babylon's answers: goes to the pane that holds its ticket.
