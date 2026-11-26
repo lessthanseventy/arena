@@ -2054,6 +2054,8 @@ check "k keeps it: babylon idea is run with the text" await last 'idea money on 
 check "and the modal closes on babylon's answer" gone "what should be true when it's done"
 key M-b
 gone ' every [0-9]+ +[a-z]'
+# an esc the shell's readline still holds would take the next key as its meta
+inner send-keys -t alpha:one C-c
 key -l 'echo worker-jkdufltb'
 key Enter
 check "and the board closed, a worker's pane gets it whole too" await said alpha: worker-jkdufltb
