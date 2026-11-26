@@ -4422,7 +4422,7 @@ fn planGrid(board: *tickets.Board, width: u16) !struct { app: App, grid: bench.G
     return .{ .app = app, .grid = try bench.Grid.init(out.buffered()) };
 }
 
-/// The row of `win` (a slot) whose cells in the window hold `needle`.
+/// The first row of `slot` whose cells within it hold `needle`.
 fn rowWith(g: *const bench.Grid, slot: sheets.Rect, needle: []const u8) ?usize {
     for (slot.y..slot.y + slot.h) |y| {
         if (g.find(y, slot.x, slot.x + slot.w, needle) != null) return y;
