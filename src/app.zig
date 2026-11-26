@@ -9726,3 +9726,88 @@ test "⏎ on a text suggestion types it into the orchestrator's pane with no Ent
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "Enter") == null);
     try std.testing.expect(app.drawerOpen() and !app.normal);
 }
+
+const plan_tail =
+    \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+;
+
+test "a digest in Your move opens in the middle column with its doc, scrolls, and ⏎ there marks it seen and leaves" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    try std.Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = "arena-test-digest.md", .data = "# the day's digest\n49 landed\nnothing waits\n" });
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, "arena-test-digest.md") catch {};
+    var app = try tryApp(sent, "{\"tickets\":[],\"needs_you\":[{\"id\":\"digest:1\",\"kind\":\"digest\",\"ticket\":null,\"repo\":\"\",\"text\":\"digest 2026-11-26: 49 landed\"," ++
+        "\"doc\":\"arena-test-digest.md\",\"actions\":[{\"label\":\"seen\",\"key\":\"⏎\",\"argv\":[\"babylon\",\"digest\",\"ok\"]}]}]," ++ plan_tail);
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.detail_asked.deinit(std.testing.allocator);
+    defer app.detail.deinit(std.testing.allocator);
+    defer app.grab.deinit(std.testing.allocator);
+    defer app.out.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    app.roles = @import("parts.zig").roles();
+    app.home.?.focus = .plan;
+    const view = &app.home.?;
+    var sheet: sheets.Sheet = undefined;
+
+    try app.planKey(" ");
+    try std.testing.expect(view.item_open);
+    try std.testing.expectEqual(@as(?u32, null), view.detail);
+    try std.testing.expect(app.planSheet(&sheet));
+    try std.testing.expect(win_move.isOpen(&app, sheet.rows[sheet.span(.move).start]));
+
+    var shot: Writer.Allocating = .init(std.testing.allocator);
+    defer shot.deinit();
+    try draw.frame(&app, &shot.writer, .all);
+    try std.testing.expect(std.mem.indexOf(u8, shot.written(), "the day's digest") != null);
+    try std.testing.expect(std.mem.indexOf(u8, shot.written(), "49 landed") != null);
+
+    var buttons: [16]App.ModalButton = undefined;
+    const shown = app.itemButtons(&buttons);
+    try std.testing.expectEqual(@as(usize, 2), shown.len);
+    try std.testing.expectEqualStrings("seen", shown[0].label);
+    try std.testing.expectEqualStrings("close", shown[1].label);
+
+    try app.homeKey("j");
+    try std.testing.expectEqual(@as(usize, 1), view.detail_scroll);
+
+    try app.homeKey("\r");
+    try std.testing.expect(!view.item_open);
+    var got: [2048]u8 = undefined;
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'digest' 'ok'") != null);
+}
+
+test "a push item in Your move opens in the middle column asking for its repo's unpushed commits, and ⏎ there runs babylon push" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try tryApp(sent, "{\"tickets\":[],\"needs_you\":[{\"id\":\"push:arena:abc:0\",\"kind\":\"push\",\"ticket\":null,\"repo\":\"arena\",\"text\":\"▲ arena: 2 unpushed\"," ++
+        "\"actions\":[{\"key\":\"⏎\",\"label\":\"push\",\"argv\":[\"babylon\",\"push\",\"arena\"]},{\"key\":\"l\",\"label\":\"look\",\"argv\":[\"true\"]}]}]," ++ plan_tail);
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.detail_asked.deinit(std.testing.allocator);
+    defer app.detail.deinit(std.testing.allocator);
+    defer app.grab.deinit(std.testing.allocator);
+    defer app.out.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    app.roles = @import("parts.zig").roles();
+    app.home.?.focus = .plan;
+    const view = &app.home.?;
+    var got: [4096]u8 = undefined;
+
+    try app.planKey(" ");
+    try std.testing.expect(view.item_open);
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "log --oneline origin/main..main") != null);
+
+    try app.detail.appendSlice(std.testing.allocator, "a1b2c3d one commit\ne4f5a6b another commit\n");
+    var shot: Writer.Allocating = .init(std.testing.allocator);
+    defer shot.deinit();
+    try draw.frame(&app, &shot.writer, .all);
+    try std.testing.expect(std.mem.indexOf(u8, shot.written(), "a1b2c3d one commit") != null);
+    try std.testing.expect(std.mem.indexOf(u8, shot.written(), "another commit") != null);
+
+    try app.homeKey("\r");
+    try std.testing.expect(!view.item_open);
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'push' 'arena'") != null);
+}
