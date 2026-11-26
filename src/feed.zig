@@ -621,7 +621,7 @@ fn kindsOf(f: *const Feed, kind: Kind) usize {
     return n;
 }
 
-test "a landed drive item's buttons in Your move are babylon's alone: + a new goal is driving towards'" {
+test "a landed drive item's buttons in Your move are babylon's alone" {
     var b = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[],"needs_you":[{"id":"drive:14","kind":"drive","ticket":14,"repo":"","text":"goal landed",
         \\"actions":[{"key":"1","label":"the board","argv":["babylon","drive","326"]}]}]}
