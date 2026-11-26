@@ -4505,7 +4505,7 @@ pub const App = struct {
     /// Where `win` is on the screen: its title bar, body and shadow.
     pub fn planSlot(app: *const App, win: sheets.Window) sheets.Rect {
         const area = app.planArea();
-        const at = sheets.slot(win, area.w, area.h, if (app.halfHome()) sheets.move_rows_half else sheets.move_rows_full);
+        const at = sheets.slot(win, area.w, area.h, app.halfHome());
         return .{ .x = area.x + at.x, .y = area.y + at.y, .w = at.w, .h = at.h };
     }
 

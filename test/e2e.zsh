@@ -1713,6 +1713,14 @@ check "a click on a window's title bar folds it, off its ▾ too" see '◐ 1 bui
 title_click '◆ in flight'
 check "and a click again opens it" see 'First buil'
 check "with the window below still on its row" same_row
+outer resize-window -t o -x 105 -y 40
+check "at half the screen the windows stack in one column, in flight above next" await eval '[[ -n $(title_row "◆ in flight") && -n $(title_row "◆ next") ]] && (( $(title_row "◆ in flight") < $(title_row "◆ next") ))'
+next_row=$(title_row '◆ next')
+key z
+check "z at half the screen folds the picked window" see '◐ 1 building · ◒ verif'
+check "and the window below keeps its row" await same_row
+key z
+outer resize-window -t o -x 121 -y 24
 key j
 key Enter
 check "⏎ on a pipeline row opens the gate's modal for its run" await shows '✗ gate +failed'

@@ -65,10 +65,16 @@ const short_area = 26;
 pub const move_rows_full = 5;
 pub const move_rows_half = 3;
 
-/// Where `win` sits on a plan area `w` by `h` cells, Your move showing `move_rows`: its title
-/// bar, body and shadow. Worked out from the area alone, so nothing in a window or its fold
-/// moves another.
-pub fn slot(win: Window, w: u16, h: u16, move_rows: u16) Rect {
+/// Rows of a stacked slot (title bar and shadow included) that is fixed at half width: in flight
+/// and landed, and driving towards and goals folded to their one-line summary.
+const stacked_list_h = 4;
+const stacked_folded_h = window_chrome + 1;
+
+/// Where `win` sits on a plan area `w` by `h` cells: its title bar, body and shadow. Worked out
+/// from the area alone, so nothing in a window or its fold moves another. `stack` is one column.
+pub fn slot(win: Window, w: u16, h: u16, stack: bool) Rect {
+    if (stack) return stacked(win, w, h);
+    const move_rows = move_rows_full;
     // on a short screen Your move gives rows to the windows under it, down to one
     const shown: u16 = if (h < short_area) @as(u16, 1) else move_rows;
     const move_h = @min(shown + window_chrome, h);
@@ -85,6 +91,59 @@ pub fn slot(win: Window, w: u16, h: u16, move_rows: u16) Rect {
         .unplanned => .{ .x = half, .y = top + rest * 4 / 10, .w = w - half, .h = rest * 3 / 10 },
         .landed => .{ .x = half, .y = top + rest * 7 / 10, .w = w - half, .h = rest - rest * 7 / 10 },
     };
+}
+
+/// One column, top to bottom: your move, driving towards, in flight, next, not planned, landed,
+/// goals. Next and not planned split what the fixed slots leave, goals the rest after them.
+fn stacked(win: Window, w: u16, h: u16) Rect {
+    const move_h: u16 = @min(move_rows_half + window_chrome, h);
+    const drive_h: u16 = @min(stacked_folded_h, h - move_h);
+    const flight_h: u16 = @min(stacked_list_h, h - move_h - drive_h);
+    const fixed = move_h + drive_h + flight_h;
+    const lists = h - fixed -| (stacked_list_h + stacked_folded_h);
+    const next_h = lists / 2;
+    const unplanned_h = lists / 2;
+    const landed_h: u16 = @min(stacked_list_h, h - fixed - next_h - unplanned_h);
+    const goals_h = h - fixed - next_h - unplanned_h - landed_h;
+    const y: u16 = switch (win) {
+        .move => 0,
+        .driving => move_h,
+        .now => move_h + drive_h,
+        .next => fixed,
+        .unplanned => fixed + next_h,
+        .landed => fixed + next_h + unplanned_h,
+        .goals => fixed + next_h + unplanned_h + landed_h,
+    };
+    const rows: u16 = switch (win) {
+        .move => move_h,
+        .driving => drive_h,
+        .now => flight_h,
+        .next => next_h,
+        .unplanned => unplanned_h,
+        .landed => landed_h,
+        .goals => goals_h,
+    };
+    return .{ .x = 0, .y = y, .w = w, .h = rows };
+}
+
+test "at half the screen the slots stack in the doc's order with its fixed heights, whatever the content" {
+    const eq = std.testing.expectEqual;
+    const order = [_]Window{ .move, .driving, .now, .next, .unplanned, .landed, .goals };
+    var y: u16 = 0;
+    for (order) |win| {
+        const at = slot(win, 103, 50, true);
+        try eq(y, at.y);
+        try eq(@as(u16, 0), at.x);
+        try eq(@as(u16, 103), at.w);
+        y += at.h;
+    }
+    try eq(@as(u16, 50), y);
+    try eq(@as(u16, move_rows_half + window_chrome), slot(.move, 103, 50, true).h);
+    try eq(@as(u16, 3), slot(.driving, 103, 50, true).h);
+    try eq(@as(u16, 4), slot(.now, 103, 50, true).h);
+    try eq(@as(u16, 4), slot(.landed, 103, 50, true).h);
+    try eq(slot(.next, 103, 50, true).h, slot(.unplanned, 103, 50, true).h);
+    try std.testing.expect(slot(.goals, 103, 50, true).h >= 3);
 }
 
 /// The first of `len` rows a window of `body` rows shows, the row at `at` kept in view with the

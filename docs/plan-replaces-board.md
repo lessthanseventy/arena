@@ -200,11 +200,11 @@ workspace and window hold its Claude:
 
 ## At half the screen (105 cells)
 
-Home shows Plan or the column, swapped with `o` / `p` (#527). Plan at 105 cells is one column of
-windows: driving towards, in flight, next, not planned, landed, goals. Each slot gets a fixed
-share of the height: in flight and landed get 4 rows each, and next and not planned split the
-rest. Fold, scroll and the modal work as above. This is the same set of windows stacked
-differently, with no second design to keep.
+Plan at 105 cells is one column of windows: your move, driving towards, in flight, next, not
+planned, landed, goals. Each slot gets a fixed share of the height: your move 5 rows, driving
+towards 3 (folded), in flight and landed 4 each (title and shadow included), next and not planned
+split what is left and goals gets the rest after them. Fold, scroll and the modal work as above.
+This is the same set of windows stacked differently, with no second design to keep.
 
 ## Removing the board
 

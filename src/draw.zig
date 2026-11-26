@@ -4552,7 +4552,7 @@ test "Home in Workbench's look: the focal goal is the one with a step building, 
     );
     defer board.deinit();
     var app = homeApp(&board);
-    app.term_w = 80;
+    app.term_w = 120;
     app.view_w = 80;
     app.view_h = 31;
     app.roles = bench.roles();
@@ -4598,7 +4598,7 @@ test "a goal with a step to try reads ▲ 1 to try after its bar in the you colo
     );
     defer board.deinit();
     var app = homeApp(&board);
-    app.term_w = 80;
+    app.term_w = 120;
     app.view_w = 80;
     app.view_h = 31;
     app.roles = bench.roles();
@@ -5137,7 +5137,7 @@ test "Plan's rows start with a ▌ in their repo's colour, and a goal's card has
     );
     defer board.deinit();
     var app = homeApp(&board);
-    app.term_w = 80;
+    app.term_w = 120;
     app.view_w = 80;
     app.view_h = 31;
     app.roles = bench.roles();

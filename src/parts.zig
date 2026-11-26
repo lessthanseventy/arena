@@ -213,10 +213,10 @@ pub const unset: RGB = .{ .r = 1, .g = 2, .b = 3 };
 
 pub const Cell = struct { cp: u21, fg: RGB, bg: RGB, bold: bool };
 
-/// The cell at (`x`, `y`) of `frame` drawn on an 80 by 24 terminal; a colour never set is `unset`.
+/// The cell at (`x`, `y`) of `frame` drawn on a 120 by 40 terminal; a colour never set is `unset`.
 pub fn probe(frame: []const u8, x: usize, y: usize) !Cell {
     const gpa = std.testing.allocator;
-    var term: vt.Terminal = try .init(std.testing.io, gpa, .{ .cols = 80, .rows = 24, .max_scrollback_bytes = 0 });
+    var term: vt.Terminal = try .init(std.testing.io, gpa, .{ .cols = 120, .rows = 40, .max_scrollback_bytes = 0 });
     defer term.deinit(gpa);
     var stream = term.vtStream();
     defer stream.deinit();
