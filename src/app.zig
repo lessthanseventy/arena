@@ -408,12 +408,12 @@ pub const HomeView = struct {
     /// or the board alone.
     alone: bool = true,
 
-    /// Whether a box lies over the board, the keys its own.
     /// Whether a box sits in the middle column, beside Plan rather than over it.
     pub fn columnOpen(view: HomeView) bool {
         return view.detail != null or view.giving != null or view.auto_pick != null or view.goal_open or view.draft != null;
     }
 
+    /// Whether a box lies over the board, the keys its own.
     pub fn boxed(view: HomeView) bool {
         return view.help or view.detail != null or view.giving != null or view.auto_pick != null or view.goal_open or view.draft != null or view.whole != null;
     }
