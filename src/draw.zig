@@ -1610,8 +1610,6 @@ fn repoTabs(app: *App, w: *Writer, view: app_mod.HomeView) !void {
     try pen.set(w, .{}, null);
 }
 
-/// Home's plan in the board's place: its head, a rule, then its rows from the one the pick keeps
-/// in view, the pick a bar at the left edge. What lies over the board lies over it.
 /// Home with no plan: why there is none, and the way back.
 fn planWhy(app: *App, w: *Writer) !void {
     var pen: Pen = .{};
@@ -1625,6 +1623,8 @@ fn planWhy(app: *App, w: *Writer) !void {
     try pen.set(w, .{}, null);
 }
 
+/// Home's plan in the board's place: its head, a rule, then its rows from the one the pick keeps
+/// in view, the pick a bar at the left edge. What lies over the board lies over it.
 fn planView(app: *App, w: *Writer, view: app_mod.HomeView) !void {
     var sheet: sheets.Sheet = undefined;
     if (!app.planSheet(&sheet)) return planWhy(app, w);
