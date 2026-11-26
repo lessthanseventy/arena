@@ -10,7 +10,6 @@ pub const max_rows = 160;
 const stages = [_][]const u8{ "landing", "reviewing", "verifying", "queued" };
 /// The tickets of next that are drawn; the rest are `+N`.
 const next_shown = 7;
-/// The tickets of next a folded window names.
 /// Rows kept past the goals for the foot: a gap, not planned's head and row, a gap, landed.
 const foot_rows = 5;
 /// Rows kept past the goals for the ideas: a gap, their rule, and three rows or the fold.
