@@ -1693,7 +1693,21 @@ fn planFoot(app: *App, w: *Writer, sheet: *const sheets.Sheet, pick: usize) !voi
     try fitted(w, text, app.boardW());
 }
 
-const PlanHeadBufs = struct { auto: [48]u8, today: [32]u8, needs: [16]u8, orch: [40]u8 };
+const PlanHeadBufs = struct { auto: [48]u8, auto_pad: [64]u8, today: [32]u8, needs: [16]u8, orch: [40]u8 };
+
+const auto_ask = "◐ turn off?";
+
+/// Auto's switch as asking "turn off?" or as `plain`, both padded to the same width so the
+/// pieces after it stay under the pointer between the two clicks.
+fn autoPiece(buf: []u8, plain: []const u8, armed: bool) []const u8 {
+    const text = if (armed) auto_ask else plain;
+    const width = @max(cellCount(plain), cellCount(auto_ask));
+    const pad = width - cellCount(text);
+    if (text.len + pad > buf.len) return text;
+    @memcpy(buf[0..text.len], text);
+    @memset(buf[text.len..][0..pad], ' ');
+    return buf[0 .. text.len + pad];
+}
 
 /// Plan's head against its right edge: auto's switch, today's landings and what
 /// needs the human, three cells apart, from cell `start` of the board's width, the head's own
@@ -1726,12 +1740,12 @@ fn planHead(app: *const App, bufs: *PlanHeadBufs) PlanHead {
     for (tries) |try_| {
         const tools = try_.tools;
         head.keep = try_.keep;
-        const auto: []const u8 = if (app.auto() != null and app.now < app.auto_armed_until)
-            "◐ turn off?"
-        else if (app.auto()) |state| (if (tools and state.tools != null)
+        const plain: []const u8 = if (app.auto()) |state| (if (tools and state.tools != null)
             std.fmt.bufPrint(&bufs.auto, "◐ auto {d}/{d} · tools {d}/{d}", .{ state.working, state.cap, state.tools.?.working, state.tools.?.cap })
         else
             std.fmt.bufPrint(&bufs.auto, "◐ auto {d}/{d}", .{ state.working, state.cap })) catch "◐" else "◐ auto";
+        const armed = app.auto() != null and app.now < app.auto_armed_until;
+        const auto = autoPiece(&bufs.auto_pad, plain, armed);
         head.pieces = .{
             .{ .text = auto, .style = if (app.auto() != null) autoOn(app) else dim },
             .{ .text = std.fmt.bufPrint(&bufs.today, "✓ {d} today", .{given.landed_today.count}) catch "", .style = dim },

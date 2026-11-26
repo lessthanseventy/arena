@@ -1369,11 +1369,11 @@ check "on, Plan's head says how many work of the cap" see '◐ auto 2/4'
 check "and the orchestrator's column says nothing of auto" eval '[[ $(screen | grep -c "auto 2/4") == 1 ]]'
 auto_offs() { grep -cx 'auto off' $tmp/babylon }
 offs=$(auto_offs)
-r=$(rowof '◐ auto'); c=$(colof $r '◐ auto')
+r=$(rowof '◐ auto'); c=$(colof $r '◐ auto'); today_c=$(colof $r '✓')
 mouse 0 $((c + 1)) $r M
 mouse 0 $((c + 1)) $r m
 check "one click on it only asks to turn it off" see '◐ turn off\?'
-c=$(colof $r '◐ turn')
+check "and the pieces after it stay where they were" eval '[[ $(colof '$r' "◐ turn") == '$c' && $(colof '$r' "✓") == '$today_c' ]]'
 mouse 0 $((c + 1)) $r M
 mouse 0 $((c + 1)) $r m
 check "a second click does" await eval '(( $(auto_offs) > offs ))'
