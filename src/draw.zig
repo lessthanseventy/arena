@@ -1508,11 +1508,11 @@ fn planHead(app: *const App, bufs: *PlanHeadBufs) PlanHead {
     const given = b.plan().?;
     const needs_n = b.needsYou().len;
     const dim = ink(app, "dim", 8);
-    const left_w = cellCount(App.plan_title) + if (app.halfHome()) cellCount(App.orch_link) + 2 else 0;
+    const left_w = cellCount(App.plan_title) + if (app.oneColumn()) cellCount(App.orch_link) + 2 else 0;
     var head: PlanHead = .{ .pieces = undefined, .keep = 0b11111, .start = 0, .left_w = left_w };
     const tries = [_]struct { tools: bool, keep: u5 }{
-        .{ .tools = true, .keep = if (app.halfHome()) 0b10101 else 0b11111 },
-        .{ .tools = false, .keep = if (app.halfHome()) 0b10101 else 0b11111 },
+        .{ .tools = true, .keep = if (app.oneColumn()) 0b10101 else 0b11111 },
+        .{ .tools = false, .keep = if (app.oneColumn()) 0b10101 else 0b11111 },
         .{ .tools = false, .keep = 0b10101 },
         .{ .tools = false, .keep = 0b10001 },
     };
@@ -1636,7 +1636,7 @@ fn planView(app: *App, w: *Writer, view: app_mod.HomeView) !void {
     try w.writeAll(" ");
     try pen.set(w, heading(app), null);
     try w.writeAll(App.plan_title[1..]);
-    if (app.halfHome()) {
+    if (app.oneColumn()) {
         try pen.set(w, .{}, null);
         try w.writeAll("  ");
         try pen.set(w, dim, null);
@@ -1666,8 +1666,8 @@ fn planView(app: *App, w: *Writer, view: app_mod.HomeView) !void {
 
     const top = app.planTop(&sheet);
     var y: u16 = 2;
-    const rows_end = app.view_h - @intFromBool(app.halfHome());
-    if (app.halfHome()) try planFoot(app, w, &sheet, view.plan_pick);
+    const rows_end = app.view_h - @intFromBool(app.oneColumn());
+    if (app.oneColumn()) try planFoot(app, w, &sheet, view.plan_pick);
     if (app.roles) |r| try benchPlan(app, w, r, &sheet, view, rows_end) else while (y < rows_end) : (y += 1) {
         try w.print("\x1b[{d};{d}H", .{ y + 1, ox + 1 });
         const at = top + (y - 2);
@@ -1831,7 +1831,7 @@ fn benchPlan(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
     var behind: sheets.Sheet = undefined;
     var repos: [app_mod.max_repos][]const u8 = undefined;
     const b = &app.board.?;
-    behind.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.halfHome(), true, app.planSee(&repos));
+    behind.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.oneColumn(), true, app.planSee(&repos));
     app.narrowPlan(&behind);
     for (std.enums.values(sheets.Window)) |win| try win_plan.benchWindow(app, w, r, &behind, view, win, false);
     try win_plan.benchWindow(app, w, r, sheet, view, view.whole.?, true);
@@ -2519,6 +2519,7 @@ fn epicApp(roles: bool, view_h: u16, width: u16) !App {
     if (roles) app.roles = bench.roles();
     app.board = try tickets.Board.parse(std.testing.allocator, epic_board);
     app.home = .{};
+    app.side_folded = true;
     return app;
 }
 
@@ -2544,6 +2545,7 @@ test "Home in Workbench's look: the focal goal is the one with a step building, 
     app.view_h = 31;
     app.roles = bench.roles();
     app.home = .{ .alone = false, .focus = .plan };
+    app.side_folded = true;
     const r = bench.roles();
 
     var sheet: sheets.Sheet = undefined;
@@ -2591,6 +2593,7 @@ test "a goal with a step to try reads ▲ 1 to try after its bar in the you colo
     app.view_h = 31;
     app.roles = bench.roles();
     app.home = .{ .alone = false, .focus = .plan };
+    app.side_folded = true;
     const r = bench.roles();
 
     var sheet: sheets.Sheet = undefined;
@@ -2635,6 +2638,7 @@ test "babylon's refusal, said while the plan is shown, is on screen" {
     app.view_h = 23;
     app.roles = bench.roles();
     app.home = .{ .alone = false, .focus = .plan };
+    app.side_folded = true;
     try std.testing.expect(app.planShown());
     app.report_said = try std.testing.allocator.dupe(u8, "babylon: repo arena is held");
     defer std.testing.allocator.free(app.report_said.?);
@@ -2906,6 +2910,7 @@ test "next is one line a row, and only the picked row shows its why" {
     app.view_h = 31;
     app.roles = bench.roles();
     app.home = .{ .alone = false, .focus = .plan };
+    app.side_folded = true;
     var sheet: sheets.Sheet = undefined;
     try std.testing.expect(app.planSheet(&sheet));
     var nexts: usize = 0;
@@ -3008,6 +3013,7 @@ test "a selection is dropped when a redraw puts other text under it" {
     app.view_h = 31;
     app.roles = bench.roles();
     app.home = .{ .alone = false, .focus = .plan };
+    app.side_folded = true;
     var shot: Writer.Allocating = .init(std.testing.allocator);
     defer shot.deinit();
     try frame(&app, &shot.writer, .all);
@@ -3059,6 +3065,7 @@ test "the plan's head is one title, ◆ plan, with no tabs after it" {
     app.view_w = 80;
     app.term_w = 80;
     app.home = .{ .alone = false, .focus = .plan };
+    app.side_folded = true;
     var buf: [1 << 17]u8 = undefined;
     var out: Writer = .fixed(&buf);
     try planView(&app, &out, app.home.?);
@@ -3068,33 +3075,34 @@ test "the plan's head is one title, ◆ plan, with no tabs after it" {
     try std.testing.expect(std.mem.indexOf(u8, drawn, "B board") == null);
 }
 
-test "Plan draws the same cells with the drawer open and closed, outside the drawer's box" {
-    var board = try tickets.Board.parse(std.testing.allocator, epic_board);
+test "with the drawer open Plan ends at the drawer's left edge: in flight's right column ends before it and no Plan cell is under it" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":760,"repo":"arena","status":"doing","epic_id":326,"title":"Visual"}],
+        \\"plan":{"now":[{"ticket":760,"repo":"arena","title":"Visual","state":"building","since":"2026-11-24T04:38:21Z"}],"next":[],
+        \\"goals":[{"epic":326,"title":"The board, redesigned","landed":13,"total":18,"steps":[{"ticket":760,"state":"building"}]}],
+        \\"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
     defer board.deinit();
     var app = homeApp(&board);
     defer app.grab.deinit(std.testing.allocator);
-    app.term_w = 140;
+    app.term_w = 220;
     app.view_w = 60;
     app.view_h = 24;
     app.home = .{ .focus = .plan };
-    var shut_buf: [1 << 17]u8 = undefined;
-    var open_buf: [1 << 17]u8 = undefined;
-    app.side_folded = true;
-    var shut: Writer = .fixed(&shut_buf);
-    try planView(&app, &shut, app.home.?);
     app.side_folded = false;
-    var open: Writer = .fixed(&open_buf);
-    try planView(&app, &open, app.home.?);
     const left = app.term_w - app.view_w;
+    try std.testing.expectEqual(left, app.boardW());
+    var buf: [1 << 17]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try planView(&app, &out, app.home.?);
+    var counted = false;
     for (0..app.view_h) |y| {
-        var a: [512]u8 = undefined;
-        var b: [512]u8 = undefined;
-        const row_a = try screenRow(shut.buffered(), app.term_w, y, &a);
-        const row_b = try screenRow(open.buffered(), app.term_w, y, &b);
-        const cut_a = row_a[0..@min(row_a.len, left)];
-        const cut_b = row_b[0..@min(row_b.len, left)];
-        try std.testing.expectEqualStrings(cut_a, cut_b);
+        var row_buf: [1024]u8 = undefined;
+        const row = try screenRow(out.buffered(), app.term_w, y, &row_buf);
+        try std.testing.expect(try std.unicode.utf8CountCodepoints(row) <= left);
+        if (std.mem.indexOf(u8, row, "building · now") != null) counted = true;
     }
+    try std.testing.expect(counted);
 }
 
 test "auto is in Plan's head alone, with its tools; the orchestrator's column, the rail and the feed lack it" {
@@ -3127,6 +3135,7 @@ test "auto is in Plan's head alone, with its tools; the orchestrator's column, t
     app.term_w = 80;
     app.view_w = 80;
     app.home = .{ .alone = false, .focus = .plan };
+    app.side_folded = true;
     var head_out: Writer = .fixed(&buf);
     try planView(&app, &head_out, app.home.?);
     const at = planAutoSwitch(&app).?;
@@ -3245,6 +3254,7 @@ test "Plan's windows keep their slots: another window's rows or a count move non
         app.view_h = 23;
         app.roles = bench.roles();
         app.home = .{ .alone = false, .focus = .plan };
+        app.side_folded = true;
         var buf: [262144]u8 = undefined;
         var out: Writer = .fixed(&buf);
         try planView(&app, &out, app.home.?);
@@ -3279,6 +3289,7 @@ test "Plan's rows start with a ▌ in their repo's colour, and a goal's card has
     app.roles = bench.roles();
     const r = bench.roles();
     app.home = .{ .alone = false, .focus = .plan };
+    app.side_folded = true;
     var buf: [262144]u8 = undefined;
     var out: Writer = .fixed(&buf);
     try planView(&app, &out, app.home.?);
@@ -3327,6 +3338,7 @@ test "an in-flight row with a Claude says its session, window and pane on a seco
     app.view_h = 23;
     app.roles = bench.roles();
     app.home = .{ .alone = false, .focus = .plan };
+    app.side_folded = true;
     var buf: [262144]u8 = undefined;
     var out: Writer = .fixed(&buf);
     try planView(&app, &out, app.home.?);
@@ -3420,6 +3432,7 @@ test "Plan and a pane view start at column 0 at 220 and 110 cells" {
         app.roles = bench.roles();
         app.current = s.id;
         app.home = .{ .alone = false, .focus = .plan };
+        app.side_folded = true;
         var out: Writer = .fixed(&buf);
         try planView(&app, &out, app.home.?);
         const head = try screenRow(out.buffered(), cols, 0, &row);
@@ -3529,6 +3542,7 @@ test "on the e2e's 24-row screen every Plan window keeps its title and a body ro
     app.view_h = 24;
     app.roles = bench.roles();
     app.home = .{ .alone = false, .focus = .plan };
+    app.side_folded = true;
     var screen: [262144]u8 = undefined;
     var out: Writer = .fixed(&screen);
     try planView(&app, &out, app.home.?);
@@ -3641,6 +3655,7 @@ fn planGrid(board: *tickets.Board, width: u16) !struct { app: App, grid: bench.G
     app.epoch = tickets.epochOf("2026-11-23T07:10:00Z").?;
     app.roles = bench.roles();
     app.home = .{ .alone = false, .focus = .plan };
+    app.side_folded = true;
     var buf: [262144]u8 = undefined;
     var out: Writer = .fixed(&buf);
     try planView(&app, &out, app.home.?);

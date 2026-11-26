@@ -409,6 +409,11 @@ pub const HomeView = struct {
     alone: bool = true,
 
     /// Whether a box lies over the board, the keys its own.
+    /// Whether a box sits in the middle column, beside Plan rather than over it.
+    pub fn columnOpen(view: HomeView) bool {
+        return view.detail != null or view.giving != null or view.auto_pick != null or view.goal_open or view.draft != null;
+    }
+
     pub fn boxed(view: HomeView) bool {
         return view.help or view.detail != null or view.giving != null or view.auto_pick != null or view.goal_open or view.draft != null or view.whole != null;
     }
@@ -1502,6 +1507,9 @@ pub const App = struct {
     /// side, and shows one at a time.
     pub const half_below = 110;
 
+    /// The least width Plan keeps beside the middle column; under it the column lies over Plan.
+    pub const plan_min = 40;
+
     /// Whether home has the room of half a screen.
     pub fn halfHome(app: *const App) bool {
         return app.home != null and app.term_w < half_below and app.hasPlan();
@@ -1736,7 +1744,8 @@ pub const App = struct {
         } else first_line else first_line;
         const bottom = if (takes) app.view_h -| 1 else app.view_h -| 2;
         if (bottom < top + 3 or width.inner == 0) return null;
-        return .{ .x = (room -| width.box) / 2, .y = top, .w = width.box, .h = bottom - top + 1 };
+        const x = if (app.boardW() < room) app.boardW() else (room -| width.box) / 2;
+        return .{ .x = x, .y = top, .w = width.box, .h = bottom - top + 1 };
     }
     /// Rows of what is being answered, quoted above the box, at most.
     pub const words_quote_rows = 5;
@@ -2358,8 +2367,19 @@ pub const App = struct {
         return view.focus == .orchestrator and !view.boxed() and app.sideDue();
     }
 
+    /// Plan's width: the screen less the drawer's, and less the middle column's when one is open
+    /// and leaves Plan `plan_min` cells.
     pub fn boardW(app: *const App) u16 {
-        return app.term_w;
+        const room = app.columnRoom();
+        const view = app.home orelse return room;
+        if (!view.columnOpen()) return room;
+        const left = room -| detailWidth(room).box;
+        return if (left >= plan_min) left else room;
+    }
+
+    /// Whether Plan lays out as #905's one column: its own width is under `half_below`.
+    pub fn oneColumn(app: *const App) bool {
+        return app.home != null and app.boardW() < half_below and app.hasPlan();
     }
 
     /// A new terminal size, with its cells' in pixels when the terminal says (0 when not):
@@ -3364,7 +3384,7 @@ pub const App = struct {
         const b = &app.board.?;
         const view = app.home.?;
         var repos: [max_repos][]const u8 = undefined;
-        sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.halfHome(), app.workbench(), app.planSee(&repos));
+        sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.oneColumn(), app.workbench(), app.planSee(&repos));
         app.narrowPlan(sheet);
         if (app.workbench()) {
             sheet.withWhyOnPick(app);
@@ -3415,7 +3435,7 @@ pub const App = struct {
         const b = if (app.board) |*b| b else return .{ .n = 0, .end = 0 };
         var repos: [max_repos][]const u8 = undefined;
         const count = b.repos(&repos);
-        const orch: usize = if (app.halfHome()) cellCount(orch_link) + 2 else 0;
+        const orch: usize = if (app.oneColumn()) cellCount(orch_link) + 2 else 0;
         var x: u16 = @as(u16, @intCast(cellCount(plan_title) + orch)) + 3;
         const limit: u16 = @as(u16, @intCast(draw.planHeadStart(app) -| 1));
         var n: usize = 0;
@@ -3465,13 +3485,13 @@ pub const App = struct {
 
     /// The plan's windows are laid out on this: the cells under the head's rule to the last row.
     fn planArea(app: *const App) sheets.Rect {
-        return .{ .x = 1, .y = 2, .w = app.boardW() -| 2, .h = (app.view_h -| @intFromBool(app.halfHome())) -| 2 };
+        return .{ .x = 1, .y = 2, .w = app.boardW() -| 2, .h = (app.view_h -| @intFromBool(app.oneColumn())) -| 2 };
     }
 
     /// Where `win` is on the screen: its title bar, body and shadow.
     pub fn planSlot(app: *const App, win: sheets.Window) sheets.Rect {
         const area = app.planArea();
-        const at = sheets.slot(win, area.w, area.h, app.halfHome());
+        const at = sheets.slot(win, area.w, area.h, app.oneColumn());
         return .{ .x = area.x + at.x, .y = area.y + at.y, .w = at.w, .h = at.h };
     }
 
@@ -3549,7 +3569,7 @@ pub const App = struct {
     pub fn planTop(app: *const App, sheet: *const sheets.Sheet) usize {
         const view = app.home orelse return 0;
         const at = sheet.rowOf(view.plan_pick) orelse return 0;
-        return (at + 3) -| (app.view_h -| 2 -| @intFromBool(app.halfHome()));
+        return (at + 3) -| (app.view_h -| 2 -| @intFromBool(app.oneColumn()));
     }
 
     pub const plan_title = " ◆ plan";
@@ -3711,7 +3731,7 @@ pub const App = struct {
                 return;
             };
             const orch = app.orchLink();
-            if (app.halfHome() and m.x >= orch.x and m.x < orch.x + orch.w) return app.openDrawer();
+            if (app.oneColumn() and m.x >= orch.x and m.x < orch.x + orch.w) return app.openDrawer();
             if (draw.planHeadHit(app, m.x)) |hit| switch (hit) {
                 .orch => try app.openDrawer(),
                 .menu => app.openMenu(&menu.main),
@@ -8905,4 +8925,21 @@ test "every box opened from Plan is the one column left of the orchestrator, and
     app.home = .{ .goal_open = true };
     try std.testing.expect(app.goalRect().?.x + app.goalRect().?.w <= app.term_w - app.view_w);
     try std.testing.expectEqual(card.x, app.goalRect().?.x);
+}
+
+test "with the drawer and a middle column open, Plan, the column and the drawer sit side by side, Plan taking what is left" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 220;
+    app.view_w = 60;
+    app.view_h = 30;
+    app.home = .{ .detail = 7 };
+    app.side_folded = false;
+    const card = app.columnRect().?;
+    try std.testing.expectEqual(app.boardW(), card.x);
+    try std.testing.expectEqual(@as(u16, 60), card.x);
+    try std.testing.expectEqual(app.term_w - app.view_w, card.x + card.w);
+    app.home = .{};
+    try std.testing.expectEqual(app.term_w - app.view_w, app.boardW());
+    app.side_folded = true;
+    try std.testing.expectEqual(app.term_w, app.boardW());
 }

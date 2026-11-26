@@ -176,8 +176,14 @@ three fifths (132 cells), and goals, not planned and landed share the rest.
 
 (The drawing is shortened in height. At 51 rows, in flight gets about 18 rows and next about 12.)
 
-`o` draws the drawer over the right 60 cells, covering goals, not planned and landed and the edge
-of in flight. Plan under it stays as drawn.
+`o` opens the drawer on the right 60 cells, and Plan narrows to the cells left of it. The human,
+2026-11-26, choosing between Plan staying full width under the drawer and Plan narrowing when it
+opens: "Plan narrows beside the drawer". Every window lays out in that width, so right-aligned
+columns (ages, `N/M  P%`, landed) end at the drawer's left edge and none is hidden under it. With
+the middle column open as well the order is Plan, the column, the drawer, and Plan takes what is
+left; if that is under 40 cells the column lies over Plan as before. Plan under 110 cells takes
+#905's one-column layout. Opening or closing the drawer lays Plan out again; the pick, the scroll
+and the open item stay.
 
 ### Keys
 
