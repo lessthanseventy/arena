@@ -689,16 +689,15 @@ const Scene = struct {
 // ---- the frame around every screen ----
 
 const Layout = struct {
-    rail: usize = 7,
     column: usize = 62,
     top: usize = 2,
     foot: usize = 1,
 
-    fn mainX(l: Layout) usize {
-        return l.rail + 1;
+    fn mainX(_: Layout) usize {
+        return 0;
     }
     fn mainW(l: Layout, w: usize) usize {
-        return w - l.rail - l.column - 3;
+        return w - l.column - 2;
     }
     fn colX(l: Layout, w: usize) usize {
         return w - l.column - 1;
@@ -789,53 +788,6 @@ fn titleBar(sc: *Scene) void {
             }
         },
     }
-}
-
-fn rail(sc: *Scene, screen: Screen) void {
-    const s = sc.skin;
-    const c = sc.c;
-    const l: Layout = .{};
-    const y0 = l.top;
-    const h = c.h - y0 - l.foot;
-    const bg = switch (s.dir) {
-        .phosphor => s.panel,
-        .workbench => s.ground,
-        .neon => s.ground,
-    };
-    c.fill(0, y0, l.rail, h, bg);
-    if (s.dir == .neon) for (y0..y0 + h) |yy| c.put(l.rail - 1, yy, '▕', .{ .fg = s.rule });
-    // home, lit
-    const home_bg = if (s.dir == .workbench) s.raised else s.accent;
-    c.fill(1, y0 + 1, l.rail - 2, 1, home_bg);
-    _ = c.print(2, y0 + 1, " \u{f015} ", .{ .fg = if (s.dir == .workbench) s.accent else s.on_accent, .bg = home_bg, .bold = true }, 3);
-    var y = y0 + 3;
-    const Ses = struct { []const u8, []const u8, bool };
-    const with_board = [_]Ses{
-        .{ "arena", "◐◐", true },
-        .{ "babylon", "◐", false },
-        .{ "menard", "", false },
-        .{ "tlon", "◐", false },
-    };
-    const alone_sessions = [_]Ses{
-        .{ "arena", "◐▲◉", true },
-        .{ "ficciones", "◉◐", false },
-        .{ "menard", "◐✗◉", false },
-        .{ "tlon", "▲◔◉", true },
-    };
-    const sessions: []const Ses = if (screen == .alone) &alone_sessions else &with_board;
-    for (sessions) |ses| {
-        const ink = s.repoInk(ses[0]);
-        _ = c.print(2, y, repo_glyphs[repoIndex(ses[0])], .{ .fg = ink }, 1);
-        _ = c.print(4, y, ses[0][0..2], .{ .fg = s.dim }, 2);
-        y += 1;
-        if (ses[1].len > 0) {
-            _ = c.print(2, y, ses[1], .{ .fg = if (ses[2]) s.building else s.dim }, l.rail - 3);
-            if (ses[2]) c.put(5, y, '▲', .{ .fg = s.you, .bold = true });
-            y += 1;
-        }
-        y += 1;
-    }
-    _ = c.print(2, c.h - 3, "+  ≡", .{ .fg = s.dim }, 5);
 }
 
 fn footBar(sc: *Scene, screen: Screen) void {
@@ -1669,7 +1621,6 @@ pub fn draw(c: *Canvas, board: *const tickets.Board, p: Palette, dir: Direction,
         return;
     }
     if (screen != .alone) titleBar(&sc);
-    rail(&sc, screen);
     switch (screen) {
         .doing, .planning, .into => unreachable,
         .home => {
