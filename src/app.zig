@@ -2017,31 +2017,6 @@ pub const App = struct {
         return true;
     }
 
-    /// A key on a ticket of next, the `at`th: `J` and `K` move it down and up, `x` drops it from
-    /// next and `p` pins it where it is. Each goes through babylon as the human, which marks the
-    /// ticket as the human's, so the orchestrator moves it only with a proposal.
-    fn nextKey(app: *App, at: usize, pick: *usize, key: []const u8) !bool {
-        const b = if (app.board) |*b| b else return false;
-        const plan = b.next();
-        if (at >= plan.len) return false;
-        var id: [12]u8 = undefined;
-        var place: [12]u8 = undefined;
-        const ticket = std.fmt.bufPrint(&id, "{d}", .{plan[at].ticket}) catch return true;
-        var said: [24]u8 = undefined;
-        const refusal = std.fmt.bufPrint(&said, "next:{d}", .{plan[at].ticket}) catch return true;
-        if (anyKey(key, &.{"x"})) return app.runNeed(refusal, &.{ "babylon", "next", ticket, "--drop" });
-        if (anyKey(key, &.{"p"})) {
-            const here = std.fmt.bufPrint(&place, "{d}", .{at + 1}) catch return true;
-            return app.runNeed(refusal, &.{ "babylon", "next", ticket, "--at", here });
-        }
-        const down = anyKey(key, &.{"J"});
-        if (!down and !anyKey(key, &.{"K"})) return false;
-        if (if (down) at + 1 >= plan.len else at == 0) return true;
-        const to = std.fmt.bufPrint(&place, "{d}", .{if (down) at + 2 else at}) catch return true;
-        pick.* = if (down) pick.* + 1 else pick.* - 1;
-        return app.runNeed(refusal, &.{ "babylon", "next", ticket, "--at", to });
-    }
-
     /// `argv`, run for Your move item `id` through tmux: babylon's refusal is written beside its
     /// board, for the feed to say in place of the item's buttons.
     pub fn runNeed(app: *App, id: []const u8, argv: []const []const u8) !bool {
@@ -3293,7 +3268,7 @@ pub const App = struct {
     }
 
     /// Every group but `keep`'s folded; with any folded, all unfolded instead.
-    fn focusFold(app: *App, keep: []const u8) !void {
+    pub fn focusFold(app: *App, keep: []const u8) !void {
         if (app.fold_n > 0) {
             app.fold_n = 0;
         } else {
@@ -3704,7 +3679,7 @@ pub const App = struct {
         if (view.whole != null and !is(key, &.{ "J", "K", "x", "e", "\r", " ", "t", "o", "p", ">", "<", "G", "w", "W", "H" })) return;
         if (app.workbench()) if (sheet.picked(view.plan_pick)) |row| {
             if (row.kind == .need and !is(key, &.{ "j", "k", "h", "l", "z", "Z", "f", "/", "r", "?", "q", "\x1b", "`", "g", "A", "]", "[", " ", "o", "O", "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D" }) and try win_move.answer(app, row, key)) return;
-            if (row.kind == .chips and try app.chipKey(key)) return;
+            if (row.kind == .chips and try win_unplanned.chipKey(app, key)) return;
             if (is(key, &.{"z"})) return app.togglePlanFold(row.win);
             if (is(key, &.{"Z"})) return app.foldPlanAll(row.win);
             if (is(key, &.{"f"})) return app.openWhole(row.win);
@@ -3733,7 +3708,7 @@ pub const App = struct {
 
         if (is(key, &.{ "J", "K", "x", "e" })) {
             const row = sheet.picked(view.plan_pick) orelse return;
-            if (row.kind == .idea) return app.ideaKey(row, key);
+            if (row.kind == .idea) return win_goals.ideaKey(app, row, key);
             if (row.kind == .todo and is(key, &.{ "J", "K" })) return win_unplanned.moveTodo(app, &sheet, row, is(key, &.{"J"}));
             if (row.kind == .backlog and is(key, &.{"x"})) return win_unplanned.openClose(app, row.ticket orelse return);
             if (row.kind != .next) {
@@ -3743,7 +3718,7 @@ pub const App = struct {
             const b = &app.board.?;
             for (b.next(), 0..) |item, at| {
                 if (item.ticket != row.ticket.?) continue;
-                if (is(key, &.{"e"})) _ = app.openWhy(item.ticket, item.why) else _ = try app.nextKey(at, &view.plan_pick, key);
+                if (is(key, &.{"e"})) _ = app.openWhy(item.ticket, item.why) else _ = try win_next.nextKey(app, at, &view.plan_pick, key);
                 break;
             }
             return;
@@ -3778,44 +3753,6 @@ pub const App = struct {
         }
     }
 
-    /// The chip row's own keys: `h` `l` from chip to chip, `Z` opening only the chip's repo. False
-    /// for the rest, and past the first or last chip, for the window beside to take.
-    fn chipKey(app: *App, key: []const u8) !bool {
-        const view = &app.home.?;
-        var chips: [sheets.max_chips]sheets.Chip = undefined;
-        const all = app.chipsOf(&chips);
-        if (all.len == 0) return false;
-        view.plan_chip = @min(view.plan_chip, all.len - 1);
-        if (anyKey(key, &.{ "l", "\x1b[C", "\x1bOC" })) {
-            if (view.plan_chip + 1 == all.len) return false;
-            view.plan_chip += 1;
-            app.dirty = true;
-            return true;
-        }
-        if (anyKey(key, &.{ "h", "\x1b[D", "\x1bOD" })) {
-            if (view.plan_chip == 0) return false;
-            view.plan_chip -= 1;
-            app.dirty = true;
-            return true;
-        }
-        if (!anyKey(key, &.{"Z"})) return false;
-        if (all[view.plan_chip].repo) |repo| try app.focusFold(repo) else try app.toggleChip(view.plan_chip);
-        return true;
-    }
-
-    /// Chip `at` of not planned's row folded or opened: a repo's through #849's fold, the backlog's
-    /// its cards in the rows' place.
-    pub fn toggleChip(app: *App, at: usize) !void {
-        const view = &app.home.?;
-        var chips: [sheets.max_chips]sheets.Chip = undefined;
-        const all = app.chipsOf(&chips);
-        if (at >= all.len) return;
-        view.plan_chip = at;
-        if (all[at].repo) |repo| return app.toggleRepoFold(repo);
-        view.plan_backlog = !view.plan_backlog;
-        app.dirty = true;
-    }
-
     /// `r` on the plan: every window narrowed to the next repo, and after the last to every one.
     fn cyclePlanRepo(app: *App) void {
         const view = &app.home.?;
@@ -3840,15 +3777,6 @@ pub const App = struct {
             if (at >= rect.y and at < rect.y + rect.h) return (sheet.pickRange(win) orelse return null).first;
         }
         return null;
-    }
-
-    /// `e` and `x` on an idea row: a kept idea's text edited in $EDITOR as a card's is, or the idea
-    /// withdrawn. One with a Claude on it or a draft is left to its own keys.
-    fn ideaKey(app: *App, row: *const sheets.Row, key: []const u8) !void {
-        const idea = app.board.?.plan().?.ideas[row.item];
-        if (sheets.Sheet.ideaState(idea) != .idea) return;
-        if (anyKey(key, &.{"e"})) return app.ticketWindow("babylon edit {d}", .{idea.epic});
-        if (anyKey(key, &.{"x"})) try app.send(.ignore, captured("babylon withdraw {d}"), .{idea.epic});
     }
 
     /// What a key does on a row of the plan. Space and `t` open its ticket's whole detail. Enter
@@ -3938,7 +3866,7 @@ pub const App = struct {
         view.plan_pick = pick;
         if (row.kind == .chips) {
             var chips: [sheets.max_chips]sheets.Chip = undefined;
-            for (app.chipsOf(&chips), 0..) |c, i| if (m.x >= c.x and m.x < c.x + c.w) return app.toggleChip(i);
+            for (app.chipsOf(&chips), 0..) |c, i| if (m.x >= c.x and m.x < c.x + c.w) return win_unplanned.toggleChip(app, i);
             return;
         }
         if (row.kind == .todo) {
@@ -5181,7 +5109,7 @@ pub const App = struct {
 
     /// A command over a ticket that wants the terminal, as $EDITOR does: in a window by the
     /// focused one, kept open on a refusal to be read.
-    fn ticketWindow(app: *App, comptime cmd: []const u8, args: anytype) !void {
+    pub fn ticketWindow(app: *App, comptime cmd: []const u8, args: anytype) !void {
         try app.closeBoard();
         try app.send(.ignore, "new-window -a -n ticket \"" ++ cmd ++ " || read _\"", args);
     }

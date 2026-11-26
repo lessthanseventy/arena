@@ -6,6 +6,7 @@ const app_mod = @import("app.zig");
 const tickets = @import("board.zig");
 const sheets = @import("plan.zig");
 const draw = @import("draw.zig");
+const anyKey = app_mod.anyKey;
 const App = app_mod.App;
 const Writer = std.Io.Writer;
 const sayCut = draw.sayCut;
@@ -52,4 +53,29 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
 /// Enter on a row of next: starts its ticket.
 pub fn act(app: *App, row: *const sheets.Row) !void {
     if (row.ticket) |id| try app.send(.ignore, app_mod.captured("babylon start {d}"), .{id});
+}
+
+/// A key on a ticket of next, the `at`th: `J` and `K` move it down and up, `x` drops it from
+/// next and `p` pins it where it is. Each goes through babylon as the human, which marks the
+/// ticket as the human's, so the orchestrator moves it only with a proposal.
+pub fn nextKey(app: *App, at: usize, pick: *usize, key: []const u8) !bool {
+    const b = if (app.board) |*b| b else return false;
+    const plan = b.next();
+    if (at >= plan.len) return false;
+    var id: [12]u8 = undefined;
+    var place: [12]u8 = undefined;
+    const ticket = std.fmt.bufPrint(&id, "{d}", .{plan[at].ticket}) catch return true;
+    var said: [24]u8 = undefined;
+    const refusal = std.fmt.bufPrint(&said, "next:{d}", .{plan[at].ticket}) catch return true;
+    if (anyKey(key, &.{"x"})) return app.runNeed(refusal, &.{ "babylon", "next", ticket, "--drop" });
+    if (anyKey(key, &.{"p"})) {
+        const here = std.fmt.bufPrint(&place, "{d}", .{at + 1}) catch return true;
+        return app.runNeed(refusal, &.{ "babylon", "next", ticket, "--at", here });
+    }
+    const down = anyKey(key, &.{"J"});
+    if (!down and !anyKey(key, &.{"K"})) return false;
+    if (if (down) at + 1 >= plan.len else at == 0) return true;
+    const to = std.fmt.bufPrint(&place, "{d}", .{if (down) at + 2 else at}) catch return true;
+    pick.* = if (down) pick.* + 1 else pick.* - 1;
+    return app.runNeed(refusal, &.{ "babylon", "next", ticket, "--at", to });
 }

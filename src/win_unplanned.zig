@@ -7,6 +7,7 @@ const tickets = @import("board.zig");
 const sheets = @import("plan.zig");
 const menu = @import("menu.zig");
 const draw = @import("draw.zig");
+const anyKey = app_mod.anyKey;
 const App = app_mod.App;
 const Writer = std.Io.Writer;
 const clip = draw.clip;
@@ -97,7 +98,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
 pub fn act(app: *App, row: *const sheets.Row) !void {
     const view = &app.home.?;
     switch (row.kind) {
-        .chips => try app.toggleChip(view.plan_chip),
+        .chips => try toggleChip(app, view.plan_chip),
         .todo => try app.act(.go),
         .unplanned => try app.togglePlanFold(row.win),
         else => {},
@@ -140,4 +141,42 @@ pub fn titleClick(app: *App, x: u16) !bool {
 pub fn frame(app: *App, w: *Writer, r: theme.Roles) !void {
     const head = app.newHead() orelse return;
     try bench.headButton(w, r, head.x, head.y, " + new ", r.accent, false);
+}
+
+/// The chip row's own keys: `h` `l` from chip to chip, `Z` opening only the chip's repo. False
+/// for the rest, and past the first or last chip, for the window beside to take.
+pub fn chipKey(app: *App, key: []const u8) !bool {
+    const view = &app.home.?;
+    var chips: [sheets.max_chips]sheets.Chip = undefined;
+    const all = app.chipsOf(&chips);
+    if (all.len == 0) return false;
+    view.plan_chip = @min(view.plan_chip, all.len - 1);
+    if (anyKey(key, &.{ "l", "\x1b[C", "\x1bOC" })) {
+        if (view.plan_chip + 1 == all.len) return false;
+        view.plan_chip += 1;
+        app.dirty = true;
+        return true;
+    }
+    if (anyKey(key, &.{ "h", "\x1b[D", "\x1bOD" })) {
+        if (view.plan_chip == 0) return false;
+        view.plan_chip -= 1;
+        app.dirty = true;
+        return true;
+    }
+    if (!anyKey(key, &.{"Z"})) return false;
+    if (all[view.plan_chip].repo) |repo| try app.focusFold(repo) else try toggleChip(app, view.plan_chip);
+    return true;
+}
+
+/// Chip `at` of not planned's row folded or opened: a repo's through #849's fold, the backlog's
+/// its cards in the rows' place.
+pub fn toggleChip(app: *App, at: usize) !void {
+    const view = &app.home.?;
+    var chips: [sheets.max_chips]sheets.Chip = undefined;
+    const all = app.chipsOf(&chips);
+    if (at >= all.len) return;
+    view.plan_chip = at;
+    if (all[at].repo) |repo| return app.toggleRepoFold(repo);
+    view.plan_backlog = !view.plan_backlog;
+    app.dirty = true;
 }

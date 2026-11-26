@@ -6,6 +6,8 @@ const app_mod = @import("app.zig");
 const tickets = @import("board.zig");
 const sheets = @import("plan.zig");
 const draw = @import("draw.zig");
+const anyKey = app_mod.anyKey;
+const captured = app_mod.captured;
 const App = app_mod.App;
 const Writer = std.Io.Writer;
 const clip = draw.clip;
@@ -149,4 +151,13 @@ pub fn titleClick(app: *App, x: u16) !bool {
 pub fn frame(app: *App, w: *Writer, r: theme.Roles) !void {
     const head = app.goalHead();
     try bench.headButton(w, r, head.x, head.y, " + goal ", r.accent, false);
+}
+
+/// `e` and `x` on an idea row: a kept idea's text edited in $EDITOR as a card's is, or the idea
+/// withdrawn. One with a Claude on it or a draft is left to its own keys.
+pub fn ideaKey(app: *App, row: *const sheets.Row, key: []const u8) !void {
+    const idea = app.board.?.plan().?.ideas[row.item];
+    if (sheets.Sheet.ideaState(idea) != .idea) return;
+    if (anyKey(key, &.{"e"})) return app.ticketWindow("babylon edit {d}", .{idea.epic});
+    if (anyKey(key, &.{"x"})) try app.send(.ignore, captured("babylon withdraw {d}"), .{idea.epic});
 }
