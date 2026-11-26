@@ -1532,6 +1532,7 @@ key Escape
 gone 'only-on-the-branch'
 # an item of any kind runs its action: a digest has no ticket and no repo, and ⏎ is its seen
 print -r -- '{"tickets":[],"needs_you":[{"id":"digest:1795536000","kind":"digest","ticket":null,"repo":"","text":"digest: 3 landed","doc":"/tmp/none-jkdufltb.md","actions":[{"key":"⏎","label":"seen","argv":["babylon","digest","ok"]}]}]}' | addplan
+key C-Space
 key ']'
 see 'o open   ⏎ seen'
 : >$tmp/babylon
