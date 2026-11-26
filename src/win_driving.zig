@@ -106,6 +106,18 @@ pub fn answer(app: *App, at: usize) !void {
     _ = try app.runNeed(need.id, argv);
 }
 
+/// The pick on the landed goal's row, above its `+ a new goal`.
+pub fn pick(app: *App) void {
+    var sheet: sheets.Sheet = undefined;
+    if (!app.planSheet(&sheet)) return;
+    for (sheet.rows[0..sheet.n]) |row| {
+        if (row.kind != .drove or row.part != 1) continue;
+        app.home.?.plan_pick = row.pick orelse continue;
+        app.dirty = true;
+        return;
+    }
+}
+
 /// A click on the buttons row under a landed goal.
 pub fn click(app: *App, m: anytype) !void {
     const b = &app.board.?;

@@ -386,15 +386,17 @@ pub const Sheet = struct {
         };
         const at = from orelse return;
         const need = b.needsYou()[s.rows[at].item];
-        var extra: usize = 2;
+        const tile = std.mem.eql(u8, need.kind, "try");
+        const head: usize = if (tile) 2 else 1;
+        var extra: usize = head;
         for (need.steps) |step| extra += checkRows(step, ww);
         if (s.n + extra > max_rows) return;
         std.mem.copyBackwards(Row, s.rows[at + 1 + extra .. s.n + extra], s.rows[at + 1 .. s.n]);
         const item = s.rows[at].item;
-        for (0..2) |part| {
-            s.rows[at + 1 + part] = .{ .kind = .need_card, .ticket = ticket, .item = item, .part = @intCast(part + 1), .win = .move };
+        for (0..head) |i| {
+            s.rows[at + 1 + i] = .{ .kind = .need_card, .ticket = ticket, .item = item, .part = if (tile) @intCast(i + 1) else 2, .win = .move };
         }
-        var to = at + 3;
+        var to = at + 1 + head;
         for (need.steps, 0..) |step, i| for (0..checkRows(step, ww)) |line| {
             s.rows[to] = .{ .kind = .need_card, .ticket = ticket, .item = item, .part = @intCast(3 + i), .count = line, .win = .move };
             to += 1;

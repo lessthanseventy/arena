@@ -4,6 +4,7 @@ const feed = @import("feed.zig");
 const app_mod = @import("app.zig");
 const tickets = @import("board.zig");
 const draw = @import("draw.zig");
+const win_driving = @import("win_driving.zig");
 const App = app_mod.App;
 const anyKey = app_mod.anyKey;
 const cellCount = draw.cellCount;
@@ -107,10 +108,6 @@ pub fn act(app: *App, item: feed.Item, key: []const u8) !bool {
         for (app.sessions.items) |s| for (s.wins.items) |w| if (w.id == win) try app.showPane(w.agent_pane);
         return true;
     }
-    if (std.mem.eql(u8, need.kind, "drive") and anyKey(key, &.{"+"})) {
-        try app.openGoal();
-        return true;
-    }
     if (std.mem.eql(u8, need.kind, "draft") and anyKey(key, &.{" "})) {
         app.openDraft(need.ticket orelse return true);
         return true;
@@ -138,6 +135,10 @@ pub fn act(app: *App, item: feed.Item, key: []const u8) !bool {
     const found = for (need.actions) |action| {
         if (std.mem.eql(u8, action.key, named)) break action;
     } else null;
+    if (std.mem.eql(u8, need.kind, "drive") and found == null and std.mem.eql(u8, named, "⏎")) {
+        win_driving.pick(app);
+        return true;
+    }
     // an action on a key is babylon's: opening the doc only has the keys it leaves
     if (need.doc != null and found == null and anyKey(key, &.{ "o", "\r" })) return app.openDoc(need);
     const action = found orelse return app.answerBox(need, key);

@@ -7853,6 +7853,54 @@ test "d on a goal runs babylon drive, and 3 under a landed goal opens the new go
     try std.testing.expect(app.home.?.goal_open);
 }
 
+const push_board =
+    \\{"tickets":[],"needs_you":[{"id":"push:1","kind":"push","ticket":7,"repo":"arena","text":"3 commits to push",
+    \\"actions":[{"key":"⏎","label":"push","argv":["babylon","push","arena"]},{"key":"l","label":"look","argv":["true"]}]}],
+    \\"plan":{"goals":[]}}
+;
+
+test "⏎ on the picked Your move item runs its first action without opening it" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 40;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator, push_board);
+    defer app.board.?.deinit();
+    app.home = .{ .focus = .plan };
+    try app.planKey("\r");
+    try std.testing.expectEqual(@as(u32, 0), app.plan_open.get(.move));
+    var got: [1024]u8 = undefined;
+    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'push' 'arena'") != null);
+}
+
+test "⏎ on a landed drive item in Your move picks driving towards' landed goal, where + a new goal is" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 40;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"needs_you":[{"id":"drive:14","kind":"drive","ticket":14,"repo":"","text":"landed",
+        \\"actions":[{"key":"1","label":"a","argv":["babylon","drive","1"]}]}],
+        \\"plan":{"driving":14,"goals":[]}}
+    );
+    defer app.board.?.deinit();
+    app.home = .{ .focus = .plan };
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    try std.testing.expectEqual(sheets.Kind.need, sheet.picked(app.home.?.plan_pick).?.kind);
+    try app.planKey("\r");
+    try std.testing.expect(app.planSheet(&sheet));
+    try std.testing.expectEqual(sheets.Kind.drove, sheet.picked(app.home.?.plan_pick).?.kind);
+}
+
 const draft_board =
     \\{"tickets":[],"backlog":[
     \\{"id":830,"repo":"tlon","kind":"epic","title":"The bar shows what is safe to spend","status":"backlog"},
@@ -8792,7 +8840,7 @@ test "Your move is a fixed slot whatever it holds, the picked item opens to its 
         try std.testing.expect(app.planSheet(&sheet));
         var cards: usize = 0;
         for (sheet.rows[0..sheet.n]) |row| cards += @intFromBool(row.kind == .need_card);
-        try eq(@as(usize, 2), cards);
+        try eq(@as(usize, 1), cards);
         try eq(@as(usize, n), sheet.pickRange(.move).?.n);
     }
 }

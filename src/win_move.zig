@@ -38,13 +38,23 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             const age = sheets.ago(&age_buf, need.since, app.epoch);
             const right = x0 + ww -| (cellCount(age) + 1);
             try bench.say(w, right, y, age, r.dim, bg, false);
-            try bench.say(w, x, y, clip(need.text, right -| x -| 1), if (failed) r.failed else r.text, bg, false);
+            var end = right;
+            if (picked and need.actions.len > 0 and app.plan_open.get(.move) != row.ticket) {
+                var hint_buf: [96]u8 = undefined;
+                const hint = std.fmt.bufPrint(&hint_buf, "{s} {s}", .{ need.actions[0].key, need.actions[0].label }) catch "";
+                const at_x = right -| (cellCount(hint) + 2);
+                if (at_x > x + 8) {
+                    try bench.say(w, at_x, y, hint, r.dim, bg, false);
+                    end = at_x;
+                }
+            }
+            try bench.say(w, x, y, clip(need.text, end -| x -| 1), if (failed) r.failed else r.text, bg, false);
         },
         .need_card => {
             const steps = need.steps.len;
             const room = ww -| 4;
             switch (row.part) {
-                1 => try bench.say(w, x0 + 2, y, clip(if (isTry(need)) need.machine else need.text, room), r.dim, bg, false),
+                1 => try bench.say(w, x0 + 2, y, clip(need.machine, room), r.dim, bg, false),
                 2 => if (app.refusalOf(need.id)) |why| {
                     try bench.say(w, x0 + 2, y, clip(why, room), r.failed, bg, false);
                 } else {
@@ -97,8 +107,7 @@ fn isTry(need: tickets.Need) bool {
 }
 
 /// The buttons of an open item as `key label` joined by three spaces: opening its doc, what
-/// babylon answers with, the options of a question box on its holder's pane, a new goal for a
-/// landed drive item and reading a draft.
+/// babylon answers with, the options of a question box on its holder's pane and reading a draft.
 pub fn chips(app: *const App, need: tickets.Need, buf: []u8) []const u8 {
     var out: Writer = .fixed(buf);
     var first = true;
@@ -117,7 +126,7 @@ pub fn chips(app: *const App, need: tickets.Need, buf: []u8) []const u8 {
     if (need.ticket) |id| for (boxes[0..n]) |box| if (box.ticket == id) {
         for (box.options, 1..) |option, number| add(&out, &first, "{d} {s}", .{ number, option });
     };
-    if (std.mem.eql(u8, need.kind, "drive")) add(&out, &first, "+ a new goal", .{});
+
     if (std.mem.eql(u8, need.kind, "draft")) add(&out, &first, "space read it", .{});
     return out.buffered();
 }
