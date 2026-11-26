@@ -168,5 +168,5 @@ pub fn chipClick(app: *App, m: keys.Mouse) !void {
 
 /// A press on a todo row: it is held, to be dragged to next or opened where it was pressed.
 pub fn todoPress(app: *App, row: sheets.Row) void {
-    app.drag = .{ .todo_row = .{ .id = row.ticket orelse return } };
+    app.drag = .{ .ticket_row = .{ .id = row.ticket orelse return } };
 }

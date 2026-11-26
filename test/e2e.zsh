@@ -1314,7 +1314,13 @@ key -l ' now'
 key Enter
 check "and Enter keeps it there with the new why, through babylon" await last 'next 7 --why the light switch now'
 key x
-check "x takes it out of next, through babylon" await last 'next 7 --drop'
+zselect -t 300
+check "x on Doing's next does nothing: next is reordered on Planning" eval '! last "next 7 --drop"'
+key Tab
+key l
+key x
+check "x takes it out of next on Planning, through babylon" await last 'next 7 --drop'
+key Tab
 : >$tmp/babylon
 # Workbench's plan is seven windows, each in a slot the screen's size gives it, and none folds:
 # each keeps its rows and its place
@@ -1470,6 +1476,7 @@ outer resize-window -t o -x 121 -y 24
 print -r -- '' >$tmp/.config/ficciones/theme/palette.sh
 cp $tmp/board.slots $tmp/run/babylon/board.json
 check "without a palette the plan is the plain one again" see '1 #7 +tlon +Lights +free now'
+key Tab
 key +
 check "+ on the plan opens the goal modal under its prompt" see "what should be true when it's done"
 key -l 'money on the bar'

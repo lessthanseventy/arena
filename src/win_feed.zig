@@ -4,7 +4,7 @@ const feed = @import("feed.zig");
 const app_mod = @import("app.zig");
 const tickets = @import("board.zig");
 const draw = @import("draw.zig");
-const win_driving = @import("win_driving.zig");
+const win_goals = @import("win_goals.zig");
 const App = app_mod.App;
 const anyKey = app_mod.anyKey;
 const cellCount = draw.cellCount;
@@ -151,7 +151,7 @@ pub fn act(app: *App, item: feed.Item, key: []const u8) !bool {
         if (std.mem.eql(u8, action.key, named)) break action;
     } else null;
     if (std.mem.eql(u8, need.kind, "drive") and found == null and std.mem.eql(u8, named, "⏎")) {
-        win_driving.pick(app);
+        win_goals.openPlanning(app);
         return true;
     }
     // an action on a key is babylon's: opening the doc only has the keys it leaves

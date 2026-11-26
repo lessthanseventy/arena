@@ -7,6 +7,7 @@ const sheets = @import("plan.zig");
 const feed = @import("feed.zig");
 const draw = @import("draw.zig");
 const win_feed = @import("win_feed.zig");
+const win_goals = @import("win_goals.zig");
 const App = app_mod.App;
 const Writer = std.Io.Writer;
 const clip = draw.clip;
@@ -56,7 +57,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
         }
     } else if (need.actions.len > 0 and !opened) {
         var hint_buf: [96]u8 = undefined;
-        const hint = std.fmt.bufPrint(&hint_buf, "{s} {s}", .{ need.actions[0].key, need.actions[0].label }) catch "";
+        const hint = if (isDrive(need)) "⏎ planning" else std.fmt.bufPrint(&hint_buf, "{s} {s}", .{ need.actions[0].key, need.actions[0].label }) catch "";
         const at_x = right -| (cellCount(hint) + 2);
         if (at_x > x + 8) {
             try bench.say(w, at_x, y, hint, if (picked) r.text else r.dim, bg, false);
@@ -64,6 +65,11 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
         }
     }
     try bench.say(w, x, y, clip(need.text, end -| x -| 1), if (failed) r.failed else r.text, bg, false);
+}
+
+/// Whether `need` is the landed goal's item, asking for the next goal to drive.
+pub fn isDrive(need: tickets.Need) bool {
+    return std.mem.eql(u8, need.kind, "drive");
 }
 
 /// Whether `row`'s item is the one open: its ticket's card is shown in the middle column.
@@ -119,6 +125,7 @@ pub fn answer(app: *App, row: *const sheets.Row, pressed: []const u8) !bool {
 /// its checks and the item's buttons; a draft opens its own modal.
 pub fn open(app: *App, row: *const sheets.Row) !void {
     const need = app.board.?.needsYou()[row.item];
+    if (isDrive(need)) return win_goals.openPlanning(app);
     if (isSuggestion(need)) return typeIn(app, need);
     if (std.mem.eql(u8, need.kind, "draft")) {
         _ = try win_feed.act(app, itemOf(need, row.item, null), " ");

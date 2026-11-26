@@ -9,13 +9,13 @@ const RGB = color.RGB;
 const Card = tickets.Card;
 const posix = std.posix;
 
-const usage = "usage: arena-mock phosphor|workbench|neon home|popup|orch|alone|doing|planning BOARD.json PALETTE.sh [COLSxROWS OUT.html]\n";
+const usage = "usage: arena-mock phosphor|workbench|neon home|popup|orch|alone|doing|planning|into BOARD.json PALETTE.sh [COLSxROWS OUT.html]\n";
 
 /// The moment the fixture is seen at: every age is counted from here.
 const now_at = "2026-11-24T05:00:00Z";
 
 pub const Direction = enum { phosphor, workbench, neon };
-pub const Screen = enum { home, popup, orch, alone, doing, planning };
+pub const Screen = enum { home, popup, orch, alone, doing, planning, into };
 
 const Ink = struct {
     fg: RGB,
@@ -848,7 +848,8 @@ fn footBar(sc: *Scene, screen: Screen) void {
         .orch => &.{ .{ "1-3", "answer" }, .{ "c", "in words" }, .{ "⏎", "go" }, .{ "x", "no" }, .{ "j k", "pick" }, .{ "i", "tell it" }, .{ "h", "back to the plan" } },
         .alone => &.{ .{ "⏎", "go" }, .{ "1-3", "answer" }, .{ "space", "open" }, .{ "j k", "pick" }, .{ "] [", "next needing you" }, .{ "z", "fold" }, .{ "o", "overview" }, .{ "?", "keys" } },
         .doing => &.{ .{ "⏎", "go" }, .{ "space", "open" }, .{ "H", "hand off" }, .{ "j k", "pick" }, .{ "h l", "window" }, .{ "tab", "planning" }, .{ "/", "find" }, .{ "o", "orchestrator" }, .{ "?", "keys" } },
-        .planning => &.{ .{ "space", "open" }, .{ "w", "next" }, .{ ">", "close" }, .{ "e", "edit" }, .{ "p", "priority" }, .{ "j k", "pick" }, .{ "h l", "window" }, .{ "+", "new" }, .{ "tab", "doing" }, .{ "/", "find" }, .{ "?", "keys" } },
+        .planning => &.{ .{ "space", "open" }, .{ "a", "goal…" }, .{ "w", "next" }, .{ ">", "close" }, .{ "e", "edit" }, .{ "p", "priority" }, .{ "j k", "pick" }, .{ "h l", "window" }, .{ "+", "new" }, .{ "tab", "doing" }, .{ "/", "find" }, .{ "?", "keys" } },
+        .into => &.{ .{ "⏎", "move it" }, .{ "j k", "pick" }, .{ "esc", "cancel" } },
     };
     const bg = switch (s.dir) {
         .phosphor => s.raised,
@@ -1624,19 +1625,53 @@ fn planning(sc: *Scene) void {
     }
 }
 
+/// Planning after `a` on a ticket: the middle column asks into which goal, the pick on the
+/// first and the ticket's own place marked.
+fn into(sc: *Scene) void {
+    const s = sc.skin;
+    const c = sc.c;
+    const plan = sc.board.plan().?;
+    planning(sc);
+    const w: usize = 58;
+    const x = c.w - w - 4;
+    var y = sc.panel(x, 3, w, plan.goals.len + 6, "#1058 into which goal?", null, true);
+    for (plan.goals, 0..) |goal, i| {
+        const bg: ?RGB = if (i == 0) s.raised else null;
+        if (i == 0) c.fill(x + 1, y, w - 2, 1, s.raised);
+        _ = c.print(x + 2, y, if (i == 0) "❯" else " ", .{ .fg = s.accent, .bg = bg, .bold = true }, 1);
+        const repo = if (sc.card(goal.epic)) |cd| cd.repo orelse "" else "";
+        var at: usize = x + 4;
+        if (i == 0) at += c.print(at, y, "◆ ", .{ .fg = s.repoInk(repo), .bg = bg }, 2);
+        at += c.print(at, y, sc.fmt("#{d} ", .{goal.epic}), .{ .fg = s.repoInk(repo), .bg = bg, .bold = true }, 7);
+        _ = c.print(at, y, goal.title, .{ .fg = s.text, .bg = bg, .bold = i == 0 }, w - 20);
+        const tally = sc.fmt("{d}/{d}", .{ goal.landed, goal.total });
+        _ = c.print(x + w - 2 - text_mod.cells(tally), y, tally, .{ .fg = s.dim, .bg = bg }, 8);
+        y += 1;
+    }
+    _ = c.print(x + 4, y, "no goal", .{ .fg = s.text }, 20);
+    _ = c.print(x + w - 8, y, "✓ here", .{ .fg = s.dim }, 6);
+    y += 2;
+    const used = sc.button(x + 2, y, "⏎", "move it", true);
+    _ = sc.button(x + 2 + used + 1, y, "esc", "cancel", false);
+}
+
 pub fn draw(c: *Canvas, board: *const tickets.Board, p: Palette, dir: Direction, screen: Screen) void {
     var sc: Scene = .{ .board = board, .skin = Skin.of(dir, p), .c = c, .now = tickets.epochOf(now_at).? };
     c.fill(0, 0, c.w, c.h, sc.skin.ground);
-    if (screen == .doing or screen == .planning) {
-        planHead(&sc, screen);
-        if (screen == .doing) doing(&sc) else planning(&sc);
+    if (screen == .doing or screen == .planning or screen == .into) {
+        planHead(&sc, if (screen == .doing) .doing else .planning);
+        switch (screen) {
+            .doing => doing(&sc),
+            .planning => planning(&sc),
+            else => into(&sc),
+        }
         footBar(&sc, screen);
         return;
     }
     if (screen != .alone) titleBar(&sc);
     rail(&sc, screen);
     switch (screen) {
-        .doing, .planning => unreachable,
+        .doing, .planning, .into => unreachable,
         .home => {
             home(&sc, true);
             column(&sc, false, 0);

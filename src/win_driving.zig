@@ -71,16 +71,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
                     try bench.say(w, x0 + 2, y, clip(row.text, room), r.text, bg, true);
                 },
                 2 => try bench.say(w, x0 + 2, y, row.text, r.dim, bg, false),
-                else => {
-                    const need = sheets.driveLanded(given, b).?;
-                    var x = x0 + 2;
-                    for (0..need.actions.len + 1) |i| {
-                        var lbl: [96]u8 = undefined;
-                        const label = sheets.driveButton(&lbl, need, i);
-                        if (x + cellCount(label) + 2 > x0 + ww) break;
-                        x += try bench.chipInk(w, r, x, y, label, if (i == need.actions.len) r.accent else r.dim, r.text, false) + 1;
-                    }
-                },
+                else => {},
             }
         },
         else => {},
@@ -91,47 +82,6 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
 pub fn drive(app: *App, epic: u32) !void {
     app.dirty = true;
     try app.send(.ignore, app_mod.captured("babylon drive {d}"), .{epic});
-}
-
-/// Button `at` under a landed goal: the drive item's action run as babylon gave it, or
-/// `+ a new goal` one past them. Nothing when no goal has landed.
-pub fn answer(app: *App, at: usize) !void {
-    const b = &app.board.?;
-    const need = sheets.driveLanded(b.plan().?, b) orelse return;
-    app.dirty = true;
-    if (at == need.actions.len) return app.openGoal();
-    if (at > need.actions.len) return;
-    const argv = need.actions[at].argv orelse return;
-    _ = try app.runNeed(need.id, argv);
-}
-
-/// The pick on the landed goal's row, above its `+ a new goal`.
-pub fn pick(app: *App) void {
-    var sheet: sheets.Sheet = undefined;
-    if (!app.planSheet(&sheet)) return;
-    for (sheet.rows[0..sheet.n]) |row| {
-        if (row.kind != .drove or row.part != 1) continue;
-        app.home.?.plan_pick = row.pick orelse continue;
-        app.dirty = true;
-        return;
-    }
-}
-
-/// A click on the buttons row under a landed goal.
-pub fn click(app: *App, m: anytype) !void {
-    const b = &app.board.?;
-    const need = sheets.driveLanded(b.plan().?, b) orelse return;
-    const button = sheets.driveButtonAt(need, app.planRect(.driving).x, m.x) orelse return;
-    return answer(app, button);
-}
-
-/// A click on the title bar: with a goal in focus and none landed, drives it.
-pub fn titleClick(app: *App) !bool {
-    const given = app.board.?.plan().?;
-    if (sheets.driveLanded(given, &app.board.?) != null) return false;
-    const at = sheets.focalGoal(given) orelse return false;
-    try drive(app, given.goals[at].epic);
-    return true;
 }
 
 /// The driving window's title-bar extra: the focal goal's epic and doc, after the title.

@@ -20,6 +20,7 @@ const win_modal = @import("win_modal.zig");
 const win_feed = @import("win_feed.zig");
 const win_next = @import("win_next.zig");
 const win_goals = @import("win_goals.zig");
+const win_into = @import("win_into.zig");
 const win_unplanned = @import("win_unplanned.zig");
 const App = app_mod.App;
 const Session = app_mod.Session;
@@ -1731,7 +1732,7 @@ fn planView(app: *App, w: *Writer, view: app_mod.HomeView) !void {
 /// Whether a box is open that is drawn in the middle column.
 fn columnOpen(app: *const App, view: app_mod.HomeView) bool {
     const words = if (app.prompt) |prompt| prompt.multiline() else false;
-    return words or view.detail != null or view.item_open or view.giving != null or view.goal_open or
+    return words or view.detail != null or view.item_open or view.giving != null or view.into != null or view.goal_open or
         app.autoRect() != null or app.draftRect() != null;
 }
 
@@ -1741,6 +1742,10 @@ fn planBoxes(app: *App, w: *Writer, view: app_mod.HomeView) !void {
         app.grab.cover();
         try win_modal.giveBox(app, w, card.id, picked);
     };
+    if (view.into != null) {
+        app.grab.cover();
+        try win_into.paint(app, w);
+    }
     if (view.detail) |id| try win_modal.detailBox(app, w, id, view.detail_scroll);
     if (view.item_open) try win_modal.itemBox(app, w, view.detail_scroll);
     if (app.autoRect() != null) app.grab.cover();
@@ -1974,9 +1979,10 @@ const plan_keys = [_][2][]const u8{
     .{ "⏎, click it", "go: its Claude, the gate, start it, plan an idea, unfold a row, the board on it" },
     .{ "space", "open the row in place; on an open row, its whole ticket" },
     .{ "f", "the picked window whole, over the plan; q closes it" },
-    .{ "+", "a new goal: plan it now, or just keep it" },
-    .{ "d", "drive towards the picked goal; 1…9 answer a landed goal's what next" },
-    .{ "J K x e", "on next: move it down or up, take it out, edit its why" },
+    .{ "+", "on Planning: a new ticket in the picked goal or in no goal; elsewhere a new goal, planned now or just kept" },
+    .{ "a", "on Planning: move the picked ticket into a goal, or out of its goal; or drag its row onto one" },
+    .{ "d", "on Planning: drive towards the picked goal" },
+    .{ "J K x e", "on Planning's next: move it down or up, take it out, edit its why" },
     .{ "z", "on Planning: fold a goal's tickets away, or list them" },
     .{ "x e", "on a kept idea: withdraw it, edit it" },
     .{ "B, b", "the board, and back to the plan" },

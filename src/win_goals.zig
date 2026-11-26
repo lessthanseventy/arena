@@ -97,6 +97,25 @@ pub fn act(app: *App, row: *const sheets.Row) !void {
     _ = try app.openDetail(row.ticket orelse return);
 }
 
+/// Planning shown with the pick on goals' first row, where `d` drives one and `+` makes one.
+pub fn openPlanning(app: *App) void {
+    app.showScreen(.planning);
+    var sheet: sheets.Sheet = undefined;
+    if (!app.planSheet(&sheet)) return;
+    const range = sheet.pickRange(.goals) orelse return;
+    app.home.?.plan_pick = range.first;
+    app.dirty = true;
+}
+
+/// The epic of the goal a row of the goals window is, or is a ticket of.
+pub fn epicOf(app: *const App, row: *const sheets.Row) ?u32 {
+    return switch (row.kind) {
+        .goal => row.ticket,
+        .goal_ticket => (app.board.?.plan() orelse return null).goals[row.item].epic,
+        else => null,
+    };
+}
+
 /// A click on the title bar: on `+ goal`, a new goal.
 pub fn titleClick(app: *App, x: u16) !bool {
     const head = app.goalHead();

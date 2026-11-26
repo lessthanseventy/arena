@@ -277,32 +277,12 @@ pub fn driveLanded(given: *const tickets.Plan, b: *const tickets.Board) ?*const 
 /// The focal window's title: whether the goal is the human's pick, or has landed.
 pub fn drivingTitle(given: *const tickets.Plan, b: *const tickets.Board) []const u8 {
     if (driveLanded(given, b) != null) return "driving towards · landed";
-    return if (given.driving != null) "driving towards · your pick" else "driving towards · d to pick";
+    return if (given.driving != null) "driving towards · your pick" else "driving towards · pick on planning";
 }
 
 fn drivenTitle(b: *const tickets.Board, need: *const tickets.Need, epic: u32) []const u8 {
     for (b.cards()) |card| if (card.id == epic) return card.title;
     return need.text;
-}
-
-/// A button under a landed goal: the drive item's action `at`, numbered; one past them
-/// is `+ a new goal`.
-pub fn driveButton(buf: []u8, need: *const tickets.Need, at: usize) []const u8 {
-    if (at < need.actions.len) return std.fmt.bufPrint(buf, "{d} {s}", .{ at + 1, need.actions[at].label }) catch "";
-    return "+ a new goal";
-}
-
-/// Which button of the landed window's row (`x0` its left edge) is under `x`: an action's place
-/// in the drive item, or `need.actions.len` for `+ a new goal`.
-pub fn driveButtonAt(need: *const tickets.Need, x0: usize, x: usize) ?usize {
-    var at = x0 + 2;
-    for (0..need.actions.len + 1) |i| {
-        var buf: [96]u8 = undefined;
-        const w = text_mod.cells(driveButton(&buf, need, i)) + 2;
-        if (x >= at and x < at + w) return i;
-        at += w + 1;
-    }
-    return null;
 }
 
 /// Whether a step is moving, next, or sent back, as opposed to landed or still waiting.
@@ -726,7 +706,6 @@ pub const Sheet = struct {
             const title = drivenTitle(b, need, given.driving.?);
             s.add(.{ .kind = .drove, .part = 1, .pick = 0, .ticket = given.driving, .text = s.print("✓ #{d} {s}", .{ given.driving.?, title }) });
             s.add(.{ .kind = .drove, .part = 2, .text = "landed. what next?" });
-            s.add(.{ .kind = .drove, .part = 3 });
         } else if (focalGoal(given)) |at| {
             s.add(.{ .kind = .focal, .item = at, .part = 1, .pick = 0, .ticket = given.goals[at].epic });
             s.add(.{ .kind = .focal, .item = at, .part = 2 });
@@ -1298,7 +1277,7 @@ test "the focal window follows plan.driving, says whose pick it is, and asks wha
     ;
     var s: Sheet = undefined;
     for ([_]struct { driving: []const u8, epic: ?u32, title: []const u8 }{
-        .{ .driving = "", .epic = 326, .title = "driving towards · d to pick" },
+        .{ .driving = "", .epic = 326, .title = "driving towards · pick on planning" },
         .{ .driving = "\"driving\":410,", .epic = 410, .title = "driving towards · your pick" },
     }) |case| {
         const text = try std.fmt.allocPrint(std.testing.allocator, "{s}{s}{s}", .{ open, case.driving, goals });
@@ -1318,19 +1297,13 @@ test "the focal window follows plan.driving, says whose pick it is, and asks wha
     var b = try tickets.Board.parse(std.testing.allocator, text);
     defer b.deinit();
     const given = b.plan().?;
-    const need = driveLanded(given, &b).?;
+    try std.testing.expect(driveLanded(given, &b) != null);
     s.build(given, &b, 100, 0, 0, false, true, .{});
     const at = s.span(.driving).start;
     try std.testing.expectEqualStrings("✓ #14 The house", s.rows[at].text);
     try std.testing.expectEqualStrings("landed. what next?", s.rows[at + 1].text);
 
-    try std.testing.expectEqual(Kind.drove, s.rows[at + 2].kind);
-    var buf: [96]u8 = undefined;
-    try std.testing.expectEqualStrings("2 the orchestrator", driveButton(&buf, need, 1));
-    try std.testing.expectEqualStrings("+ a new goal", driveButton(&buf, need, 2));
-    try std.testing.expectEqual(@as(?usize, 0), driveButtonAt(need, 10, 12));
-    try std.testing.expectEqual(@as(?usize, 1), driveButtonAt(need, 10, 12 + "1 the board".len + 3));
-    try std.testing.expectEqual(@as(?usize, null), driveButtonAt(need, 10, 10));
+    try std.testing.expect(s.rows[at + 2].kind != .drove);
     try std.testing.expectEqualStrings("driving towards · landed", drivingTitle(given, &b));
 }
 

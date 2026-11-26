@@ -19,6 +19,7 @@ const draw = @import("draw.zig");
 const win_feed = @import("win_feed.zig");
 const win_driving = @import("win_driving.zig");
 const win_goals = @import("win_goals.zig");
+const win_into = @import("win_into.zig");
 const win_landed = @import("win_landed.zig");
 const win_move = @import("win_move.zig");
 const win_plan = @import("win_plan.zig");
@@ -362,6 +363,9 @@ pub const HomeView = struct {
     back: ?u32 = null,
     /// The Claudes the picked card can be given to shown over the board, and the one picked.
     giving: ?usize = null,
+    /// The ticket asking `into which goal?` in the middle column, and the place picked.
+    into: ?u32 = null,
+    into_pick: usize = 0,
     /// The ticket whose whole detail is shown over the board, and how far down it is scrolled.
     detail: ?u32 = null,
     detail_scroll: usize = 0,
@@ -419,12 +423,12 @@ pub const HomeView = struct {
 
     /// Whether a box sits in the middle column, beside Plan rather than over it.
     pub fn columnOpen(view: HomeView) bool {
-        return view.detail != null or view.item_open or view.giving != null or view.auto_pick != null or view.goal_open or view.draft != null;
+        return view.detail != null or view.item_open or view.giving != null or view.into != null or view.auto_pick != null or view.goal_open or view.draft != null;
     }
 
     /// Whether a box lies over the board, the keys its own.
     pub fn boxed(view: HomeView) bool {
-        return view.help or view.detail != null or view.item_open or view.giving != null or view.auto_pick != null or view.goal_open or view.draft != null or view.whole != null;
+        return view.help or view.detail != null or view.item_open or view.giving != null or view.into != null or view.auto_pick != null or view.goal_open or view.draft != null or view.whole != null;
     }
 };
 
@@ -590,9 +594,11 @@ pub const App = struct {
             opens: bool,
             moved: bool = false,
         },
-        /// A todo row of not planned by its ticket, to join next where it is let go.
-        todo_row: struct {
+        /// A ticket row of goals or no goal by its ticket, to join next or a goal where it is let go.
+        ticket_row: struct {
             id: u32,
+            /// The press was on the picked row, which a let go without a move goes to.
+            opens: bool = false,
             moved: bool = false,
         },
     } = .none,
@@ -3619,6 +3625,7 @@ pub const App = struct {
         std.mem.swap(usize, &view.plan_pick, &view.other_pick);
         view.detail = null;
         view.giving = null;
+        view.into = null;
         view.whole = null;
     }
 
@@ -3839,14 +3846,21 @@ pub const App = struct {
         if (view.whole != null and is(key, &.{ "\x1b", "q" })) return app.closeWhole();
         if (view.whole != null and !is(key, &.{ "J", "K", "x", "e", "\r", " ", "t", "o", "p", ">", "<", "G", "w", "W", "H" })) return;
         if (app.workbench()) if (sheet.picked(view.plan_pick)) |row| {
-            if (row.kind == .need and !is(key, &.{ "j", "k", "h", "l", "f", "/", "r", "?", "q", "\x1b", "`", "g", "A", "]", "[", " ", "o", "O", "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D" }) and try win_move.answer(app, row, key)) return;
+            if (row.kind == .need and !win_move.isDrive(app.board.?.needsYou()[row.item]) and !is(key, &.{ "j", "k", "h", "l", "f", "/", "r", "?", "q", "\x1b", "`", "g", "A", "]", "[", " ", "o", "O", "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D" }) and try win_move.answer(app, row, key)) return;
             if (row.kind == .chips and try win_unplanned.chipKey(app, key)) return;
             if (is(key, &.{"f"})) return app.openWhole(row.win);
         };
         if (is(key, &.{"+"})) {
-            const in_no_goal = if (sheet.picked(view.plan_pick)) |row| row.win == .no_goal else false;
-            return if (in_no_goal and app.workbench()) app.newTicket() else app.openGoal();
+            if (view.screen != .planning) return;
+            if (sheet.picked(view.plan_pick)) |row| {
+                if (win_goals.epicOf(app, row)) |epic| return app.newTicketIn(epic);
+                if (row.win == .no_goal and app.workbench()) return app.newTicket();
+            }
+            return app.openGoal();
         }
+        if (is(key, &.{"a"}) and view.screen == .planning) if (sheet.picked(view.plan_pick)) |row| {
+            if (row.kind == .goal_ticket or row.kind == .todo or row.kind == .next) if (row.ticket) |id| return win_into.open(app, id);
+        };
         if (app.workbench() and view.whole == null) {
             if (is(key, &.{"/"})) return app.openFind();
             if (is(key, &.{"\x1b"}) and app.find_len > 0) return app.clearFind();
@@ -3860,16 +3874,15 @@ pub const App = struct {
                 return;
             }
         }
-        if (is(key, &.{"d"})) if (sheet.picked(view.plan_pick)) |row| {
-            if (row.kind == .goal or row.kind == .focal) return win_driving.drive(app, row.ticket.?);
+        if (is(key, &.{"d"}) and view.screen == .planning) if (sheet.picked(view.plan_pick)) |row| {
+            if (row.kind == .goal) return win_driving.drive(app, row.ticket.?);
         };
         if (is(key, &.{"z"})) if (sheet.picked(view.plan_pick)) |row| {
             if (row.kind == .goal or row.kind == .goal_ticket) return win_goals.fold(app, if (row.kind == .goal) row.ticket.? else app.board.?.plan().?.goals[row.item].epic);
         };
-        if (key.len == 1 and key[0] >= '1' and key[0] <= '9') return win_driving.answer(app, key[0] - '1');
-
         if (is(key, &.{ "J", "K", "x", "e" })) {
             const row = sheet.picked(view.plan_pick) orelse return;
+            if (row.kind == .next and view.screen == .doing and !is(key, &.{"e"})) return;
             if (row.kind == .idea) return win_backlog.ideaKey(app, row, key);
             if (row.kind == .todo and is(key, &.{ "J", "K" })) return win_unplanned.moveTodo(app, &sheet, row, is(key, &.{"J"}));
             if (row.kind == .backlog and is(key, &.{"x"})) return win_backlog.openClose(app, row.ticket orelse return);
@@ -3993,7 +4006,6 @@ pub const App = struct {
             if (hit.title) {
                 if (view.whole != null) return;
                 _ = switch (hit.win) {
-                    .driving => try win_driving.titleClick(app),
                     .goals => try win_goals.titleClick(app, m.x),
                     .no_goal => try win_unplanned.titleClick(app, m.x),
                     else => false,
@@ -4003,7 +4015,7 @@ pub const App = struct {
         }
         const at = app.planRowAt(&sheet, m.x, m.y) orelse return;
         const row = sheet.rows[at];
-        if (row.kind == .drove and row.part == 3) return win_driving.click(app, m);
+
         if (row.kind == .buttons) return win_plan.planButtonClick(app, &sheet, at, m);
         if (row.kind == .held) return win_now.heldClick(app, row);
         const pick = row.pick orelse return;
@@ -4013,8 +4025,10 @@ pub const App = struct {
         if (row.kind == .chips) return win_unplanned.chipClick(app, m);
         if (row.kind == .todo) {
             win_unplanned.todoPress(app, row);
+        } else if (row.kind == .goal_ticket) {
+            app.drag = .{ .ticket_row = .{ .id = row.ticket orelse return, .opens = picked } };
         } else if (row.kind == .next) {
-            win_next.nextPress(app, &sheet, at);
+            if (view.screen == .planning) win_next.nextPress(app, &sheet, at) else if (picked) try app.planAct(&row, "\r") else try app.togglePlanOpen(&row);
         } else if (row.kind == .need) {
             try win_move.open(app, &row);
         } else if (opensInPlace(&row)) {
@@ -4044,8 +4058,8 @@ pub const App = struct {
     /// The held todo row moved to `m`, or let go: over next it joins next at the place it is let
     /// go on, `babylon next N --at K`, or at the bottom over the window's empty rows; let go where
     /// it was pressed it opens in place, as a click does.
-    fn dragTodoRow(app: *App, m: keys.Mouse) !void {
-        const held = &app.drag.todo_row;
+    fn dragTicketRow(app: *App, m: keys.Mouse) !void {
+        const held = &app.drag.ticket_row;
         app.dirty = true;
         if (!m.release and m.motion() and !m.hover()) {
             held.moved = true;
@@ -4057,12 +4071,14 @@ pub const App = struct {
         var sheet: sheets.Sheet = undefined;
         if (m.y < 2 or !app.planSheet(&sheet)) return;
         const hit = win_plan.planHit(app, &sheet, m.x, m.y) orelse return;
-        if (hit.win == .no_goal) {
-            if (row.moved) return;
+        if (!row.moved) {
             const at = hit.row orelse return;
-            if (sheet.rows[at].ticket == row.id) try app.togglePlanOpen(&sheet.rows[at]);
+            const here = &sheet.rows[at];
+            if (here.ticket != row.id) return;
+            if (opensInPlace(here)) try app.togglePlanOpen(here) else if (row.opens) try app.planAct(here, "\r");
             return;
         }
+        if (try win_into.drop(app, &sheet, hit, row.id)) return;
         if (hit.win != .next or hit.title) return;
         const place = if (hit.row) |at| nextPlace(&sheet, at) + 1 else app.board.?.next().len + 1;
         var id: [12]u8 = undefined;
@@ -4089,8 +4105,18 @@ pub const App = struct {
         if (!m.release) return;
         var sheet: sheets.Sheet = undefined;
         if (m.y < 2 or !app.planSheet(&sheet)) return;
-        const at = app.planRowAt(&sheet, m.x, m.y) orelse return;
-        if (sheet.rows[at].kind != .next) return;
+        const at = app.planRowAt(&sheet, m.x, m.y) orelse {
+            if (row.moved) if (win_plan.planHit(app, &sheet, m.x, m.y)) |hit| if (row.from < app.board.?.next().len) {
+                _ = try win_into.drop(app, &sheet, hit, app.board.?.next()[row.from].ticket);
+            };
+            return;
+        };
+        if (sheet.rows[at].kind != .next) {
+            if (row.moved) if (win_plan.planHit(app, &sheet, m.x, m.y)) |hit| if (row.from < app.board.?.next().len) {
+                _ = try win_into.drop(app, &sheet, hit, app.board.?.next()[row.from].ticket);
+            };
+            return;
+        }
         const to = nextPlace(&sheet, at);
         if (to == row.from) {
             if (row.opens and !row.moved) try app.togglePlanOpen(&sheet.rows[at]);
@@ -4199,6 +4225,7 @@ pub const App = struct {
         if (view.draft != null) return app.draftKey(key);
         if (view.auto_pick != null) return app.autoKey(key);
         if (view.giving != null) return app.giveKey(key);
+        if (view.into != null) return win_into.key(app, key);
         if (view.help) {
             view.help = false;
             return;
@@ -4673,6 +4700,13 @@ pub const App = struct {
         try app.ticketWindow("babylon new{s}", .{narrowed});
     }
 
+    /// `babylon new --epic M`: a new ticket in goal `epic`, in the repo the plan is narrowed to.
+    pub fn newTicketIn(app: *App, epic: u32) !void {
+        var buf: [80]u8 = undefined;
+        const narrowed = if (app.planRepo()) |r| (if (plainName(r)) std.fmt.bufPrint(&buf, " --repo {s}", .{r}) catch "" else "") else "";
+        try app.ticketWindow("babylon new --epic {d}{s}", .{ epic, narrowed });
+    }
+
     /// What can be done to a card from the board, by its key or its chip.
     pub const CardAction = enum {
         go,
@@ -4686,6 +4720,12 @@ pub const App = struct {
         to_next,
         handoff,
         open,
+        /// Into another goal, or out of its goal.
+        goal,
+        /// A goal's card: drive towards it.
+        drive,
+        /// A goal's card: a new ticket in it.
+        new_ticket,
 
         /// The key that does it, as the box on the board writes it.
         pub fn key(action: CardAction) []const u8 {
@@ -4701,6 +4741,9 @@ pub const App = struct {
                 .to_next => "w",
                 .handoff => "H",
                 .open => "space",
+                .goal => "a",
+                .drive => "d",
+                .new_ticket => "+",
             };
         }
 
@@ -4717,6 +4760,9 @@ pub const App = struct {
                 .to_todo => "to todo",
                 .to_next => "next",
                 .handoff => "hand off",
+                .goal => "goal…",
+                .drive => "drive",
+                .new_ticket => "ticket",
             };
         }
     };
@@ -4735,6 +4781,8 @@ pub const App = struct {
             .{ .edit, open },                                                                     .{ .priority, open and card.status != .backlog },
             .{ .close, card.status == .todo or card.status == .backlog },                         .{ .reopen, card.status == .done },
             .{ .to_todo, card.status == .backlog },                                               .{ .to_next, card.status == .todo },
+            .{ .goal, open and !card.isEpic() },                                                  .{ .drive, open and card.isEpic() and card.status != .backlog },
+            .{ .new_ticket, open and card.isEpic() and card.status != .backlog },
         };
         for (all) |pair| if (pair[1]) {
             out[n] = pair[0];
@@ -4749,7 +4797,7 @@ pub const App = struct {
     /// does nothing.
     pub fn act(app: *App, action: CardAction) !void {
         const view = if (app.home) |*open| open else return;
-        const card = app.pickedCard() orelse return;
+        const card = (if (action == .drive or action == .new_ticket) app.modalCard() else null) orelse app.pickedCard() orelse app.modalCard() orelse return;
         if (action == .open) {
             _ = try app.openDetail(card.id);
             return;
@@ -4768,6 +4816,12 @@ pub const App = struct {
             },
             .close => try app.send(.ignore, captured("babylon update {d} --status done"), .{card.id}),
             .to_next => try app.toNext(card.id, false),
+            .goal => {
+                view.detail = null;
+                win_into.open(app, card.id);
+            },
+            .drive => try win_driving.drive(app, card.id),
+            .new_ticket => try app.newTicketIn(card.id),
             .handoff => try app.askHandoff(card),
             .reopen, .to_todo => try app.send(.ignore, captured("babylon update {d} --status todo"), .{card.id}),
             .open => unreachable,
@@ -5144,6 +5198,9 @@ pub const App = struct {
                     .close => ">",
                     .reopen => "<",
                     .to_todo => "t",
+                    .goal => "a",
+                    .drive => "d",
+                    .new_ticket => "+",
                     else => continue,
                 };
                 const button: ModalButton = .{ .action = .{ .card = action }, .key = key, .label = action.label(), .x = x, .y = foot };
@@ -5444,6 +5501,11 @@ pub const App = struct {
             }
             return;
         }
+        if (app.modalCard()) |open| {
+            var have: [12]CardAction = undefined;
+            const wanted: ?CardAction = if (is(key, &.{"a"})) .goal else if (is(key, &.{"d"})) .drive else if (is(key, &.{"+"})) .new_ticket else null;
+            if (wanted) |action| if (std.mem.indexOfScalar(CardAction, cardActions(open, &have), action) != null) return app.pressModal(.{ .card = action });
+        }
         if (is(key, &.{"g"})) return app.openGate(view.detail orelse return);
         if (is(key, &.{"d"})) return app.openAskDoc(view.detail orelse return);
         if (is(key, &.{"x"}) and (app.modalCard() orelse return).proposal != null) return app.pressModal(.{ .card = .no });
@@ -5513,7 +5575,7 @@ pub const App = struct {
     /// focused, is the drawer's; else it is the plan's.
     fn homeMouse(app: *App, m: keys.Mouse) !bool {
         // a drag's let go that never came: a new press ends that drag unseen
-        if ((app.drag == .next_row or app.drag == .todo_row) and m.leftPress()) app.drag = .none;
+        if ((app.drag == .next_row or app.drag == .ticket_row) and m.leftPress()) app.drag = .none;
         if (app.drag != .none) return false;
         if (app.board == null) return true;
 
@@ -5542,6 +5604,10 @@ pub const App = struct {
         if (open.boxed()) {
             if (open.goal_open) {
                 try app.goalClick(m);
+                return true;
+            }
+            if (open.into != null) {
+                try win_into.click(app, m);
                 return true;
             }
             if (open.draft != null) {
@@ -5896,7 +5962,7 @@ pub const App = struct {
     /// The held button moved to `m`, or let go, wherever the pointer is by then.
     fn dragTo(app: *App, m: keys.Mouse) !void {
         if (app.drag == .next_row) return app.dragNextRow(m);
-        if (app.drag == .todo_row) return app.dragTodoRow(m);
+        if (app.drag == .ticket_row) return app.dragTicketRow(m);
         const s = app.cur() orelse {
             app.drag = .none;
             return;
@@ -5916,7 +5982,7 @@ pub const App = struct {
         const ox: i32 = app.term_w - app.view_w;
         switch (app.drag) {
             .none, .thumb, .focus => {},
-            .next_row, .todo_row => {},
+            .next_row, .ticket_row => {},
             // Past the pane's top or bottom the history scrolls under the pointer.
             .select => |from| {
                 const pane = app.paneById(from.pane) orelse return;
@@ -8207,34 +8273,270 @@ test "⏎ on an idea plans it, e and x edit and withdraw it, and ⏎ on the fold
     try std.testing.expect(sheet.picked(view.plan_pick).?.kind == .idea);
 }
 
-test "d on a goal runs babylon drive, and 3 under a landed goal opens the new goal modal" {
+const moves_board =
+    \\{"tickets":[
+    \\{"id":326,"repo":"arena","kind":"epic","title":"board","status":"doing"},
+    \\{"id":500,"repo":"arena","kind":"epic","title":"orchestrator","status":"doing"},
+    \\{"id":760,"repo":"arena","title":"in a goal","status":"todo","epic_id":326},
+    \\{"id":9,"repo":"arena","title":"in another","status":"todo","epic_id":500},
+    \\{"id":2,"repo":"arena","title":"free","status":"todo"}],
+    \\"plan":{"driving":326,"next":[{"ticket":2,"repo":"arena","title":"free","why":"x"}],"goals":[
+    \\{"epic":326,"title":"board","landed":1,"total":2,"steps":[{"ticket":760,"state":"todo"}]},
+    \\{"epic":500,"title":"orchestrator","landed":0,"total":1,"steps":[{"ticket":9,"state":"todo"}]}],
+    \\"landed_today":{"count":0,"newest":[]},
+    \\"not_planned":{"count":1,"follow_ups":0,"by_repo":{"arena":1}}}}
+;
+
+/// An app on `moves_board` showing `screen`, and the file babylon's commands are sent to.
+fn movesApp(app: *App, sent: std.Io.File, screen: sheets.Screen) !void {
+    app.* = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 40;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator, moves_board);
+    app.home = .{ .focus = .plan, .screen = screen };
+}
+
+/// What was sent to tmux has `want`; when it has not, says what it has.
+fn expectSent(sent: std.Io.File, got: []u8, want: []const u8) !void {
+    const text = try sentText(sent, got);
+    if (std.mem.indexOf(u8, text, want) != null) return;
+    std.debug.print("sent no `{s}`, but:\n{s}\n", .{ want, text });
+    return error.TestExpectedEqual;
+}
+
+fn pickTicket(app: *App, kind: sheets.Kind, id: u32) !void {
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    for (sheet.rows[0..sheet.n]) |row| if (row.kind == kind and row.ticket == id) {
+        app.home.?.plan_pick = row.pick.?;
+        return;
+    };
+    return error.NoRow;
+}
+
+test "d on a goal runs babylon drive on Planning, and does nothing on Doing" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
     defer sent.close(std.testing.io);
-    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    var app: App = undefined;
+    try movesApp(&app, sent, .doing);
     defer app.pending.deinit(std.testing.allocator);
-    app.term_w = 200;
-    app.view_w = 60;
-    app.view_h = 40;
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[],"plan":{"goals":[{"epic":326,"title":"board","landed":1,"total":2,"steps":[{"ticket":760,"state":"todo"}]}]}}
-    );
     defer app.board.?.deinit();
-    app.home = .{ .focus = .plan };
+    var got: [2048]u8 = undefined;
     try app.planKey("d");
-    var got: [1024]u8 = undefined;
-    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
-    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon drive 326") != null);
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "babylon drive") == null);
 
+    app.showScreen(.planning);
+    try pickTicket(&app, .goal, 500);
+    try app.planKey("d");
+    try expectSent(sent, &got, "babylon drive 500");
+}
+
+test "+ on a goal or its ticket asks babylon for a ticket in it, on no goal for one in none, elsewhere for a goal, and does nothing on Doing" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = undefined;
+    try movesApp(&app, sent, .doing);
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    var got: [4096]u8 = undefined;
+    try app.planKey("+");
+    try std.testing.expect(!app.home.?.goal_open);
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "babylon new") == null);
+
+    app.showScreen(.planning);
+    try pickTicket(&app, .goal, 500);
+    try app.planKey("+");
+    try expectSent(sent, &got, "babylon new --epic 500");
+    app.home = .{ .focus = .plan, .screen = .planning };
+    try pickTicket(&app, .goal_ticket, 760);
+    try app.planKey("+");
+    try expectSent(sent, &got, "babylon new --epic 326");
+    app.home = .{ .focus = .plan, .screen = .planning };
+
+    try pickTicket(&app, .todo, 2);
+    try app.planKey("+");
+    try expectSent(sent, &got, "babylon new || read _");
+    app.home = .{ .focus = .plan, .screen = .planning };
+
+    try pickTicket(&app, .next, 2);
+    try app.planKey("+");
+    try std.testing.expect(app.home.?.goal_open);
+}
+
+test "a asks into which goal, its ⏎ moves the ticket with babylon update --epic, and no goal says none" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = undefined;
+    try movesApp(&app, sent, .planning);
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    defer app.clearReportSaid();
+    var got: [4096]u8 = undefined;
+    const view = &app.home.?;
+
+    try pickTicket(&app, .goal_ticket, 760);
+    try app.homeKey("a");
+    try std.testing.expectEqual(@as(?u32, 760), view.into);
+    try std.testing.expectEqual(@as(usize, 0), view.into_pick);
+    try app.homeKey("j");
+    try app.homeKey("\r");
+    try std.testing.expectEqual(@as(?u32, null), view.into);
+    try expectSent(sent, &got, "'babylon' 'update' '760' '--epic' '500'");
+
+    try app.homeKey("a");
+    try app.homeKey("j");
+    try app.homeKey("j");
+    try app.homeKey("j");
+    try std.testing.expectEqual(@as(usize, 2), view.into_pick);
+    try app.homeKey("\r");
+    try expectSent(sent, &got, "'babylon' 'update' '760' '--epic' 'none'");
+
+    try pickTicket(&app, .todo, 2);
+    try app.homeKey("a");
+    try std.testing.expectEqual(@as(usize, 2), view.into_pick);
+    try app.homeKey("\x1b");
+    try std.testing.expectEqual(@as(?u32, null), view.into);
+}
+
+test "a ticket row dragged onto a goal moves into it, onto no goal moves out, and a row of next does the same" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = undefined;
+    try movesApp(&app, sent, .planning);
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    defer app.clearReportSaid();
+    var got: [4096]u8 = undefined;
+    const goals = app.planRect(.goals);
+    const no_goal = app.planRect(.no_goal);
+    const next = app.planRect(.next);
+
+    app.drag = .{ .ticket_row = .{ .id = 760, .moved = true } };
+    try app.dragTo(.{ .code = 0, .x = goals.x + 5, .y = goals.y + 3, .release = true });
+    try expectSent(sent, &got, "'babylon' 'update' '760' '--epic' '500'");
+
+    app.drag = .{ .ticket_row = .{ .id = 2, .moved = true } };
+    try app.dragTo(.{ .code = 0, .x = goals.x + 5, .y = goals.y + 2, .release = true });
+    try expectSent(sent, &got, "'babylon' 'update' '2' '--epic' '326'");
+
+    app.drag = .{ .ticket_row = .{ .id = 9, .moved = true } };
+    try app.dragTo(.{ .code = 0, .x = no_goal.x + 5, .y = no_goal.y + 1, .release = true });
+    try expectSent(sent, &got, "'babylon' 'update' '9' '--epic' 'none'");
+
+    app.drag = .{ .ticket_row = .{ .id = 760, .moved = true } };
+    try app.dragTo(.{ .code = 0, .x = next.x + 3, .y = next.y + 1, .release = true });
+    try expectSent(sent, &got, "'babylon' 'next' '760' '--at' '1'");
+
+    app.drag = .{ .next_row = .{ .from = 0, .opens = true, .moved = true } };
+    try app.dragTo(.{ .code = 0, .x = goals.x + 5, .y = goals.y + 1, .release = true });
+    try expectSent(sent, &got, "'babylon' 'update' '2' '--epic' '326'");
+
+    app.drag = .{ .ticket_row = .{ .id = 760, .moved = true } };
+    try app.dragTo(.{ .code = 0, .x = goals.x + 5, .y = goals.y + 2, .release = true });
+    try std.testing.expectEqual(@as(usize, 2), std.mem.count(u8, try sentText(sent, &got), "'--epic' '326'"));
+}
+
+test "next is reordered on Planning only: on Doing J, x and a press on its row do nothing" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = undefined;
+    try movesApp(&app, sent, .doing);
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    var got: [2048]u8 = undefined;
+    try pickTicket(&app, .next, 2);
+    try app.planKey("x");
+    try app.planKey("J");
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "babylon") == null);
+
+    const next = app.planRect(.next);
+    try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = next.x + 3, .y = next.y + 1, .release = false }));
+    try std.testing.expect(app.drag == .none);
+
+    app.showScreen(.planning);
+    try pickTicket(&app, .next, 2);
+    try app.planKey("x");
+    try expectSent(sent, &got, "'babylon' 'next' '2' '--drop'");
+}
+
+test "⏎ on the landed goal's item in Your move opens Planning with the pick on goals, and its number runs nothing" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = undefined;
+    try movesApp(&app, sent, .doing);
+    defer app.pending.deinit(std.testing.allocator);
     app.board.?.deinit();
     app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[],"needs_you":[{"id":"drive:14","kind":"drive","ticket":14,"repo":"","text":"landed",
-        \\"actions":[{"key":"1","label":"a","argv":["babylon","drive","1"]},{"key":"2","label":"b","argv":["babylon","drive","2"]}]}],
-        \\"plan":{"driving":14,"goals":[]}}
+        \\{"tickets":[{"id":326,"repo":"arena","kind":"epic","title":"board","status":"doing"},{"id":760,"repo":"arena","title":"in a goal","status":"todo","epic_id":326}],
+        \\"needs_you":[{"id":"drive:14","kind":"drive","ticket":14,"repo":"","text":"landed",
+        \\"actions":[{"key":"1","label":"a","argv":["babylon","drive","326"]}]}],
+        \\"plan":{"driving":14,"goals":[{"epic":326,"title":"board","landed":1,"total":2,"steps":[{"ticket":760,"state":"todo"}]}]}}
     );
-    try app.planKey("3");
-    try std.testing.expect(app.home.?.goal_open);
+    defer app.board.?.deinit();
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    try std.testing.expectEqual(sheets.Kind.need, sheet.picked(app.home.?.plan_pick).?.kind);
+    var got: [2048]u8 = undefined;
+    try app.planKey("1");
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "babylon") == null);
+    try std.testing.expectEqual(sheets.Screen.doing, app.home.?.screen);
+
+    try app.planKey("\r");
+    try std.testing.expectEqual(sheets.Screen.planning, app.home.?.screen);
+    try std.testing.expect(app.planSheet(&sheet));
+    try std.testing.expectEqual(sheets.Kind.goal, sheet.picked(app.home.?.plan_pick).?.kind);
+}
+
+test "a goal's card has drive and a new ticket, a ticket's card has goal…, each by its key" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = undefined;
+    try movesApp(&app, sent, .planning);
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    defer app.clearReportSaid();
+    var got: [4096]u8 = undefined;
+    var have: [12]App.CardAction = undefined;
+    const has = std.mem.indexOfScalar;
+    const epic = app.cardById(326).?;
+    try std.testing.expect(has(App.CardAction, App.cardActions(epic, &have), .drive) != null);
+    try std.testing.expect(has(App.CardAction, App.cardActions(epic, &have), .new_ticket) != null);
+    try std.testing.expect(has(App.CardAction, App.cardActions(epic, &have), .goal) == null);
+    try std.testing.expect(has(App.CardAction, App.cardActions(app.cardById(760).?, &have), .goal) != null);
+    try std.testing.expect(has(App.CardAction, App.cardActions(app.cardById(760).?, &have), .drive) == null);
+
+    app.home.?.detail = 326;
+    var buttons: [48]App.ModalButton = undefined;
+    var labels: usize = 0;
+    for (app.modalButtons(&buttons)) |button| labels += @intFromBool(std.mem.eql(u8, button.label, "drive") or std.mem.eql(u8, button.label, "ticket"));
+    try std.testing.expectEqual(@as(usize, 2), labels);
+    try app.homeKey("d");
+    try expectSent(sent, &got, "babylon drive 326");
+    app.home.?.detail = 326;
+    try app.homeKey("+");
+    try expectSent(sent, &got, "babylon new --epic 326");
+    app.home = .{ .focus = .plan, .screen = .planning };
+
+    app.home.?.detail = 760;
+    try app.homeKey("a");
+    try std.testing.expectEqual(@as(?u32, 760), app.home.?.into);
+    try std.testing.expectEqual(@as(?u32, null), app.home.?.detail);
 }
 
 const push_board =
@@ -8262,27 +8564,6 @@ test "⏎ on the picked Your move item runs its first action without opening it"
     var got: [1024]u8 = undefined;
     const len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'push' 'arena'") != null);
-}
-
-test "⏎ on a landed drive item in Your move picks driving towards' landed goal, where + a new goal is" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 200;
-    app.view_w = 60;
-    app.view_h = 40;
-    app.roles = @import("parts.zig").roles();
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[],"needs_you":[{"id":"drive:14","kind":"drive","ticket":14,"repo":"","text":"landed",
-        \\"actions":[{"key":"1","label":"a","argv":["babylon","drive","1"]}]}],
-        \\"plan":{"driving":14,"goals":[]}}
-    );
-    defer app.board.?.deinit();
-    app.home = .{ .focus = .plan };
-    var sheet: sheets.Sheet = undefined;
-    try std.testing.expect(app.planSheet(&sheet));
-    try std.testing.expectEqual(sheets.Kind.need, sheet.picked(app.home.?.plan_pick).?.kind);
-    try app.planKey("\r");
-    try std.testing.expect(app.planSheet(&sheet));
-    try std.testing.expectEqual(sheets.Kind.drove, sheet.picked(app.home.?.plan_pick).?.kind);
 }
 
 const draft_board =
@@ -8411,7 +8692,7 @@ test "a row of next dragged onto another takes its place" {
         \\{"ticket":12,"repo":"arena","title":"b","why":"y"}]}}
     );
     defer app.board.?.deinit();
-    app.home = .{ .focus = .plan };
+    app.home = .{ .focus = .plan, .screen = .planning };
     const eq = std.testing.expectEqual;
 
     var sheet: sheets.Sheet = undefined;
@@ -9233,7 +9514,7 @@ test "J K on a todo row move it in its repo, W adds it to next, + opens the new 
     len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon next 2 --at 1") != null);
 
-    app.drag = .{ .todo_row = .{ .id = 3, .moved = true } };
+    app.drag = .{ .ticket_row = .{ .id = 3, .moved = true } };
     const next = app.planRect(.next);
     try app.dragTo(.{ .code = 0, .x = next.x + 3, .y = next.y + 1, .release = true });
     len = try sent.readPositionalAll(std.testing.io, &got, 0);
