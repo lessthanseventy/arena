@@ -39,7 +39,7 @@ pub fn draftBox(app: *const App, w: *Writer) !void {
     const title = std.fmt.bufPrint(&head, "☐ draft #{d}", .{epic}) catch "draft";
     if (app.roles) |r| {
         try bench.window(w, r, rect.x, rect.y, rect.w - 1, rect.h + 1, title, null, true);
-        try bench.say(w, rect.x + rect.w - 4, rect.y, "×", r.text, r.panel, true);
+        try bench.say(w, rect.x + rect.w - 5, rect.y, " × ", r.text, r.panel, true);
     } else {
         const edge = ink(app, "amber", 4);
         var pen: Pen = .{};
@@ -217,7 +217,7 @@ pub fn autoBox(app: *const App, w: *Writer) !void {
     const working = std.fmt.bufPrint(&line, "working {d} of {d}", .{ state.working, state.cap }) catch "";
     if (app.roles) |r| {
         try bench.window(w, r, rect.x, rect.y, rect.w - 1, rect.h + 1, "auto", null, true);
-        try bench.say(w, rect.x + rect.w - 4, rect.y, "×", r.text, r.panel, true);
+        try bench.say(w, rect.x + rect.w - 5, rect.y, " × ", r.text, r.panel, true);
         _ = try bench.toggle(w, r, x0, rect.y + 1, "auto", on, r.panel);
         try bench.say(w, x0 + 10, rect.y + 1, if (on) "on" else "off", if (on) r.accent else r.dim, r.panel, pick == 0);
         try bench.say(w, x0, rect.y + 2, working, r.dim, r.panel, false);
@@ -304,7 +304,7 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
     const card = app.modalCard();
     const title = std.fmt.bufPrint(&tbuf, "#{d} \u{b7} {s}", .{ id, if (card) |it| it.repo orelse "no repo" else "" }) catch "";
     try bench.window(w, r, rect.x, rect.y, rect.w - 1, rect.h + 1, title, null, true);
-    try bench.say(w, rect.x + rect.w - 4, rect.y, "×", r.text, r.panel, true);
+    try bench.say(w, rect.x + rect.w - 5, rect.y, " × ", r.text, r.panel, true);
 
     var head: App.CardHead = .{};
     if (card) |it| app.modalHead(it, inner, app.askWords(it) != null, &head);

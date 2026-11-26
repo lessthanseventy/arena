@@ -822,12 +822,21 @@ pub const App = struct {
         var n: usize = 0;
         for (all[0..total]) |a| {
             if (n == out.len) break;
-            if (branchTicket(a.win.text(.branch)) != null) continue;
+            if (branchTicket(a.win.text(.branch)) != null or app.holdsInFlight(a.win)) continue;
             out[n] = a;
             n += 1;
         }
         std.sort.insertion(Agent, out[0..n], {}, otherBefore);
         return out[0..n];
+    }
+
+    fn holdsInFlight(app: *const App, win: *const Window) bool {
+        const given = (app.board orelse return false).plan() orelse return false;
+        for (given.now) |item| {
+            const pane = item.holder() orelse continue;
+            for (win.panes.items) |p| if (p.id == pane) return true;
+        }
+        return false;
     }
 
     fn otherBefore(_: void, a: Agent, b: Agent) bool {
@@ -9411,6 +9420,34 @@ test "⏎ on a Claude with no ticket in in flight's foot shows its window, space
     try eq(@as(?HomeView, null), app.home);
     try std.testing.expect(app.popup == null);
     try eq(@as(usize, 1), session.focus);
+}
+
+test "a Claude whose pane holds an in-flight ticket is not listed under other Claudes" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"plan":{"now":[{"ticket":5,"repo":"arena","pane":"%7"}],"next":[],"goals":[],
+        \\"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer board.deinit();
+    var held: Window = .{ .id = 1, .index = 1, .name = @constCast("a"), .claude = .working, .since = 1, .info = @constCast("\t\tbuilding\t\t\t\t\t/h/projects/arena") };
+    var free: Window = .{ .id = 2, .index = 2, .name = @constCast("b"), .claude = .waiting, .since = 1, .info = @constCast("\t\tasks\t\t\t\t\t/h/projects/babylon") };
+    var wins = [_]*Window{ &held, &free };
+    var session: Session = .{ .id = 3, .name = @constCast("babylon") };
+    session.wins = .fromOwnedSlice(&wins);
+    var sessions = [_]*Session{&session};
+    var devnull = try std.Io.Dir.openFileAbsolute(std.testing.io, "/dev/null", .{ .mode = .write_only });
+    defer devnull.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = devnull, .board = board, .current = 3 };
+    defer app.pending.deinit(app.gpa);
+    const pane = try Pane.create(&app, 7, 20, 5);
+    defer pane.destroy(app.gpa);
+    var panes = [_]*Pane{pane};
+    held.panes = .fromOwnedSlice(&panes);
+    held.agent_pane = 7;
+    app.sessions = .fromOwnedSlice(&sessions);
+    var others: [App.max_others]App.Agent = undefined;
+    const found = app.otherClaudes(&others);
+    try std.testing.expectEqual(@as(usize, 1), found.len);
+    try std.testing.expect(found[0].win == &free);
 }
 
 test "a Claude waiting in its pane is a Your move item after babylon's, ⏎ shows its pane, and it goes when the pane stops waiting" {

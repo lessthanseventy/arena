@@ -140,7 +140,7 @@ pub fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.S
     try bench.window(w, r, rect.x, rect.y, ww, rect.h, if (win == .driving) sheets.drivingTitle(given, &app.board.?) else win.title(), windowCount(&app.board.?, given, win), focused);
     const bar = r.panel;
     if (whole) {
-        try bench.say(w, rect.x + ww - 10, rect.y, "q close", r.dim, bar, false);
+        try bench.say(w, rect.x + ww - 10, rect.y, " q close ", r.dim, bar, false);
     }
     if (win == .unplanned and !whole) try win_unplanned.frame(app, w, r);
     if (win == .goals and !whole) try win_goals.frame(app, w, r);

@@ -305,6 +305,22 @@ test "a window is a box of line-drawing cells with its title and count in the to
     try expectCell(f, 10, 9, ' ', unset, unset);
 }
 
+test "a window's top row is one border from corner to corner with its title in it" {
+    const r = roles();
+    var buf: [4096]u8 = undefined;
+    var w: Writer = .fixed(&buf);
+    try window(&w, r, 0, 0, 40, 5, "your move", 2, false);
+    const f = w.buffered();
+    const row = "┌─ ◆ your move │ 2 ────────────────────┐";
+    var it = std.unicode.Utf8View.initUnchecked(row).iterator();
+    var x: usize = 0;
+    while (it.nextCodepoint()) |cp| : (x += 1) {
+        try std.testing.expectEqual(cp, (try probe(f, x, 0)).cp);
+        try std.testing.expectEqual(r.panel, (try probe(f, x, 0)).bg);
+    }
+    try std.testing.expectEqual(@as(usize, 40), x);
+}
+
 test "a focused window's border and diamond are amber and its title bright" {
     const r = roles();
     var buf: [4096]u8 = undefined;

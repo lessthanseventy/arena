@@ -1772,7 +1772,7 @@ fn goalBox(app: *const App, w: *Writer) !void {
     const note = if (modal.busy) "asking babylon…" else "an Opus Claude breaks it out into steps";
     if (app.roles) |r| {
         try bench.window(w, r, rect.x, rect.y, rect.w - 1, rect.h + 1, "a new goal", null, true);
-        try bench.say(w, rect.x + rect.w - 4, rect.y, "×", r.text, r.panel, true);
+        try bench.say(w, rect.x + rect.w - 5, rect.y, " × ", r.text, r.panel, true);
         for (asked, 0..) |line, i| try bench.say(w, x0, rect.y + 1 + @as(u16, @intCast(i)), line, r.dim, r.panel, false);
         for (0..goal_field_rows) |row| {
             const y = rect.y + 3 + @as(u16, @intCast(row));
