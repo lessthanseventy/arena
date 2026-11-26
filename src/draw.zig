@@ -3377,7 +3377,7 @@ test "every Plan window is a box with its ◆ title in its top border, whatever 
             var out: Writer = .fixed(&buf);
             try planView(&app, &out, app.home.?);
             for (std.enums.values(sheets.Window)) |win| {
-                if (!win.on(screen)) continue;
+                if (!win.on(screen) or win == .driving) continue;
                 const slot = app.planSlot(win);
                 const corner = try bench.probe(out.buffered(), slot.x, slot.y);
                 try eq(@as(u21, '┌'), corner.cp);
@@ -3675,7 +3675,7 @@ test "on the e2e's 24-row screen every Plan window keeps its title and a body ro
         var out: Writer = .fixed(&screen);
         try planView(&app, &out, app.home.?);
         for (std.enums.values(sheets.Window)) |win| {
-            if (!win.on(on)) continue;
+            if (!win.on(on) or win == .driving) continue;
             try std.testing.expect(app.planSlot(win).h > sheets.window_chrome);
             // goals' `+ goal` button covers the end of its title at this width
             const shown = if (win == .goals) win.title()[0..4] else win.title();
@@ -3832,7 +3832,7 @@ test "in Planning's goals window the goals' ids start at one x and their tickets
     try std.testing.expect(!std.meta.eql(r.well, g.bgs[second][count - 1]));
 }
 
-test "driving's bar starts at its title's column and its count has a bar's end before it" {
+test "driving towards is one line: the goal, then its bar and count, with nothing under it but in flight" {
     const eq = std.testing.expectEqual;
     var board = try tickets.Board.parse(std.testing.allocator, grid_board);
     defer board.deinit();
@@ -3841,16 +3841,39 @@ test "driving's bar starts at its title's column and its count has a bar's end b
     const g = &shot.grid;
     const r = bench.roles();
     const driving = shot.app.planSlot(.driving);
-    const dbar = rowWith(g, driving, "5/12").?;
-    const dtitle = rowWith(g, driving, "menard goal").?;
-    try eq(driving.x + 3, g.find(dtitle, driving.x, driving.x + driving.w, "menard goal").?);
-    try eq(r.well, g.bgs[dbar][driving.x + 3]);
-    const dcount = g.find(dbar, driving.x, driving.x + driving.w, "5/12").?;
-    try eq(r.well, g.bgs[dbar][dcount - 2]);
-    try std.testing.expect(!std.meta.eql(r.well, g.bgs[dbar][dcount - 1]));
+    try eq(@as(u16, 1), driving.h);
+    try eq(driving.y + 1, shot.app.planSlot(.now).y);
+    const title = g.find(driving.y, driving.x, driving.x + driving.w, "towards #410 menard goal").?;
+    const count = g.find(driving.y, driving.x, driving.x + driving.w, "5/12  41%").?;
+    try std.testing.expect(title < count);
+    try std.testing.expect(!std.meta.eql(r.well, g.bgs[driving.y][count - 1]));
+    try eq(r.well, g.bgs[driving.y][count - 2]);
 }
 
-test "every Plan window has its ◆ title and its count in the same places, no ▾, and driving's epic sits two cells after its title" {
+const landed_title = "Landed ticket title of forty cells wide.";
+
+test "at 200 columns a 40-cell landed title shows whole" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":801,"repo":"arena","status":"done","title":"Landed ticket title of forty cells wide.","closed_at":"2026-11-23T07:00:00Z"}],
+        \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":1,"newest":[801]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer board.deinit();
+    var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
+    app.term_w = 200;
+    app.view_w = 200;
+    app.view_h = 38;
+    app.epoch = tickets.epochOf("2026-11-23T07:10:00Z").?;
+    app.roles = bench.roles();
+    app.home = .{ .alone = false, .focus = .plan, .screen = .doing };
+    app.side_folded = true;
+    var buf: [262144]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try planView(&app, &out, app.home.?);
+    try std.testing.expect(std.mem.indexOf(u8, out.buffered(), landed_title) != null);
+}
+
+test "every Plan window but driving has its ◆ title and its count in the same places, and no ▾" {
     const eq = std.testing.expectEqual;
     var board = try tickets.Board.parse(std.testing.allocator, grid_board);
     defer board.deinit();
@@ -3862,7 +3885,8 @@ test "every Plan window has its ◆ title and its count in the same places, no �
             if (!win.on(screen)) continue;
             const slot = shot.app.planSlot(win);
             const ww = slot.w - 1;
-            const named = if (win == .driving) sheets.drivingTitle(shot.app.board.?.plan().?, &shot.app.board.?) else win.title();
+            if (win == .driving) continue;
+            const named = win.title();
             try eq(@as(u21, '┌'), g.cps[slot.y][slot.x]);
             try eq(@as(u21, '◆'), g.cps[slot.y][slot.x + 3]);
             try eq(slot.x + 5, g.find(slot.y, slot.x, slot.x + ww, named).?);
@@ -3872,33 +3896,6 @@ test "every Plan window has its ◆ title and its count in the same places, no �
             }
         }
     }
-    var shot = try planGrid(&board, 100);
-    defer shot.app.grab.deinit(std.testing.allocator);
-    const g = &shot.grid;
-    const driving = shot.app.planSlot(.driving);
-    const pick = g.find(driving.y, driving.x, driving.x + driving.w, "your pick").?;
-    try eq(pick + 9 + 2, g.find(driving.y, driving.x, driving.x + driving.w, "epic #410").?);
-}
-
-test "the step chain's arrows each have one cell before and after them, and a chip right after" {
-    const eq = std.testing.expectEqual;
-    var board = try tickets.Board.parse(std.testing.allocator, grid_board);
-    defer board.deinit();
-    var shot = try planGrid(&board, 100);
-    defer shot.app.grab.deinit(std.testing.allocator);
-    const g = &shot.grid;
-    const slot = shot.app.planSlot(.driving);
-    const y = rowWith(g, slot, "#701").?;
-    var arrows: usize = 0;
-    for (slot.x..slot.x + slot.w) |x| {
-        if (g.cps[y][x] != '▶') continue;
-        arrows += 1;
-        try eq(@as(u21, '─'), g.cps[y][x - 1]);
-        try eq(@as(u21, ' '), g.cps[y][x - 2]);
-        try eq(@as(u21, ' '), g.cps[y][x + 1]);
-        try eq(@as(u21, '▎'), g.cps[y][x + 2]);
-    }
-    try eq(@as(usize, 2), arrows);
 }
 
 test "a repo mark, a text line and a bar start on one column inside a window" {

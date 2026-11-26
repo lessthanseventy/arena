@@ -64,7 +64,8 @@ pub const Rect = struct { x: u16, y: u16, w: u16, h: u16 };
 
 /// Rows of a window's slot that are not its body: the title bar, and the shadow's row.
 pub const window_chrome = 2;
-const driving_h = 5;
+/// Driving towards is one row: a title bar with no body.
+const driving_h = 1;
 
 /// Under this many rows the windows above the lists keep one body row each, so not planned and
 /// the rest keep rows of theirs.
@@ -72,9 +73,6 @@ const short_area = 26;
 
 /// Rows Your move's slot shows at full width: whatever it holds, its slot is this tall.
 pub const move_rows_full = 5;
-
-/// Rows of driving towards' slot (its borders included) in one column: its one-line summary.
-const stacked_folded_h = window_chrome + 1;
 
 /// Where `win` sits on a plan area `w` by `h` cells of `screen`: its top border, body and bottom
 /// border; nothing for a window the screen does not have. Worked out from the area alone, so
@@ -96,7 +94,7 @@ pub fn slot(win: Window, screen: Screen, w: u16, h: u16, stack: bool, rows: Rows
     // on a short screen Your move gives rows to the windows under it, down to one
     const shown: u16 = if (h < short_area) @as(u16, 1) else move_rows;
     const move_h = @min(shown + window_chrome, h);
-    const drive_h = @min(@as(u16, if (h < short_area) driving_h - 2 else driving_h), h - move_h);
+    const drive_h = @min(@as(u16, driving_h), h - move_h);
     const top = move_h + drive_h;
     const rest = h - top;
     const half = w * 3 / 5;
@@ -144,7 +142,7 @@ fn stacked(win: Window, screen: Screen, w: u16, h: u16, rows: Rows) Rect {
     var heights: [8]usize = undefined;
     var total: usize = 0;
     for (order, 0..) |each, i| {
-        heights[i] = if (each == .driving) stacked_folded_h else window_chrome + @max(1, @min(rows.get(each), stackedCap(each)));
+        heights[i] = if (each == .driving) driving_h else window_chrome + @max(1, @min(rows.get(each), stackedCap(each)));
         total += heights[i];
     }
     var at = order.len;
@@ -272,12 +270,6 @@ pub fn driveLanded(given: *const tickets.Plan, b: *const tickets.Board) ?*const 
     const epic = given.driving orelse return null;
     for (given.goals) |goal| if (goal.epic == epic) return null;
     return b.driveNeed();
-}
-
-/// The focal window's title: whether the goal is the human's pick, or has landed.
-pub fn drivingTitle(given: *const tickets.Plan, b: *const tickets.Board) []const u8 {
-    if (driveLanded(given, b) != null) return "driving towards · landed";
-    return if (given.driving != null) "driving towards · your pick" else "driving towards · pick on planning";
 }
 
 fn drivenTitle(b: *const tickets.Board, need: *const tickets.Need, epic: u32) []const u8 {
@@ -704,14 +696,11 @@ pub const Sheet = struct {
         s.begin(.driving);
         if (driveLanded(given, b)) |need| {
             const title = drivenTitle(b, need, given.driving.?);
-            s.add(.{ .kind = .drove, .part = 1, .pick = 0, .ticket = given.driving, .text = s.print("✓ #{d} {s}", .{ given.driving.?, title }) });
-            s.add(.{ .kind = .drove, .part = 2, .text = "landed. what next?" });
+            s.add(.{ .kind = .drove, .pick = 0, .ticket = given.driving, .text = s.print("✓ #{d} {s} landed · pick the next goal on planning", .{ given.driving.?, title }) });
         } else if (focalGoal(given)) |at| {
-            s.add(.{ .kind = .focal, .item = at, .part = 1, .pick = 0, .ticket = given.goals[at].epic });
-            s.add(.{ .kind = .focal, .item = at, .part = 2 });
-            s.add(.{ .kind = .focal, .item = at, .part = 3 });
+            s.add(.{ .kind = .focal, .item = at, .pick = 0, .ticket = given.goals[at].epic });
         }
-        s.end("no goal yet");
+        s.end("towards no goal · pick one on planning");
         s.begin(.now);
         s.buildingRows(given, width, epoch);
         s.pipelineRows(given, width, epoch);
@@ -1263,7 +1252,7 @@ test "the focal goal is the first with a step being built, and Doing has no goal
     try std.testing.expectEqual(@as(usize, 0), s.span(.backlog).len);
 }
 
-test "the focal window follows plan.driving, says whose pick it is, and asks what next when that goal has landed" {
+test "the focal window follows plan.driving, is one row, and asks what next when that goal has landed" {
     const open =
         \\{"tickets":[{"id":14,"repo":"arena","kind":"epic","status":"done","title":"The house"},{"id":15,"repo":"arena","status":"done","title":"a step","epic_id":14}],
         \\"needs_you":[{"id":"drive:14","kind":"drive","ticket":14,"repo":"","text":"goal landed",
@@ -1276,9 +1265,9 @@ test "the focal window follows plan.driving, says whose pick it is, and asks wha
         \\{"epic":326,"title":"board","landed":1,"total":2,"steps":[{"ticket":760,"state":"building"}]}]}}
     ;
     var s: Sheet = undefined;
-    for ([_]struct { driving: []const u8, epic: ?u32, title: []const u8 }{
-        .{ .driving = "", .epic = 326, .title = "driving towards · pick on planning" },
-        .{ .driving = "\"driving\":410,", .epic = 410, .title = "driving towards · your pick" },
+    for ([_]struct { driving: []const u8, epic: ?u32 }{
+        .{ .driving = "", .epic = 326 },
+        .{ .driving = "\"driving\":410,", .epic = 410 },
     }) |case| {
         const text = try std.fmt.allocPrint(std.testing.allocator, "{s}{s}{s}", .{ open, case.driving, goals });
         defer std.testing.allocator.free(text);
@@ -1286,9 +1275,9 @@ test "the focal window follows plan.driving, says whose pick it is, and asks wha
         defer b.deinit();
         const given = b.plan().?;
         try std.testing.expectEqual(@as(?u32, case.epic), given.goals[focalGoal(given).?].epic);
-        try std.testing.expectEqualStrings(case.title, drivingTitle(given, &b));
         try std.testing.expect(driveLanded(given, &b) == null);
         s.build(given, &b, 100, 0, 0, false, true, .{});
+        try std.testing.expectEqual(@as(usize, 1), s.span(.driving).len);
         for (s.rows[0..s.n]) |row| try std.testing.expect(row.kind != .goal and row.kind != .goal_ticket);
     }
 
@@ -1300,11 +1289,8 @@ test "the focal window follows plan.driving, says whose pick it is, and asks wha
     try std.testing.expect(driveLanded(given, &b) != null);
     s.build(given, &b, 100, 0, 0, false, true, .{});
     const at = s.span(.driving).start;
-    try std.testing.expectEqualStrings("✓ #14 The house", s.rows[at].text);
-    try std.testing.expectEqualStrings("landed. what next?", s.rows[at + 1].text);
-
-    try std.testing.expect(s.rows[at + 2].kind != .drove);
-    try std.testing.expectEqualStrings("driving towards · landed", drivingTitle(given, &b));
+    try std.testing.expectEqual(@as(usize, 1), s.span(.driving).len);
+    try std.testing.expectEqualStrings("✓ #14 The house landed · pick the next goal on planning", s.rows[at].text);
 }
 
 test "Planning lists every goal with its open ticket, and Doing keeps landed" {

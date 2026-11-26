@@ -75,6 +75,11 @@ pub fn planHit(app: *const App, sheet: *const sheets.Sheet, x: u16, y: u16) ?Pla
 }
 
 pub fn hitIn(app: *const App, sheet: *const sheets.Sheet, win: sheets.Window, rect: sheets.Rect, x: u16, y: u16) ?PlanHit {
+    if (win == .driving) {
+        if (rect.h == 0 or x < rect.x or x + 1 >= rect.x + rect.w or y != rect.y) return null;
+        const span = sheet.span(win);
+        return .{ .win = win, .row = if (span.len > 0) span.start else null };
+    }
     if (rect.h <= sheets.window_chrome or x < rect.x or x + 1 >= rect.x + rect.w or y < rect.y or y + 1 >= rect.y + rect.h) return null;
     if (y == rect.y) return .{ .win = win, .title = true };
     const body = rect.h - sheets.window_chrome;
@@ -133,6 +138,16 @@ pub fn windowCount(b: *const tickets.Board, given: *const tickets.Plan, win: she
 pub fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, view: app_mod.HomeView, win: sheets.Window, lit: bool) !void {
     const rect = app.planRect(win);
     const whole = lit and view.whole == win;
+    if (win == .driving) {
+        const mine = sheet.span(win);
+        if (rect.h == 0 or rect.w < 16 or mine.len == 0) return;
+        if (lit) {
+            app.grab.pane(.{ .x = rect.x, .y = rect.y, .w = rect.w - 1, .h = 1 });
+            bench.tap = .{ .grab = &app.grab, .gpa = app.gpa };
+        }
+        defer bench.tap = null;
+        return win_driving.paint(app, w, r, sheet, mine.start, rect.y, rect.x, rect.w - 1, lit);
+    }
     if (rect.h <= sheets.window_chrome or rect.w < 16) return;
     const given = app.board.?.plan().?;
     const ww: usize = rect.w - 1;
@@ -140,14 +155,13 @@ pub fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.S
     const mine = sheet.span(win);
     const picked_at = if (lit) sheet.rowOf(view.plan_pick) else null;
     const focused = !app.columnFocused() and (if (picked_at) |at| sheet.rows[at].win == win else false);
-    try bench.window(w, r, rect.x, rect.y, ww, rect.h, if (win == .driving) sheets.drivingTitle(given, &app.board.?) else win.title(), windowCount(&app.board.?, given, win), focused);
+    try bench.window(w, r, rect.x, rect.y, ww, rect.h, win.title(), windowCount(&app.board.?, given, win), focused);
     const bar = r.panel;
     if (whole) {
         try bench.say(w, rect.x + ww - 10, rect.y, " q close ", r.dim, bar, false);
     }
     if (win == .no_goal and !whole) try win_unplanned.frame(app, w, r);
     if (win == .goals and !whole) try win_goals.frame(app, w, r);
-    if (win == .driving) try win_driving.frame(app, w, r, rect, ww, bar);
     if (lit) {
         const text_area: grab_mod.Area = .{ .x = rect.x + 1, .y = rect.y + 1, .w = @intCast(ww - 2), .h = @intCast(body) };
         if (whole) app.grab.window(text_area) else app.grab.pane(text_area);
@@ -210,7 +224,7 @@ pub fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.
             try bench.say(w, x0 + 2, y, clip(row.text, room), r.dim, bg, false);
         },
         .need => try win_move.paint(app, w, r, sheet, at, y, x0, ww, lit),
-        .focal, .drove => try win_driving.paint(app, w, r, sheet, at, y, x0, ww, lit),
+        .focal, .drove => {},
         .now, .other => try win_now.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .next => try win_next.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .goal, .goal_ticket => try win_goals.paint(app, w, r, sheet, at, y, x0, ww, lit),
