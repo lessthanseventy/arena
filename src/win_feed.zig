@@ -230,9 +230,6 @@ fn tryClick(app: *App, f: *const feed.Feed, row: usize, col: usize) !bool {
             // the chip takes the cells before the title, the age those after it
             if (col + 1 >= 8 and col + 1 + line.alt.len + 2 < inner) _ = try app.openDetail(id);
         },
-        .try_machine => {
-            if (line.alt.len > 0 and col + 1 + cellCount(line.alt) + 5 >= inner) return act(app, item, "x");
-        },
         .try_buttons => {
             if (line.failed) return true;
             const chip = feed.chipKeyAt(line.text, col, true) orelse return true;
@@ -377,15 +374,7 @@ fn benchTryRow(app: *const App, w: *Writer, pen: *draw.Pen, r: theme.Roles, f: *
         },
         .try_machine => {
             try o.say(r.text, false, "  ");
-            const button = line.alt;
-            const space = std.mem.indexOfScalar(u8, button, ' ') orelse button.len;
-            const room = o.room -| (if (button.len > 0) cellCount(button) + 5 else @as(usize, 0));
-            const text = clip(line.text, room);
-            try o.say(r.dim, false, text);
-            if (button.len > 0) {
-                try o.say(r.text, false, spaceRun(o.room -| (cellCount(button) + 5)));
-                try o.button(r, button[0..space], std.mem.trimStart(u8, button[space..], " "), false);
-            }
+            try o.say(r.dim, false, clip(line.text, o.room));
         },
         .try_step => {
             try o.say(if (strong) r.accent else r.dim, true, if (lit) "▌ " else "  ");
@@ -461,9 +450,8 @@ pub fn feedRow(app: *const App, w: *Writer, pen: *draw.Pen, f: *const feed.Feed,
     var lit = false;
     var shown = line.text;
     var marked: [256]u8 = undefined;
-    // without Workbench's raised cells, a settled check ends on its mark and a picked tile's machine line on its button
+    // without Workbench's raised cells, a settled check ends on its mark
     if (line.kind == .try_step and line.settled) shown = std.fmt.bufPrint(&marked, "{s}  ✓", .{line.text}) catch shown;
-    if (line.kind == .try_machine and line.alt.len > 0) shown = std.fmt.bufPrint(&marked, "{s}   {s}", .{ line.text, line.alt }) catch shown;
     if (app.feedLitItem(f)) |on| lit = on.line == row;
     const cut = cellCount(shown) > room;
     const avail = if (cut) room - 1 else room;

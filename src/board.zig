@@ -373,6 +373,8 @@ pub const Board = struct {
         }
         for (parsed.value.backlog) |*card| card.title = try cleanLine(arena, card.title);
         for (parsed.value.needs_you) |*need| {
+            // a to-try ticket is closed by answering its checks, or from its card
+            if (std.mem.eql(u8, need.kind, "try")) need.actions = &.{};
             need.text = try cleanLine(arena, need.text);
             need.machine = try cleanLine(arena, need.machine);
             for (need.actions) |*action| action.label = try cleanLine(arena, action.label);

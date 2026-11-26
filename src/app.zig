@@ -8109,7 +8109,7 @@ fn rowOf(f: *const feed.Feed, kind: feed.Kind, step: ?usize) usize {
     return row;
 }
 
-test "in a to-try tile y settles the picked check, ] and [ go from tile to tile, and x closes it untried" {
+test "in a to-try tile y settles the picked check, ] and [ go from tile to tile, and x does not close it untried" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
@@ -8154,9 +8154,8 @@ test "in a to-try tile y settles the picked check, ] and [ go from tile to tile,
     try std.testing.expect(app.feedOf(&f));
     try eq(@as(?usize, 2), app.feedPick(&f).?.step);
 
-    // x runs the tile's close untried
-    try std.testing.expect(try win_feed.press(&app, "x"));
-    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'tried' '825' 'skip'") != null);
+    _ = try win_feed.press(&app, "x");
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'skip'") == null);
 
     // space opens the ticket's modal
     try std.testing.expect(try win_feed.press(&app, " "));
@@ -8191,7 +8190,7 @@ test "n on a check asks what went wrong, ⏎ sends the no argv with the words, e
     try std.testing.expectEqual(before, (try sentText(sent, &got)).len);
 }
 
-test "a click on a to-try tile picks a check, settles it with ✓, fails it with ✗ and the words, opens its modal and closes it untried" {
+test "a click on a to-try tile picks a check, settles it with ✓, fails it with ✗ and the words, and opens its modal; its machine line has no close untried" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
@@ -8237,12 +8236,10 @@ test "a click on a to-try tile picks a check, settles it with ✓, fails it with
     try eq(@as(?u32, 825), view.detail);
     view.detail = null;
 
-    // the picked tile's close untried button closes it untried
     try std.testing.expect(app.feedOf(&f));
     const machine = rowOf(&f, .try_machine, null);
-    try std.testing.expect(f.line(machine).alt.len > 0);
     try std.testing.expect(try app.homeMouse(feedPoint(&app, machine, 50)));
-    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'tried' '825' 'skip'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'skip'") == null);
 }
 
 test "o on a check to look at the diff opens meatcheck on the landed range in a window of its own, with the check's words as its prompt" {

@@ -3044,7 +3044,7 @@ test "a card to try wears ▲ try it in the you colour, filled" {
     try std.testing.expect(!std.mem.eql(u8, state.label, asks.label));
 }
 
-test "a to-try tile is drawn: its chip, its age in the you colour at a week, the machine's line, a check's rows, the picked check's buttons and its tile's close untried" {
+test "a to-try tile is drawn: its chip, its age in the you colour at a week, the machine's line, a check's rows and the picked check's buttons, with no close untried" {
     var b = try tickets.Board.parse(std.testing.allocator, feed.try_sample);
     defer b.deinit();
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
@@ -3077,7 +3077,7 @@ test "a to-try tile is drawn: its chip, its age in the you colour at a week, the
 
     const machine = try Rows.at(&app, &f, &buf, 4);
     try std.testing.expect(Rows.has(machine, "soak day ✓  gate ✓  review ✓"));
-    try std.testing.expect(Rows.has(machine, "close untried"));
+    try std.testing.expect(!Rows.has(machine, "close untried"));
 
     const first = try Rows.at(&app, &f, &buf, 5);
     try std.testing.expect(Rows.has(first, "1 remind me in two minutes"));

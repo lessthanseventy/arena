@@ -161,7 +161,7 @@ pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, wi
 }
 
 /// `build` with the pick known: the item `pick` of Your move, which a to-try tile shows its
-/// buttons under, and whose tile has its close untried button.
+/// buttons under.
 pub fn buildPicked(f: *Feed, board: *const tickets.Board, refused: []const Refusal, boxes: []const Box, width: usize, rows: usize, epoch: i64, pick: usize) void {
     f.* = .{};
     const needs = board.needsYou();
@@ -302,7 +302,6 @@ fn tile(p: *Part, need: tickets.Need, need_at: usize, refused: []const Refusal, 
     p.lines[p.n - 1].old = if (since) |at| epoch - at >= stale_days * 86400 else false;
     p.lines[p.n - 1].need = need_at;
     p.add(.try_machine, false, "{s}", .{need.machine});
-    if (picked) for (need.actions) |action| if (std.mem.eql(u8, action.key, "x")) p.alt("{s} {s}", .{ action.key, action.label });
     p.lines[p.n - 1].need = need_at;
     var open: usize = 0;
     // the number and the margin take six cells of the row
@@ -664,7 +663,7 @@ test "to try is a section after the decisions and before the send-backs, a tile 
     try eq(@as(?usize, 1), f.item(4).?.need);
 }
 
-test "only the picked check shows its buttons, and only its tile the close untried button" {
+test "only the picked check shows its buttons, and no tile has a close untried button" {
     var b = try tickets.Board.parse(std.testing.allocator, try_sample);
     defer b.deinit();
     var f: Feed = undefined;
@@ -678,13 +677,7 @@ test "only the picked check shows its buttons, and only its tile the close untri
     try std.testing.expectEqualStrings("y ✓   n ✗", f.line(row).text);
     try std.testing.expectEqual(@as(?usize, 2), f.line(row).step);
     try std.testing.expectEqual(f.item(2).?.line + 1, row);
-    var close: usize = 0;
-    for (0..f.shown) |i| if (f.line(i).kind == .try_machine and f.line(i).alt.len > 0) {
-        close += 1;
-        try std.testing.expectEqualStrings("x close untried", f.line(i).alt);
-        try std.testing.expectEqual(@as(?usize, 2), f.line(i).need);
-    };
-    try std.testing.expectEqual(@as(usize, 1), close);
+    for (0..f.shown) |i| try std.testing.expectEqualStrings("", if (f.line(i).kind == .try_machine) f.line(i).alt else "");
 }
 
 test "a stopped session whose pane shows Claude Code's question box lists its options as buttons" {
