@@ -12,6 +12,25 @@ const clip = draw.clip;
 const cellCount = draw.cellCount;
 const repoHue = draw.repoHue;
 
+/// Where a landed row's name starts and the cells it has before its age, in a window `ww` cells
+/// wide.
+pub fn titleRoom(app: *const App, id: u32, ww: usize) struct { x: usize, room: usize, name: []const u8 } {
+    const card = app.cardById(id) orelse return .{ .x = 0, .room = 0, .name = "" };
+    var idb: [16]u8 = undefined;
+    var age: [16]u8 = undefined;
+    const how = sheets.ago(&age, card.closed_at, app.epoch);
+    const title_x = 5 + cellCount(std.fmt.bufPrint(&idb, "#{d}", .{id}) catch "");
+    const how_x = ww -| (cellCount(how) + 1);
+    const end = if (how.len > 0 and how_x > title_x + 4) how_x else ww;
+    return .{ .x = title_x, .room = end -| title_x -| 1, .name = card.name() };
+}
+
+/// What of a landed row's name goes on a second line, in a window `ww` cells wide.
+pub fn wrapRest(app: *const App, row: sheets.Row, ww: usize) ?[]const u8 {
+    const at = titleRoom(app, row.ticket orelse return null, ww);
+    return draw.wrapRest(at.name, at.room);
+}
+
 pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, at: usize, y: u16, x0: usize, ww: usize, lit: bool) !void {
     const b = &app.board.?;
     const row = sheet.rows[at];
@@ -37,8 +56,10 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             const title_x = x0 + 5 + cellCount(text);
             const how_x = x0 + ww -| (cellCount(how) + 1);
             if (how.len > 0 and how_x > title_x + 4) try bench.say(w, how_x, y, how, r.dim, bg, false);
-            const title_room = (if (how.len > 0) how_x else x0 + ww) -| title_x -| 1;
-            if (card) |c| try draw.sayCut(w, title_x, y, c.title, title_room, r.text, bg, false);
+            if (card) |c| {
+                const name = if (at + 1 < sheet.n and sheet.rows[at + 1].kind == .wrap) draw.wrapHead(c.name(), sheet.rows[at + 1].text) else c.name();
+                try draw.sayCut(w, title_x, y, name, titleRoom(app, id, ww).room, r.text, bg, false);
+            }
         },
         else => {},
     }

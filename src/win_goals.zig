@@ -50,8 +50,8 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             if (asks) try bench.say(w, right -| cellCount(ask_text), y, ask_text, r.you, bg, true);
             if (chip_x > title_x + 4) {
                 _ = try bench.chipInk(w, r, chip_x, y, label, lead, r.text, false);
-                try sayCut(w, title_x, y, idea.title, chip_x - title_x - 1, if (row.dim) r.dim else r.text, bg, false);
-            } else try sayCut(w, title_x, y, idea.title, right -| title_x, if (row.dim) r.dim else r.text, bg, false);
+                try sayCut(w, title_x, y, idea.name(), chip_x - title_x - 1, if (row.dim) r.dim else r.text, bg, false);
+            } else try sayCut(w, title_x, y, idea.name(), right -| title_x, if (row.dim) r.dim else r.text, bg, false);
         },
         .ideas_more => {
             try bench.fill(w, x0, y, ww, bg);
@@ -82,7 +82,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
                     const hue = goalHue(b, r, goal);
                     const shares = try goalChips(w, r, b, goal, cx + cw, y);
                     try bench.say(w, cx + 1, y, id, hue, face, true);
-                    try sayCut(w, cx + 1 + cellCount(id), y, goal.title, cw -| 3 -| cellCount(id) -| shares, if (row.dim) r.dim else r.text, face, true);
+                    try sayCut(w, cx + 1 + cellCount(id), y, goal.name(), cw -| 3 -| cellCount(id) -| shares, if (row.dim) r.dim else r.text, face, true);
                 },
                 .goal_bar => {
                     try bench.fill(w, cx, y, cw, face);

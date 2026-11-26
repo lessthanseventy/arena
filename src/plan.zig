@@ -19,7 +19,7 @@ const ideas_shown = 3;
 /// The bit of `unfolded` that holds the ideas open.
 pub const ideas_fold: u3 = 0;
 
-pub const Kind = enum { head, blank, other, need, now, next, why, more, goals_more, goal, landed, unplanned, chips, todo, backlog, focal, drove, card_top, goal_bar, goal_next, goal_block, idea, ideas_more, note, buttons, held };
+pub const Kind = enum { head, blank, other, need, now, next, why, more, goals_more, goal, landed, unplanned, chips, todo, backlog, focal, drove, card_top, goal_bar, goal_next, goal_block, idea, ideas_more, note, buttons, held, wrap };
 pub const Style = enum { normal, dim, heading, attention };
 
 /// Workbench's plan is six windows, each a fixed slot of the screen.
@@ -386,6 +386,44 @@ pub const Sheet = struct {
         s.n += extra;
     }
 
+    /// A second line under each ticket row whose name `ctx.rest` says does not fit its line, while
+    /// its window has spare rows (`ctx.spare`): the rest of the name, indented to start under it
+    /// (`ctx.indent`). A window's spare is what its body has over the rows it holds without a
+    /// pick's why, card buttons or held line, so picking never takes a wrap away. It is no pick,
+    /// so the picks stay where they were.
+    pub fn withWraps(s: *Sheet, ctx: anytype) void {
+        var spare = Rows.initFill(0);
+        var base = Rows.initFill(0);
+        for (s.rows[0..s.n]) |row| switch (row.kind) {
+            .why, .buttons, .held, .wrap => {},
+            else => base.set(row.win, base.get(row.win) + 1),
+        };
+        for (std.enums.values(Window)) |win| spare.set(win, ctx.spare(win, base.get(win)));
+        var rest: [max_rows]?[]const u8 = @splat(null);
+        var extra: usize = 0;
+        for (s.rows[0..s.n], 0..) |row, i| {
+            if (row.pick == null or spare.get(row.win) == 0) continue;
+            rest[i] = ctx.rest(row) orelse continue;
+            spare.set(row.win, spare.get(row.win) - 1);
+            extra += 1;
+        }
+        if (extra == 0 or s.n + extra > max_rows) return;
+        var j = s.n + extra;
+        var i = s.n;
+        while (i > 0) {
+            i -= 1;
+            j -= 1;
+            s.rows[j] = s.rows[i];
+            if (rest[i]) |tail| {
+                const owner = s.rows[j];
+                s.rows[j] = .{ .kind = .wrap, .ticket = owner.ticket, .item = owner.item, .win = owner.win, .text = tail, .part = ctx.indent(owner) };
+                j -= 1;
+                s.rows[j] = owner;
+            }
+        }
+        s.n += extra;
+    }
+
     /// A second line under each in-flight row whose Claude's pane `known` has, for its workspace
     /// chip; it is no pick, so the picks stay where they were.
     pub fn withHeld(s: *Sheet, given: *const tickets.Plan, known: anytype) void {
@@ -705,7 +743,7 @@ pub const Sheet = struct {
         else if (item.waiting_on) |wait|
             s.print("{s}", .{wait.say(&said)})
         else if (how.len > 0) s.print("{s} · {s}", .{ state, how }) else s.print("{s}", .{state});
-        const left = s.print(" {s} #{d} {s: <8} {s}", .{ mark, item.ticket, text_mod.clip(item.repo orelse "", 8), item.title });
+        const left = s.print(" {s} #{d} {s: <8} {s}", .{ mark, item.ticket, text_mod.clip(item.repo orelse "", 8), item.name() });
         const both = s.spread(width, left, right);
         s.add(.{
             .kind = .now,
@@ -731,7 +769,7 @@ pub const Sheet = struct {
                 continue;
             }
             const right = s.waits(item.waits_on);
-            const left = s.print(" {d} #{d} {s: <8} {s}", .{ place_n, item.ticket, text_mod.clip(item.repo orelse "", 8), item.title });
+            const left = s.print(" {d} #{d} {s: <8} {s}", .{ place_n, item.ticket, text_mod.clip(item.repo orelse "", 8), item.name() });
             const both = s.spread(width, left, right);
             s.add(.{ .kind = .next, .pick = 0, .ticket = item.ticket, .text = both.text, .tail_at = both.tail_at });
             if (item.why.len > 0 and !s.narrow) s.add(.{ .kind = .why, .style = .dim, .text = s.clipped(width, s.print("      {s}", .{item.why})) });
@@ -761,7 +799,7 @@ pub const Sheet = struct {
         }
         var name_w: usize = 0;
         if (!s.narrow) for (given.goals) |goal| {
-            name_w = @max(name_w, @min(text_mod.cells(goal.title), 26));
+            name_w = @max(name_w, @min(text_mod.cells(goal.name()), 26));
         };
         const per: usize = if (s.bench) 5 else 1;
         const ideas_room: usize = if (given.ideas.len == 0) 0 else idea_rows;
@@ -781,7 +819,7 @@ pub const Sheet = struct {
                 s.print("  {d} of {d}  {s}{s}▲ {d} to try", .{ goal.landed, goal.total, goalExtra(goal, &extra), if (goalExtra(goal, &extra).len > 0) "  " else "", trying })
             else
                 s.print("  {d} of {d}  {s}", .{ goal.landed, goal.total, goalExtra(goal, &extra) });
-            const name = text_mod.clip(goal.title, name_w);
+            const name = text_mod.clip(goal.name(), name_w);
             const head = s.print(" {s}{s}  #{d}  ", .{ name, spaces(name_w -| text_mod.cells(name)), goal.epic });
             const room = width -| text_mod.cells(head) -| text_mod.cells(after);
             const start = s.used;
@@ -819,7 +857,7 @@ pub const Sheet = struct {
             const label = ideaLabel(&said, idea, epoch);
             const asks = state == .planning and idea.asks > 0;
             const right = if (asks) s.print("{s}  ▲ asks you", .{label}) else label;
-            const left = s.print(" {s} #{d} {s}", .{ ideaMark(state), idea.epic, idea.title });
+            const left = s.print(" {s} #{d} {s}", .{ ideaMark(state), idea.epic, idea.name() });
             const both = s.spread(width, left, right);
             s.add(.{
                 .kind = .idea,
@@ -965,7 +1003,7 @@ pub const Sheet = struct {
         const right = if (card.blocked_by.len > 0)
             s.print("{s}  ← #{d}", .{ card.priority, card.blocked_by[0] })
         else if (kind == .backlog and how.len > 0) s.print("{s}  {s}", .{ card.priority, how }) else s.print("{s}", .{card.priority});
-        const left = s.print(" #{d} {s}", .{ card.id, card.title });
+        const left = s.print(" #{d} {s}", .{ card.id, card.name() });
         const both = s.spread(width, left, right);
         s.add(.{ .kind = kind, .pick = 0, .ticket = card.id, .text = both.text, .tail_at = both.tail_at, .tail_style = .dim });
     }

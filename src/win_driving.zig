@@ -33,7 +33,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
                 switch (row.part) {
                     1 => {
                         const shares = try goalChips(w, r, b, goal, x0 + ww, y);
-                        try draw.sayCut(w, x0 + 2, y, goal.title, room -| shares, r.text, bg, true);
+                        try draw.sayCut(w, x0 + 2, y, goal.name(), room -| shares, r.text, bg, true);
                     },
                     2 => {
                         try draw.goalBar(w, r, x0 + 2, y, ww -| 4, goal, hue, bg, r.dim, "", r.dim);

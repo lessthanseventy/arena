@@ -13,6 +13,32 @@ const sayCut = draw.sayCut;
 const cellCount = draw.cellCount;
 const repoHue = draw.repoHue;
 
+/// The chip of a next row, what it waits on.
+fn nextLabel(item: tickets.Next, lbuf: *[48]u8) []const u8 {
+    const first = tickets.Wait.first(item.waits_on);
+    return if (first) |wt| if (wt.ticket) |t|
+        std.fmt.bufPrint(lbuf, "\u{f0c1} waits #{d}", .{t}) catch "waits"
+    else
+        std.fmt.bufPrint(lbuf, "\u{f0c1} after #{d}", .{wt.until.?}) catch "waits" else "ready";
+}
+
+/// Where a next row's name starts and the cells it has before its chip, in a window `ww` cells
+/// wide.
+pub fn titleRoom(item: tickets.Next, ww: usize) struct { x: usize, room: usize } {
+    var idb: [16]u8 = undefined;
+    const id = std.fmt.bufPrint(&idb, "#{d}", .{item.ticket}) catch "";
+    var lbuf: [48]u8 = undefined;
+    const chip_x = ww -| (cellCount(nextLabel(item, &lbuf)) + 3);
+    const title_x = 7 + cellCount(id);
+    return .{ .x = title_x, .room = chip_x -| title_x -| 1 -| (if (item.pinned()) @as(usize, 2) else 0) };
+}
+
+/// What of a next row's name goes on a second line, in a window `ww` cells wide.
+pub fn wrapRest(app: *const App, row: sheets.Row, ww: usize) ?[]const u8 {
+    const item = app.board.?.plan().?.next[row.item];
+    return draw.wrapRest(item.name(), titleRoom(item, ww).room);
+}
+
 pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, at: usize, y: u16, x0: usize, ww: usize, lit: bool) !void {
     const given = app.board.?.plan().?;
     const row = sheet.rows[at];
@@ -34,16 +60,14 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             try bench.say(w, x0 + 6, y, id, repo.hue, bg, true);
             var lbuf: [48]u8 = undefined;
             const first = tickets.Wait.first(item.waits_on);
-            const label = if (first) |wt| if (wt.ticket) |t|
-                std.fmt.bufPrint(&lbuf, "\u{f0c1} waits #{d}", .{t}) catch "waits"
-            else
-                std.fmt.bufPrint(&lbuf, "\u{f0c1} after #{d}", .{wt.until.?}) catch "waits" else "ready";
+            const label = nextLabel(item, &lbuf);
             const chip_x = x0 + ww -| (cellCount(label) + 3);
             const title_x = x0 + 7 + cellCount(id);
-            const pin_w: usize = if (item.pinned()) 2 else 0;
+
             _ = try bench.chipInk(w, r, chip_x, y, label, if (first == null) r.landed else r.dim, if (first == null) r.text else r.dim, false);
             if (item.pinned()) try bench.say(w, chip_x -| 2, y, "\u{f08d}", r.accent, bg, false);
-            try sayCut(w, title_x, y, item.title, chip_x -| title_x -| 1 -| pin_w, if (row.dim) r.dim else r.text, bg, false);
+            const name = if (at + 1 < sheet.n and sheet.rows[at + 1].kind == .wrap) draw.wrapHead(item.name(), sheet.rows[at + 1].text) else item.name();
+            try sayCut(w, title_x, y, name, titleRoom(item, ww).room, if (row.dim) r.dim else r.text, bg, false);
         },
         else => {},
     }

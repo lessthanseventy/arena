@@ -517,6 +517,21 @@ pub fn clipMark(buf: []u8, text: []const u8, max: usize) []const u8 {
     return std.fmt.bufPrint(buf, "{s}…", .{head}) catch head;
 }
 
+/// What of `name` goes on a second line when it does not fit `room` cells: the words after the
+/// last one that ends within `room`. None when it fits, or when no word ends there.
+pub fn wrapRest(name: []const u8, room: usize) ?[]const u8 {
+    if (cellCount(name) <= room) return null;
+    const head = clip(name, room);
+    const at = if (name[head.len] == ' ') head.len else std.mem.lastIndexOfScalar(u8, head, ' ') orelse return null;
+    const rest = std.mem.trim(u8, name[at..], " ");
+    return if (at == 0 or rest.len == 0) null else rest;
+}
+
+/// `name`'s first line when `rest` of it goes on a second.
+pub fn wrapHead(name: []const u8, rest: []const u8) []const u8 {
+    return std.mem.trimEnd(u8, name[0 .. name.len - rest.len], " ");
+}
+
 /// `clipMark` of `text` said at (`x`, `y`) in `max` cells.
 pub fn sayCut(w: *Writer, x: usize, y: usize, text: []const u8, max: usize, fg: color.RGB, bg: color.RGB, bold: bool) !void {
     var buf: [256]u8 = undefined;
@@ -2896,12 +2911,80 @@ fn peekBox(app: *App, w: *Writer, p: *const PeekRows) !void {
     try w.writeAll("╯");
 }
 
+test "a name too long for its line wraps at a word, and one that fits or has no word to break at does not" {
+    const eq = std.testing.expectEqualStrings;
+    try eq("is shown", wrapRest("only your move is shown", 14).?);
+    try eq("move is shown", wrapRest("only your move is shown", 13).?);
+    try std.testing.expect(wrapRest("only your move", 14) == null);
+    try std.testing.expect(wrapRest("Portable:transportation", 10) == null);
+    try eq("only your", wrapHead("only your move is shown", wrapRest("only your move is shown", 13).?)[0..9]);
+}
+
 test "a title too long for its slot is cut at a word boundary and ends in …, and one that fits is whole" {
     var buf: [64]u8 = undefined;
     try std.testing.expectEqualStrings("only your move", clipMark(&buf, "only your move", 14));
     try std.testing.expectEqualStrings("only your…", clipMark(&buf, "only your move is shown", 13));
     try std.testing.expectEqualStrings("Portable: transpor…", clipMark(&buf, "Portable: transportation", 19));
     try std.testing.expectEqualStrings("é…", clipMark(&buf, "éééé", 2));
+}
+
+fn wrapApp(board: *tickets.Board, view_h: u16) App {
+    var app = homeApp(board);
+    app.view_w = 200;
+    app.term_w = 200;
+    app.view_h = view_h;
+    app.roles = bench.roles();
+    app.home = .{ .alone = false, .focus = .plan };
+    app.side_folded = true;
+    return app;
+}
+
+const long_title = "The orchestrator's suggest tool: 1–6 suggestions it writes after each turn, carried in board.json, wrapped";
+
+fn nextBoard(comptime extra_rows: usize) ![]const u8 {
+    comptime var text: []const u8 = "{\"tickets\":[],\"plan\":{\"now\":[],\"next\":[";
+    inline for (0..extra_rows + 1) |i| {
+        text = text ++ (if (i == 0) "" else ",") ++ std.fmt.comptimePrint("{{\"ticket\":{d},\"repo\":\"arena\",\"title\":\"{s}\"}}", .{ i + 1, long_title });
+    }
+    return text ++ "],\"goals\":[],\"landed_today\":{\"count\":0,\"newest\":[]},\"not_planned\":{\"count\":0,\"follow_ups\":0,\"by_repo\":{}}}}";
+}
+
+test "a row shows the ticket's short name whole, and its title when the board has none" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"plan":{"now":[],"next":[
+        \\{"ticket":1,"repo":"arena","title":"A long title that is the card's","short":"Short name"},
+        \\{"ticket":2,"repo":"arena","title":"Only a title"}],
+        \\"goals":[],"landed_today":{"count":0,"newest":[]},
+        \\"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer board.deinit();
+    try std.testing.expectEqualStrings("Short name", board.next()[0].name());
+    try std.testing.expectEqualStrings("Only a title", board.next()[1].name());
+}
+
+test "a window with spare height wraps a long title onto a second line at a word, and a full one does not" {
+    var board = try tickets.Board.parse(std.testing.allocator, try nextBoard(0));
+    defer board.deinit();
+    var app = wrapApp(&board, 60);
+    defer app.grab.deinit(std.testing.allocator);
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    var wraps: usize = 0;
+    for (sheet.rows[0..sheet.n], 0..) |row, i| if (row.kind == .wrap) {
+        wraps += 1;
+        try std.testing.expectEqual(sheets.Window.next, row.win);
+        try std.testing.expectEqual(sheets.Kind.next, sheet.rows[i - 1].kind);
+        try std.testing.expect(std.mem.endsWith(u8, long_title, row.text));
+        try std.testing.expect(long_title[long_title.len - row.text.len - 1] == ' ');
+    };
+    try std.testing.expectEqual(@as(usize, 1), wraps);
+
+    var packed_board = try tickets.Board.parse(std.testing.allocator, try nextBoard(30));
+    defer packed_board.deinit();
+    var full = wrapApp(&packed_board, 24);
+    defer full.grab.deinit(std.testing.allocator);
+    try std.testing.expect(full.planSheet(&sheet));
+    for (sheet.rows[0..sheet.n]) |row| try std.testing.expect(row.kind != .wrap);
 }
 
 test "next is one line a row, and only the picked row shows its why" {
@@ -3820,7 +3903,11 @@ test "every title cut to fit ends in …" {
         var buf: [512]u8 = undefined;
         const text = g.line(&buf, y, slot.x, slot.x + slot.w - 1);
         try std.testing.expect(std.mem.indexOf(u8, text, c.whole) == null);
-        try std.testing.expect(std.mem.indexOf(u8, text, "…") != null);
+        var under: [512]u8 = undefined;
+        const next_line = g.line(&under, y + 1, slot.x, slot.x + slot.w - 1);
+        const wrapped = std.mem.indexOf(u8, next_line, "long, with more words") != null;
+        const cut_at = if (wrapped) next_line else text;
+        try std.testing.expect(std.mem.indexOf(u8, cut_at, "…") != null or std.mem.indexOf(u8, next_line, "edge of any window") != null);
     }
 }
 

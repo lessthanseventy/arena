@@ -3413,9 +3413,46 @@ pub const App = struct {
             sheet.withHeld(b.plan().?, KnownPanes{ .app = app });
             var others: [max_others]Agent = undefined;
             sheet.withOthers(app.otherClaudes(&others).len, app.findText());
+            sheet.withWraps(Wraps{ .app = app });
         }
         return true;
     }
+
+    /// Where a title wraps onto a second line: in a window with rows to spare.
+    const Wraps = struct {
+        app: *const App,
+
+        fn width(c: Wraps, win: sheets.Window) usize {
+            return @as(usize, c.app.planRect(win).w) -| 3;
+        }
+
+        pub fn spare(c: Wraps, win: sheets.Window, rows: usize) usize {
+            return switch (win) {
+                .now, .next, .landed => (@as(usize, c.app.planRect(win).h) -| sheets.window_chrome) -| rows,
+                else => 0,
+            };
+        }
+
+        pub fn rest(c: Wraps, row: sheets.Row) ?[]const u8 {
+            const ww = c.width(row.win);
+            return switch (row.kind) {
+                .now => win_now.wrapRest(c.app, row, ww),
+                .next => win_next.wrapRest(c.app, row, ww),
+                .landed => win_landed.wrapRest(c.app, row, ww),
+                else => null,
+            };
+        }
+
+        pub fn indent(c: Wraps, row: sheets.Row) u8 {
+            const ww = c.width(row.win);
+            const b = c.app.board.?.plan().?;
+            return @intCast(switch (row.kind) {
+                .now => win_now.titleRoom(c.app, b.now[row.item], ww).x,
+                .next => win_next.titleRoom(b.next[row.item], ww).x,
+                else => win_landed.titleRoom(c.app, row.ticket.?, ww).x,
+            });
+        }
+    };
 
     /// What not planned shows: the repos folded, held in `out`, and the backlog's chip open or not.
     pub fn planSee(app: *const App, out: *[max_repos][]const u8) sheets.See {

@@ -62,6 +62,8 @@ pub const Card = struct {
     id: u32,
     repo: ?[]const u8 = null,
     title: []const u8,
+    /// The ticket's short name, which a row shows; an older babylon sends none.
+    short: ?[]const u8 = null,
     kind: []const u8 = "ticket",
     status: Status,
     priority: []const u8 = "med",
@@ -124,6 +126,11 @@ pub const Card = struct {
     /// The pane holding it, as `%12`: the one that claimed it, else the one it was handed to.
     pub fn heldBy(card: *const Card) ?[]const u8 {
         return card.claimed_by orelse card.handed_to;
+    }
+
+    /// What a row shows: its short name, else its title.
+    pub fn name(card: Card) []const u8 {
+        return card.short orelse card.title;
     }
 
     /// Whether its number, title or repo holds `query`, letter case aside; a leading `#` is the
@@ -193,10 +200,16 @@ pub const Next = struct {
     /// None for a ticket of no repo, as a planning ticket is.
     repo: ?[]const u8 = null,
     title: []const u8 = "",
+    short: ?[]const u8 = null,
     why: []const u8 = "",
     set_by: []const u8 = "",
     waits_on: []Wait = &.{},
     actions: []NextAction = &.{},
+
+    /// What a row shows: its short name, else its title.
+    pub fn name(n: Next) []const u8 {
+        return n.short orelse n.title;
+    }
 
     pub fn pinned(n: Next) bool {
         return std.mem.eql(u8, n.set_by, "human");
@@ -297,6 +310,7 @@ pub const NowItem = struct {
     /// None for a ticket of no repo, as a planning ticket is.
     repo: ?[]const u8 = null,
     title: []const u8 = "",
+    short: ?[]const u8 = null,
     state: []const u8 = "",
     stage: ?[]const u8 = null,
     since: ?[]const u8 = null,
@@ -305,6 +319,11 @@ pub const NowItem = struct {
     /// Why nothing is moving it (`idle 9m`, `no Claude`), when nothing is.
     stalled: ?[]const u8 = null,
     waiting_on: ?WaitingOn = null,
+
+    /// What a row shows: its short name, else its title.
+    pub fn name(item: NowItem) []const u8 {
+        return item.short orelse item.title;
+    }
 
     /// The id of the pane working it, if babylon names one.
     pub fn holder(item: *const NowItem) ?u32 {
@@ -328,10 +347,16 @@ pub const Step = struct {
 pub const Goal = struct {
     epic: u32,
     title: []const u8 = "",
+    short: ?[]const u8 = null,
     doc: ?[]const u8 = null,
     landed: u32 = 0,
     total: u32 = 0,
     steps: []Step = &.{},
+
+    /// What a row shows: its short name, else its title.
+    pub fn name(goal: Goal) []const u8 {
+        return goal.short orelse goal.title;
+    }
 };
 
 /// A question the planning Claude put to the human, and their answer once given.
@@ -346,6 +371,7 @@ pub const IdeaAsk = struct {
 pub const Idea = struct {
     epic: u32,
     title: []const u8 = "",
+    short: ?[]const u8 = null,
     body: []const u8 = "",
     state: []const u8 = "idea",
     plan_ticket: ?u32 = null,
@@ -354,6 +380,11 @@ pub const Idea = struct {
     ask_list: []IdeaAsk = &.{},
     steps: u32 = 0,
     since: ?[]const u8 = null,
+
+    /// What a row shows: its short name, else its title.
+    pub fn name(idea: Idea) []const u8 {
+        return idea.short orelse idea.title;
+    }
 
     /// The id of the pane planning it, if babylon names one.
     pub fn holder(idea: *const Idea) ?u32 {
@@ -412,6 +443,7 @@ pub const Board = struct {
         const arena = parsed.arena.allocator();
         for (parsed.value.tickets) |*card| {
             card.title = try cleanLine(arena, card.title);
+            if (card.short) |short| card.short = try cleanLine(arena, short);
             card.session_note = try cleanLine(arena, card.session_note);
             card.stage_note = try cleanLine(arena, card.stage_note);
             if (card.waiting_on) |*wait| if (wait.@"for") |words| {
@@ -433,7 +465,10 @@ pub const Board = struct {
                 overlap.files = files;
             }
         }
-        for (parsed.value.backlog) |*card| card.title = try cleanLine(arena, card.title);
+        for (parsed.value.backlog) |*card| {
+            card.title = try cleanLine(arena, card.title);
+            if (card.short) |short| card.short = try cleanLine(arena, short);
+        }
         for (parsed.value.needs_you) |*need| {
             // a to-try ticket is closed by answering its checks, or from its card
             if (std.mem.eql(u8, need.kind, "try")) need.actions = &.{};
@@ -449,6 +484,7 @@ pub const Board = struct {
         if (parsed.value.plan) |*given| {
             for (given.now) |*item| {
                 item.title = try cleanLine(arena, item.title);
+                if (item.short) |short| item.short = try cleanLine(arena, short);
                 if (item.repo) |repo| item.repo = try cleanLine(arena, repo);
                 if (item.stalled) |why| item.stalled = try cleanLine(arena, why);
                 if (item.waiting_on) |*wait| if (wait.@"for") |words| {
@@ -458,11 +494,16 @@ pub const Board = struct {
             for (given.next) |*item| {
                 if (item.repo) |repo| item.repo = try cleanLine(arena, repo);
                 item.title = try cleanLine(arena, item.title);
+                if (item.short) |short| item.short = try cleanLine(arena, short);
                 item.why = try cleanLine(arena, item.why);
             }
-            for (given.goals) |*goal| goal.title = try cleanLine(arena, goal.title);
+            for (given.goals) |*goal| {
+                goal.title = try cleanLine(arena, goal.title);
+                if (goal.short) |short| goal.short = try cleanLine(arena, short);
+            }
             for (given.ideas) |*idea| {
                 idea.title = try cleanLine(arena, idea.title);
+                if (idea.short) |short| idea.short = try cleanLine(arena, short);
                 idea.body = try cleanLine(arena, idea.body);
                 for (idea.ask_list) |*ask| {
                     ask.question = try cleanLine(arena, ask.question);

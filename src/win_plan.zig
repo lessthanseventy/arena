@@ -104,7 +104,9 @@ pub fn planButtonClick(app: *App, sheet: *const sheets.Sheet, at: usize, m: keys
     var buttons: [12]PlanButton = undefined;
     for (planButtons(app, sheet, at, &buttons)) |button| {
         if (m.y != button.y or m.x < button.x or m.x >= button.x + button.w) continue;
-        const owner = sheet.rows[at - 1 - @as(usize, @intFromBool(sheet.rows[at - 1].kind == .why or sheet.rows[at - 1].kind == .held))];
+        var from = at - 1;
+        while (sheet.rows[from].kind == .why or sheet.rows[from].kind == .held or sheet.rows[from].kind == .wrap) from -= 1;
+        const owner = sheet.rows[from];
         app.home.?.plan_pick = owner.pick orelse return;
         return app.act(button.action);
     }
@@ -174,6 +176,13 @@ pub fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.
             for (planButtons(app, sheet, at, &buttons), 0..) |button, i| {
                 _ = try bench.button(w, r, button.x, button.y, button.key, button.word, i == 0, null);
             }
+        },
+        .wrap => {
+            const picked_owner = lit and at > 0 and app.planRowLit(sheet.rows[at - 1]);
+            const under = if (picked_owner) r.raised else r.panel;
+            try bench.fill(w, x0, y, ww, under);
+            if (picked_owner) try bench.say(w, x0, y, "▌", mark, under, true);
+            try draw.sayCut(w, x0 + row.part, y, row.text, ww -| row.part -| 1, r.text, under, false);
         },
         .held => {
             const item = given.now[row.item];
