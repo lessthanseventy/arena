@@ -1570,7 +1570,7 @@ looking() {
 '"actions":[]}]}' | addplan
 }
 looking
-see 'o look'
+see 'o open'
 key ']'
 : >$tmp/babylon
 key o
