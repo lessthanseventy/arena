@@ -11,6 +11,7 @@ const tickets = @import("board.zig");
 const feed = @import("feed.zig");
 const sheets = @import("plan.zig");
 const goal_mod = @import("goal.zig");
+const win_plan = @import("win_plan.zig");
 const win_landed = @import("win_landed.zig");
 const win_driving = @import("win_driving.zig");
 const win_now = @import("win_now.zig");
@@ -1855,7 +1856,7 @@ fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet
     }
     defer bench.tap = null;
     for (0..body) |line| {
-        const at = if (lit) app.planRowOnLine(sheet, win, body, line) else line;
+        const at = if (lit) win_plan.planRowOnLine(app, sheet, win, body, line) else line;
         if (at >= mine.len) break;
         try benchPlanRow(app, w, r, sheet, mine.start + at, rect.y + 1 + @as(u16, @intCast(line)), rect.x, ww, lit);
     }
@@ -1900,8 +1901,8 @@ fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Shee
         .blank => {},
         .buttons => {
             try bench.fill(w, x0, y, ww, r.panel);
-            var buttons: [12]App.PlanButton = undefined;
-            for (app.planButtons(sheet, at, &buttons), 0..) |button, i| {
+            var buttons: [12]win_plan.PlanButton = undefined;
+            for (win_plan.planButtons(app, sheet, at, &buttons), 0..) |button, i| {
                 _ = try bench.button(w, r, button.x, button.y, button.key, button.word, i == 0, null);
             }
         },
