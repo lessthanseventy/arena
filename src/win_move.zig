@@ -85,12 +85,12 @@ pub fn isSuggestion(need: tickets.Need) bool {
 fn typeIn(app: *App, need: tickets.Need) !void {
     const win = app.orchestratorWindow() orelse return;
     if (win.panes.items.len == 0) return;
-    var buf: [512]u8 = undefined;
+    var buf: [1024]u8 = undefined;
     var w: Writer = .fixed(&buf);
     for (need.text) |c| {
         if (c == '\'') try w.writeAll("'\\''") else try w.writeByte(c);
     }
-    try app.send(.ignore, "send-keys -t %{d} -l '{s}'", .{ win.panes.items[0].id, w.buffered() });
+    try app.send(.ignore, "send-keys -t %{d} -l -- '{s}'", .{ win.panes.items[0].id, w.buffered() });
     try app.openDrawer();
 }
 

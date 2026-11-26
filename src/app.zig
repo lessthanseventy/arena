@@ -9384,7 +9384,7 @@ test "⏎ on a text suggestion types it into the orchestrator's pane with no Ent
 
     try win_move.open(&app, &row);
     const len = try sent.readPositionalAll(std.testing.io, &got, 0);
-    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "send-keys -t %5 -l 'rebase #7 onto main'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "send-keys -t %5 -l -- 'rebase #7 onto main'") != null);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "Enter") == null);
     try std.testing.expect(app.drawerOpen() and !app.normal);
 }
