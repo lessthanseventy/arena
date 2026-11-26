@@ -4515,10 +4515,10 @@ pub const App = struct {
         const open = card.status != .@"try" and card.status != .done;
         const all = [_]struct { CardAction, bool }{
             .{ .go, open and (card.proposal != null or card.holder() != null or givable(card)) }, .{ .no, card.proposal != null },
-            .{ .give, givable(card) },                                                            .{ .edit, open },
-            .{ .priority, open and card.status != .backlog },                                     .{ .close, card.status == .todo or card.status == .backlog },
-            .{ .reopen, card.status == .done },                                                   .{ .to_todo, card.status == .backlog },
-            .{ .to_next, card.status == .todo },                                                  .{ .handoff, card.status == .doing and card.holder() != null },
+            .{ .handoff, card.status == .doing and card.holder() != null },                       .{ .give, givable(card) },
+            .{ .edit, open },                                                                     .{ .priority, open and card.status != .backlog },
+            .{ .close, card.status == .todo or card.status == .backlog },                         .{ .reopen, card.status == .done },
+            .{ .to_todo, card.status == .backlog },                                               .{ .to_next, card.status == .todo },
         };
         for (all) |pair| if (pair[1]) {
             out[n] = pair[0];
@@ -4674,10 +4674,10 @@ pub const App = struct {
         wr.print("{s}", .{@tagName(card.status)}) catch {};
         if (card.stage) |stage| wr.print(" · {s}", .{stage}) catch {};
         if (card.heldBy()) |pane| wr.print(" · held by {s}", .{pane}) catch {};
-        if (card.handed_off_from) |pane| wr.print(" · handed off from {s}", .{pane}) catch {};
         if (card.model) |model| wr.print(" · {s}", .{model}) catch {};
         if (card.branch) |branch| wr.print(" · {s}", .{branch}) catch {};
         head.add(.dim, "{s}", .{wr.buffered()});
+        if (card.handed_off_from) |pane| head.add(.dim, "handed off from {s}", .{pane});
         if (card.blocked_by.len > 0) {
             wr = .fixed(&meta);
             wr.writeAll("blocked by") catch {};

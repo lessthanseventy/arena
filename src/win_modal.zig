@@ -428,8 +428,6 @@ fn benchFacts(app: *const App, w: *Writer, r: theme.Roles, card: *const tickets.
     const low = std.mem.eql(u8, card.priority, "low");
     const state = benchState(app, card, r, &sbuf);
     const held = if (card.heldBy()) |pane| std.fmt.bufPrint(&lbuf, "held {s}", .{pane}) catch "" else "";
-    var hbuf: [48]u8 = undefined;
-    const handed = if (card.handed_off_from) |pane| std.fmt.bufPrint(&hbuf, "handed off from {s}", .{pane}) catch "" else "";
     var filed: [8]u8 = undefined;
     var claimed: [8]u8 = undefined;
     var fbuf: [24]u8 = undefined;
@@ -442,7 +440,6 @@ fn benchFacts(app: *const App, w: *Writer, r: theme.Roles, card: *const tickets.
         if (state) |s| .{ .label = s.label, .lead = s.lead, .words = s.words, .filled = s.filled } else .{ .label = @tagName(card.status), .lead = r.dim, .words = r.text, .filled = false },
         .{ .label = if (card.model) |m| modelName(m) else "", .lead = r.dim, .words = r.text, .filled = false },
         .{ .label = held, .lead = r.dim, .words = r.text, .filled = false },
-        .{ .label = handed, .lead = r.dim, .words = r.text, .filled = false },
         .{ .label = filed_text, .lead = r.dim, .words = r.text, .filled = false },
         .{ .label = claimed_text, .lead = r.dim, .words = r.text, .filled = false },
     };
