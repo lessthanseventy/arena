@@ -272,7 +272,7 @@ fn footAt(app: *const App, w: *Writer, x: usize) !void {
 }
 
 const normal_label = "NORMAL";
-const normal_keys = "j k session  ] [ next waiting  ⏎ go  s go to  b home  B board  i insert";
+const normal_keys = "j k session  ] [ next waiting  ⏎ go  s go to  b home  i insert";
 
 /// `NORMAL` in the accent at the bottom-left corner of the screen while in normal mode, and the
 /// cells it takes blank otherwise.

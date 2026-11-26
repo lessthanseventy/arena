@@ -4155,8 +4155,7 @@ pub const App = struct {
         }
     }
 
-    /// A left click on the plan: on the head's `B board` the board, on a row its pick, and on
-    /// the row picked already what Enter does.
+    /// A left click on the plan: on a row its pick, and on the row picked already what Enter does.
     fn planClick(app: *App, m: keys.Mouse) !void {
         const view = &app.home.?;
         if (m.y == 0) {
@@ -4403,7 +4402,7 @@ pub const App = struct {
         };
     }
 
-    /// The side folded away, or back beside the board; the board opens so from then on.
+    /// A key at home: a box over the plan takes it, else the drawer's, else the plan's.
     fn homeKey(app: *App, key: []const u8) !void {
         app.clearStartRefusal();
         app.dirty = true;
@@ -4422,6 +4421,7 @@ pub const App = struct {
         return app.planKey(key);
     }
 
+    /// The side folded away, or back beside the board; the board opens so from then on.
     fn foldSide(app: *App) !void {
         const view = &app.home.?;
         app.dirty = true;
@@ -5490,7 +5490,6 @@ pub const App = struct {
         view.giving = null;
     }
 
-    /// The card with ticket `id`, on the board or in the backlog.
     /// The mouse at home: a box over the plan takes the click, as a key would; on the drawer a click
     /// focuses it, as one on any window out of focus, and the wheel, or anything once it is
     /// focused, is the drawer's; else it is the plan's.
@@ -5559,6 +5558,7 @@ pub const App = struct {
         return true;
     }
 
+    /// The card with ticket `id`, on the board or in the backlog.
     pub fn cardById(app: *const App, id: u32) ?*const tickets.Card {
         const b = if (app.board) |*b| b else return null;
         for (b.cards()) |*card| if (card.id == id) return card;
