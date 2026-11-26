@@ -963,7 +963,7 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
     const drop = app.dropAt();
 
     for (s.wins.items, 0..) |win, i| {
-        const focused = i == s.focus and (app.board_view == null or app.sideFocused()) and app.popup == null;
+        const focused = i == s.focus and (app.home == null or app.sideFocused()) and app.popup == null;
         if (what == .focused_border and !focused and app.mark(s, win) != .working) continue;
         const col_w = app.colW(s, win);
         const x0 = app.colX(s, i) - s.scroll;
@@ -1765,7 +1765,7 @@ pub fn planAutoSwitch(app: *const App) ?struct { x: u16, w: u16 } {
 }
 
 /// The repo filter in the plan's head: `every` and each repo, the one the plan is narrowed to lit.
-fn repoTabs(app: *App, w: *Writer, view: app_mod.BoardView) !void {
+fn repoTabs(app: *App, w: *Writer, view: app_mod.HomeView) !void {
     var slots: [33]App.RepoTab = undefined;
     const found = app.planRepoTabs(&slots);
     var repos: [32][]const u8 = undefined;
@@ -1785,7 +1785,7 @@ fn repoTabs(app: *App, w: *Writer, view: app_mod.BoardView) !void {
 
 /// Home's plan in the board's place: its head, a rule, then its rows from the one the pick keeps
 /// in view, the pick a bar at the left edge. What lies over the board lies over it.
-fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
+fn planView(app: *App, w: *Writer, view: app_mod.HomeView) !void {
     var sheet: sheets.Sheet = undefined;
     if (!app.planSheet(&sheet)) return;
     const ox: u16 = 0;
@@ -1961,7 +1961,7 @@ fn repeat(w: *Writer, x: usize, y: usize, cell_glyph: []const u8, n: usize, fg: 
 /// The plan's rows in Workbench's look, from `rows_end` up: seven windows, each in the slot
 /// the screen's size gives it, a goal a card with its bar. A window shown whole is a modal over
 /// them, and what is behind it is drawn as it was.
-fn benchPlan(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, view: app_mod.BoardView, rows_end: u16) !void {
+fn benchPlan(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, view: app_mod.HomeView, rows_end: u16) !void {
     var y: u16 = 2;
     while (y < rows_end) : (y += 1) try bench.fill(w, 0, y, app.boardW(), r.ground);
     if (view.whole == null) {
@@ -1993,7 +1993,7 @@ fn windowCount(b: *const tickets.Board, given: *const tickets.Plan, win: sheets.
 
 /// `win` in its slot (or the modal, when it is the one shown whole): its frame, fold mark and
 /// the rows from the one that keeps the pick in view. `lit` is whether the pick is drawn.
-fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, view: app_mod.BoardView, win: sheets.Window, lit: bool) !void {
+fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, view: app_mod.HomeView, win: sheets.Window, lit: bool) !void {
     const rect = app.planRect(win);
     const whole = lit and view.whole == win;
     if (rect.h <= sheets.window_chrome or rect.w < 16) return;
@@ -2174,7 +2174,7 @@ const DraftTone = enum { plain, dim, pick };
 /// on, the pick marked, and the foot's keys.
 fn draftBox(app: *const App, w: *Writer) !void {
     const rect = app.draftRect() orelse return;
-    const view = app.board_view.?;
+    const view = app.home.?;
     const epic = view.draft.?;
     var list: [App.draft_max]*const tickets.Card = undefined;
     const steps = app.draftSteps(epic, &list);
@@ -2257,7 +2257,7 @@ fn draftLine(app: *const App, w: *Writer, rect: App.ModalRect, row: u16, text: [
 /// A ticket's whole detail over the board, as babylon gave it, its lines cut to the box's width
 /// and run on under one another, scrolled `scroll` rows down.
 fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
-    if (app.board_view.?.gate) return gateBox(app, w, id, scroll);
+    if (app.home.?.gate) return gateBox(app, w, id, scroll);
     const rect = app.modalRect() orelse return;
     if (app.roles) |r| return benchDetail(app, w, r, id, rect, scroll);
     const inner = app_mod.detailWidth(app.boardW()).inner;
@@ -2293,7 +2293,7 @@ fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
             .plain, .options => .{},
             .dim, .check, .shell => dim,
             .warn => ink(app, "amber", 4),
-            .sub => if (at - head.subs.? + 1 == app.board_view.?.sub_pick) ink(app, "amber", 4) else .{},
+            .sub => if (at - head.subs.? + 1 == app.home.?.sub_pick) ink(app, "amber", 4) else .{},
         };
         try boxLine(w, &pen, edge, style, x, y, line, inner);
         if (kind != .options) try app.grab.row(app.gpa, x + 2, y - 1, clip(line, inner), head.joins[at]);
@@ -2343,7 +2343,7 @@ fn knobText(on: bool) []const u8 {
 /// babylon's refusal, else the keys. Its rows are where `App.autoClick` looks.
 fn autoBox(app: *const App, w: *Writer) !void {
     const rect = app.autoRect() orelse return;
-    const view = app.board_view.?;
+    const view = app.home.?;
     const pick = view.auto_pick.?;
     const state = app.board.?.autoState() orelse tickets.Auto{};
     const on = app.auto() != null;
@@ -2489,11 +2489,11 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
             .check => {
                 try app.grab.row(app.gpa, x0, y, clip(line, inner), null);
                 const settled = card.?.checks[at - head.checks.?].result != null;
-                const lit = at - head.checks.? + 1 == @min(@max(app.board_view.?.check_pick, 1), card.?.checks.len);
+                const lit = at - head.checks.? + 1 == @min(@max(app.home.?.check_pick, 1), card.?.checks.len);
                 try bench.say(w, x0, y, clip(line, inner), if (lit) r.accent else if (settled) r.dim else r.text, bg, lit);
             },
             .sub => {
-                const lit = at - head.subs.? + 1 == app.board_view.?.sub_pick;
+                const lit = at - head.subs.? + 1 == app.home.?.sub_pick;
                 try app.grab.row(app.gpa, x0, y, clip(line, inner), null);
                 try bench.say(w, x0, y, clip(line, inner), if (lit) r.accent else r.text, bg, lit);
             },
@@ -2502,7 +2502,7 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
                 try bench.say(w, x0, y, clip(line, inner), r.dim, bg, false);
             },
             .options => for (modal) |button| if ((button.action == .option or button.action == .words) and button.y == y) {
-                const lit = button.action == .option and button.action.option == app.board_view.?.ask_pick;
+                const lit = button.action == .option and button.action.option == app.home.?.ask_pick;
                 _ = try bench.button(w, r, button.x, y, button.key, button.label, lit, r.tile);
             },
         }
@@ -2679,7 +2679,7 @@ fn gateBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
     }
     while (y < last) : (y += 1) try boxLine(w, &pen, edge, .{}, rect.x, y, "", inner);
     if (last < bottom) try boxLine(w, &pen, edge, dim, rect.x, last, q.buffered(), inner);
-    try modalFrame(app, w, rect, title, if (app.board_view.?.withdrawing) " W again to withdraw " else " j k scroll ");
+    try modalFrame(app, w, rect, title, if (app.home.?.withdrawing) " W again to withdraw " else " j k scroll ");
 }
 
 /// The modal frame every thing opens in: the rounded box at `rect` with its head in the top edge
@@ -2960,7 +2960,7 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
     if (app.overview) |spot| {
         try overview(app, w, spot);
         try modeRow(app, w);
-    } else if (app.board_view) |view| {
+    } else if (app.home) |view| {
         if (!app.columnAlone()) try planView(app, w, view);
         try modeRow(app, w);
         // the orchestrator's window beside it, once arena is in its session
@@ -3021,7 +3021,7 @@ fn homeApp(board: *tickets.Board) App {
     app.view_w = 60;
     app.view_h = 24;
     app.board = board.*;
-    app.board_view = .{ .focus = .orchestrator };
+    app.home = .{ .focus = .orchestrator };
     return app;
 }
 
@@ -3108,7 +3108,7 @@ test "the feed draws at every width and with every item picked, with a long next
         var f: feed.Feed = undefined;
         feed.build(&f, &b, &.{}, width, 80, 1795262400);
         for (0..f.itemCount() + 1) |pick| {
-            app.board_view = .{ .focus = .orchestrator, .pick = pick };
+            app.home = .{ .focus = .orchestrator, .pick = pick };
             for (0..f.count() + 1) |row| {
                 for (2..140) |inner| {
                     var out: Writer = .fixed(&buf);
@@ -3157,7 +3157,7 @@ test "a draft's modal draws the outcome, a row to each step with what it waits o
     app.view_w = 100;
     app.view_h = 40;
     app.board = board;
-    app.board_view = .{ .draft = 830, .draft_pick = 1 };
+    app.home = .{ .draft = 830, .draft_pick = 1 };
     var out: std.Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
     try frame(&app, &out.writer, .all);
@@ -3176,7 +3176,7 @@ fn wordsFrame(gpa: std.mem.Allocator, json: []const u8, prompt: menu.Prompt, out
     app.view_w = 60;
     app.view_h = 40;
     app.board = try tickets.Board.parse(gpa, json);
-    app.board_view = .{ .focus = .orchestrator };
+    app.home = .{ .focus = .orchestrator };
     app.prompt = prompt;
     try frame(&app, &out.writer, .all);
     return app;
@@ -3275,7 +3275,7 @@ fn epicApp(roles: bool, view_h: u16, width: u16) !App {
     app.view_h = view_h;
     if (roles) app.roles = bench.roles();
     app.board = try tickets.Board.parse(std.testing.allocator, epic_board);
-    app.board_view = .{};
+    app.home = .{};
     return app;
 }
 
@@ -3299,7 +3299,7 @@ test "Home in Workbench's look: the focal goal is the one with a step building, 
     app.view_w = 80;
     app.view_h = 31;
     app.roles = bench.roles();
-    app.board_view = .{ .alone = false, .focus = .plan };
+    app.home = .{ .alone = false, .focus = .plan };
     const r = bench.roles();
 
     var sheet: sheets.Sheet = undefined;
@@ -3309,7 +3309,7 @@ test "Home in Workbench's look: the focal goal is the one with a step building, 
 
     var buf: [65536]u8 = undefined;
     var out: Writer = .fixed(&buf);
-    try planView(&app, &out, app.board_view.?);
+    try planView(&app, &out, app.home.?);
     const f = out.buffered();
 
     // the first goal's card in the goals window: its bar row, 2 of 7 in menard's hue on the well
@@ -3345,14 +3345,14 @@ test "a goal with a step to try reads ▲ 1 to try after its bar in the you colo
     app.view_w = 80;
     app.view_h = 31;
     app.roles = bench.roles();
-    app.board_view = .{ .alone = false, .focus = .plan };
+    app.home = .{ .alone = false, .focus = .plan };
     const r = bench.roles();
 
     var sheet: sheets.Sheet = undefined;
     try std.testing.expect(app.planSheet(&sheet));
     var buf: [65536]u8 = undefined;
     var out: Writer = .fixed(&buf);
-    try planView(&app, &out, app.board_view.?);
+    try planView(&app, &out, app.home.?);
     const f = out.buffered();
 
     var at: usize = 0;
@@ -3388,7 +3388,7 @@ test "babylon's refusal, said while the plan is shown, is on screen" {
     app.view_w = 80;
     app.view_h = 23;
     app.roles = bench.roles();
-    app.board_view = .{ .alone = false, .focus = .plan };
+    app.home = .{ .alone = false, .focus = .plan };
     try std.testing.expect(app.planShown());
     app.report_said = try std.testing.allocator.dupe(u8, "babylon: repo arena is held");
     defer std.testing.allocator.free(app.report_said.?);
@@ -3413,10 +3413,10 @@ test "a card's popup in Workbench's look: a window with its ✕, the title whole
         \\],"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .detail = 4 };
+    app.home = .{ .detail = 4 };
     var buf: [65536]u8 = undefined;
     var out: Writer = .fixed(&buf);
-    try planView(&app, &out, app.board_view.?);
+    try planView(&app, &out, app.home.?);
     const drawn = out.buffered();
     const eq = std.testing.expectEqual;
     const rect = app.modalRect().?;
@@ -3651,10 +3651,10 @@ test "the plan's head is one title, ◆ plan, with no tabs after it" {
     var app = homeApp(&board);
     app.view_w = 80;
     app.term_w = 80;
-    app.board_view = .{ .alone = false, .focus = .plan };
+    app.home = .{ .alone = false, .focus = .plan };
     var buf: [1 << 17]u8 = undefined;
     var out: Writer = .fixed(&buf);
-    try planView(&app, &out, app.board_view.?);
+    try planView(&app, &out, app.home.?);
     const drawn = out.buffered();
     try std.testing.expectEqual(@as(u21, '◆'), (try bench.probe(drawn, 1, 0)).cp);
     try std.testing.expectEqual(@as(u21, 'p'), (try bench.probe(drawn, 3, 0)).cp);
@@ -3668,15 +3668,15 @@ test "Plan draws the same cells with the drawer open and closed, outside the dra
     app.term_w = 140;
     app.view_w = 60;
     app.view_h = 24;
-    app.board_view = .{ .focus = .plan };
+    app.home = .{ .focus = .plan };
     var shut_buf: [1 << 17]u8 = undefined;
     var open_buf: [1 << 17]u8 = undefined;
     app.side_folded = true;
     var shut: Writer = .fixed(&shut_buf);
-    try planView(&app, &shut, app.board_view.?);
+    try planView(&app, &shut, app.home.?);
     app.side_folded = false;
     var open: Writer = .fixed(&open_buf);
-    try planView(&app, &open, app.board_view.?);
+    try planView(&app, &open, app.home.?);
     const left = app.term_w - app.view_w;
     for (0..app.view_h) |y| {
         var a: [512]u8 = undefined;
@@ -3701,7 +3701,7 @@ test "auto is in Plan's head alone, with its tools; the orchestrator's column, t
     var app = homeApp(&board);
     app.term_w = 140;
     app.view_w = 60;
-    app.board_view = .{ .focus = .plan };
+    app.home = .{ .focus = .plan };
     var buf: [1 << 17]u8 = undefined;
     var out: Writer = .fixed(&buf);
     try frame(&app, &out, .all);
@@ -3717,9 +3717,9 @@ test "auto is in Plan's head alone, with its tools; the orchestrator's column, t
     try std.testing.expectEqual(@as(usize, 0), count(drawn, "idle"));
     app.term_w = 80;
     app.view_w = 80;
-    app.board_view = .{ .alone = false, .focus = .plan };
+    app.home = .{ .alone = false, .focus = .plan };
     var head_out: Writer = .fixed(&buf);
-    try planView(&app, &head_out, app.board_view.?);
+    try planView(&app, &head_out, app.home.?);
     const at = planAutoSwitch(&app).?;
     const mark = try bench.probe(head_out.buffered(), at.x, 0);
     try std.testing.expectEqual(@as(u21, '◐'), mark.cp);
@@ -3835,11 +3835,11 @@ test "Plan's windows keep their slots: another window's rows, a count or a fold 
         app.view_w = 80;
         app.view_h = 23;
         app.roles = bench.roles();
-        app.board_view = .{ .alone = false, .focus = .plan };
+        app.home = .{ .alone = false, .focus = .plan };
         if (shape.fold) app.plan_shut.insert(.now);
         var buf: [262144]u8 = undefined;
         var out: Writer = .fixed(&buf);
-        try planView(&app, &out, app.board_view.?);
+        try planView(&app, &out, app.home.?);
         for (std.enums.values(sheets.Window)) |win| {
             const slot = app.planSlot(win);
             const diamond = try bench.probe(out.buffered(), slot.x + 1, slot.y);
@@ -3869,10 +3869,10 @@ test "Plan's rows start with a ▌ in their repo's colour, and a goal's card has
     app.view_h = 31;
     app.roles = bench.roles();
     const r = bench.roles();
-    app.board_view = .{ .alone = false, .focus = .plan };
+    app.home = .{ .alone = false, .focus = .plan };
     var buf: [262144]u8 = undefined;
     var out: Writer = .fixed(&buf);
-    try planView(&app, &out, app.board_view.?);
+    try planView(&app, &out, app.home.?);
     const drawn = out.buffered();
 
     const now = app.planSlot(.now);
@@ -3916,10 +3916,10 @@ test "an in-flight row with a Claude says its session, window and pane on a seco
     app.view_w = 80;
     app.view_h = 23;
     app.roles = bench.roles();
-    app.board_view = .{ .alone = false, .focus = .plan };
+    app.home = .{ .alone = false, .focus = .plan };
     var buf: [262144]u8 = undefined;
     var out: Writer = .fixed(&buf);
-    try planView(&app, &out, app.board_view.?);
+    try planView(&app, &out, app.home.?);
     const drawn = out.buffered();
     try std.testing.expect(std.mem.indexOf(u8, drawn, "babylon-work:2 · %5") != null);
 }
@@ -4008,15 +4008,15 @@ test "Plan and a pane view start at column 0 at 220 and 110 cells" {
         app.sessions = .fromOwnedSlice(&sessions);
         app.roles = bench.roles();
         app.current = s.id;
-        app.board_view = .{ .alone = false, .focus = .plan };
+        app.home = .{ .alone = false, .focus = .plan };
         var out: Writer = .fixed(&buf);
-        try planView(&app, &out, app.board_view.?);
+        try planView(&app, &out, app.home.?);
         const head = try screenRow(out.buffered(), cols, 0, &row);
         try std.testing.expect(std.mem.startsWith(u8, head, " ◆ plan"));
         const underline = try screenRow(out.buffered(), cols, 1, &row);
         try std.testing.expect(std.mem.startsWith(u8, underline, "──"));
 
-        app.board_view = null;
+        app.home = null;
         out = .fixed(&buf);
         _ = try strip(&app, &out, &s, 0, .all);
         const pane = try screenRow(out.buffered(), cols, 0, &row);
@@ -4096,10 +4096,10 @@ test "Your move with 8 items scrolls inside its five rows to the picked one" {
     app.view_w = 80;
     app.view_h = 31;
     app.roles = bench.roles();
-    app.board_view = .{ .alone = false, .focus = .plan, .plan_pick = 7 };
+    app.home = .{ .alone = false, .focus = .plan, .plan_pick = 7 };
     var screen: [262144]u8 = undefined;
     var out: Writer = .fixed(&screen);
-    try planView(&app, &out, app.board_view.?);
+    try planView(&app, &out, app.home.?);
     const drawn = out.buffered();
     try std.testing.expect(std.mem.indexOf(u8, drawn, "item 7") != null);
     try std.testing.expect(std.mem.indexOf(u8, drawn, "item 0") == null);
@@ -4115,10 +4115,10 @@ test "on the e2e's 24-row screen every Plan window keeps its title and a body ro
     app.view_w = 60;
     app.view_h = 24;
     app.roles = bench.roles();
-    app.board_view = .{ .alone = false, .focus = .plan };
+    app.home = .{ .alone = false, .focus = .plan };
     var screen: [262144]u8 = undefined;
     var out: Writer = .fixed(&screen);
-    try planView(&app, &out, app.board_view.?);
+    try planView(&app, &out, app.home.?);
     for (std.enums.values(sheets.Window)) |win| {
         try std.testing.expect(app.planSlot(win).h > sheets.window_chrome);
         // goals' `+ goal` button covers the end of its title at this width
@@ -4142,7 +4142,7 @@ test "Your move's open check wraps over as many rows as it needs, its buttons on
     app.view_w = 80;
     app.view_h = 40;
     app.roles = bench.roles();
-    app.board_view = .{ .focus = .plan };
+    app.home = .{ .focus = .plan };
     app.plan_open.set(.move, 52);
     var sheet: sheets.Sheet = undefined;
     try std.testing.expect(app.planSheet(&sheet));

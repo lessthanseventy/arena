@@ -64,7 +64,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
                 .goal_next => 3,
                 else => 4,
             });
-            const card_picked = lit and sheet.rows[base + 1].pick == app.board_view.?.plan_pick;
+            const card_picked = lit and sheet.rows[base + 1].pick == app.home.?.plan_pick;
             const face = if (card_picked) r.raised else r.tile;
             try bench.fill(w, x0, y, ww, r.panel);
             const cx = x0 + 1;

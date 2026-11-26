@@ -351,7 +351,7 @@ const Pending = union(enum) {
     cursor: u32,
 };
 
-pub const BoardView = struct {
+pub const HomeView = struct {
     /// Which has the keys and is lit: the board, or the orchestrator's column beside it.
     focus: enum { plan, orchestrator } = .plan,
     /// The session the human was in when arena went to the orchestrator's to have its window
@@ -407,7 +407,7 @@ pub const BoardView = struct {
     alone: bool = true,
 
     /// Whether a box lies over the board, the keys its own.
-    pub fn boxed(view: BoardView) bool {
+    pub fn boxed(view: HomeView) bool {
         return view.help or view.detail != null or view.giving != null or view.auto_pick != null or view.goal_open or view.draft != null or view.whole != null;
     }
 };
@@ -450,7 +450,7 @@ pub const App = struct {
     /// babylon's board, as its file was last read; null while there is none.
     board: ?tickets.Board = null,
     /// The board while it is open in place of the strip.
-    board_view: ?BoardView = null,
+    home: ?HomeView = null,
     /// The orchestrator was asked to start: gone to as soon as its session shows, unless the human
     /// has gone somewhere else first.
     orchestrating: bool = false,
@@ -1252,7 +1252,7 @@ pub const App = struct {
             const id = std.fmt.parseInt(u32, app.hash[0..len], 10) catch return;
             app.normal = false;
             try app.showPlan(id);
-            if (app.board_view) |view| if (view.detail == null) {
+            if (app.home) |view| if (view.detail == null) {
                 _ = try app.openDetail(id);
             };
         }
@@ -1262,7 +1262,7 @@ pub const App = struct {
     /// to the next or previous Claude waiting or done, space opens the Claude in view and Enter
     /// goes into insert. Whether the key was one of them.
     fn sessionKey(app: *App, key: []const u8) !bool {
-        if (app.board_view != null) return false;
+        if (app.home != null) return false;
         if (anyKey(key, &.{ "j", "\x1b[B", "\x1bOB" })) {
             try app.sessionBy(1);
         } else if (anyKey(key, &.{ "k", "\x1b[A", "\x1bOA" })) {
@@ -1288,7 +1288,7 @@ pub const App = struct {
     /// What the pointer rests on, as of `look_at`.
     fn lookUnder(app: *const App, x: u16, y: u16) ?Look {
         if (app.menu != null or app.prompt != null or app.overview != null) return null;
-        if (app.board_view) |view| if (view.boxed()) return null;
+        if (app.home) |view| if (view.boxed()) return null;
         if (app.feedUnder(x, y)) |look| return look;
         if (app.planShown()) {
             var sheet: sheets.Sheet = undefined;
@@ -1349,7 +1349,7 @@ pub const App = struct {
 
     /// What the pick is on, the board's card, which a peek follows after a pause with no key.
     fn focusLook(app: *const App) ?Look {
-        const view = app.board_view orelse return null;
+        const view = app.home orelse return null;
         if (!app.key_typed or view.boxed() or view.focus != .plan or app.menu != null or app.prompt != null) return null;
         const card = app.pickedCard() orelse return null;
         return .{ .ticket = card.id };
@@ -1439,9 +1439,9 @@ pub const App = struct {
         if (std.mem.eql(u8, text, "\x1b") and !app.typing()) return true;
         if (app.typing() or was == null) return false;
         if (std.mem.eql(u8, text, "\r")) {
-            if (look == .ticket and app.board_view != null) {
+            if (look == .ticket and app.home != null) {
                 app.pickPlan(look.ticket);
-                app.board_view.?.focus = .plan;
+                app.home.?.focus = .plan;
                 if (was.?.card) |card| if (card.ask != null) {
                     _ = try app.openDetail(card.id);
                     return true;
@@ -1452,7 +1452,7 @@ pub const App = struct {
                 try app.showPane(win.agent_pane);
                 return true;
             };
-        } else if (std.mem.eql(u8, text, " ")) if (was.?.card) |card| if (app.board_view != null) {
+        } else if (std.mem.eql(u8, text, " ")) if (was.?.card) |card| if (app.home != null) {
             _ = try app.openDetail(card.id);
             return true;
         };
@@ -1504,19 +1504,19 @@ pub const App = struct {
 
     /// Whether home has the room of half a screen.
     pub fn halfHome(app: *const App) bool {
-        return app.board_view != null and app.term_w < half_below and app.hasPlan();
+        return app.home != null and app.term_w < half_below and app.hasPlan();
     }
 
     /// Whether home shows the orchestrator's column alone, the plan or the board being one key away.
     pub fn columnAlone(app: *const App) bool {
-        return app.halfHome() and app.board_view.?.alone and !app.side_folded;
+        return app.halfHome() and app.home.?.alone and !app.side_folded;
     }
 
     /// Whether the orchestrator's column is beside the open board, unless folded: while the
     /// orchestrator runs, with its window, and at home always, with what babylon says of it. At
     /// half a screen it is beside nothing: the plan or the board has the screen, or it has.
     pub fn sided(app: *const App) bool {
-        const view = app.board_view orelse return false;
+        const view = app.home orelse return false;
         if (app.halfHome() and !view.alone) return false;
         return !app.side_folded;
     }
@@ -1524,8 +1524,8 @@ pub const App = struct {
     /// The orchestrator's drawer opened over home, from the right edge: the whole width at half a
     /// screen. It has the keys, in insert, so typing goes straight to the chat.
     pub fn openDrawer(app: *App) !void {
-        if (app.board_view == null) try app.goHome();
-        const view = &app.board_view.?;
+        if (app.home == null) try app.goHome();
+        const view = &app.home.?;
         view.alone = true;
         view.focus = .orchestrator;
         view.help = false;
@@ -1539,7 +1539,7 @@ pub const App = struct {
 
     /// The drawer closed: Plan has the keys, in the session arena was in before it opened.
     pub fn closeDrawer(app: *App) !void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         view.alone = false;
         view.focus = .plan;
         app.normal = false;
@@ -1552,12 +1552,12 @@ pub const App = struct {
 
     /// Whether the drawer is open over home.
     pub fn drawerOpen(app: *const App) bool {
-        return app.board_view != null and !app.side_folded;
+        return app.home != null and !app.side_folded;
     }
 
     /// Whether the column has the keys: its window's once arena is in its session, else its own.
     pub fn columnFocused(app: *const App) bool {
-        const view = app.board_view orelse return false;
+        const view = app.home orelse return false;
         return view.focus == .orchestrator and !view.boxed() and app.sided();
     }
 
@@ -1580,7 +1580,7 @@ pub const App = struct {
     pub fn feedOf(app: *const App, f: *feed.Feed) bool {
         const b = if (app.board) |*b| b else return false;
         if (app.planShown() and app.workbench()) return false;
-        const pick = if (app.board_view) |view| view.pick else std.math.maxInt(usize);
+        const pick = if (app.home) |view| view.pick else std.math.maxInt(usize);
         var asks: [box_max]Asked = undefined;
         var boxes: [box_max]feed.Box = undefined;
         const n = app.questionBoxes(&asks, &boxes);
@@ -1653,7 +1653,7 @@ pub const App = struct {
         }
         var sheet: sheets.Sheet = undefined;
         if (!app.planSheet(&sheet)) return;
-        if (sheet.picked(app.board_view.?.plan_pick)) |row| app.lit_ticket = row.ticket;
+        if (sheet.picked(app.home.?.plan_pick)) |row| app.lit_ticket = row.ticket;
     }
 
     /// The feed's item that is lit: its pick while the feed has the keys, else the one of the
@@ -1673,7 +1673,7 @@ pub const App = struct {
     /// Whether the plan's `row` is lit: the pick's while the plan has the keys, else the row of
     /// the feed's picked ticket, dim.
     pub fn planRowLit(app: *const App, row: sheets.Row) bool {
-        const view = app.board_view orelse return false;
+        const view = app.home orelse return false;
         if (!app.columnFocused()) return if (row.pick) |p| p == view.plan_pick else false;
         const id = app.lit_ticket orelse return false;
         return row.ticket == id and (row.kind == .now or row.kind == .next);
@@ -1686,14 +1686,14 @@ pub const App = struct {
         for (sheet.rows[0..sheet.n]) |row| {
             const pick = row.pick orelse continue;
             if (row.ticket != id or (row.kind != .now and row.kind != .next)) continue;
-            app.board_view.?.plan_pick = pick;
+            app.home.?.plan_pick = pick;
             return;
         }
     }
 
     /// The feed's pick, kept to what the feed has now: none while it has nothing to pick.
     pub fn feedPick(app: *const App, f: *const feed.Feed) ?feed.Item {
-        const view = app.board_view orelse return null;
+        const view = app.home orelse return null;
         const n = f.itemCount();
         return if (n == 0) null else f.item(@min(view.pick, n - 1));
     }
@@ -1704,7 +1704,7 @@ pub const App = struct {
     fn feedKey(app: *App, key: []const u8) !bool {
         var f: feed.Feed = undefined;
         if (!app.feedOf(&f)) return false;
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         const n = f.itemCount();
         if (n == 0) return false;
         view.pick = @min(view.pick, n - 1);
@@ -1841,7 +1841,7 @@ pub const App = struct {
         }
         if (std.mem.eql(u8, needs, "pick")) {
             app.pickPlan(ticket);
-            app.board_view.?.giving = 0;
+            app.home.?.giving = 0;
             app.dirty = true;
         }
         return true;
@@ -1863,7 +1863,7 @@ pub const App = struct {
             if (f.item(i).?.line <= row) at = i;
         }
         const i = at orelse return false;
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         view.focus = .orchestrator;
         if (app.sideDue()) app.normal = true;
         view.pick = i;
@@ -1982,7 +1982,7 @@ pub const App = struct {
     fn tryClick(app: *App, f: *const feed.Feed, row: usize, col: usize) !bool {
         const line = f.line(row);
         if (line.kind == .try_head) return true;
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         const need_at = line.need orelse return true;
         // the item it picks: the check's own, else the tile's, the one picked already when it is in it
         var first: ?usize = null;
@@ -2143,7 +2143,7 @@ pub const App = struct {
     /// The pick back on the first card the narrowing leaves, in the first lane that has one.
     fn refind(app: *App) void {
         app.dirty = true;
-        const view = if (app.board_view) |*open| open else return;
+        const view = if (app.home) |*open| open else return;
         view.plan_pick = 0;
     }
 
@@ -2465,7 +2465,7 @@ pub const App = struct {
     pub fn startAnswered(app: *App, text: []const u8) !void {
         const line = std.mem.trim(u8, text, " \n");
         if (std.mem.eql(u8, line, "ok")) return app.closeBoard();
-        if (app.board_view == null) return;
+        if (app.home == null) return;
         const first = line[0 .. std.mem.indexOfScalar(u8, line, '\n') orelse line.len];
         var clean: std.ArrayList(u8) = .empty;
         errdefer clean.deinit(app.gpa);
@@ -2516,9 +2516,9 @@ pub const App = struct {
     /// the screen.
     pub fn quiet(app: *const App) bool {
         if (app.drag != .none or app.menu != null or app.prompt != null) return false;
-        if (app.board_view) |view| if (view.goal_open) return false;
+        if (app.home) |view| if (view.goal_open) return false;
         if (app.overview != null or app.popup != null) return false;
-        return if (app.board_view) |view| !view.boxed() else true;
+        return if (app.home) |view| !view.boxed() else true;
     }
 
     pub fn clearReportSaid(app: *App) void {
@@ -2581,7 +2581,7 @@ pub const App = struct {
     /// Whether its column is the one focused: the keys and the mouse are then its own, as any
     /// window's.
     pub fn sideFocused(app: *const App) bool {
-        const view = app.board_view orelse return false;
+        const view = app.home orelse return false;
         return view.focus == .orchestrator and !view.boxed() and app.sideDue();
     }
 
@@ -2767,7 +2767,7 @@ pub const App = struct {
                 return a.order < b.order or (a.order == b.order and a.id < b.id);
             }
         }.before);
-        if (app.board_view) |*view| {
+        if (app.home) |*view| {
             const alone = app.orchestratorSession() == null;
             if (alone or app.sessionIndex(view.back) == null) view.back = null;
         }
@@ -3287,7 +3287,7 @@ pub const App = struct {
     fn toggleHome(app: *App) !void {
         app.orchestrating = false;
         app.dirty = true;
-        if (app.board_view != null) return app.closeBoard();
+        if (app.home != null) return app.closeBoard();
         try app.goHome();
     }
 
@@ -3303,8 +3303,8 @@ pub const App = struct {
         app.normal = false;
         app.dirty = true;
         app.find_len = 0;
-        if (app.board_view == null) app.board_view = .{};
-        const view = &app.board_view.?;
+        if (app.home == null) app.home = .{};
+        const view = &app.home.?;
         view.help = false;
         view.detail = null;
         view.giving = null;
@@ -3321,7 +3321,7 @@ pub const App = struct {
     /// its repo's chip in not planned as a click on it leaves it.
     /// False when no window of the plan holds it.
     fn pickPlanTicket(app: *App, id: u32) !bool {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         var sheet: sheets.Sheet = undefined;
         if (!app.planSheet(&sheet)) return false;
         if (planPickOf(&sheet, id)) |pick| {
@@ -3380,7 +3380,7 @@ pub const App = struct {
     fn openText(app: *App, id: u32, comptime cmd: []const u8, gate: bool) !bool {
         var buf: [std.fs.max_path_bytes]u8 = undefined;
         const path = app.detailPath(id, &buf) orelse return false;
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         // tmux gives a control client run-shell's output outside its reply, so it comes by a file
         std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
         if (app.detail_asked.items.len == 16) _ = app.detail_asked.orderedRemove(0);
@@ -3399,8 +3399,8 @@ pub const App = struct {
 
     /// The board put away, and the side with it, back in the session the human was in.
     fn closeBoard(app: *App) !void {
-        const view = app.board_view orelse return;
-        app.board_view = null;
+        const view = app.home orelse return;
+        app.home = null;
         app.find_len = 0;
         app.clearStartRefusal();
         app.dirty = true;
@@ -3413,7 +3413,7 @@ pub const App = struct {
     fn toSide(app: *App) !void {
         app.reflow();
         if (!app.sided()) return;
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         const to = app.sessions.items[app.orchestratorSession() orelse return].id;
         const from = app.bound();
         if (from == to) return;
@@ -3435,7 +3435,7 @@ pub const App = struct {
     /// The rows the card's detail takes in its box.
     pub fn detailRows(app: *const App) usize {
         const inner = detailWidth(app.boardW()).inner;
-        if (app.board_view) |view| if (view.gate) return gateOutputRows(gateOutput(gateLastRun(app.detail.items)), inner);
+        if (app.home) |view| if (view.gate) return gateOutputRows(gateOutput(gateLastRun(app.detail.items)), inner);
         var n: usize = 0;
         var lines = DetailLines.init(if (app.detail.items.len > 0) app.detail.items else "…", inner);
         while (lines.next()) |_| n += 1;
@@ -3577,8 +3577,8 @@ pub const App = struct {
         app.orchestrating = false;
         app.normal = false;
         app.dirty = true;
-        if (app.board_view == null) app.board_view = .{};
-        const view = &app.board_view.?;
+        if (app.home == null) app.home = .{};
+        const view = &app.home.?;
         view.help = false;
         view.detail = null;
         view.giving = null;
@@ -3595,7 +3595,7 @@ pub const App = struct {
 
     /// Whether home draws the plan, in the board's place.
     pub fn planShown(app: *const App) bool {
-        return app.board_view != null and app.hasPlan();
+        return app.home != null and app.hasPlan();
     }
 
     /// The plan laid out in rows for the board's width, less the cell the pick bar takes; false
@@ -3603,7 +3603,7 @@ pub const App = struct {
     pub fn planSheet(app: *const App, sheet: *sheets.Sheet) bool {
         if (!app.planShown()) return false;
         const b = &app.board.?;
-        const view = app.board_view.?;
+        const view = app.home.?;
         var shut = app.plan_shut;
         if (view.whole) |win| shut.remove(win);
         var repos: [max_repos][]const u8 = undefined;
@@ -3622,7 +3622,7 @@ pub const App = struct {
     /// What not planned shows: the repos folded, held in `out`, and the backlog's chip open or not.
     pub fn planSee(app: *const App, out: *[max_repos][]const u8) sheets.See {
         for (0..app.fold_n) |i| out[i] = app.folds[i][0..app.fold_lens[i]];
-        return .{ .repos_shut = out[0..app.fold_n], .backlog = if (app.board_view) |view| view.plan_backlog else false };
+        return .{ .repos_shut = out[0..app.fold_n], .backlog = if (app.home) |view| view.plan_backlog else false };
     }
 
     /// Not planned's chips where they are drawn and clicked, on the screen.
@@ -3643,7 +3643,7 @@ pub const App = struct {
 
     /// The repo the plan is narrowed to; null for every one.
     pub fn planRepo(app: *const App) ?[]const u8 {
-        const view = app.board_view orelse return null;
+        const view = app.home orelse return null;
         const b = if (app.board) |*b| b else return null;
         var repos: [max_repos][]const u8 = undefined;
         const n = b.repos(&repos);
@@ -3675,7 +3675,7 @@ pub const App = struct {
 
     /// The card the keys and buttons act on: the plan's picked row's ticket.
     pub fn pickedCard(app: *const App) ?*const tickets.Card {
-        const view = app.board_view orelse return null;
+        const view = app.home orelse return null;
         var sheet: sheets.Sheet = undefined;
         if (!app.planSheet(&sheet)) return null;
         const row = sheet.picked(view.plan_pick) orelse return null;
@@ -3760,7 +3760,7 @@ pub const App = struct {
 
     /// The rect `win` is drawn in: its slot, or the modal when it is shown whole.
     pub fn planRect(app: *const App, win: sheets.Window) sheets.Rect {
-        const view = app.board_view orelse return app.planSlot(win);
+        const view = app.home orelse return app.planSlot(win);
         return if (view.whole == win) app.planWhole() else app.planSlot(win);
     }
 
@@ -3782,7 +3782,7 @@ pub const App = struct {
     /// it is the window's, else the window's first.
     pub fn planWindowTop(app: *const App, sheet: *const sheets.Sheet, win: sheets.Window, body: usize) usize {
         const pin = planPinned(win);
-        const view = app.board_view orelse return pin;
+        const view = app.home orelse return pin;
         const at = sheet.rowOf(view.plan_pick) orelse return pin;
         if (sheet.rows[at].win != win) return pin;
         const span = sheet.span(win);
@@ -3812,7 +3812,7 @@ pub const App = struct {
 
     /// What is under (`x`, `y`) of the plan: a window's title bar or a row.
     pub fn planHit(app: *const App, sheet: *const sheets.Sheet, x: u16, y: u16) ?PlanHit {
-        const view = app.board_view orelse return null;
+        const view = app.home orelse return null;
         if (view.whole) |win| return app.hitIn(sheet, win, app.planWhole(), x, y);
         for (std.enums.values(sheets.Window)) |win| if (app.hitIn(sheet, win, app.planSlot(win), x, y)) |hit| return hit;
         return null;
@@ -3841,8 +3841,8 @@ pub const App = struct {
     fn planPlace(app: *App) ?struct { win: sheets.Window, at: usize } {
         var sheet: sheets.Sheet = undefined;
         if (!app.planSheet(&sheet)) return null;
-        const row = sheet.picked(app.board_view.?.plan_pick) orelse return null;
-        return .{ .win = row.win, .at = app.board_view.?.plan_pick - sheet.pickRange(row.win).?.first };
+        const row = sheet.picked(app.home.?.plan_pick) orelse return null;
+        return .{ .win = row.win, .at = app.home.?.plan_pick - sheet.pickRange(row.win).?.first };
     }
 
     /// The pick put back in the place it had in its window, now that a fold has renumbered the picks.
@@ -3850,7 +3850,7 @@ pub const App = struct {
         var sheet: sheets.Sheet = undefined;
         if (!app.planSheet(&sheet)) return;
         const range = sheet.pickRange(place.win) orelse return;
-        app.board_view.?.plan_pick = range.first + @min(place.at, range.n - 1);
+        app.home.?.plan_pick = range.first + @min(place.at, range.n - 1);
     }
 
     /// `win` folded to its summary, or opened again; the pick stays where it was.
@@ -3874,7 +3874,7 @@ pub const App = struct {
     }
 
     fn openWhole(app: *App, win: sheets.Window) void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         view.whole = win;
         app.dirty = true;
         var sheet: sheets.Sheet = undefined;
@@ -3884,7 +3884,7 @@ pub const App = struct {
     }
 
     fn closeWhole(app: *App) void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         const win = view.whole orelse return;
         view.whole = null;
         app.dirty = true;
@@ -3897,7 +3897,7 @@ pub const App = struct {
     /// The first of the plan's rows that is drawn: the row picked kept in view, two rows more
     /// below it.
     pub fn planTop(app: *const App, sheet: *const sheets.Sheet) usize {
-        const view = app.board_view orelse return 0;
+        const view = app.home orelse return 0;
         const at = sheet.rowOf(view.plan_pick) orelse return 0;
         return (at + 3) -| (app.view_h -| 2 -| @intFromBool(app.halfHome()));
     }
@@ -3914,7 +3914,7 @@ pub const App = struct {
     /// space or `t` opens the ticket; `B` is the board. What the board's keys do to a card is not
     /// the plan's, the card under them being out of sight.
     fn planKey(app: *App, key: []const u8) !void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         const is = anyKey;
         var sheet: sheets.Sheet = undefined;
         if (!app.planSheet(&sheet)) return;
@@ -4007,7 +4007,7 @@ pub const App = struct {
     /// The chip row's own keys: `h` `l` from chip to chip, `Z` opening only the chip's repo. False
     /// for the rest, and past the first or last chip, for the window beside to take.
     fn chipKey(app: *App, key: []const u8) !bool {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         var chips: [sheets.max_chips]sheets.Chip = undefined;
         const all = app.chipsOf(&chips);
         if (all.len == 0) return false;
@@ -4032,7 +4032,7 @@ pub const App = struct {
     /// Chip `at` of not planned's row folded or opened: a repo's through #849's fold, the backlog's
     /// its cards in the rows' place.
     pub fn toggleChip(app: *App, at: usize) !void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         var chips: [sheets.max_chips]sheets.Chip = undefined;
         const all = app.chipsOf(&chips);
         if (at >= all.len) return;
@@ -4045,7 +4045,7 @@ pub const App = struct {
     /// `J` `K` on a todo row: it moves down or up its repo's order, `babylon move N down|up --repo R`,
     /// and the pick goes with it while the next row is a todo one.
     fn moveTodo(app: *App, sheet: *const sheets.Sheet, row: *const sheets.Row, down: bool) !void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         const card = app.cardById(row.ticket orelse return) orelse return;
         const repo = card.repo orelse return;
         if (!plainName(repo)) return;
@@ -4068,7 +4068,7 @@ pub const App = struct {
 
     /// `r` on the plan: every window narrowed to the next repo, and after the last to every one.
     fn cyclePlanRepo(app: *App) void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         var repos: [max_repos][]const u8 = undefined;
         const n = if (app.board) |*b| b.repos(&repos) else 0;
         view.plan_repo = if (view.plan_repo >= n) 0 else view.plan_repo + 1;
@@ -4079,7 +4079,7 @@ pub const App = struct {
     /// The first pick of the window beside the picked row's, to the right or the left, in the
     /// other column at the same height; null where there is none or it holds nothing to pick.
     fn planBeside(app: *const App, sheet: *const sheets.Sheet, right: bool) ?usize {
-        const view = app.board_view.?;
+        const view = app.home.?;
         const here = (sheet.picked(view.plan_pick) orelse return null).win;
         const left_col = here == .now or here == .next;
         if (here == .driving or left_col != right) return null;
@@ -4124,7 +4124,7 @@ pub const App = struct {
     /// gate for a ticket in the pipeline; unfolds a folded row; starts a ticket of next now;
     /// and from a goal, landed or not planned, to the board on it.
     fn planAct(app: *App, row: *const sheets.Row, key: []const u8) !void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         const given = app.board.?.plan().?;
         app.dirty = true;
         if (row.kind == .other) {
@@ -4158,7 +4158,7 @@ pub const App = struct {
     /// A left click on the plan: on the head's `B board` the board, on a row its pick, and on
     /// the row picked already what Enter does.
     fn planClick(app: *App, m: keys.Mouse) !void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         if (m.y == 0) {
             if (draw.planAutoSwitch(app)) |at| if (m.x >= at.x and m.x < at.x + at.w) return app.planAutoClick();
             var tabs: [33]RepoTab = undefined;
@@ -4243,7 +4243,7 @@ pub const App = struct {
         for (app.planButtons(sheet, at, &buttons)) |button| {
             if (m.y != button.y or m.x < button.x or m.x >= button.x + button.w) continue;
             const owner = sheet.rows[at - 1 - @as(usize, @intFromBool(sheet.rows[at - 1].kind == .why or sheet.rows[at - 1].kind == .held))];
-            app.board_view.?.plan_pick = owner.pick orelse return;
+            app.home.?.plan_pick = owner.pick orelse return;
             return app.act(button.action);
         }
     }
@@ -4311,7 +4311,7 @@ pub const App = struct {
             return;
         }
         if (row.from >= app.board.?.next().len) return;
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         view.plan_pick = sheet.rows[at].pick orelse return;
         var id: [12]u8 = undefined;
         var place: [12]u8 = undefined;
@@ -4330,10 +4330,10 @@ pub const App = struct {
 
     /// What home keeps across tmux ending arena's client, as when the orchestrator's session the
     /// client was in ends: the board as it was, and the column's fold.
-    pub const Kept = struct { view: BoardView, folded: bool };
+    pub const Kept = struct { view: HomeView, folded: bool };
 
     pub fn kept(app: *const App) ?Kept {
-        var view = app.board_view orelse return null;
+        var view = app.home orelse return null;
         view.help = false;
         view.whole = null;
         view.detail = null;
@@ -4344,7 +4344,7 @@ pub const App = struct {
     /// Home as it was kept, in the new client's sessions.
     pub fn restore(app: *App, was: Kept) !void {
         if (app.board == null) return;
-        app.board_view = was.view;
+        app.home = was.view;
         app.side_folded = was.folded;
         app.dirty = true;
         try app.toSide();
@@ -4353,7 +4353,7 @@ pub const App = struct {
     /// A key while the column has the keys with no window of the orchestrator's in it: Enter
     /// starts it when it is off, h gives the board the keys, and Escape and q close the board.
     fn columnKey(app: *App, key: []const u8) !void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         if (anyKey(key, &.{ "h", "\x1b[D", "\x1bOD" })) view.focus = .plan;
         if (anyKey(key, &.{"q"})) return app.closeBoard();
         if (anyKey(key, &.{"A"})) return app.openAuto();
@@ -4368,7 +4368,7 @@ pub const App = struct {
     /// `]` or `[` from the board: the column's feed takes the keys, in normal mode, with the pick
     /// on Your move's first item or its last, or on the one of `ticket` when it has one.
     fn toFeed(app: *App, key: []const u8, ticket: ?u32) !void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         if (app.planShown() and app.workbench()) return app.toMove(key, ticket);
         if (ticket == null and !app.sided()) try app.openDrawer();
         if (!app.sided()) return;
@@ -4390,7 +4390,7 @@ pub const App = struct {
     /// `]` or `[` on the plan: the pick on Your move's first item or its last, or on the one of
     /// `ticket` when it has one; the plan has the keys.
     fn toMove(app: *App, key: []const u8, ticket: ?u32) !void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         view.focus = .plan;
         view.whole = null;
         app.dirty = true;
@@ -4407,7 +4407,7 @@ pub const App = struct {
     fn homeKey(app: *App, key: []const u8) !void {
         app.clearStartRefusal();
         app.dirty = true;
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         if (view.goal_open) return app.goalKey(key);
         if (view.draft != null) return app.draftKey(key);
         if (view.auto_pick != null) return app.autoKey(key);
@@ -4423,7 +4423,7 @@ pub const App = struct {
     }
 
     fn foldSide(app: *App) !void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         app.dirty = true;
         if (!app.sided()) {
             app.side_folded = false;
@@ -4445,7 +4445,7 @@ pub const App = struct {
     /// To the orchestrator, started first when it is not running and gone to once its session shows.
     fn toOrchestrator(app: *App) !void {
         if (app.orchestratorSession()) |at| {
-            app.board_view = null;
+            app.home = null;
             app.dirty = true;
             app.reflow();
             return app.sessionTo(at);
@@ -4492,7 +4492,7 @@ pub const App = struct {
     /// Auto's modal: a window over the board with a row for auto, its count, hold, a blank row, a
     /// row for each repo, a blank one and the foot. Its rows are `autoRows`.
     pub fn autoRect(app: *const App) ?ModalRect {
-        const view = app.board_view orelse return null;
+        const view = app.home orelse return null;
         if (view.auto_pick == null) return null;
         const width: u16 = @min(app.boardW() -| 4, 48);
         const bottom = app.view_h -| 2;
@@ -4566,7 +4566,7 @@ pub const App = struct {
     /// A draft's modal over the board: a title bar, the outcome, a line of its count, a row for
     /// each step, a blank one and the foot.
     pub fn draftRect(app: *const App) ?ModalRect {
-        const view = app.board_view orelse return null;
+        const view = app.home orelse return null;
         const epic = view.draft orelse return null;
         var steps: [draft_max]*const tickets.Card = undefined;
         const n = app.draftSteps(epic, &steps).len;
@@ -4578,7 +4578,7 @@ pub const App = struct {
     }
 
     fn openDraft(app: *App, epic: u32) void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         view.draft = epic;
         view.draft_pick = 0;
         if (app.draftRect() == null) {
@@ -4591,7 +4591,7 @@ pub const App = struct {
     }
 
     fn closeDraft(app: *App) void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         view.draft = null;
         if (view.draft_from_column) view.focus = .orchestrator;
         app.dirty = true;
@@ -4600,7 +4600,7 @@ pub const App = struct {
     /// A key in a draft's modal: `j` `k` pick a step, space opens its ticket, `e` edits it, `y`
     /// goes (`babylon adopt`), `r` replies with changes on the line at the foot, `q` closes.
     fn draftKey(app: *App, key: []const u8) !void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         const is = anyKey;
         const epic = view.draft.?;
         app.dirty = true;
@@ -4637,7 +4637,7 @@ pub const App = struct {
 
     /// Opens auto's modal, with the keys on the board.
     fn openAuto(app: *App) !void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         view.auto_pick = 0;
         // too small a screen for the window: no box that takes the keys unseen
         if (app.autoRect() == null) {
@@ -4651,7 +4651,7 @@ pub const App = struct {
     }
 
     fn closeAuto(app: *App) void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         view.auto_pick = null;
         if (view.auto_from_column) {
             view.focus = .orchestrator;
@@ -4663,7 +4663,7 @@ pub const App = struct {
     /// A key in auto's modal: `j` `k` pick a row, `+` `-` step the cap of a repo, `a` and `H` turn
     /// auto and hold on or off, and Escape closes it.
     fn autoKey(app: *App, key: []const u8) !void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         const is = anyKey;
         const pick = &view.auto_pick.?;
         app.dirty = true;
@@ -4707,7 +4707,7 @@ pub const App = struct {
     }
 
     pub fn openGoal(app: *App) !void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         if (app.goalRect() == null) return;
         app.goal = .{};
         view.goal_open = true;
@@ -4717,7 +4717,7 @@ pub const App = struct {
     /// A key in the `+ goal` modal; `⏎` and `k` send what is typed to babylon, and the modal waits
     /// for its answer.
     fn goalKey(app: *App, key: []const u8) !void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         app.dirty = true;
         switch (app.goal.press(key)) {
             .none => {},
@@ -4737,7 +4737,7 @@ pub const App = struct {
 
     /// babylon's answer to the modal: `ok` closes it, anything else is said in it, the text kept.
     pub fn goalAnswered(app: *App, text: []const u8) !void {
-        const view = if (app.board_view) |*open| open else return;
+        const view = if (app.home) |*open| open else return;
         if (!view.goal_open) return;
         app.dirty = true;
         const line = std.mem.trim(u8, text, " \n");
@@ -4753,7 +4753,7 @@ pub const App = struct {
 
     /// A click in the `+ goal` modal: a button is its key, and outside it, or its ✕, cancels.
     fn goalClick(app: *App, m: keys.Mouse) !void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         const rect = app.goalRect() orelse {
             view.goal_open = false;
             return;
@@ -4787,7 +4787,7 @@ pub const App = struct {
 
     /// A click in auto's modal: a switch, a stepper button, a row to pick, or outside it to close.
     fn autoClick(app: *App, m: keys.Mouse) !void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         const rect = app.autoRect() orelse return app.closeAuto();
         const close = app.workbench() and m.y == rect.y and m.x + 4 >= rect.x + rect.w and m.x + 2 <= rect.x + rect.w;
         if (close or !rect.contains(m.x, m.y)) return app.closeAuto();
@@ -4952,7 +4952,7 @@ pub const App = struct {
     /// and the pipeline's. Each through babylon's command line. An action the picked card has not
     /// does nothing.
     pub fn act(app: *App, action: CardAction) !void {
-        const view = if (app.board_view) |*open| open else return;
+        const view = if (app.home) |*open| open else return;
         const card = app.pickedCard() orelse return;
         if (action == .open) {
             _ = try app.openDetail(card.id);
@@ -5033,7 +5033,7 @@ pub const App = struct {
 
     /// The frame of the modal open over the board, centred over it, when there is room for one.
     pub fn modalRect(app: *const App) ?ModalRect {
-        const view = app.board_view orelse return null;
+        const view = app.home orelse return null;
         if (view.detail == null) return null;
         const width = detailWidth(app.boardW());
         const top: u16 = first_line;
@@ -5085,7 +5085,7 @@ pub const App = struct {
 
     /// The card the open modal shows: the one its buttons act on.
     pub fn modalCard(app: *const App) ?*const tickets.Card {
-        const view = app.board_view orelse return null;
+        const view = app.home orelse return null;
         return app.cardById(view.detail orelse return null);
     }
 
@@ -5163,7 +5163,7 @@ pub const App = struct {
         var n: usize = 0;
         var x = rect.x + 2;
         var subs: ?struct { win: *const Window, line: usize, n: usize } = null;
-        if (app.board_view.?.gate) {
+        if (app.home.?.gate) {
             const all = [_]ModalButton{
                 .{ .action = .whole_log, .key = "L", .label = "whole log", .x = 0, .y = foot },
                 .{ .action = .ticket, .key = "t", .label = "ticket", .x = 0, .y = foot },
@@ -5208,7 +5208,7 @@ pub const App = struct {
             };
             x = rect.x + 2;
             if (shown > 0 and n < out.len) {
-                const pick = @min(@max(app.board_view.?.ask_pick, 1), shown);
+                const pick = @min(@max(app.home.?.ask_pick, 1), shown);
                 const button: ModalButton = .{ .action = .{ .option = pick }, .key = "⏎", .label = answers[pick - 1], .x = x, .y = foot };
                 out[n] = button;
                 n += 1;
@@ -5222,7 +5222,7 @@ pub const App = struct {
                     .{ .action = .copy_check, .key = "Y", .label = "copy", .x = x, .y = foot },
                 };
                 var found: [512]u8 = undefined;
-                const runs = if (pickedCheck(card, app.board_view.?.check_pick)) |check| runcheck.find(check.text, &found).len > 0 else false;
+                const runs = if (pickedCheck(card, app.home.?.check_pick)) |check| runcheck.find(check.text, &found).len > 0 else false;
                 for (tries) |item| {
                     if (item.action == .run_check and !runs) continue;
                     var button = item;
@@ -5320,7 +5320,7 @@ pub const App = struct {
 
     /// What a press on a modal button does.
     fn pressModal(app: *App, action: ModalAction) !void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         switch (action) {
             .close => {
                 view.detail = null;
@@ -5392,7 +5392,7 @@ pub const App = struct {
 
     /// A key in the open modal: the keys of its buttons, `j` `k` to scroll and `q` to close.
     fn modalKey(app: *App, key: []const u8) !void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         const is = anyKey;
         const was_withdrawing = view.withdrawing;
         view.withdrawing = false;
@@ -5470,7 +5470,7 @@ pub const App = struct {
     /// Enter or its number gives it the card through babylon, which types the claim into its pane
     /// as its human's word; Esc puts them away.
     fn giveKey(app: *App, key: []const u8) !void {
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         var found: [give_rows]Agent = undefined;
         const n = app.agents(&found);
         const picked = view.giving.?;
@@ -5499,7 +5499,7 @@ pub const App = struct {
         if ((app.drag == .next_row or app.drag == .todo_row) and m.leftPress()) app.drag = .none;
         if (app.drag != .none) return false;
 
-        const view = &app.board_view.?;
+        const view = &app.home.?;
         if (m.x >= app.term_w - app.view_w and app.sided() and !view.boxed()) {
             if (m.y >= app.view_h) return true;
             if (m.leftPress() and try app.feedClick(m)) return true;
@@ -5519,7 +5519,7 @@ pub const App = struct {
         }
         if (!m.leftPress()) return true;
         app.dirty = true;
-        const open = &app.board_view.?;
+        const open = &app.home.?;
         // a box over the plan takes the click, so nothing hidden under it is pressed
         if (open.boxed()) {
             if (open.goal_open) {
@@ -5673,7 +5673,7 @@ pub const App = struct {
             .ticket => |card| {
                 app.normal = false;
                 try app.showPlan(card.id);
-                if (app.board_view) |view| if (view.detail == null) {
+                if (app.home) |view| if (view.detail == null) {
                     _ = try app.openDetail(card.id);
                 };
             },
@@ -5772,7 +5772,7 @@ pub const App = struct {
 
     /// Goes where a row of the switcher is.
     fn goRow(app: *App, row: Row) !void {
-        if (app.board_view != null) try app.closeBoard();
+        if (app.home != null) try app.closeBoard();
         switch (row) {
             .claude => |a| try app.goAgent(a),
             .session => |si| try app.sessionTo(si),
@@ -6158,7 +6158,7 @@ pub const App = struct {
             // its chrome must not leave the focused column in normal mode, drawn as insert
             if (app.paneClick(m)) {
                 app.normal = false;
-            } else if (app.board_view == null) app.normal = true;
+            } else if (app.home == null) app.normal = true;
             app.dirty = true;
         }
         try app.pointAs(m);
@@ -6178,7 +6178,7 @@ pub const App = struct {
             if (m.leftPress()) try app.wordsClick(prompt, m);
             return;
         };
-        if (app.board_view != null) if (try app.homeMouse(m)) return;
+        if (app.home != null) if (try app.homeMouse(m)) return;
         if (app.prompt) |*prompt| {
             if (!m.leftPress() and !m.rightPress()) return;
             app.dirty = true;
@@ -6363,7 +6363,7 @@ pub const App = struct {
 
     /// Whether the menu, a prompt or the overview has the keys and lies over the strip.
     pub fn overlay(app: *const App) bool {
-        return app.menu != null or app.prompt != null or app.overview != null or app.board_view != null;
+        return app.menu != null or app.prompt != null or app.overview != null or app.home != null;
     }
 
     /// Where the top left corner of a menu or prompt `height` rows tall is: centred over the strip.
@@ -6383,13 +6383,13 @@ pub const App = struct {
     /// Whether what is typed is the focused pane's: nothing lies over the strip, or the board
     /// does with the orchestrator's column beside it focused.
     fn typing(app: *const App) bool {
-        return !app.normal and app.menu == null and app.prompt == null and app.overview == null and (app.board_view == null or app.sideFocused());
+        return !app.normal and app.menu == null and app.prompt == null and app.overview == null and (app.home == null or app.sideFocused());
     }
 
     /// Whether a left click at `m` is on the strip or the board's side column, which it makes
     /// insert; the board is chrome.
     fn paneClick(app: *const App, m: keys.Mouse) bool {
-        if (app.board_view) |view| return app.sideShown() and !view.boxed() and m.y < app.view_h and m.x >= app.term_w - app.view_w;
+        if (app.home) |view| return app.sideShown() and !view.boxed() and m.y < app.view_h and m.x >= app.term_w - app.view_w;
         return m.y < app.view_h and m.x >= app.term_w - app.view_w;
     }
 
@@ -6413,7 +6413,7 @@ pub const App = struct {
             app.menu = null;
             app.prompt = null;
             app.overview = null;
-        } else if (app.board_view) |*view| {
+        } else if (app.home) |*view| {
             if (app.sideFocused()) {
                 app.normal = true;
             } else if (app.sideDue() and !view.boxed()) {
@@ -6441,8 +6441,8 @@ pub const App = struct {
                 app.dirty = true;
             },
             'g' => {
-                if (app.board_view == null) try app.toggleHome();
-                if (app.board_view != null) try app.gateModal();
+                if (app.home == null) try app.toggleHome();
+                if (app.home != null) try app.gateModal();
             },
             'Q' => app.quit = true,
             else => {},
@@ -6485,7 +6485,7 @@ pub const App = struct {
                     try app.hashKey(key);
                     continue;
                 }
-                if (app.board_view == null and anyKey(key, &.{"#"})) {
+                if (app.home == null and anyKey(key, &.{"#"})) {
                     app.hash_len = 0;
                     app.dirty = true;
                     continue;
@@ -6505,14 +6505,14 @@ pub const App = struct {
                     app.dirty = true;
                 }
                 if (std.mem.eql(u8, key, "b")) try app.goHome();
-                if (app.board_view == null) {
+                if (app.home == null) {
                     try app.stripKey(key);
                     // a key that opened a menu, prompt or overview leaves the rest of the read to it
                     if (app.overlay()) app.normal = false;
                 }
             } else if (app.overview != null and !asking) {
                 try app.overviewKey(key);
-            } else if (app.board_view != null and !app.sideFocused() and !asking) {
+            } else if (app.home != null and !app.sideFocused() and !asking) {
                 try app.homeKey(key);
             } else if (app.prompt) |*prompt| {
                 app.dirty = true;
@@ -6650,7 +6650,7 @@ pub const App = struct {
             const s = app.sessions.items[spot.session];
             return w.print("the overview's picture of window {s} of session {s}", .{ s.wins.items[spot.win].name, s.name });
         }
-        if (app.board_view) |view| {
+        if (app.home) |view| {
             if (view.boxed()) return w.writeAll("a box over the plan");
             if (p.x >= app.boardW()) return w.writeAll(if (app.sided()) "the orchestrator column" else "the plan's edge");
             var sheet: sheets.Sheet = undefined;
@@ -6673,7 +6673,7 @@ pub const App = struct {
     /// Which view is showing.
     fn writeView(app: *const App, w: *Writer) !void {
         if (app.overview != null) return w.writeAll("overview");
-        if (app.board_view) |view| {
+        if (app.home) |view| {
             try w.writeAll("home");
             if (app.planRepo()) |repo| try w.print(", {s} only", .{repo});
             if (view.boxed()) try w.writeAll(", a box open");
@@ -6687,7 +6687,7 @@ pub const App = struct {
 
     /// What is picked: the plan's card, the column's feed item or the focused window.
     fn writePicked(app: *const App, w: *Writer) !void {
-        if (app.board_view) |view| {
+        if (app.home) |view| {
             if (view.focus == .orchestrator and app.sided()) return w.print("the orchestrator column's feed item {d}", .{view.pick});
             if (app.pickedCard()) |c| return w.print("card #{d} {s}", .{ c.id, c.title });
             return w.writeAll("no card");
@@ -6792,7 +6792,7 @@ pub const App = struct {
     fn onChord(app: *App, letter: u8) !void {
         if (letter == '!') return if (app.prompt == null) app.startReport();
         if (app.menu == null and app.prompt == null and app.sideDue()) {
-            const view = &app.board_view.?;
+            const view = &app.home.?;
             const s = app.sessionById(app.bound()).?;
             const at_board = view.focus == .plan;
             // the board is the column before the orchestrator's first
@@ -6808,7 +6808,7 @@ pub const App = struct {
             app.menu = null;
             app.prompt = null;
             app.overview = null;
-            if (app.board_view != null) try app.closeBoard();
+            if (app.home != null) try app.closeBoard();
             app.dirty = true;
             return;
         }
@@ -7355,18 +7355,18 @@ test "the session to go back to is forgotten once it, or the orchestrator's, is 
     app.current = 2;
     const eq = std.testing.expectEqual;
 
-    app.board_view = .{ .back = 1, .focus = .orchestrator };
+    app.home = .{ .back = 1, .focus = .orchestrator };
     try app.onSessions("$1 0 work\n$2 1 orchestrator\n");
-    try eq(@as(?u32, 1), app.board_view.?.back);
-    try eq(.orchestrator, app.board_view.?.focus);
+    try eq(@as(?u32, 1), app.home.?.back);
+    try eq(.orchestrator, app.home.?.focus);
 
     try app.onSessions("$2 1 orchestrator\n");
-    try eq(@as(?u32, null), app.board_view.?.back);
+    try eq(@as(?u32, null), app.home.?.back);
 
-    app.board_view.?.back = 1;
+    app.home.?.back = 1;
     try app.onSessions("$1 0 work\n");
-    try eq(@as(?u32, null), app.board_view.?.back);
-    try eq(.orchestrator, app.board_view.?.focus);
+    try eq(@as(?u32, null), app.home.?.back);
+    try eq(.orchestrator, app.home.?.focus);
 }
 
 test "home: the board with the orchestrator's column focused, its own keys while no window is in it" {
@@ -7374,14 +7374,14 @@ test "home: the board with the orchestrator's column focused, its own keys while
     defer app.deinit();
     const expect = std.testing.expect;
     try app.goHome();
-    try expect(app.board_view == null);
+    try expect(app.home == null);
 
     app.board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[{"id":1,"repo":"arena","title":"a","status":"todo"}],"plan":{"next":[]}}
     );
     app.normal = true;
     try app.goHome();
-    try expect(app.board_view.?.focus == .plan);
+    try expect(app.home.?.focus == .plan);
     try expect(!app.drawerOpen() and !app.sided() and !app.columnFocused());
     try expect(app.orchestratorState() == .off);
 
@@ -7389,18 +7389,18 @@ test "home: the board with the orchestrator's column focused, its own keys while
     try expect(app.drawerOpen() and app.sided() and app.columnFocused() and !app.normal);
     try expect(!app.typing());
     try app.closeDrawer();
-    try expect(!app.drawerOpen() and app.board_view.?.focus == .plan and !app.columnFocused());
+    try expect(!app.drawerOpen() and app.home.?.focus == .plan and !app.columnFocused());
 
     try app.openDrawer();
-    app.board_view.?.focus = .orchestrator;
-    app.board_view.?.help = true;
+    app.home.?.focus = .orchestrator;
+    app.home.?.help = true;
     const was = app.kept().?;
     try expect(!was.view.help and was.view.focus == .orchestrator);
-    app.board_view.?.help = false;
+    app.home.?.help = false;
     _ = try app.onInput("q");
-    try expect(app.board_view == null);
+    try expect(app.home == null);
     try app.restore(was);
-    try expect(app.board_view != null and app.columnFocused());
+    try expect(app.home != null and app.columnFocused());
 }
 
 test "a stalled Claude outranks one waiting, says its error, and draws its own glyph" {
@@ -7500,10 +7500,10 @@ test "auto's modal shows a step at once, and a cap babylon refused is back at it
     );
     defer app.board.?.deinit();
     defer app.auto_wants.deinit(std.testing.allocator);
-    app.board_view = .{ .focus = .orchestrator };
+    app.home = .{ .focus = .orchestrator };
     try app.homeKey("A");
-    try std.testing.expectEqual(@as(?usize, 0), app.board_view.?.auto_pick);
-    try std.testing.expect(app.board_view.?.focus == .plan);
+    try std.testing.expectEqual(@as(?usize, 0), app.home.?.auto_pick);
+    try std.testing.expect(app.home.?.focus == .plan);
     try app.homeKey("j");
     try app.homeKey("j");
     try app.homeKey("+");
@@ -7524,7 +7524,7 @@ test "auto's modal shows a step at once, and a cap babylon refused is back at it
     try std.testing.expectEqualStrings("babylon: no such repo", app.auto_wants.refused.?);
 
     try app.homeKey("\x1b");
-    try std.testing.expectEqual(@as(?usize, null), app.board_view.?.auto_pick);
+    try std.testing.expectEqual(@as(?usize, null), app.home.?.auto_pick);
 }
 
 test "⏎ on a card's peek is left to home, not sent to a Claude's pane" {
@@ -7539,11 +7539,11 @@ test "⏎ on a card's peek is left to home, not sent to a Claude's pane" {
         \\]}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .focus = .orchestrator };
+    app.home = .{ .focus = .orchestrator };
     app.look = .{ .ticket = 6 };
     try std.testing.expect(!try app.lookKey("\r"));
     try std.testing.expect(app.look == null);
-    try std.testing.expect(app.board_view.?.focus == .plan);
+    try std.testing.expect(app.home.?.focus == .plan);
 }
 
 test "a gate run's last run is read into its stages, their results, times and output" {
@@ -7719,16 +7719,16 @@ test "beside the board, the keys go by the session tmux was last asked for" {
     const expect = std.testing.expect;
 
     // the board opened from the human's session: the switch to the orchestrator's is unanswered
-    app.board_view = .{ .back = 1 };
+    app.home = .{ .back = 1 };
     app.current = 1;
     app.heading = 2;
     app.switches = 1;
     try expect(!app.typing());
     try app.onChord('l');
-    try expect(app.board_view.?.focus == .orchestrator);
+    try expect(app.home.?.focus == .orchestrator);
     try expect(app.typing());
     try app.onChord('l');
-    try expect(app.board_view != null);
+    try expect(app.home != null);
 
     // on the way back out of it, they are the board's
     app.current = 2;
@@ -7869,7 +7869,7 @@ test "a card's modal lists every option of its ask and its words, and ⏎ answer
         \\"actions":[{"key":"1","label":"a"},{"key":"c","label":"in words","argv":["babylon","answer","9","--words"],"needs":"words"}]}]}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .detail = 4 };
+    app.home = .{ .detail = 4 };
     var buttons: [16]App.ModalButton = undefined;
     var rows: [4]u16 = undefined;
     var seen: usize = 0;
@@ -7895,7 +7895,7 @@ test "a card's modal lists every option of its ask and its words, and ⏎ answer
 
     try app.modalKey("\t");
     try app.modalKey("\r");
-    try std.testing.expectEqual(@as(?u32, null), app.board_view.?.detail);
+    try std.testing.expectEqual(@as(?u32, null), app.home.?.detail);
     var got: [512]u8 = undefined;
     const len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon answer 9 2") != null);
@@ -7918,7 +7918,7 @@ test "in Workbench's look a click on a popup's option answers the ask and one on
         \\]}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .detail = 4 };
+    app.home = .{ .detail = 4 };
     const eq = std.testing.expectEqual;
     const rect = app.modalRect().?;
 
@@ -7927,14 +7927,14 @@ test "in Workbench's look a click on a popup's option answers the ask and one on
         if (b.action == .option and b.action.option == 2) break b;
     } else return error.NoOption;
     try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = second.x + 1, .y = second.y, .release = false }));
-    try eq(@as(?u32, null), app.board_view.?.detail);
+    try eq(@as(?u32, null), app.home.?.detail);
     var got: [512]u8 = undefined;
     const len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon answer 9 2") != null);
 
-    app.board_view.?.detail = 4;
+    app.home.?.detail = 4;
     try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = rect.x + rect.w - 4, .y = rect.y, .release = false }));
-    try eq(@as(?u32, null), app.board_view.?.detail);
+    try eq(@as(?u32, null), app.home.?.detail);
 }
 
 test "a look's doc window is closed when its ask is answered or withdrawn, and one still asked is left" {
@@ -7977,9 +7977,9 @@ test "the plan's pick lights its ticket's Your move item dim in the feed, and th
         \\{"ticket":99,"repo":"arena","title":"Three","state":"building"}]}}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .focus = .plan };
+    app.home = .{ .focus = .plan };
     const eq = std.testing.expectEqual;
-    const view = &app.board_view.?;
+    const view = &app.home.?;
 
     var f: feed.Feed = undefined;
     try std.testing.expect(app.feedOf(&f));
@@ -8048,9 +8048,9 @@ test "⏎ on an idea plans it, e and x edit and withdraw it, and ⏎ on the fold
         \\{"epic":831,"title":"retro","state":"draft","steps":7}]}}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .focus = .plan };
+    app.home = .{ .focus = .plan };
     const eq = std.testing.expectEqual;
-    const view = &app.board_view.?;
+    const view = &app.home.?;
     var got: [1024]u8 = undefined;
 
     try app.planKey("\r");
@@ -8074,7 +8074,7 @@ test "⏎ on an idea plans it, e and x edit and withdraw it, and ⏎ on the fold
     try app.planKey("e");
     len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[then..len], "babylon edit 829") != null);
-    app.board_view = .{ .focus = .plan };
+    app.home = .{ .focus = .plan };
 
     app.board.?.deinit();
     app.board = try tickets.Board.parse(std.testing.allocator,
@@ -8105,7 +8105,7 @@ test "d on a goal runs babylon drive, and 3 under a landed goal opens the new go
         \\{"tickets":[],"plan":{"goals":[{"epic":326,"title":"board","landed":1,"total":2,"steps":[{"ticket":760,"state":"todo"}]}]}}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .focus = .plan };
+    app.home = .{ .focus = .plan };
     try app.planKey("d");
     var got: [1024]u8 = undefined;
     const len = try sent.readPositionalAll(std.testing.io, &got, 0);
@@ -8118,7 +8118,7 @@ test "d on a goal runs babylon drive, and 3 under a landed goal opens the new go
         \\"plan":{"driving":14,"goals":[]}}
     );
     try app.planKey("3");
-    try std.testing.expect(app.board_view.?.goal_open);
+    try std.testing.expect(app.home.?.goal_open);
 }
 
 const draft_board =
@@ -8145,10 +8145,10 @@ test "space on a draft's tile opens its modal, j picks a step, y runs adopt and 
     app.view_h = 40;
     app.board = try tickets.Board.parse(std.testing.allocator, draft_board);
     defer app.board.?.deinit();
-    app.board_view = .{ .focus = .orchestrator };
+    app.home = .{ .focus = .orchestrator };
     app.normal = true;
     const eq = std.testing.expectEqual;
-    const view = &app.board_view.?;
+    const view = &app.home.?;
 
     try std.testing.expect(try app.feedKey(" "));
     try eq(@as(?u32, 830), view.draft);
@@ -8183,8 +8183,8 @@ test "⏎ on a draft's row on Plan opens the draft modal, and e edits the step p
     app.view_h = 40;
     app.board = try tickets.Board.parse(std.testing.allocator, draft_board);
     defer app.board.?.deinit();
-    app.board_view = .{ .focus = .plan };
-    const view = &app.board_view.?;
+    app.home = .{ .focus = .plan };
+    const view = &app.home.?;
     try app.planKey("\r");
     try std.testing.expectEqual(@as(?u32, 830), view.draft);
     try app.homeKey("j");
@@ -8209,7 +8209,7 @@ test "an item of any kind runs its action's argv: ⏎ on a digest with no ticket
         \\{"id":"digest:1795536000","kind":"digest","ticket":null,"repo":"","text":"digest","doc":"/home/a/.cache/babylon/digests/2026-11-24.md","actions":[{"label":"seen","key":"⏎","argv":["babylon","digest","ok"]}]}]}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .focus = .orchestrator };
+    app.home = .{ .focus = .orchestrator };
     try std.testing.expect(try app.feedKey("\r"));
     var got: [512]u8 = undefined;
     var len = try sent.readPositionalAll(std.testing.io, &got, 0);
@@ -8247,7 +8247,7 @@ test "a row of next dragged onto another takes its place" {
         \\{"ticket":12,"repo":"arena","title":"b","why":"y"}]}}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .focus = .plan };
+    app.home = .{ .focus = .plan };
     const eq = std.testing.expectEqual;
 
     var sheet: sheets.Sheet = undefined;
@@ -8288,7 +8288,7 @@ test "a to-try card's modal lists its checks, j and k pick one, y says it works 
     const eq = std.testing.expectEqual;
     const eql = std.testing.expectEqualStrings;
 
-    app.board_view = .{ .detail = 7 };
+    app.home = .{ .detail = 7 };
     const card = app.modalCard().?;
     var head: App.CardHead = undefined;
     App.cardHead(card, 60, 0, false, &head);
@@ -8312,10 +8312,10 @@ test "a to-try card's modal lists its checks, j and k pick one, y says it works 
     try eql("y", pressed[0]);
 
     try app.modalKey("j");
-    try eq(@as(u8, 2), app.board_view.?.check_pick);
+    try eq(@as(u8, 2), app.home.?.check_pick);
     try app.modalKey("j");
     try app.modalKey("j");
-    try eq(@as(u8, 3), app.board_view.?.check_pick);
+    try eq(@as(u8, 3), app.home.?.check_pick);
     try app.modalKey("k");
     try app.modalKey("y");
     var got: [1024]u8 = undefined;
@@ -8355,7 +8355,7 @@ test "a drag over a wrapped line of the modal copies it as one line, inside the 
     app.board = try tickets.Board.parse(std.testing.allocator, json);
     defer app.board.?.deinit();
     const eql = std.testing.expectEqualStrings;
-    app.board_view = .{ .detail = 7 };
+    app.home = .{ .detail = 7 };
     const inner = detailWidth(app.boardW()).inner;
     var body: std.ArrayList(u8) = .empty;
     defer body.deinit(std.testing.allocator);
@@ -8394,7 +8394,7 @@ test "a drag over a wrapped line of the modal copies it as one line, inside the 
 
     // Y: the picked check, whole, though the modal cut it
     app.out.clearRetainingCapacity();
-    app.board_view.?.check_pick = 2;
+    app.home.?.check_pick = 2;
     try app.modalKey("Y");
     var want: [256]u8 = undefined;
     const encoded = std.base64.standard.Encoder.encode(&want, long_check);
@@ -8410,7 +8410,7 @@ fn tryApp(sent: std.Io.File, tmp_board: []const u8) !App {
     app.epoch = 1795262400;
     app.board_dir = "arena-test-board";
     app.board = try tickets.Board.parse(std.testing.allocator, tmp_board);
-    app.board_view = .{ .focus = .orchestrator };
+    app.home = .{ .focus = .orchestrator };
     app.normal = true;
     return app;
 }
@@ -8440,7 +8440,7 @@ test "in a to-try tile y settles the picked check, ] and [ go from tile to tile,
     defer app.pending.deinit(std.testing.allocator);
     defer app.detail_asked.deinit(std.testing.allocator);
     defer app.board.?.deinit();
-    const view = &app.board_view.?;
+    const view = &app.home.?;
     const eq = std.testing.expectEqual;
     var got: [2048]u8 = undefined;
     var f: feed.Feed = undefined;
@@ -8493,7 +8493,7 @@ test "n on a check asks what went wrong, ⏎ sends the no argv with the words, e
     var app = try tryApp(sent, feed.try_sample);
     defer app.pending.deinit(std.testing.allocator);
     defer app.board.?.deinit();
-    app.board_view.?.pick = 2;
+    app.home.?.pick = 2;
     var got: [2048]u8 = undefined;
 
     try std.testing.expect(try app.feedKey("n"));
@@ -8522,7 +8522,7 @@ test "a click on a to-try tile picks a check, settles it with ✓, fails it with
     defer app.pending.deinit(std.testing.allocator);
     defer app.detail_asked.deinit(std.testing.allocator);
     defer app.board.?.deinit();
-    const view = &app.board_view.?;
+    const view = &app.home.?;
     const eq = std.testing.expectEqual;
     var got: [4096]u8 = undefined;
     var f: feed.Feed = undefined;
@@ -8579,7 +8579,7 @@ test "o on a check to look at the diff opens meatcheck on the landed range in a 
     );
     defer app.pending.deinit(std.testing.allocator);
     defer app.board.?.deinit();
-    app.board_view.?.pick = 0;
+    app.home.?.pick = 0;
     var f: feed.Feed = undefined;
     try std.testing.expect(app.feedOf(&f));
     try std.testing.expectEqualStrings("o look   y ✓   n ✗", f.line(rowOf(&f, .try_buttons, 0)).text);
@@ -8606,9 +8606,9 @@ test "on Plan's windows z folds the picked one and keeps the pick, Z folds the r
         \\"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .focus = .plan };
+    app.home = .{ .focus = .plan };
     const eq = std.testing.expectEqual;
-    const view = &app.board_view.?;
+    const view = &app.home.?;
     var sheet: sheets.Sheet = undefined;
 
     try app.planKey("j");
@@ -8659,7 +8659,7 @@ test "space opens a Plan ticket row in place, one to a window, with the card's o
         \\"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .focus = .plan };
+    app.home = .{ .focus = .plan };
     const eq = std.testing.expectEqual;
     var sheet: sheets.Sheet = undefined;
 
@@ -8745,9 +8745,9 @@ test "on not planned's chips ⏎ folds a repo's rows, h l walk the chips, Z open
     app.roles = @import("parts.zig").roles();
     app.board = try tickets.Board.parse(std.testing.allocator, not_planned_plan);
     defer app.board.?.deinit();
-    app.board_view = .{ .focus = .plan };
+    app.home = .{ .focus = .plan };
     const eq = std.testing.expectEqual;
-    const view = &app.board_view.?;
+    const view = &app.home.?;
     view.plan_pick = try chipsPick(&app);
 
     try eq(@as(usize, 3), try unplannedKinds(&app, .todo));
@@ -8782,9 +8782,9 @@ test "J K on a todo row move it in its repo, W adds it to next, + opens the new 
     app.roles = @import("parts.zig").roles();
     app.board = try tickets.Board.parse(std.testing.allocator, not_planned_plan);
     defer app.board.?.deinit();
-    app.board_view = .{ .focus = .plan };
+    app.home = .{ .focus = .plan };
     const eq = std.testing.expectEqual;
-    const view = &app.board_view.?;
+    const view = &app.home.?;
     var got: [2048]u8 = undefined;
     view.plan_pick = (try chipsPick(&app)) + 1;
 
@@ -8809,8 +8809,8 @@ test "J K on a todo row move it in its repo, W adds it to next, + opens the new 
     len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon new") != null);
 
-    app.board_view = .{ .focus = .plan, .plan_backlog = true };
-    app.board_view.?.plan_pick = (try chipsPick(&app)) + 1;
+    app.home = .{ .focus = .plan, .plan_backlog = true };
+    app.home.?.plan_pick = (try chipsPick(&app)) + 1;
     try app.planKey("x");
     try std.testing.expect(app.prompt.?.what == .why);
     try std.testing.expectEqualStrings("close:6", app.prompt.?.item());
@@ -8836,7 +8836,7 @@ test "a click on not planned's + new button opens the new ticket window, and a w
     app.roles = @import("parts.zig").roles();
     app.board = try tickets.Board.parse(std.testing.allocator, not_planned_plan);
     defer app.board.?.deinit();
-    app.board_view = .{ .focus = .plan };
+    app.home = .{ .focus = .plan };
     app.side_folded = true;
     const head = app.newHead().?;
     try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = head.x + 1, .y = head.y, .release = false }));
@@ -8867,9 +8867,9 @@ test "on Plan r narrows every window to one repo and back, / dims what misses th
         \\"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .focus = .plan };
+    app.home = .{ .focus = .plan };
     const eq = std.testing.expectEqual;
-    const view = &app.board_view.?;
+    const view = &app.home.?;
     var sheet: sheets.Sheet = undefined;
 
     try app.planKey("r");
@@ -8939,7 +8939,7 @@ test "⏎ on a subagent row in a card's modal shows that subagent, as a click on
     var sessions = [_]*Session{&s};
     app.sessions = .fromOwnedSlice(&sessions);
     app.current = 1;
-    app.board_view = .{ .detail = 4 };
+    app.home = .{ .detail = 4 };
 
     var buttons: [16]App.ModalButton = undefined;
     var rows: [2]u16 = undefined;
@@ -8954,7 +8954,7 @@ test "⏎ on a subagent row in a card's modal shows that subagent, as a click on
     try app.modalKey("\t");
     try app.modalKey("\t");
     try app.modalKey("\r");
-    try std.testing.expect(app.board_view == null);
+    try std.testing.expect(app.home == null);
     try std.testing.expectEqual(@as(u32, 12), app.pick.?.pane);
     try std.testing.expectEqualStrings("check deps", app.pick.?.name[0..app.pick.?.len]);
 }
@@ -8979,15 +8979,15 @@ test "Your move is a fixed slot whatever it holds, the picked item opens to its 
         app.roles = @import("parts.zig").roles();
         app.board = try tickets.Board.parse(std.testing.allocator, try needsBoard(&buf, n));
         defer app.board.?.deinit();
-        app.board_view = .{ .focus = .plan };
+        app.home = .{ .focus = .plan };
         const rect = app.planSlot(.move);
         if (height) |h| try eq(h, rect.h) else height = rect.h;
         try eq(@as(u16, sheets.move_rows_full + sheets.window_chrome), rect.h);
         if (n == 0) continue;
 
-        app.board_view.?.plan_pick = 5 % n;
+        app.home.?.plan_pick = 5 % n;
         try app.planKey("]");
-        try eq(@as(usize, 0), app.board_view.?.plan_pick);
+        try eq(@as(usize, 0), app.home.?.plan_pick);
         try app.planKey(" ");
         try eq(@as(u32, 100), app.plan_open.get(.move));
         try app.planKey("j");
@@ -9028,7 +9028,7 @@ test "⏎ on a Claude with no ticket in in flight's foot shows its window, space
     app.view_w = 60;
     app.view_h = 30;
     app.roles = @import("parts.zig").roles();
-    app.board_view = .{ .focus = .plan };
+    app.home = .{ .focus = .plan };
     const eq = std.testing.expectEqual;
 
     var sheet: sheets.Sheet = undefined;
@@ -9039,17 +9039,17 @@ test "⏎ on a Claude with no ticket in in flight's foot shows its window, space
     try eq(@as(usize, 0), first.item);
     try eq(sheets.Window.now, first.win);
     try std.testing.expect(app.otherAt(0).?.win == &asks);
-    app.board_view.?.plan_pick = first.pick.?;
+    app.home.?.plan_pick = first.pick.?;
     try std.testing.expect(app.peekOf(.{ .window = 2 }).?.win == &asks);
 
     try app.planKey(" ");
-    try eq(@as(?BoardView, null), app.board_view);
+    try eq(@as(?HomeView, null), app.home);
     try std.testing.expect(app.popup != null and app.popup.?.entry == 2);
     app.closePopup();
 
-    app.board_view = .{ .focus = .plan, .plan_pick = first.pick.? };
+    app.home = .{ .focus = .plan, .plan_pick = first.pick.? };
     try app.planKey("\r");
-    try eq(@as(?BoardView, null), app.board_view);
+    try eq(@as(?HomeView, null), app.home);
     try std.testing.expect(app.popup == null);
     try eq(@as(usize, 1), session.focus);
 }
@@ -9119,7 +9119,7 @@ test "arena plan N opens the shut repo chip that holds N" {
         \\"not_planned":{"count":2,"follow_ups":0,"by_repo":{"tlon":1,"arena":1}}}}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .focus = .plan };
+    app.home = .{ .focus = .plan };
     var sheet: sheets.Sheet = undefined;
     app.setFold("tlon", true);
     app.plan_shut.insert(.unplanned);
@@ -9127,5 +9127,5 @@ test "arena plan N opens the shut repo chip that holds N" {
     try std.testing.expect(!app.folded("tlon"));
     try std.testing.expect(!app.plan_shut.contains(.unplanned));
     try std.testing.expect(app.planSheet(&sheet));
-    try std.testing.expectEqual(@as(u32, 5), sheet.picked(app.board_view.?.plan_pick).?.ticket.?);
+    try std.testing.expectEqual(@as(u32, 5), sheet.picked(app.home.?.plan_pick).?.ticket.?);
 }

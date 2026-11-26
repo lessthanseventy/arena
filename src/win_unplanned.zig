@@ -40,7 +40,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             try bench.fill(w, x0, y, ww, bg);
             if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
             var chips_buf: [sheets.max_chips]sheets.Chip = undefined;
-            const view = app.board_view.?;
+            const view = app.home.?;
             const chips_n = app.chipsOf(&chips_buf).len;
             for (chips_buf[0..chips_n], 0..) |c, i| {
                 var buf: [64]u8 = undefined;
@@ -94,7 +94,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
 /// Enter on a row of not planned: the window's fold for the summary, a chip's repo
 /// toggled for the chips, and a todo row's ticket gone to.
 pub fn act(app: *App, row: *const sheets.Row) !void {
-    const view = &app.board_view.?;
+    const view = &app.home.?;
     switch (row.kind) {
         .chips => try app.toggleChip(view.plan_chip),
         .todo => try app.act(.go),

@@ -148,7 +148,7 @@ pub fn click(app: *App, sheet: *const sheets.Sheet, at: usize, m: anytype) !void
     const row = sheet.rows[at];
     const need = app.board.?.needsYou()[row.item];
     const rect = app.planRect(.move);
-    const view = &app.board_view.?;
+    const view = &app.home.?;
     const owner = for (sheet.rows[0..at]) |prior| {
         if (prior.kind == .need and prior.item == row.item) break prior;
     } else return;

@@ -2,7 +2,7 @@
 //! carrying the view across in a small text file named for its pid, which an exec keeps.
 const std = @import("std");
 const app_mod = @import("app.zig");
-const BoardView = app_mod.BoardView;
+const HomeView = app_mod.HomeView;
 const Writer = std.Io.Writer;
 const posix = std.posix;
 
@@ -155,14 +155,14 @@ fn encode(w: *Writer, arrival: Arrival) !void {
     if (arrival.ticket) |id| try put(w, "ticket", id);
     const kept = arrival.kept orelse return;
     try put(w, "folded", kept.folded);
-    inline for (@typeInfo(BoardView).@"struct".field_names) |name| try put(w, "view." ++ name, @field(kept.view, name));
+    inline for (@typeInfo(HomeView).@"struct".field_names) |name| try put(w, "view." ++ name, @field(kept.view, name));
 }
 
 /// A line the new build does not know, or cannot read, is left out: a view across two builds
 /// that differ is what it can be, never a failure to start.
 fn decode(text: []const u8) Arrival {
     var arrival: Arrival = .{};
-    var view: BoardView = .{};
+    var view: HomeView = .{};
     var folded = false;
     var seen = false;
     var lines = std.mem.tokenizeScalar(u8, text, '\n');
@@ -175,7 +175,7 @@ fn decode(text: []const u8) Arrival {
             seen = true;
             folded = take(bool, value) catch false;
         }
-        inline for (@typeInfo(BoardView).@"struct".field_names, @typeInfo(BoardView).@"struct".field_types) |name, T| {
+        inline for (@typeInfo(HomeView).@"struct".field_names, @typeInfo(HomeView).@"struct".field_types) |name, T| {
             if (std.mem.eql(u8, key, "view." ++ name)) {
                 if (take(T, value)) |v| @field(view, name) = v else |_| {}
             }
@@ -188,7 +188,7 @@ fn decode(text: []const u8) Arrival {
 test "a view and a ticket come back as they went" {
     var text: Writer.Allocating = .init(std.testing.allocator);
     defer text.deinit();
-    const view: BoardView = .{ .focus = .orchestrator, .back = 7, .pick = 4, .unfolded = 5, .alone = false };
+    const view: HomeView = .{ .focus = .orchestrator, .back = 7, .pick = 4, .unfolded = 5, .alone = false };
     try encode(&text.writer, .{ .kept = .{ .view = view, .folded = true }, .ticket = 822 });
     const back = decode(text.written());
     try std.testing.expectEqual(@as(?u32, 822), back.ticket);
