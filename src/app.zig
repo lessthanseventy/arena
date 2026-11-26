@@ -602,8 +602,6 @@ pub const App = struct {
     folds: [max_repos][48]u8 = undefined,
     fold_lens: [max_repos]u8 = @splat(0),
     fold_n: usize = 0,
-    /// Workbench's plan windows folded to their summary, kept in the folds file as `plan:<window>`.
-    plan_shut: sheets.Shut = .empty,
     /// The ticket open in each plan window, kept in the folds file as `open:<window>:<ticket>`.
     plan_open: sheets.Open = .initFill(0),
     folds_path: ?[]const u8 = null,
@@ -3077,27 +3075,14 @@ pub const App = struct {
             view.plan_pick = pick;
             return true;
         }
-        for (std.enums.values(sheets.Window)) |win| {
-            if (!app.plan_shut.contains(win)) continue;
-            app.plan_shut.remove(win);
-            if (app.planSheet(&sheet)) if (planPickOf(&sheet, id)) |pick| {
-                view.plan_pick = pick;
-                try app.saveFolds();
-                return true;
-            };
-            app.plan_shut.insert(win);
-        }
         const repo = (app.cardById(id) orelse return false).repo orelse return false;
         if (!app.folded(repo)) return false;
-        const unplanned_shut = app.plan_shut.contains(.unplanned);
-        app.plan_shut.remove(.unplanned);
         try app.toggleRepoFold(repo);
         if (app.planSheet(&sheet)) if (planPickOf(&sheet, id)) |pick| {
             view.plan_pick = pick;
             try app.saveFolds();
             return true;
         };
-        if (unplanned_shut) app.plan_shut.insert(.unplanned);
         try app.toggleRepoFold(repo);
         return false;
     }
@@ -3234,8 +3219,8 @@ pub const App = struct {
         var lines = std.mem.splitScalar(u8, text, '\n');
         while (lines.next()) |line| {
             if (line.len == 0) continue;
-            if (std.mem.startsWith(u8, line, plan_fold)) {
-                if (std.meta.stringToEnum(sheets.Window, line[plan_fold.len..])) |win| app.plan_shut.insert(win);
+            if (std.mem.startsWith(u8, line, window_fold)) {
+                continue;
             } else if (std.mem.startsWith(u8, line, plan_opened)) {
                 const rest = line[plan_opened.len..];
                 const colon = std.mem.indexOfScalar(u8, rest, ':') orelse continue;
@@ -3245,7 +3230,8 @@ pub const App = struct {
         }
     }
 
-    const plan_fold = "plan:";
+    /// A `plan:<window>` line names no fold any more, and is read past.
+    const window_fold = "plan:";
     const plan_opened = "open:";
 
     fn saveFolds(app: *App) !void {
@@ -3253,8 +3239,6 @@ pub const App = struct {
         var data: Writer.Allocating = .init(app.gpa);
         defer data.deinit();
         for (0..app.fold_n) |i| try data.writer.print("{s}\n", .{app.folds[i][0..app.fold_lens[i]]});
-        var shut = app.plan_shut.iterator();
-        while (shut.next()) |win| try data.writer.print(plan_fold ++ "{s}\n", .{@tagName(win)});
         var opened = app.plan_open.iterator();
         while (opened.next()) |entry| if (entry.value.* != 0) try data.writer.print(plan_opened ++ "{s}:{d}\n", .{ @tagName(entry.key), entry.value.* });
         if (std.fs.path.dirname(path)) |dir| std.Io.Dir.cwd().createDirPath(app.io, dir) catch return;
@@ -3353,10 +3337,8 @@ pub const App = struct {
         if (!app.planShown()) return false;
         const b = &app.board.?;
         const view = app.home.?;
-        var shut = app.plan_shut;
-        if (view.whole) |win| shut.remove(win);
         var repos: [max_repos][]const u8 = undefined;
-        sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.halfHome(), app.workbench(), shut, app.planSee(&repos));
+        sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.halfHome(), app.workbench(), app.planSee(&repos));
         app.narrowPlan(sheet);
         if (app.workbench()) {
             sheet.withNeedCards(app.plan_open, b, app.planRect(.move).w -| 1);
@@ -3528,42 +3510,6 @@ pub const App = struct {
         return hit.row;
     }
 
-    /// The pick as its window and its place among that window's picks.
-    fn planPlace(app: *App) ?struct { win: sheets.Window, at: usize } {
-        var sheet: sheets.Sheet = undefined;
-        if (!app.planSheet(&sheet)) return null;
-        const row = sheet.picked(app.home.?.plan_pick) orelse return null;
-        return .{ .win = row.win, .at = app.home.?.plan_pick - sheet.pickRange(row.win).?.first };
-    }
-
-    /// The pick put back in the place it had in its window, now that a fold has renumbered the picks.
-    fn planRestore(app: *App, place: anytype) void {
-        var sheet: sheets.Sheet = undefined;
-        if (!app.planSheet(&sheet)) return;
-        const range = sheet.pickRange(place.win) orelse return;
-        app.home.?.plan_pick = range.first + @min(place.at, range.n - 1);
-    }
-
-    /// `win` folded to its summary, or opened again; the pick stays where it was.
-    pub fn togglePlanFold(app: *App, win: sheets.Window) !void {
-        const place = app.planPlace();
-        app.plan_shut.toggle(win);
-        app.dirty = true;
-        try app.saveFolds();
-        if (place) |p| app.planRestore(p);
-    }
-
-    /// Every window but `keep` folded; with those folded already, all opened.
-    fn foldPlanAll(app: *App, keep: sheets.Window) !void {
-        const place = app.planPlace();
-        var others = sheets.Shut.full;
-        others.remove(keep);
-        app.plan_shut = if (app.plan_shut.eql(others)) .empty else others;
-        app.dirty = true;
-        try app.saveFolds();
-        if (place) |p| app.planRestore(p);
-    }
-
     fn openWhole(app: *App, win: sheets.Window) void {
         const view = &app.home.?;
         view.whole = win;
@@ -3576,13 +3522,8 @@ pub const App = struct {
 
     fn closeWhole(app: *App) void {
         const view = &app.home.?;
-        const win = view.whole orelse return;
         view.whole = null;
         app.dirty = true;
-        if (!app.plan_shut.contains(win)) return;
-        var sheet: sheets.Sheet = undefined;
-        if (!app.planSheet(&sheet)) return;
-        if (sheet.pickRange(win)) |range| view.plan_pick = range.first;
     }
 
     /// The first of the plan's rows that is drawn: the row picked kept in view, two rows more
@@ -3620,10 +3561,8 @@ pub const App = struct {
         if (view.whole != null and is(key, &.{ "\x1b", "q" })) return app.closeWhole();
         if (view.whole != null and !is(key, &.{ "J", "K", "x", "e", "\r", " ", "t", "o", "p", ">", "<", "G", "w", "W", "H" })) return;
         if (app.workbench()) if (sheet.picked(view.plan_pick)) |row| {
-            if (row.kind == .need and !is(key, &.{ "j", "k", "h", "l", "z", "Z", "f", "/", "r", "?", "q", "\x1b", "`", "g", "A", "]", "[", " ", "o", "O", "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D" }) and try win_move.answer(app, row, key)) return;
+            if (row.kind == .need and !is(key, &.{ "j", "k", "h", "l", "f", "/", "r", "?", "q", "\x1b", "`", "g", "A", "]", "[", " ", "o", "O", "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D" }) and try win_move.answer(app, row, key)) return;
             if (row.kind == .chips and try win_unplanned.chipKey(app, key)) return;
-            if (is(key, &.{"z"})) return app.togglePlanFold(row.win);
-            if (is(key, &.{"Z"})) return app.foldPlanAll(row.win);
             if (is(key, &.{"f"})) return app.openWhole(row.win);
         };
         if (is(key, &.{"+"})) {
@@ -3726,7 +3665,6 @@ pub const App = struct {
             return;
         }
         switch (row.kind) {
-            .summary => try app.togglePlanFold(row.win),
             .ideas_more => if (row.fold) |bit| {
                 view.unfolded ^= @as(u8, 1) << bit;
             },
@@ -3768,14 +3706,13 @@ pub const App = struct {
             const hit = win_plan.planHit(app, &sheet, m.x, m.y) orelse return app.closeWhole();
             if (hit.title) {
                 if (view.whole != null) return;
-                const pressed = switch (hit.win) {
+                _ = switch (hit.win) {
                     .driving => try win_driving.titleClick(app),
                     .goals => try win_goals.titleClick(app, m.x),
                     .unplanned => try win_unplanned.titleClick(app, m.x),
                     else => false,
                 };
-                if (pressed) return;
-                return app.togglePlanFold(hit.win);
+                return;
             }
         }
         const at = app.planRowAt(&sheet, m.x, m.y) orelse return;
@@ -8267,7 +8204,7 @@ test "o on a check to look at the diff opens meatcheck on the landed range in a 
     try std.testing.expect(std.mem.indexOf(u8, said, "abc123^..abc123") != null);
     try std.testing.expect(std.mem.indexOf(u8, said, "is the retry bounded?") != null);
 }
-test "on Plan's windows z folds the picked one and keeps the pick, Z folds the rest and opens them again, f shows one whole and q closes it, and the folds load from their file's plan: lines" {
+test "Plan's windows never fold: z, Z and a click on a title leave every window open; f shows one whole and q closes it; plan: lines in the folds file fold nothing" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     app.term_w = 200;
     app.view_w = 60;
@@ -8288,19 +8225,14 @@ test "on Plan's windows z folds the picked one and keeps the pick, Z folds the r
 
     try app.planKey("j");
     try eq(@as(usize, 1), view.plan_pick);
-    try app.planKey("z");
-    try std.testing.expect(app.plan_shut.contains(.now));
+    const title = app.planSlot(.now);
+    try app.planClick(.{ .code = 0, .x = title.x + 3, .y = title.y, .release = false });
+    for ([_][]const u8{ "z", "Z" }) |key| try app.planKey(key);
     try std.testing.expect(app.planSheet(&sheet));
-    try eq(sheets.Window.now, sheet.picked(view.plan_pick).?.win);
-    try eq(sheets.Kind.summary, sheet.picked(view.plan_pick).?.kind);
-    try app.planKey("z");
-    try std.testing.expect(!app.plan_shut.contains(.now));
-
-    try app.planKey("Z");
-    try eq(@as(usize, 6), app.plan_shut.count());
-    try std.testing.expect(!app.plan_shut.contains(.now));
-    try app.planKey("Z");
-    try eq(@as(usize, 0), app.plan_shut.count());
+    try eq(@as(usize, 1), view.plan_pick);
+    try eq(sheets.Kind.now, sheet.picked(view.plan_pick).?.kind);
+    try eq(@as(usize, 2), sheet.span(.now).len);
+    try eq(sheets.Kind.next, sheet.rows[sheet.span(.next).start].kind);
 
     try app.planKey("f");
     try eq(@as(?sheets.Window, .now), view.whole);
@@ -8314,7 +8246,7 @@ test "on Plan's windows z folds the picked one and keeps the pick, Z folds the r
     var fresh: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     fresh.loadFolds("tlon\nplan:now\nplan:nowhere\nplan:landed\n");
     try std.testing.expect(fresh.folded("tlon") and !fresh.folded("plan:now"));
-    try std.testing.expect(fresh.plan_shut.contains(.now) and fresh.plan_shut.contains(.landed) and fresh.plan_shut.count() == 2);
+    try eq(@as(usize, 1), fresh.fold_n);
 }
 
 test "space opens a Plan ticket row in place, one to a window, with the card's own actions as its buttons; the open row loads from its file's open: line" {
@@ -8572,9 +8504,7 @@ test "on Plan r narrows every window to one repo and back, / dims what misses th
     try std.testing.expect(app.planSheet(&sheet));
     try eq(sheets.Window.now, sheet.picked(view.plan_pick).?.win);
 
-    app.plan_shut.insert(.next);
     try std.testing.expect(try app.pickPlanTicket(11));
-    try std.testing.expect(!app.plan_shut.contains(.next));
     try std.testing.expect(app.planSheet(&sheet));
     try eq(@as(u32, 11), sheet.picked(view.plan_pick).?.ticket.?);
 }
@@ -8797,10 +8727,8 @@ test "arena plan N opens the shut repo chip that holds N" {
     app.home = .{ .focus = .plan };
     var sheet: sheets.Sheet = undefined;
     app.setFold("tlon", true);
-    app.plan_shut.insert(.unplanned);
     try app.showPlan(5);
     try std.testing.expect(!app.folded("tlon"));
-    try std.testing.expect(!app.plan_shut.contains(.unplanned));
     try std.testing.expect(app.planSheet(&sheet));
     try std.testing.expectEqual(@as(u32, 5), sheet.picked(app.home.?.plan_pick).?.ticket.?);
 }

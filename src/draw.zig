@@ -1809,7 +1809,7 @@ fn benchPlan(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
     var behind: sheets.Sheet = undefined;
     var repos: [app_mod.max_repos][]const u8 = undefined;
     const b = &app.board.?;
-    behind.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.halfHome(), true, app.plan_shut, app.planSee(&repos));
+    behind.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.halfHome(), true, app.planSee(&repos));
     app.narrowPlan(&behind);
     for (std.enums.values(sheets.Window)) |win| try win_plan.benchWindow(app, w, r, &behind, view, win, false);
     try win_plan.benchWindow(app, w, r, sheet, view, view.whole.?, true);
@@ -1914,7 +1914,6 @@ const plan_keys = [_][2][]const u8{
     .{ "j k, arrows", "pick a row: now, next, goals, ideas, landed, not planned" },
     .{ "⏎, click it", "go: its Claude, the gate, start it, plan an idea, unfold a row, the board on it" },
     .{ "space", "open the row in place; on an open row, its whole ticket" },
-    .{ "z, Z", "fold the picked window to its summary; fold all but it, and open all" },
     .{ "f", "the picked window whole, over the plan; q closes it" },
     .{ "+", "a new goal: plan it now, or just keep it" },
     .{ "d", "drive towards the picked goal; 1…9 answer a landed goal's what next" },
@@ -3102,7 +3101,7 @@ test "a to-try tile is drawn: its chip, its age in the you colour at a week, the
     try std.testing.expect(!Rows.has(other, "close untried"));
 }
 
-test "Plan's windows keep their slots: another window's rows, a count or a fold move none of them" {
+test "Plan's windows keep their slots: another window's rows or a count move none of them" {
     const eq = std.testing.expectEqual;
     const few =
         \\{"tickets":[],"plan":{"now":[],"next":[{"ticket":9,"repo":"arena","title":"n","why":"","waits_on":[]}],
@@ -3114,10 +3113,9 @@ test "Plan's windows keep their slots: another window's rows, a count or a fold 
         used += (try std.fmt.bufPrint(many_text[used..], "{s}{{\"ticket\":{d},\"repo\":\"arena\",\"title\":\"t\",\"state\":\"building\"}}", .{ if (i > 0) "," else "", 100 + i })).len;
     }
     used += (try std.fmt.bufPrint(many_text[used..], "],\"next\":[],\"goals\":[],\"landed_today\":{{\"count\":40,\"newest\":[]}},\"not_planned\":{{\"count\":3,\"follow_ups\":0,\"by_repo\":{{}}}}}}}}", .{})).len;
-    var shapes: [3]struct { text: []const u8, fold: bool } = .{
-        .{ .text = few, .fold = false },
-        .{ .text = many_text[0..used], .fold = false },
-        .{ .text = many_text[0..used], .fold = true },
+    var shapes: [2]struct { text: []const u8 } = .{
+        .{ .text = few },
+        .{ .text = many_text[0..used] },
     };
     for (&shapes) |shape| {
         var board = try tickets.Board.parse(std.testing.allocator, shape.text);
@@ -3129,7 +3127,6 @@ test "Plan's windows keep their slots: another window's rows, a count or a fold 
         app.view_h = 23;
         app.roles = bench.roles();
         app.home = .{ .alone = false, .focus = .plan };
-        if (shape.fold) app.plan_shut.insert(.now);
         var buf: [262144]u8 = undefined;
         var out: Writer = .fixed(&buf);
         try planView(&app, &out, app.home.?);
@@ -3582,7 +3579,7 @@ test "in a goals window every value starts at one x, and a bar's ends sit on the
     try std.testing.expect(!std.meta.eql(r.well, g.bgs[dbar][dcount - 1]));
 }
 
-test "every Plan window has its ◆ title, its count and its ▾ in the same places, and driving's epic sits two cells after its title" {
+test "every Plan window has its ◆ title and its count in the same places, no ▾, and driving's epic sits two cells after its title" {
     const eq = std.testing.expectEqual;
     var board = try tickets.Board.parse(std.testing.allocator, grid_board);
     defer board.deinit();
@@ -3595,7 +3592,7 @@ test "every Plan window has its ◆ title, its count and its ▾ in the same pla
         const named = if (win == .driving) sheets.drivingTitle(shot.app.board.?.plan().?, &shot.app.board.?) else win.title();
         try eq(@as(u21, '◆'), g.cps[slot.y][slot.x + 1]);
         try eq(slot.x + 3, g.find(slot.y, slot.x, slot.x + ww, named).?);
-        try eq(@as(u21, '▾'), g.cps[slot.y][slot.x + ww - 3]);
+        try std.testing.expect(g.find(slot.y, slot.x, slot.x + ww, "▾") == null);
         if (win_plan.windowCount(&shot.app.board.?, shot.app.board.?.plan().?, win) != null) {
             try eq(slot.x + 4 + cellCount(named), g.find(slot.y, slot.x, slot.x + ww, "▎").?);
         }

@@ -124,8 +124,7 @@ pub fn windowCount(b: *const tickets.Board, given: *const tickets.Plan, win: she
     };
 }
 
-/// `win` in its slot (or the modal, when it is the one shown whole): its frame, fold mark and
-/// the rows from the one that keeps the pick in view. `lit` is whether the pick is drawn.
+/// `win` in its slot (or the modal, when it is the one shown whole): its frame and the rows from the one that keeps the pick in view. `lit` is whether the pick is drawn.
 pub fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, view: app_mod.HomeView, win: sheets.Window, lit: bool) !void {
     const rect = app.planRect(win);
     const whole = lit and view.whole == win;
@@ -140,7 +139,7 @@ pub fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.S
     const bar = if (focused) r.raised else r.tile;
     if (whole) {
         try bench.say(w, rect.x + ww - 10, rect.y, "q close", r.dim, bar, false);
-    } else try bench.say(w, rect.x + ww - 3, rect.y, if (app.plan_shut.contains(win)) "▸" else "▾", r.dim, bar, false);
+    }
     if (win == .unplanned and !whole) try win_unplanned.frame(app, w, r);
     if (win == .goals and !whole) try win_goals.frame(app, w, r);
     if (win == .driving) try win_driving.frame(app, w, r, rect, ww, bar);
@@ -193,7 +192,7 @@ pub fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.
             try bench.say(w, x0 + 1, y, label, r.dim, r.panel, false);
             try repeat(w, x0 + 1 + cellCount(label), y, "─", ww -| 2 -| cellCount(label), r.dim, r.panel);
         },
-        .summary, .note => {
+        .note => {
             try bench.fill(w, x0, y, ww, bg);
             if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
             try bench.say(w, x0 + 2, y, clip(row.text, room), r.dim, bg, false);

@@ -94,14 +94,13 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
     }
 }
 
-/// Enter on a row of not planned: the window's fold for the summary, a chip's repo
-/// toggled for the chips, and a todo row's ticket gone to.
+/// Enter on a row of not planned: a chip's repo toggled for the chips, and a todo row's ticket
+/// gone to.
 pub fn act(app: *App, row: *const sheets.Row) !void {
     const view = &app.home.?;
     switch (row.kind) {
         .chips => try toggleChip(app, view.plan_chip),
         .todo => try app.act(.go),
-        .unplanned => try app.togglePlanFold(row.win),
         else => {},
     }
 }

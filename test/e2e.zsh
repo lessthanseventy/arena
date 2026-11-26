@@ -1315,8 +1315,8 @@ check "and Enter keeps it there with the new why, through babylon" await last 'n
 key x
 check "x takes it out of next, through babylon" await last 'next 7 --drop'
 : >$tmp/babylon
-# Workbench's plan is seven windows, each in a slot the screen's size gives it: a fold leaves
-# every other window where it was
+# Workbench's plan is seven windows, each in a slot the screen's size gives it, and none folds:
+# each keeps its rows and its place
 cp $tmp/run/babylon/board.json $tmp/board.slots
 mkdir -p $tmp/.config/ficciones/theme
 for name in AMBER VIOLET AMBERDIM EMBERDIM INK DIM GREY SURFACE0 SURFACE2 SURFACE3 SURFACE4 BG CYAN MOSS PINK RED; do print -r -- "PALETTE_$name=#808080"; done >$tmp/.config/ficciones/theme/palette.sh
@@ -1328,14 +1328,10 @@ check "landed holds today's landing, a row to a ticket" see '✓ #703'
 title_row() { settled | grep -n "$1" | head -1 | cut -d: -f1 }
 next_row=$(title_row '◆ next')
 key z
-check "z folds the picked window to its summary" see '◐ 1 building · ◒ verif'
-check "its rows are gone" gone 'First buil'
+check "z folds nothing: in flight keeps its rows" see 'First buil'
 same_row() { [[ $(title_row '◆ next') == $next_row ]] }
-check "and the window below it stays on the same screen row" await same_row
-folded_file=$tmp/.local/state/arena/folded
-check "the fold is saved beside the repo folds" await eval 'grep -qx "plan:now" $folded_file'
-key z
-check "z again opens it" see 'First buil'
+check "and the window below stays on the same screen row" await same_row
+check "no window's title has a fold mark" gone '▾'
 key f
 check "f opens the window whole, as a modal" see 'q close'
 key q
@@ -1343,17 +1339,10 @@ check "and q closes it" gone 'q close'
 check "with the window below still on its row" same_row
 title_click() { local row=$(title_row "$1"); local line=$(settled | sed -n "${row}p"); mouse 0 $(( ${#${line%%$1*}} + 3 )) $row M; mouse 0 $(( ${#${line%%$1*}} + 3 )) $row m }
 title_click '◆ in flight'
-check "a click on a window's title bar folds it, off its ▾ too" see '◐ 1 building · ◒ verif'
-title_click '◆ in flight'
-check "and a click again opens it" see 'First buil'
+check "a click on a window's title bar leaves it open" see 'First buil'
 check "with the window below still on its row" same_row
 outer resize-window -t o -x 105 -y 40
 check "at half the screen the windows stack in one column, in flight above next" await eval '[[ -n $(title_row "◆ in flight") && -n $(title_row "◆ next") ]] && (( $(title_row "◆ in flight") < $(title_row "◆ next") ))'
-next_row=$(title_row '◆ next')
-key z
-check "z at half the screen folds the picked window" see '◐ 1 building · ◒ verif'
-check "and the window below keeps its row" await same_row
-key z
 outer resize-window -t o -x 121 -y 24
 key j
 key Enter
