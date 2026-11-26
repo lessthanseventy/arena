@@ -1127,8 +1127,6 @@ in_session() { [[ $(inner list-clients -F '#{session_name}') == $1 ]] }
 orch_lit() { [[ $(outer capture-pane -ep -t o) =~ $'((\e\\[[0-9;]*m)+) ○ orchestrator ' && $match[1] =~ '[[;]7[;m]' ]] }
 shown_cursor() { [[ $(outer display -p -t o '#{cursor_flag}') == $1 ]] }
 said() { inner capture-pane -p -t $1 | grep -qx $2 }
-rowof() { screen | grep -n -m1 -F -- "$1" | cut -d: -f1 }
-colof() { local l=$(screen | sed -n $1p); [[ $l == *"$2"* ]] || return 1; local p=${l%%"$2"*}; print $(( ${#p} + 1 )) }
 # column and row from one picture, taken again while it shows nothing (mid-frame): from two, a click goes out with no row
 spot() { local at l p i; for i in {1..30}; do at=$(settled | grep -n -m1 -- "$1") && break; zselect -t 100; done; [[ -n $at ]] || return 1; l=${at#*:} p=${l%%"$1"*}; print $(( ${#p} + 2 )) ${at%%:*} }
 print -r -- '' >$tmp/.config/ficciones/theme/palette.sh
@@ -1154,9 +1152,9 @@ offs=$(grep -cx 'auto off' $tmp/babylon)
 click 10 20
 key '`'
 see '◐ (auto )?1/2'
-r=$(rowof '◐ auto'); c=$(colof $r '◐ auto')
-mouse 0 $((c + 1)) $r M
-mouse 0 $((c + 1)) $r M
+switch=$(spot '◐ auto')
+mouse 0 ${(z)switch} M
+mouse 0 ${(z)switch} M
 await eval '(( $(grep -cx "auto off" $tmp/babylon) > offs ))'
 key '`'
 zselect -t 50
@@ -1623,8 +1621,6 @@ await shows ' 6 g6 '
 g6=$(inner display -p -t gamma:g6 '#{pane_id}')
 plan_up='in flight [0-9]'
 plan_at() { $bin -L $in plan $1; see "$plan_up" }
-rowof() { screen | grep -n -m1 -F -- "$1" | cut -d: -f1 }
-colof() { local l=$(screen | sed -n $1p); [[ $l == *"$2"* ]] || return 1; local p=${l%%"$2"*}; print $(( ${#p} + 1 )) }
 last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
 print -r -- '' >$tmp/.config/ficciones/theme/palette.sh
 outer resize-window -t o -x 121 -y 24
