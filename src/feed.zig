@@ -259,6 +259,11 @@ pub fn isLook(step: tickets.TryStep) bool {
     return std.mem.eql(u8, step.kind, "look") and step.range.len > 0;
 }
 
+/// Whether `step` has something `o` opens: its doc, or the landed change of a look.
+pub fn opens(step: tickets.TryStep) bool {
+    return step.doc != null or isLook(step);
+}
+
 fn isTry(need: tickets.Need) bool {
     return std.mem.eql(u8, need.kind, "try");
 }
@@ -359,8 +364,8 @@ fn buttons(p: *Part, need: tickets.Need, at: usize) void {
     const step = need.steps[at];
     var found: [512]u8 = undefined;
     const runs = runcheck.find(step.text, &found).len > 0;
-    const looks = isLook(step);
-    if (looks) w.writeAll("o look") catch {};
+    const looks = opens(step);
+    if (looks) w.writeAll("o open") catch {};
     if (runs) w.print("{s}r run", .{if (looks) "   " else ""}) catch {};
     for (step.actions, 0..) |action, k| {
         w.print("{s}{s} {s}", .{ if (k == 0 and !looks and !runs) "" else "   ", action.key, action.label }) catch break;

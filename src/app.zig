@@ -8294,7 +8294,7 @@ test "o on a check to look at the diff opens meatcheck on the landed range in a 
     app.home.?.pick = 0;
     var f: feed.Feed = undefined;
     try std.testing.expect(app.feedOf(&f));
-    try std.testing.expectEqualStrings("o look   y ✓   n ✗", f.line(rowOf(&f, .try_buttons, 0)).text);
+    try std.testing.expectEqualStrings("o open   y ✓   n ✗", f.line(rowOf(&f, .try_buttons, 0)).text);
 
     try std.testing.expect(try win_feed.press(&app, "o"));
     var got: [4096]u8 = undefined;
@@ -8304,6 +8304,49 @@ test "o on a check to look at the diff opens meatcheck on the landed range in a 
     try std.testing.expect(std.mem.indexOf(u8, said, "abc123^..abc123") != null);
     try std.testing.expect(std.mem.indexOf(u8, said, "is the retry bounded?") != null);
 }
+test "a check with a doc draws o open and o opens the doc; a check with neither draws none" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try tryApp(sent,
+        \\{"tickets":[],"needs_you":[{"id":"try:933","kind":"try","ticket":933,"repo":"arena","text":"#933 arena  Docs","since":"2026-11-21T10:00:00Z","machine":"gate ✓",
+        \\"steps":[{"n":1,"text":"read the plan","doc":"docs/doing-planning.md","result":null,"actions":[{"key":"y","label":"✓","argv":["babylon","tried","933","1","ok"]}]},
+        \\{"n":2,"text":"press it","result":null,"actions":[{"key":"y","label":"✓","argv":["babylon","tried","933","2","ok"]}]}],"actions":[]}]}
+    );
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    app.home.?.pick = 0;
+    var f: feed.Feed = undefined;
+    try std.testing.expect(app.feedOf(&f));
+    try std.testing.expectEqualStrings("o open   y ✓", f.line(rowOf(&f, .try_buttons, 0)).text);
+
+    try std.testing.expect(try win_feed.press(&app, "o"));
+    var got: [4096]u8 = undefined;
+    const said = try sentText(sent, &got);
+    try std.testing.expect(std.mem.indexOf(u8, said, "docs/doing-planning.md") != null);
+}
+
+test "a check with no doc and no range draws no o open, and o does nothing" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try tryApp(sent,
+        \\{"tickets":[],"needs_you":[{"id":"try:934","kind":"try","ticket":934,"repo":"arena","text":"#934 arena  Plain","since":"2026-11-21T10:00:00Z","machine":"gate ✓",
+        \\"steps":[{"n":1,"text":"press it","result":null,"actions":[{"key":"y","label":"✓","argv":["babylon","tried","934","1","ok"]}]}],"actions":[]}]}
+    );
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    app.home.?.pick = 0;
+    var f: feed.Feed = undefined;
+    try std.testing.expect(app.feedOf(&f));
+    try std.testing.expectEqualStrings("y ✓", f.line(rowOf(&f, .try_buttons, 0)).text);
+    _ = try win_feed.press(&app, "o");
+    var got: [4096]u8 = undefined;
+    try std.testing.expectEqualStrings("", try sentText(sent, &got));
+}
+
 test "Plan's windows never fold: z, Z and a click on a title leave every window open; f shows one whole and q closes it; plan: lines in the folds file fold nothing" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     app.term_w = 200;

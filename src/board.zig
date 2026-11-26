@@ -205,6 +205,8 @@ pub const TryStep = struct {
     /// `look` for a check to be done by reading the landed change; then `range` is its git range.
     kind: []const u8 = "",
     range: []const u8 = "",
+    /// A repo path or link the check asks to be read.
+    doc: ?[]const u8 = null,
     result: ?[]const u8 = null,
     actions: []Action = &.{},
 };

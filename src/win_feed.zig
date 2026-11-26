@@ -119,7 +119,15 @@ pub fn act(app: *App, item: feed.Item, key: []const u8) !bool {
         return true;
     }
     if (item.step) |s| if (s < need.steps.len) {
-        if (anyKey(key, &.{"o"}) and feed.isLook(need.steps[s])) return app.lookAtDiff(need, need.steps[s]);
+        if (anyKey(key, &.{"o"})) {
+            const step = need.steps[s];
+            if (step.doc) |doc| {
+                var of_step = need;
+                of_step.doc = doc;
+                return app.openDoc(of_step);
+            }
+            if (feed.isLook(step)) return app.lookAtDiff(need, step);
+        }
         if (need.ticket) |ticket| {
             const step = need.steps[s];
             if (anyKey(key, &.{"r"}) and try app.checkOffer(ticket, step.n, step.text)) return true;
