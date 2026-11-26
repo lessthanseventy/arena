@@ -3638,7 +3638,7 @@ const board_keys = [_][2][]const u8{
 const plan_keys = [_][2][]const u8{
     .{ "j k, arrows", "pick a row: now, next, goals, ideas, landed, not planned" },
     .{ "⏎, click it", "go: its Claude, the gate, start it, plan an idea, unfold a row, the board on it" },
-    .{ "space, t", "its whole ticket" },
+    .{ "space", "open the row in place; on an open row, its whole ticket" },
     .{ "z, Z", "fold the picked window to its summary; fold all but it, and open all" },
     .{ "f", "the picked window whole, over the plan; q closes it" },
     .{ "+", "a new goal: plan it now, or just keep it" },

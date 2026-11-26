@@ -1080,7 +1080,7 @@ $bin -L $in plan 7
 see "not planned"
 : >$tmp/babylon
 key ' '
-key o
+key ' '
 check "a ticket's modal opened from a not planned row shows the question and its options by number" see '2 blue'
 key 2
 checked() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == 'answer 5 2' ]] }
@@ -1088,14 +1088,14 @@ check "and a number answers it through babylon" await checked
 check "and closes it" gone '2 blue'
 touch $tmp/refuse
 key ' '
-key o
+key ' '
 key 1
 refused() { [[ -f $tmp/notified && $(<$tmp/notified) == *'babylon: no session to answer'* ]] }
 check "and an answer babylon refuses says why" await refused
 rm $tmp/refuse
 rowof() { screen | grep -n -m1 -- "$1" | cut -d: -f1 }
 key ' '
-key o
+key ' '
 check "space on a row and o show the picked ticket's whole ticket, as babylon tells it" see 'the whole of it'
 check "with its close button in the foot" see 'q close'
 check "and a send-back's reason whole in it, on as many rows as it takes" see 'last words of it are never cut off'
@@ -1104,7 +1104,7 @@ check "and j scrolls it no further than its last line" see 'the whole of it'
 key Escape
 check "Escape puts it away" gone 'the whole of it'
 key ' '
-key o
+key ' '
 see 'the whole of it'
 key q
 check "q closes it too" gone 'the whole of it'
@@ -1112,12 +1112,12 @@ nofile() { [[ ! -e $tmp/run/babylon/detail-7.txt ]] }
 check "leaving no file of it behind" await nofile
 close_at() { local l=$(settled | grep -m1 "q close"); print $(( ${#${l%%q close*}} + 1 )) $(settled | grep -n -m1 "q close" | cut -d: -f1) }
 key ' '
-key o
+key ' '
 see 'the whole of it'
 mouse 0 ${(z)$(close_at)} M
 check "a click on the modal's close button puts it away" gone 'the whole of it'
 key ' '
-key o
+key ' '
 see 'the whole of it'
 foot_at=(${(z)$(close_at)})
 mouse 0 $(( foot_at[1] - 20 )) $(( foot_at[2] - 3 )) M
@@ -1129,8 +1129,6 @@ check "arena plan and a ticket's id, run elsewhere, opens Plan with the pick on 
 key ' '
 check "so that space opens its row" see '⏎ start'
 key ' '
-key ' '
-key o
 see 'the whole of it'
 arena_pid=$(pgrep -x -P $(outer display -p -t o '#{pane_pid}') arena)
 kill -STOP $arena_pid
@@ -1307,7 +1305,7 @@ check "e on a not planned row edits it in a window of its own" await last 'edit 
 key Escape
 plan_at 8
 key ' '
-key o
+key ' '
 check "a modal opened from an in flight row shows its body" see 'the whole of it'
 check "and its holder's state" see 'its Claude: '
 key Enter
@@ -2113,9 +2111,13 @@ check "a second click does" await eval '(( $(auto_offs) > offs ))'
 cp $tmp/board.plan $tmp/run/babylon/board.json
 : >$tmp/babylon
 key -l ' '
-check "space opens the row in place, with the card's buttons under it" await shows 'o open +e edit'
+check "space opens the row in place, with the card's buttons under it" await shows 'space open +e edit'
 key -l ' '
-check "and space closes it" gone 'o open +e edit'
+check "and space on the open row opens its modal" see 'q close'
+key Escape
+check "which Escape puts away, the row still open" see 'space open +e edit'
+click $(settled | awk '/#701 First building/ { print index($0, "#701") + 1; exit }') $(settled | grep -n -m1 '#701 First building' | cut -d: -f1)
+check "and a click on the open row closes it" gone 'space open +e edit'
 check "the pick starts on the first window's row" see '▌▌. #701 First building'
 key /
 key -l Light
@@ -2399,7 +2401,7 @@ nowplan $now ',"handed_off_from":"%407","handed_off_at":"'$now'"'
 zselect -t 150
 plan_at 920
 key ' '
-key o
+key ' '
 check "a row handed off from a pane says so in its modal" await shows 'handed off from %407'
 check "whose foot has H for asking its Claude to hand off" see 'H hand off'
 key H
@@ -2415,7 +2417,7 @@ zselect -t 300
 $bin -L $in plan 920
 see '#922 Third'
 key ' '
-key o
+key ' '
 check "a ticket with an open ask: its modal opened from a row lists every option, a row each" see '3 gamma'
 check "and ⏎ in its foot is labelled for answering the lit option" see '⏎ answer 1'
 : >$tmp/babylon
@@ -2425,7 +2427,7 @@ check "and puts the modal away" gone '3 gamma'
 $bin -L $in plan 921
 see '#922 Third'
 key ' '
-key o
+key ' '
 await shows '3 gamma'
 : >$tmp/babylon
 gamma_row=$(screen | grep -n -m1 -E '3 gamma' | cut -d: -f1)
@@ -2434,7 +2436,7 @@ check "a click on an option answers it" await last 'answer 7 3'
 $bin -L $in plan 922
 see '#922 Third'
 key ' '
-key o
+key ' '
 await shows '3 gamma'
 : >$tmp/babylon
 key Enter

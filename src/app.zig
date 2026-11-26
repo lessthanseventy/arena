@@ -5096,7 +5096,7 @@ pub const App = struct {
 
     /// The key of `action` on the plan: space folds a row there, so the modal is `o`.
     fn planKeyOf(action: CardAction) []const u8 {
-        return if (action == .open) "o" else action.key();
+        return action.key();
     }
 
     /// Ticket row `row` opened, or closed when it is the open one of its window; opening one
@@ -5366,7 +5366,7 @@ pub const App = struct {
         for (keyed) |pair| if (std.mem.eql(u8, key, pair[0])) return app.act(pair[1]);
         if (is(key, &.{ "\r", " " })) {
             const row = sheet.picked(view.plan_pick) orelse return;
-            if (is(key, &.{" "}) and opensInPlace(row)) return app.togglePlanOpen(row);
+            if (is(key, &.{" "}) and opensInPlace(row) and app.plan_open.get(row.win) != row.ticket) return app.togglePlanOpen(row);
             return app.planAct(row, key);
         }
         if (is(key, &.{ "\x1b", "q" })) return app.closeBoard();
@@ -11648,8 +11648,6 @@ test "space opens a Plan ticket row in place, one to a window, with the card's o
     try app.planKey("j");
     try app.planKey(" ");
     try eq(@as(u32, 2), app.plan_open.get(.now));
-    try app.planKey(" ");
-    try eq(@as(u32, 0), app.plan_open.get(.now));
 
     app.loadFolds("open:now:7\nopen:nowhere:3\n");
     try eq(@as(u32, 7), app.plan_open.get(.now));
