@@ -5,6 +5,7 @@ const bench = @import("parts.zig");
 const app_mod = @import("app.zig");
 const tickets = @import("board.zig");
 const sheets = @import("plan.zig");
+const menu = @import("menu.zig");
 const draw = @import("draw.zig");
 const App = app_mod.App;
 const Writer = std.Io.Writer;
@@ -101,6 +102,30 @@ pub fn act(app: *App, row: *const sheets.Row) !void {
         .unplanned => try app.togglePlanFold(row.win),
         else => {},
     }
+}
+
+/// `J` `K` on a todo row: it moves down or up its repo's order, `babylon move N down|up --repo R`,
+/// and the pick goes with it while the next row is a todo one.
+pub fn moveTodo(app: *App, sheet: *const sheets.Sheet, row: *const sheets.Row, down: bool) !void {
+    const view = &app.home.?;
+    const card = app.cardById(row.ticket orelse return) orelse return;
+    const repo = card.repo orelse return;
+    if (!app_mod.plainName(repo)) return;
+    try app.send(.ignore, app_mod.captured("babylon move {d} {s} --repo {s}"), .{ card.id, if (down) "down" else "up", repo });
+    const to = if (down) view.plan_pick + 1 else view.plan_pick -| 1;
+    if (sheet.picked(to)) |near| if (near.kind == .todo) {
+        view.plan_pick = to;
+    };
+}
+
+/// `x` on a backlog row: a line for why it is closed, which Enter sends with the close.
+pub fn openClose(app: *App, id: u32) void {
+    var prompt: menu.Prompt = .{ .what = .why };
+    const said = std.fmt.bufPrint(&prompt.target, "close:{d}", .{id}) catch return;
+    prompt.target_len = said.len;
+    app.prompt = prompt;
+    app.normal = false;
+    app.dirty = true;
 }
 
 /// A click on the title bar: on `+ new`, a new ticket.

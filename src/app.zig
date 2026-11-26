@@ -3960,8 +3960,8 @@ pub const App = struct {
         if (is(key, &.{ "J", "K", "x", "e" })) {
             const row = sheet.picked(view.plan_pick) orelse return;
             if (row.kind == .idea) return app.ideaKey(row, key);
-            if (row.kind == .todo and is(key, &.{ "J", "K" })) return app.moveTodo(&sheet, row, is(key, &.{"J"}));
-            if (row.kind == .backlog and is(key, &.{"x"})) return app.openClose(row.ticket orelse return);
+            if (row.kind == .todo and is(key, &.{ "J", "K" })) return win_unplanned.moveTodo(app, &sheet, row, is(key, &.{"J"}));
+            if (row.kind == .backlog and is(key, &.{"x"})) return win_unplanned.openClose(app, row.ticket orelse return);
             if (row.kind != .next) {
                 if (is(key, &.{"e"})) try app.act(.edit);
                 return;
@@ -4039,30 +4039,6 @@ pub const App = struct {
         view.plan_chip = at;
         if (all[at].repo) |repo| return app.toggleRepoFold(repo);
         view.plan_backlog = !view.plan_backlog;
-        app.dirty = true;
-    }
-
-    /// `J` `K` on a todo row: it moves down or up its repo's order, `babylon move N down|up --repo R`,
-    /// and the pick goes with it while the next row is a todo one.
-    fn moveTodo(app: *App, sheet: *const sheets.Sheet, row: *const sheets.Row, down: bool) !void {
-        const view = &app.home.?;
-        const card = app.cardById(row.ticket orelse return) orelse return;
-        const repo = card.repo orelse return;
-        if (!plainName(repo)) return;
-        try app.send(.ignore, captured("babylon move {d} {s} --repo {s}"), .{ card.id, if (down) "down" else "up", repo });
-        const to = if (down) view.plan_pick + 1 else view.plan_pick -| 1;
-        if (sheet.picked(to)) |near| if (near.kind == .todo) {
-            view.plan_pick = to;
-        };
-    }
-
-    /// `x` on a backlog row: a line for why it is closed, which Enter sends with the close.
-    fn openClose(app: *App, id: u32) void {
-        var prompt: menu.Prompt = .{ .what = .why };
-        const said = std.fmt.bufPrint(&prompt.target, "close:{d}", .{id}) catch return;
-        prompt.target_len = said.len;
-        app.prompt = prompt;
-        app.normal = false;
         app.dirty = true;
     }
 
@@ -7321,7 +7297,7 @@ test "a card is given only while it is free to claim, whatever its repo" {
 }
 
 /// A repo's name safe in a tmux command unquoted, as directory names are.
-fn plainName(name: []const u8) bool {
+pub fn plainName(name: []const u8) bool {
     for (name) |c| if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_' and c != '.') return false;
     return name.len > 0;
 }
