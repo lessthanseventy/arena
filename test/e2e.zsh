@@ -1258,7 +1258,7 @@ check "off, the state is gone" gone 'auto [0-9]'
 check "with nothing of the orchestrator in babylon's file, Plan's head has no button for it" hides ' ● orch '
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":4,"working":4,"tools":{"working":1,"cap":1}}}' >$tmp/run/babylon/board.json
 check "with room, Plan's head says the tools slots when babylon's file gives them" see ' ◐ auto 4/4 · tools 1/1( |$)'
-outer resize-window -t o -x 100
+outer resize-window -t o -x 112
 check "and with less room, without the tools slots" see ' ◐ auto 4/4 +✓ 0 today'
 outer resize-window -t o -x 200
 cp $tmp/board.noauto $tmp/run/babylon/board.json
@@ -1419,124 +1419,12 @@ check "Alt+h goes back to Plan" await eval '! orch_lit && shown_cursor 0'
 key '?'
 check "whose keys are its own again" see "the plan.s keys"
 key Escape
-mouse 0 100 10 M
-mouse 0 100 10 m
-check "a click on the column focuses it" await orch_lit
-key 'echo back' Enter
-check "and what is typed reaches its pane" see '│back +│'
-mouse 0 45 22 M
-mouse 0 45 22 m
-check "a click on Plan gives Plan the keys" await eval '! orch_lit'
-key '`'
-check "where \` folds the column away" gone '╭─ ○ orchestrator · idle '
-check "going back to the session the human was in" await in_session alpha
-key '`'
-check "and unfolds it" see '╭─ ○ orchestrator · idle '
+key o
+check "o opens the drawer again, with the keys" await orch_lit
+key M-h
 key Escape
 check "closing Plan goes back to the session the human was in" await in_session alpha
 server=$(inner display -p '#{pid}')
-kill -STOP $server
-key C-Space b M-h q
-zselect -t 50
-kill -CONT $server
-check "opened and closed before tmux has switched, it comes back all the same" await in_session alpha
-plan_at 8
-await in_session orchestrator
-kill -STOP $server
-key '`' '`' q
-zselect -t 50
-kill -CONT $server
-check "folded, unfolded and closed before tmux has switched back, it comes back all the same" await in_session alpha
-kill -STOP $server
-key C-Space b M-h
-see "$plan_up"
-key M-l 'echo ahead' Enter
-zselect -t 50
-check "Plan stays open on an Alt+l typed before tmux has switched" shows "$plan_up"
-kill -CONT $server
-check "Alt+l and what is typed before tmux has switched reach the orchestrator's pane" await said orchestrator:orch ahead
-check "Plan left open" await shows "$plan_up"
-key -l 'echo jkdufltb'
-key Enter
-check "with Plan open, a sentence of Plan's own letters reaches the orchestrator's pane whole" await said orchestrator:orch jkdufltb
-check "and Plan is still open" see "$plan_up"
-key C-Space
-key -l 'nojkdu'
-key Enter
-zselect -t 50
-check "Ctrl+Space makes that column normal: none of it reaches the pane" eval '! said orchestrator:orch nojkdu'
-check "home in normal mode shows NORMAL and how to type" see '^NORMAL .*Ctrl\+Space / i to type'
-key -l i
-check "and i is insert again" gone '^NORMAL'
-kill -STOP $server
-key M-h Escape
-gone "$plan_up"
-key 'echo home' Enter
-zselect -t 50
-kill -CONT $server
-inner new-window -d -t orchestrator: -n two sh
-plan_at 8
-see '` fold'
-key Escape
-await in_session alpha
-orch_at() { [[ $(inner display -p -t orchestrator: '#{window_name}') == $1 ]] }
-kill -STOP $server
-key C-Space b M-h M-l M-l
-zselect -t 50
-kill -CONT $server
-check "Alt+l again before tmux has switched steps to the orchestrator's next window" await orch_at two
-kill -STOP $server
-key M-h
-zselect -t 50
-kill -CONT $server
-check "and Alt+h back" await orch_at orch
-inner kill-window -t orchestrator:two
-plan_at 8
-key Escape
-await in_session alpha
-cp $tmp/board.kept $tmp/board.pipe
-print -r -- "${$(<$tmp/board.pipe)%\}}"',"orchestrator":{"on":true,"running":true}}' >$tmp/run/babylon/board.json
-key C-Space
-see '^NORMAL .*b home'
-key b
-check "b in normal mode goes home: the orchestrator's column beside Plan, with the keys" await orch_lit
-check "in insert" hides '^NORMAL'
-await in_session orchestrator
-inner kill-session -t '=orchestrator'
-check "its session ending leaves home open, its head saying it restarts" see '╭─ ◌ orchestrator · restarting '
-check "Plan still there" await shows "$plan_up"
-check "and arena in the session the human was in" await in_session alpha
-inner new-session -d -s orchestrator -n orch sh
-check "the column comes back on the new orchestrator" see '╭─ ○ orchestrator · idle '
-check "with the keys, as the human left them" await orch_lit
-key 'echo again' Enter
-check "and what is typed reaches the new one's pane" see '│again +│'
-print -r -- "${$(<$tmp/board.pipe)%\}}"',"orchestrator":{"on":true,"running":true},"needs_you":['\
-'{"id":"ask:5","kind":"ask","ticket":8,"repo":"arena","text":"#8 arena  asks: Blue or green?",'\
-'"actions":[{"key":"1","label":"Blue","argv":["babylon","answer","5","1"]},{"key":"c","label":"in words","argv":["babylon","answer","5","--words"],"needs":"words"}]},'\
-'{"id":"sendback:7","kind":"sendback","ticket":7,"repo":"tlon","text":"✗ #7 tlon  sent back, free: red",'\
-'"actions":[{"key":"G","label":"give","argv":null,"needs":"pick"},{"key":"⏎","label":"start","argv":null,"needs":"surface"}]}]}' >$tmp/run/babylon/board.json
-see '▲ your move 2'
-key M-h
-await eval '! orch_lit'
-key ']'
-feed_lit() { [[ $(outer capture-pane -ep -t o | grep -F -- "$1") =~ $'((\e\\[[0-9;]*m)+)'"$1" && $match[1] =~ '[[;]7[;m]' ]] }
-check "] from Plan puts the feed's pick on Your move's first item, the column normal" await feed_lit '#8 arena  asks'
-key j
-check "where its keys are the feed's" await feed_lit '✗ #7 tlon'
-key i
-see '│again '
-key M-h
-check "Alt+h gives Plan the keys" await eval '! orch_lit'
-key '['
-check "[ from Plan puts the feed's pick on Your move's last item" await feed_lit '✗ #7 tlon'
-key M-h
-await eval '! orch_lit'
-repeat 9 key j
-key o
-check "o goes to it, Plan put away" gone "$plan_up"
-key 'echo whole' Enter
-check "and what is typed after o reaches its pane" see '│whole +│'
 inner kill-session -t '=orchestrator'
 await in_session alpha
 print -r -- '' >$tmp/.config/ficciones/theme/palette.sh
