@@ -61,7 +61,6 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
                     },
                 }
             }
-            try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
         },
         .drove => {
             try bench.fill(w, x0, y, ww, bg);
@@ -143,7 +142,7 @@ pub fn frame(app: *App, w: *Writer, r: theme.Roles, rect: sheets.Rect, ww: usize
     const goal = given.goals[at];
     var buf: [160]u8 = undefined;
     const text = std.fmt.bufPrint(&buf, "epic #{d}{s}{s}", .{ goal.epic, if (goal.doc != null) " · " else "", goal.doc orelse "" }) catch "";
-    const gap = rect.x + 4 + cellCount(sheets.drivingTitle(given, &app.board.?));
+    const gap = rect.x + 6 + cellCount(sheets.drivingTitle(given, &app.board.?));
     const shown = clip(text, rect.x + ww -| gap -| 9);
     try bench.say(w, gap, rect.y, " ", r.dim, bar, false);
     try bench.say(w, gap + 1, rect.y, shown, r.dim, bar, false);

@@ -1,4 +1,4 @@
-//! Workbench's drawing parts: a window, its shadow, a chip, a button, the switch and a bar, each
+//! Workbench's drawing parts: a window, a chip, a button, the switch and a bar, each
 //! written as cursor moves and 24-bit colour to a frame. Positions are 0-based cells.
 const std = @import("std");
 const vt = @import("ghostty-vt");
@@ -24,18 +24,6 @@ fn moveTo(w: *Writer, x: usize, y: usize) !void {
 
 fn spaces(w: *Writer, n: usize) !void {
     for (0..n) |_| try w.writeAll(" ");
-}
-
-/// The hard one-cell shadow of a `width` by `h` rectangle at (`x`, `y`): `▌` down its right and
-/// `▀` under it, in the well's colour on `under`, what lies beside and below it.
-pub fn shadow(w: *Writer, r: Roles, x: usize, y: usize, width: usize, h: usize, under: RGB) !void {
-    try paint(w, r.well, under, false);
-    for (y + 1..y + h + 1) |yy| {
-        try moveTo(w, x + width, yy);
-        try w.writeAll("▌");
-    }
-    try moveTo(w, x + 1, y + h);
-    for (0..width) |_| try w.writeAll("▀");
 }
 
 /// `▎label ` on raised, its lead bar in `lead`; filled, `lead` is the face and the label is ink.
@@ -136,39 +124,44 @@ pub fn bar(w: *Writer, r: Roles, x: usize, y: usize, width: usize, done: u32, to
     for (0..width) |i| try w.writeAll(parts[@min(8, eighths -| i * 8)]);
 }
 
-/// A window `width` by `h` at (`x`, `y`) on the ground: its face, a title bar (`◆ name`, a count
-/// badge, `▫`) and its shadow. A focused bar is raised and striped `═══` in half-strength amber.
+/// A window `width` by `h` at (`x`, `y`) on the ground: a panel boxed in line-drawing cells, its
+/// title and count in the top border (`┌─ ◆ title │ N ──┐`). A focused window's border and
+/// diamond are amber. The cell after its right edge is the gap to the next window.
 pub fn window(w: *Writer, r: Roles, x: usize, y: usize, width: usize, h: usize, title: []const u8, count: ?usize, focused: bool) !void {
-    const bar_bg = if (focused) r.raised else r.tile;
+    if (width < 6 or h < 2) return;
+    const edge = if (focused) r.accent else r.dim;
     try paint(w, r.text, r.panel, false);
-    for (y + 1..y + h) |yy| {
+    for (y..y + h) |yy| {
         try moveTo(w, x, yy);
         try spaces(w, width);
     }
+    var nbuf: [20]u8 = undefined;
+    const tally = if (count) |n| std.fmt.bufPrint(&nbuf, " │ {d}", .{n}) catch "" else "";
+    const named = text_mod.clip(title, width -| (7 + text_mod.cells(tally)));
     try moveTo(w, x, y);
-    try paint(w, r.text, bar_bg, false);
-    try spaces(w, width);
-    try moveTo(w, x + 1, y);
-    try paint(w, if (focused) r.accent else r.dim, bar_bg, false);
+    try paint(w, edge, r.panel, false);
+    try w.writeAll("┌─ ");
+    try paint(w, edge, r.panel, false);
     try w.writeAll("◆ ");
-    const named = text_mod.clip(title, width -| 8);
-    try paint(w, if (focused) r.text else r.dim, bar_bg, true);
+    try paint(w, if (focused) r.text else r.dim, r.panel, true);
     try w.writeAll(named);
-    var end = x + 3 + text_mod.cells(named);
-    if (count) |n| {
-        var buf: [20]u8 = undefined;
-        end += 1;
-        end += try chip(w, r, end, y, std.fmt.bufPrint(&buf, "{d}", .{n}) catch "", r.dim, false);
+    try paint(w, r.dim, r.panel, false);
+    try w.writeAll(tally);
+    try paint(w, edge, r.panel, false);
+    try w.writeAll(" ");
+    const used = 6 + text_mod.cells(named) + text_mod.cells(tally);
+    for (used..width - 1) |_| try w.writeAll("─");
+    try w.writeAll("┐");
+    for (y + 1..y + h - 1) |yy| {
+        try moveTo(w, x, yy);
+        try w.writeAll("│");
+        try moveTo(w, x + width - 1, yy);
+        try w.writeAll("│");
     }
-    if (focused and end + 1 < x + width -| 4) {
-        try moveTo(w, end + 1, y);
-        try paint(w, r.accent.mix(r.raised, 0.5), bar_bg, false);
-        for (end + 1..x + width - 4) |_| try w.writeAll("═");
-    }
-    try moveTo(w, x + width - 3, y);
-    try paint(w, r.dim, bar_bg, false);
-    try w.writeAll("▫");
-    try shadow(w, r, x, y, width, h, r.ground);
+    try moveTo(w, x, y + h - 1);
+    try w.writeAll("└");
+    for (0..width - 2) |_| try w.writeAll("─");
+    try w.writeAll("┘");
 }
 
 /// A title bar `width` cells wide at (`x`, `y`): `◆ name`, and, focused, the bar raised and
@@ -289,36 +282,41 @@ test "the roles come from the palette's names, dim stays readable on a tile, and
     try std.testing.expectEqual(@as(?Roles, null), Roles.parse("PALETTE_AMBER=#FFB000\n"));
 }
 
-test "a window is a face, a title bar with its name and count, and a shadow in the well" {
+test "a window is a box of line-drawing cells with its title and count in the top border" {
     const r = roles();
     var buf: [4096]u8 = undefined;
     var w: Writer = .fixed(&buf);
     try window(&w, r, 10, 3, 30, 6, "todo", 12, false);
     const f = w.buffered();
-    try expectCell(f, 10, 3, ' ', r.text, r.tile);
-    try expectCell(f, 11, 3, '◆', r.dim, r.tile);
-    try expectCell(f, 13, 3, 't', r.dim, r.tile);
-    try expectCell(f, 18, 3, '▎', r.dim, r.raised);
-    try expectCell(f, 19, 3, '1', r.text, r.raised);
-    try expectCell(f, 37, 3, '▫', r.dim, r.tile);
+    try expectCell(f, 10, 3, '┌', r.dim, r.panel);
+    try expectCell(f, 13, 3, '◆', r.dim, r.panel);
+    try expectCell(f, 15, 3, 't', r.dim, r.panel);
+    try expectCell(f, 20, 3, '│', r.dim, r.panel);
+    try expectCell(f, 22, 3, '1', r.dim, r.panel);
+    try expectCell(f, 30, 3, '─', r.dim, r.panel);
+    try expectCell(f, 39, 3, '┐', r.dim, r.panel);
+    try expectCell(f, 10, 5, '│', r.dim, r.panel);
+    try expectCell(f, 39, 5, '│', r.dim, r.panel);
     try expectCell(f, 12, 5, ' ', r.text, r.panel);
-    try expectCell(f, 40, 4, '▌', r.well, r.ground);
-    try expectCell(f, 40, 9, '▀', r.well, r.ground);
-    try expectCell(f, 11, 9, '▀', r.well, r.ground);
+    try expectCell(f, 10, 8, '└', r.dim, r.panel);
+    try expectCell(f, 25, 8, '─', r.dim, r.panel);
+    try expectCell(f, 39, 8, '┘', r.dim, r.panel);
+    try expectCell(f, 40, 4, ' ', unset, unset);
     try expectCell(f, 10, 9, ' ', unset, unset);
 }
 
-test "a focused window has a raised bar striped in half amber" {
+test "a focused window's border and diamond are amber and its title bright" {
     const r = roles();
     var buf: [4096]u8 = undefined;
     var w: Writer = .fixed(&buf);
     try window(&w, r, 0, 0, 30, 5, "doing", null, true);
     const f = w.buffered();
-    try expectCell(f, 1, 0, '◆', r.accent, r.raised);
-    try expectCell(f, 3, 0, 'd', r.text, r.raised);
-    try expectCell(f, 12, 0, '═', r.accent.mix(r.raised, 0.5), r.raised);
-    try expectCell(f, 25, 0, '═', r.accent.mix(r.raised, 0.5), r.raised);
-    try expectCell(f, 27, 0, '▫', r.dim, r.raised);
+    try expectCell(f, 0, 0, '┌', r.accent, r.panel);
+    try expectCell(f, 3, 0, '◆', r.accent, r.panel);
+    try expectCell(f, 5, 0, 'd', r.text, r.panel);
+    try expectCell(f, 29, 0, '┐', r.accent, r.panel);
+    try expectCell(f, 0, 2, '│', r.accent, r.panel);
+    try expectCell(f, 29, 4, '┘', r.accent, r.panel);
 }
 
 test "a chip is a lead bar and its words on raised, and a filled one is its colour with ink" {

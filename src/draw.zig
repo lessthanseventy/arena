@@ -1756,8 +1756,8 @@ fn goalBox(app: *const App, w: *Writer) !void {
     const keys_text = if (modal.typing) "esc done typing" else "⏎ plan  k keep  i type  q cancel";
     const note = if (modal.busy) "asking babylon…" else "an Opus Claude breaks it out into steps";
     if (app.roles) |r| {
-        try bench.window(w, r, rect.x, rect.y, rect.w - 1, rect.h, "a new goal", null, true);
-        try bench.say(w, rect.x + rect.w - 4, rect.y, "✕", r.text, r.raised, true);
+        try bench.window(w, r, rect.x, rect.y, rect.w - 1, rect.h + 1, "a new goal", null, true);
+        try bench.say(w, rect.x + rect.w - 4, rect.y, "×", r.text, r.panel, true);
         for (asked, 0..) |line, i| try bench.say(w, x0, rect.y + 1 + @as(u16, @intCast(i)), line, r.dim, r.panel, false);
         for (0..goal_field_rows) |row| {
             const y = rect.y + 3 + @as(u16, @intCast(row));
@@ -2383,7 +2383,7 @@ test "an ask's own words are a modal with the question and its options quoted; t
     short.target_len = 5;
     _ = short.press("a");
     var long = short;
-    for (0..30) |i| {
+    for (0..40) |i| {
         var line: [16]u8 = undefined;
         for (std.fmt.bufPrint(&line, "line {d}", .{i}) catch "") |byte| _ = long.press(&.{byte});
         _ = long.press("\n");
@@ -2414,7 +2414,7 @@ test "an ask's own words are a modal with the question and its options quoted; t
     const base = try std.fmt.bufPrint(&foot, "\x1b[{d};{d}H╰─", .{ rect.y + rect.h, rect.x + 1 });
     try std.testing.expect(has(u8, many.written(), base) != null);
     // a box of a fixed height scrolls: the last lines are shown, the first are not
-    try std.testing.expect(has(u8, many.written(), "line 29") != null);
+    try std.testing.expect(has(u8, many.written(), "line 39") != null);
     try std.testing.expect(has(u8, many.written(), "line 0 ") == null);
 }
 
@@ -2578,8 +2578,8 @@ test "Home in Workbench's look: the focal goal is the one with a step building, 
     }
     const slot = app.planSlot(.goals);
     const y = slot.y + 1 + (at - sheet.span(.goals).start);
-    const x = slot.x + 1 + 2;
-    const bar_w = (slot.w - 1 - 2) - 4 - "2/7  28%".len;
+    const x = slot.x + 2 + 2;
+    const bar_w = (slot.w - 1 - 4) - 4 - "2/7  28%".len;
     const filled = try bench.probe(f, x, y);
     try std.testing.expectEqual(@as(u21, '█'), filled.cp);
     try std.testing.expectEqual(r.repo[3], filled.fg);
@@ -2622,8 +2622,8 @@ test "a goal with a step to try reads ▲ 1 to try after its bar in the you colo
     }
     const rect = app.planSlot(.goals);
     const y = rect.y + 1 + (at - sheet.span(.goals).start) - app.planWindowTop(&sheet, .goals, rect.h - sheets.window_chrome);
-    const cw = rect.w - 1 - 2;
-    const label_x = rect.x + 1 + 3 + cw -| 4 -| "2/3  66%".len -| 10 -| 2;
+    const cw = rect.w - 1 - 4;
+    const label_x = rect.x + 2 + 3 + cw -| 4 -| "2/3  66%".len -| 10 -| 2;
     const words_x = label_x + "2/3  66%".len + 2;
     const mark = try bench.probe(f, words_x, y);
     try std.testing.expectEqual(@as(u21, '▲'), mark.cp);
@@ -2664,8 +2664,8 @@ test "babylon's refusal, said while the plan is shown, is on screen" {
 test "a card's popup in Workbench's look: a window with its ✕, the title whole, the ask's options as buttons and the facts as chips" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     defer app.grab.deinit(std.testing.allocator);
-    app.term_w = 80;
-    app.view_w = 80;
+    app.term_w = 100;
+    app.view_w = 100;
     app.view_h = 24;
     app.roles = bench.roles();
     const r = app.roles.?;
@@ -2684,13 +2684,13 @@ test "a card's popup in Workbench's look: a window with its ✕, the title whole
     const eq = std.testing.expectEqual;
     const rect = app.modalRect().?;
 
-    // the title bar is raised with its ✕ at the right, the face below it the panel, a shadow beside
-    try eq(@as(u21, '◆'), (try bench.probe(drawn, rect.x + 1, rect.y)).cp);
+    // the title in the top border with its × at the right, the face below it the panel, a side border beside
+    try eq(@as(u21, '◆'), (try bench.probe(drawn, rect.x + 3, rect.y)).cp);
     const close = try bench.probe(drawn, rect.x + rect.w - 4, rect.y);
-    try eq(@as(u21, '✕'), close.cp);
-    try eq(r.raised, close.bg);
+    try eq(@as(u21, '×'), close.cp);
+    try eq(r.panel, close.bg);
     try eq(r.panel, (try bench.probe(drawn, rect.x + 3, rect.y + 8)).bg);
-    try eq(@as(u21, '▌'), (try bench.probe(drawn, rect.x + rect.w - 1, rect.y + 3)).cp);
+    try eq(@as(u21, '│'), (try bench.probe(drawn, rect.x + rect.w - 2, rect.y + 3)).cp);
 
     // the whole title in bold, then the facts: the repo's chip in its hue, the high dot in red
     const title = try bench.probe(drawn, rect.x + 2, rect.y + 1);
@@ -3241,7 +3241,7 @@ test "a to-try tile is drawn: its chip, its age in the you colour at a week, the
     try std.testing.expect(!Rows.has(other, "close untried"));
 }
 
-test "Plan's windows keep their slots: another window's rows or a count move none of them" {
+test "every Plan window is a box with its ◆ title in its top border, whatever its rows" {
     const eq = std.testing.expectEqual;
     const few =
         \\{"tickets":[],"plan":{"now":[],"next":[{"ticket":9,"repo":"arena","title":"n","why":"","waits_on":[]}],
@@ -3264,7 +3264,7 @@ test "Plan's windows keep their slots: another window's rows or a count move non
         defer app.grab.deinit(std.testing.allocator);
         app.term_w = 80;
         app.view_w = 80;
-        app.view_h = 23;
+        app.view_h = 24;
         app.roles = bench.roles();
         app.home = .{ .alone = false, .focus = .plan };
         app.side_folded = true;
@@ -3273,8 +3273,12 @@ test "Plan's windows keep their slots: another window's rows or a count move non
         try planView(&app, &out, app.home.?);
         for (std.enums.values(sheets.Window)) |win| {
             const slot = app.planSlot(win);
-            const diamond = try bench.probe(out.buffered(), slot.x + 1, slot.y);
+            const corner = try bench.probe(out.buffered(), slot.x, slot.y);
+            try eq(@as(u21, '┌'), corner.cp);
+            const diamond = try bench.probe(out.buffered(), slot.x + 3, slot.y);
             try eq(@as(u21, '◆'), diamond.cp);
+            const foot = try bench.probe(out.buffered(), slot.x, slot.y + slot.h - 1);
+            try eq(@as(u21, '└'), foot.cp);
         }
     }
 }
@@ -3310,19 +3314,19 @@ test "Plan's rows start with a ▌ in their repo's colour, and a goal's card has
 
     const now = app.planSlot(.now);
     for (0..2) |line| {
-        const edge = try bench.probe(drawn, now.x + 1, now.y + 1 + @as(u16, @intCast(line)));
+        const edge = try bench.probe(drawn, now.x + 2, now.y + 1 + @as(u16, @intCast(line)));
         try eq(@as(u21, '▌'), edge.cp);
         try eq(r.repo[line], edge.fg);
     }
     const next = app.planSlot(.next);
-    const edge = try bench.probe(drawn, next.x + 1, next.y + 1);
+    const edge = try bench.probe(drawn, next.x + 2, next.y + 1);
     try eq(@as(u21, '▌'), edge.cp);
     try eq(r.repo[3], edge.fg);
 
     // the card's rows, its title, bar, next and blocker, wear the colour of the goal's repo
     const goals = app.planSlot(.goals);
     for (2..4) |line| {
-        const mark = try bench.probe(drawn, goals.x + 1, goals.y + @as(u16, @intCast(line)));
+        const mark = try bench.probe(drawn, goals.x + 2, goals.y + @as(u16, @intCast(line)));
         try eq(@as(u21, '▌'), mark.cp);
         try eq(r.repo[0], mark.fg);
     }
@@ -3348,7 +3352,7 @@ test "an in-flight row with a Claude says its session, window and pane on a seco
     app.sessions = .fromOwnedSlice(&sessions);
     app.term_w = 80;
     app.view_w = 80;
-    app.view_h = 23;
+    app.view_h = 30;
     app.roles = bench.roles();
     app.home = .{ .alone = false, .focus = .plan };
     app.side_folded = true;
@@ -3603,7 +3607,7 @@ test "a Your move item ends its row in its first action's key, ticket or none, p
     try std.testing.expect(std.mem.indexOf(u8, open_out.buffered(), "▸") != null);
 }
 
-test "with a Your move item's card open, every Your move row is drawn above it, the open one marked ▸, and the card has its check's y and no close untried" {
+test "with a Your move item's card open, every Your move row is drawn beside it, the open one marked ▸, and the card has its check's y and no close untried" {
     var board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[{"id":1105,"repo":"arena","title":"Your move says its key","status":"try","stage":"landed",
         \\"checks":[{"n":1,"text":"it folds back","result":null},{"n":2,"text":"the pick stays","result":null}]}],
@@ -3633,9 +3637,9 @@ test "with a Your move item's card open, every Your move row is drawn above it, 
     try std.testing.expect(std.mem.indexOf(u8, first, "▸▲ #1105 arena") != null);
     const second = try screenRow(out.buffered(), app.term_w, slot.y + 2, &line);
     try std.testing.expect(std.mem.indexOf(u8, second, "arena: 2 unpushed") != null);
-    try std.testing.expect(app.modalRect().?.y >= slot.y + slot.h);
+    try std.testing.expectEqual(slot.y, app.modalRect().?.y);
     var y_seen = false;
-    for (slot.y + slot.h..app.view_h) |y| {
+    for (slot.y..app.view_h) |y| {
         const row = try screenRow(out.buffered(), app.term_w, y, &line);
         try std.testing.expect(std.mem.indexOf(u8, row, "close untried") == null);
         y_seen = y_seen or std.mem.indexOf(u8, row, "y ✓ it works") != null;
@@ -3692,8 +3696,8 @@ test "in a goals window every value starts at one x, and a bar's ends sit on the
     const g = &shot.grid;
     const r = bench.roles();
     const slot = shot.app.planSlot(.goals);
-    const x0: usize = slot.x;
-    const to = x0 + slot.w;
+    const x0: usize = slot.x + 1;
+    const to = slot.x + slot.w;
 
     const blocked = rowWith(g, slot, "blocked").?;
     const next = blocked - 1;
@@ -3713,8 +3717,8 @@ test "in a goals window every value starts at one x, and a bar's ends sit on the
     const driving = shot.app.planSlot(.driving);
     const dbar = rowWith(g, driving, "5/12").?;
     const dtitle = rowWith(g, driving, "menard goal").?;
-    try eq(driving.x + 2, g.find(dtitle, driving.x, driving.x + driving.w, "menard goal").?);
-    try eq(r.well, g.bgs[dbar][driving.x + 2]);
+    try eq(driving.x + 3, g.find(dtitle, driving.x, driving.x + driving.w, "menard goal").?);
+    try eq(r.well, g.bgs[dbar][driving.x + 3]);
     const dcount = g.find(dbar, driving.x, driving.x + driving.w, "5/12").?;
     try eq(r.well, g.bgs[dbar][dcount - 2]);
     try std.testing.expect(!std.meta.eql(r.well, g.bgs[dbar][dcount - 1]));
@@ -3731,11 +3735,12 @@ test "every Plan window has its ◆ title and its count in the same places, no �
         const slot = shot.app.planSlot(win);
         const ww = slot.w - 1;
         const named = if (win == .driving) sheets.drivingTitle(shot.app.board.?.plan().?, &shot.app.board.?) else win.title();
-        try eq(@as(u21, '◆'), g.cps[slot.y][slot.x + 1]);
-        try eq(slot.x + 3, g.find(slot.y, slot.x, slot.x + ww, named).?);
+        try eq(@as(u21, '┌'), g.cps[slot.y][slot.x]);
+        try eq(@as(u21, '◆'), g.cps[slot.y][slot.x + 3]);
+        try eq(slot.x + 5, g.find(slot.y, slot.x, slot.x + ww, named).?);
         try std.testing.expect(g.find(slot.y, slot.x, slot.x + ww, "▾") == null);
         if (win_plan.windowCount(&shot.app.board.?, shot.app.board.?.plan().?, win) != null) {
-            try eq(slot.x + 4 + cellCount(named), g.find(slot.y, slot.x, slot.x + ww, "▎").?);
+            try eq(slot.x + 6 + cellCount(named), g.find(slot.y, slot.x, slot.x + ww, "│").?);
         }
     }
     const driving = shot.app.planSlot(.driving);
@@ -3773,13 +3778,13 @@ test "a repo mark, a text line and a bar start on one column inside a window" {
     const g = &shot.grid;
     const now = shot.app.planSlot(.now);
     const flying = rowWith(g, now, "#701").?;
-    try std.testing.expect(g.cps[flying][now.x + 2] != ' ');
-    try eq(@as(u21, '▌'), g.cps[flying][now.x + 1]);
+    try std.testing.expect(g.cps[flying][now.x + 3] != ' ');
+    try eq(@as(u21, '▌'), g.cps[flying][now.x + 2]);
     const landed = shot.app.planSlot(.landed);
     const row = rowWith(g, landed, "#701").?;
-    try eq(@as(u21, '✓'), g.cps[row][landed.x + 2]);
+    try eq(@as(u21, '✓'), g.cps[row][landed.x + 3]);
     const unplanned = shot.app.planSlot(.unplanned);
-    try eq(unplanned.x + 2, g.find(rowWith(g, unplanned, "nothing to do").?, unplanned.x, unplanned.x + unplanned.w, "nothing to do").?);
+    try eq(unplanned.x + 3, g.find(rowWith(g, unplanned, "nothing to do").?, unplanned.x, unplanned.x + unplanned.w, "nothing to do").?);
 }
 
 test "home with no plan draws why, and the way back" {
@@ -3840,4 +3845,98 @@ test "driving and goals draw progress in one shape, N/M then a percent, ending t
         try eq(from_edge orelse gap, gap);
         from_edge = gap;
     }
+}
+
+const empty_plan =
+    \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}
+;
+
+/// The labels of the buttons in the foot of ticket `id`'s open card, `key label` each.
+fn cardFoot(app: *App, id: u32, out: [][]const u8, store: *[8][32]u8) ![][]const u8 {
+    app.home = .{ .focus = .plan, .detail = id };
+    const rect = app.modalRect().?;
+    var buttons: [16]App.ModalButton = undefined;
+    var n: usize = 0;
+    for (app.modalButtons(&buttons)) |b| {
+        if (b.y != rect.y + rect.h - 1) continue;
+        out[n] = try std.fmt.bufPrint(&store[n], "{s} {s}", .{ b.key, b.label });
+        n += 1;
+    }
+    return out[0..n];
+}
+
+test "a card's foot has only the buttons its ticket's state can use" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"repo":"arena","title":"try","status":"try","stage":"landed","checks":[{"n":1,"text":"it folds back","result":null}]},
+        \\{"id":2,"repo":"arena","title":"done","status":"done","checks":[{"n":1,"text":"it folds back","result":"ok"}]},
+        \\{"id":3,"repo":"arena","title":"todo","status":"todo"},
+        \\{"id":4,"repo":"arena","title":"later","status":"backlog"}],
+    ++ empty_plan ++ "}");
+    defer board.deinit();
+    var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 30;
+    app.roles = bench.roles();
+    var out: [8][]const u8 = undefined;
+    var store: [8][32]u8 = undefined;
+    const eq = std.testing.expectEqualStrings;
+
+    const tried = try cardFoot(&app, 1, &out, &store);
+    try std.testing.expectEqual(@as(usize, 4), tried.len);
+    try eq("y ✓ it works", tried[0]);
+    try eq("n ✗ it failed", tried[1]);
+    try eq("Y copy", tried[2]);
+    try eq("q close", tried[3]);
+
+    const done = try cardFoot(&app, 2, &out, &store);
+    try std.testing.expectEqual(@as(usize, 3), done.len);
+    try eq("< reopen", done[0]);
+    try eq("Y copy", done[1]);
+    try eq("q close", done[2]);
+
+    const todo = try cardFoot(&app, 3, &out, &store);
+    var edit = false;
+    for (todo) |label| edit = edit or std.mem.startsWith(u8, label, "e edit");
+    try std.testing.expect(edit);
+
+    const later = try cardFoot(&app, 4, &out, &store);
+    for (later) |label| try std.testing.expect(!std.mem.startsWith(u8, label, "p "));
+    try std.testing.expect(later.len >= 3);
+}
+
+test "with a card open, the middle column's top border is on the row of Plan's first window's" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1,"repo":"arena","title":"try","status":"todo"}],
+        \\"needs_you":[{"id":"push:1","kind":"push","ticket":1,"repo":"arena","text":"3 commits to push","actions":[{"key":"⏎","label":"push"}]}],
+    ++ empty_plan ++ "}");
+    defer board.deinit();
+    var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 30;
+    app.roles = bench.roles();
+    app.home = .{ .focus = .plan, .detail = 1 };
+    try std.testing.expectEqual(app.planSlot(.move).y, app.columnRect().?.y);
+}
+
+test "a one-column Plan draws in flight with one row three rows tall" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"plan":{"now":[{"ticket":9,"repo":"arena","title":"n","state":"building"}],"next":[],"goals":[],
+        \\"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer board.deinit();
+    var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 38;
+    app.roles = bench.roles();
+    app.home = .{ .alone = false, .focus = .plan };
+    app.side_folded = true;
+    try std.testing.expect(app.oneColumn());
+    try std.testing.expectEqual(@as(u16, 3), app.planSlot(.now).h);
 }

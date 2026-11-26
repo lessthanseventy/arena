@@ -43,8 +43,8 @@ pub fn planButtons(app: *const App, sheet: *const sheets.Sheet, at: usize, out: 
     var have: [12]CardAction = undefined;
     const actions = App.cardActions(card, &have);
     const order = [_]CardAction{ .go, .open, .give, .handoff, .edit, .priority, .close, .reopen, .to_todo, .to_next };
-    var x = rect.x + 2;
-    const right = rect.x + rect.w -| 2;
+    var x = rect.x + 3;
+    const right = rect.x + rect.w -| 3;
     var n: usize = 0;
     for (order) |action| {
         if (action != .open and std.mem.indexOfScalar(CardAction, actions, action) == null) continue;
@@ -135,8 +135,8 @@ pub fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.S
     const mine = sheet.span(win);
     const picked_at = if (lit) sheet.rowOf(view.plan_pick) else null;
     const focused = !app.columnFocused() and (if (picked_at) |at| sheet.rows[at].win == win else false);
-    try bench.window(w, r, rect.x, rect.y, ww, rect.h - 1, if (win == .driving) sheets.drivingTitle(given, &app.board.?) else win.title(), windowCount(&app.board.?, given, win), focused);
-    const bar = if (focused) r.raised else r.tile;
+    try bench.window(w, r, rect.x, rect.y, ww, rect.h, if (win == .driving) sheets.drivingTitle(given, &app.board.?) else win.title(), windowCount(&app.board.?, given, win), focused);
+    const bar = r.panel;
     if (whole) {
         try bench.say(w, rect.x + ww - 10, rect.y, "q close", r.dim, bar, false);
     }
@@ -144,7 +144,7 @@ pub fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.S
     if (win == .goals and !whole) try win_goals.frame(app, w, r);
     if (win == .driving) try win_driving.frame(app, w, r, rect, ww, bar);
     if (lit) {
-        const text_area: grab_mod.Area = .{ .x = rect.x, .y = rect.y + 1, .w = @intCast(ww), .h = @intCast(body) };
+        const text_area: grab_mod.Area = .{ .x = rect.x + 1, .y = rect.y + 1, .w = @intCast(ww - 2), .h = @intCast(body) };
         if (whole) app.grab.window(text_area) else app.grab.pane(text_area);
         bench.tap = .{ .grab = &app.grab, .gpa = app.gpa };
     }
@@ -152,12 +152,12 @@ pub fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.S
     for (0..body) |line| {
         const at = if (lit) planRowOnLine(app, sheet, win, body, line) else line;
         if (at >= mine.len) break;
-        try benchPlanRow(app, w, r, sheet, mine.start + at, rect.y + 1 + @as(u16, @intCast(line)), rect.x, ww, lit);
+        try benchPlanRow(app, w, r, sheet, mine.start + at, rect.y + 1 + @as(u16, @intCast(line)), rect.x + 1, ww - 2, lit);
     }
 }
 
-/// The row at `at` of the plan, drawn on row `y`, in a window one cell in from the board's left
-/// edge and short of its right by the shadow.
+/// The row at `at` of the plan, drawn on row `y`, in the `ww` cells from `x0` between a
+/// window's side borders.
 pub fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, at: usize, y: u16, x0: usize, ww: usize, lit: bool) !void {
     const b = &app.board.?;
     const given = b.plan().?;

@@ -364,6 +364,8 @@ pub const HomeView = struct {
     /// The ticket whose whole detail is shown over the board, and how far down it is scrolled.
     detail: ?u32 = null,
     detail_scroll: usize = 0,
+    /// A landed ticket's body is unfolded: it is one `space` away behind its checks.
+    body_open: bool = false,
 
     /// The option of the modal's open ask that ⏎ answers, from 1.
     ask_pick: u8 = 1,
@@ -1734,16 +1736,13 @@ pub const App = struct {
     }
 
     /// The middle column: what every box opened from Plan is drawn in, beside the orchestrator
-    /// and never over it, under Your move while the open ticket is one of its items.
+    /// and never over it, from Plan's first window's row down.
     pub fn columnRect(app: *const App) ?ModalRect {
-        const view = app.home orelse return null;
+        if (app.home == null) return null;
         const room = app.columnRoom();
         const width = detailWidth(room);
         const takes = app.columnTakesPlan();
-        const top: u16 = if (takes) 0 else if (view.detail) |id| if (app.needsYouOn(id)) below: {
-            const move = app.planSlot(.move);
-            break :below move.y + move.h;
-        } else first_line else first_line;
+        const top: u16 = if (takes) 0 else app.planArea().y;
         const bottom = if (takes) app.view_h -| 1 else app.view_h -| 2;
         if (bottom < top + 3 or width.inner == 0) return null;
         const x = if (app.boardW() < room) app.boardW() else (room -| width.box) / 2;
@@ -3176,6 +3175,7 @@ pub const App = struct {
         try app.detail_asked.append(app.gpa, id);
         view.detail = id;
         view.detail_scroll = 0;
+        view.body_open = false;
         view.ask_pick = 1;
         view.check_pick = 1;
         view.sub_pick = 0;
@@ -3226,7 +3226,8 @@ pub const App = struct {
         const inner = detailWidth(app.columnRoom()).inner;
         if (app.home) |view| if (view.gate) return gateOutputRows(gateOutput(gateLastRun(app.detail.items)), inner);
         var n: usize = 0;
-        var lines = DetailLines.init(if (app.detail.items.len > 0) app.detail.items else "…", inner);
+        const body_folded = if (app.modalCard()) |card| card.status == .done and !app.home.?.body_open else false;
+        var lines = DetailLines.init(if (body_folded) "space more" else if (app.detail.items.len > 0) app.detail.items else "…", inner);
         while (lines.next()) |_| n += 1;
         if (app.modalCard()) |card| if (card.stage_note.len > 0) {
             var note = DetailLines.init(card.stage_note, inner);
@@ -3425,7 +3426,7 @@ pub const App = struct {
         var backlog: usize = 0;
         for (b.backlog()) |*card| backlog += @intFromBool(!card.isEpic());
         const rect = app.planRect(.unplanned);
-        return sheets.chipsAt(given, backlog, rect.x + 2, rect.w -| 4, out);
+        return sheets.chipsAt(given, backlog, rect.x + 3, rect.w -| 6, out);
     }
 
     /// `sheet` narrowed to the plan's repo and to what the find line holds.
@@ -3504,10 +3505,28 @@ pub const App = struct {
         return .{ .x = 1, .y = 2, .w = app.boardW() -| 2, .h = (app.view_h -| @intFromBool(app.oneColumn())) -| 2 };
     }
 
-    /// Where `win` is on the screen: its title bar, body and shadow.
+    /// The rows each window holds, as the one column sizes its windows by: what a pick adds to
+    /// next's or a card's rows is left out, so picking moves nothing. Zero outside one column.
+    fn planRows(app: *const App) sheets.Rows {
+        var rows = sheets.Rows.initFill(0);
+        if (!app.oneColumn()) return rows;
+        const b = &app.board.?;
+        var sheet: sheets.Sheet = undefined;
+        var repos: [max_repos][]const u8 = undefined;
+        sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, app.home.?.unfolded, true, app.workbench(), app.planSee(&repos));
+        app.narrowPlan(&sheet);
+        sheet.withButtons(app.plan_open);
+        sheet.withHeld(b.plan().?, KnownPanes{ .app = app });
+        var others: [max_others]Agent = undefined;
+        sheet.withOthers(app.otherClaudes(&others).len, app.findText());
+        for (std.enums.values(sheets.Window)) |win| rows.set(win, sheet.span(win).len);
+        return rows;
+    }
+
+    /// Where `win` is on the screen: its top border, body and bottom border.
     pub fn planSlot(app: *const App, win: sheets.Window) sheets.Rect {
         const area = app.planArea();
-        const at = sheets.slot(win, area.w, area.h, app.oneColumn());
+        const at = sheets.slot(win, area.w, area.h, app.oneColumn(), app.planRows());
         return .{ .x = area.x + at.x, .y = area.y + at.y, .w = at.w, .h = at.h };
     }
 
@@ -4487,16 +4506,19 @@ pub const App = struct {
     };
 
     /// The actions `card` has: go while a proposal is open on it, a Claude holds it or it can be
-    /// started, no beside a proposal, give while it is free to claim, close while still to
-    /// do and reopen once done, to todo while in the backlog, and edit and priority always.
+    /// started, no beside a proposal, give while it is free to claim, close while still to do or
+    /// in the backlog and reopen once done, to todo while in the backlog, and edit and priority
+    /// until it is tried or done (a backlog ticket has no priority). A ticket to try or done keeps
+    /// only what its state can use.
     pub fn cardActions(card: *const tickets.Card, out: *[12]CardAction) []CardAction {
         var n: usize = 0;
+        const open = card.status != .@"try" and card.status != .done;
         const all = [_]struct { CardAction, bool }{
-            .{ .go, card.proposal != null or card.holder() != null or givable(card) }, .{ .no, card.proposal != null },
-            .{ .give, givable(card) },                                                 .{ .edit, true },
-            .{ .priority, true },                                                      .{ .close, card.status == .todo },
-            .{ .reopen, card.status == .done },                                        .{ .to_todo, card.status == .backlog },
-            .{ .to_next, card.status == .todo },                                       .{ .handoff, card.status == .doing and card.holder() != null },
+            .{ .go, open and (card.proposal != null or card.holder() != null or givable(card)) }, .{ .no, card.proposal != null },
+            .{ .give, givable(card) },                                                            .{ .edit, open },
+            .{ .priority, open and card.status != .backlog },                                     .{ .close, card.status == .todo or card.status == .backlog },
+            .{ .reopen, card.status == .done },                                                   .{ .to_todo, card.status == .backlog },
+            .{ .to_next, card.status == .todo },                                                  .{ .handoff, card.status == .doing and card.holder() != null },
         };
         for (all) |pair| if (pair[1]) {
             out[n] = pair[0];
@@ -4595,14 +4617,6 @@ pub const App = struct {
         return app.columnRect();
     }
 
-    /// Whether Plan's Your move is shown with an item of ticket `id`: its card opens under it, so
-    /// every item stays in sight.
-    fn needsYouOn(app: *const App, id: u32) bool {
-        if (!app.workbench() or !app.planShown()) return false;
-        for (app.board.?.needsYou()) |need| if (need.ticket == id) return true;
-        return false;
-    }
-
     /// What a card's modal says of it above its body, a line each.
     pub const CardHead = struct {
         pub const Kind = enum { plain, dim, warn, options, check, sub, shell };
@@ -4689,6 +4703,10 @@ pub const App = struct {
             head.options = head.n;
             for (0..@min(ask.options.len, max_ask_options) + @intFromBool(words)) |_| head.add(.options, "", .{});
         }
+        if (card.status == .done) for (card.checks) |check| {
+            const sign: []const u8 = if (check.result) |result| (if (std.mem.eql(u8, result, "ok")) "✓" else "✗") else "·";
+            head.add(.dim, "{s} {d} {s}", .{ sign, check.n, check.text });
+        };
         if (card.status == .@"try" and card.checks.len > 0) {
             var tried: usize = 0;
             for (card.checks) |check| tried += @intFromBool(check.result != null);
@@ -4815,6 +4833,7 @@ pub const App = struct {
                     .priority => "p",
                     .close => ">",
                     .reopen => "<",
+                    .to_todo => "t",
                     else => continue,
                 };
                 const button: ModalButton = .{ .action = .{ .card = action }, .key = key, .label = action.label(), .x = x, .y = foot };
@@ -4822,6 +4841,14 @@ pub const App = struct {
                 out[n] = button;
                 n += 1;
                 x += button.width() + 1;
+            }
+            if (card.status == .done and n < out.len) {
+                const button: ModalButton = .{ .action = .copy_check, .key = "Y", .label = "copy", .x = x, .y = foot };
+                if (x + button.width() <= right) {
+                    out[n] = button;
+                    n += 1;
+                    x += button.width() + 1;
+                }
             }
             if (app.claudeOf(card) != null and n < out.len) {
                 const button: ModalButton = .{ .action = .claude, .key = app.claudeKey(card), .label = "its Claude", .x = x, .y = foot };
@@ -4936,6 +4963,7 @@ pub const App = struct {
             },
             .copy_check => {
                 const card = app.modalCard() orelse return;
+                if (card.status == .done) return app.copyText(app.detail.items);
                 try app.copyText((pickedCheck(card, view.check_pick) orelse return).text);
             },
             .tried_no => {
@@ -4978,7 +5006,13 @@ pub const App = struct {
         const is = anyKey;
         const was_withdrawing = view.withdrawing;
         view.withdrawing = false;
+        if (!view.gate and is(key, &.{" "})) if (app.modalCard()) |card| if (card.status == .done) {
+            view.body_open = !view.body_open;
+            view.detail_scroll = 0;
+            return;
+        };
         if (is(key, &.{ "\x1b", "q", " " })) return app.pressModal(.close);
+        if (!view.gate and is(key, &.{"Y"})) if (app.modalCard()) |card| if (card.status == .done) return app.pressModal(.copy_check);
         if (!view.gate) if (app.modalCard()) |card| if (card.status == .@"try" and card.checks.len > 0) {
             if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) {
                 view.check_pick = @intCast(@min(view.check_pick + 1, card.checks.len));
@@ -6762,9 +6796,10 @@ pub fn waited(buf: []u8, secs: i64) []const u8 {
     return (if (s < 60) std.fmt.bufPrint(buf, "{d}s", .{s}) else if (s < 3600) std.fmt.bufPrint(buf, "{d}m", .{@divFloor(s, 60)}) else if (s < 86400) std.fmt.bufPrint(buf, "{d}h", .{@divFloor(s, 3600)}) else std.fmt.bufPrint(buf, "{d}d", .{@divFloor(s, 86400)})) catch "";
 }
 
-/// The detail box's width, and the text's within its border.
+/// The detail box's width, and the text's within its border: what the room leaves Plan its
+/// least, or the whole room where there is not enough for both.
 pub fn detailWidth(view_w: u16) struct { box: u16, inner: u16 } {
-    const box = @min(view_w -| 4, 100);
+    const box = @min(if (view_w < App.column_beside_plan) view_w -| 4 else view_w - App.plan_min, 100);
     return .{ .box = box, .inner = box -| 4 };
 }
 

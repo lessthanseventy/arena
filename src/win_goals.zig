@@ -72,7 +72,6 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             try bench.fill(w, x0, y, ww, r.panel);
             const cx = x0 + 1;
             const cw = ww - 2;
-            try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
             switch (row.kind) {
                 .card_top => try bench.bevel(w, cx, y, cw, if (card_picked) r.text.mix(face, 0.5) else r.raised, face),
                 .goal => {

@@ -44,7 +44,6 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             _ = try bench.chipInk(w, r, chip_x, y, label, if (first == null) r.landed else r.dim, if (first == null) r.text else r.dim, false);
             if (item.pinned()) try bench.say(w, chip_x -| 2, y, "\u{f08d}", r.accent, bg, false);
             try sayCut(w, title_x, y, item.title, chip_x -| title_x -| 1 -| pin_w, if (row.dim) r.dim else r.text, bg, false);
-            try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
         },
         else => {},
     }

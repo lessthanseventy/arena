@@ -38,8 +38,8 @@ pub fn draftBox(app: *const App, w: *Writer) !void {
     var head: [32]u8 = undefined;
     const title = std.fmt.bufPrint(&head, "☐ draft #{d}", .{epic}) catch "draft";
     if (app.roles) |r| {
-        try bench.window(w, r, rect.x, rect.y, rect.w - 1, rect.h, title, null, true);
-        try bench.say(w, rect.x + rect.w - 4, rect.y, "✕", r.text, r.raised, true);
+        try bench.window(w, r, rect.x, rect.y, rect.w - 1, rect.h + 1, title, null, true);
+        try bench.say(w, rect.x + rect.w - 4, rect.y, "×", r.text, r.panel, true);
     } else {
         const edge = ink(app, "amber", 4);
         var pen: Pen = .{};
@@ -214,8 +214,8 @@ pub fn autoBox(app: *const App, w: *Writer) !void {
     const hint = " j k pick   + - step   a auto   H hold   esc close ";
     const working = std.fmt.bufPrint(&line, "working {d} of {d}", .{ state.working, state.cap }) catch "";
     if (app.roles) |r| {
-        try bench.window(w, r, rect.x, rect.y, rect.w - 1, rect.h, "auto", null, true);
-        try bench.say(w, rect.x + rect.w - 4, rect.y, "✕", r.text, r.raised, true);
+        try bench.window(w, r, rect.x, rect.y, rect.w - 1, rect.h + 1, "auto", null, true);
+        try bench.say(w, rect.x + rect.w - 4, rect.y, "×", r.text, r.panel, true);
         _ = try bench.toggle(w, r, x0, rect.y + 1, "auto", on, r.panel);
         try bench.say(w, x0 + 10, rect.y + 1, if (on) "on" else "off", if (on) r.accent else r.dim, r.panel, pick == 0);
         try bench.say(w, x0, rect.y + 2, working, r.dim, r.panel, false);
@@ -301,8 +301,8 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
     var tbuf: [48]u8 = undefined;
     const card = app.modalCard();
     const title = std.fmt.bufPrint(&tbuf, "#{d} \u{b7} {s}", .{ id, if (card) |it| it.repo orelse "no repo" else "" }) catch "";
-    try bench.window(w, r, rect.x, rect.y, rect.w - 1, rect.h, title, null, true);
-    try bench.say(w, rect.x + rect.w - 4, rect.y, "✕", r.text, r.raised, true);
+    try bench.window(w, r, rect.x, rect.y, rect.w - 1, rect.h + 1, title, null, true);
+    try bench.say(w, rect.x + rect.w - 4, rect.y, "×", r.text, r.panel, true);
 
     var head: App.CardHead = .{};
     if (card) |it| app.modalHead(it, inner, app.askWords(it) != null, &head);
@@ -370,11 +370,12 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
         y += 1;
     }
 
-    const text = if (app.detail.items.len > 0) app.detail.items else "…";
+    const folded = if (card) |it| it.status == .done and !app.home.?.body_open else false;
+    const text = if (folded) "space more" else if (app.detail.items.len > 0) app.detail.items else "…";
     var row: usize = 0;
     const parts = [2]struct { text: []const u8, fg: color.RGB }{
         .{ .text = if (card) |it| it.stage_note else "", .fg = r.dim },
-        .{ .text = text, .fg = r.text },
+        .{ .text = text, .fg = if (folded) r.dim else r.text },
     };
     for (parts) |part| {
         if (part.text.len == 0) continue;
@@ -411,7 +412,7 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
         if (button.action != .close) primary = false;
         end = button.x + button.width() + 1;
     }
-    const hint = " j k scroll ";
+    const hint = if (card) |it| (if (it.status != .done) " j k scroll " else if (folded) " space more " else " space less ") else " j k scroll ";
     if (end + cellCount(hint) < rect.x + rect.w - 2) try bench.say(w, end, foot, hint, r.dim, r.panel, false);
 }
 

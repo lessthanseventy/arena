@@ -37,7 +37,6 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             var buf: [32]u8 = undefined;
             const follow = std.fmt.bufPrint(&buf, "· {d} follow-ups", .{not.follow_ups}) catch "";
             if (x + cellCount(follow) < x0 + ww) try bench.say(w, x, y, follow, r.dim, bg, false);
-            try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
         },
         .chips => {
             try bench.fill(w, x0, y, ww, bg);
@@ -65,7 +64,6 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
                 if (i + 1 == chips_n) break chips_buf[i].x + chips_buf[i].w + 2;
             } else x0 + 2;
             if (after > used) try bench.say(w, after, y, follow, r.dim, bg, false);
-            try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
         },
         .todo, .backlog => {
             const card = app.cardById(row.ticket orelse return) orelse return;
@@ -88,7 +86,6 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             const dim = card.blocked_by.len > 0;
             try bench.say(w, label_x, y, label, if (dim) r.dim else if (std.mem.eql(u8, card.priority, "high")) r.you else r.dim, bg, false);
             try draw.sayCut(w, title_x, y, card.title, label_x -| title_x -| 1, if (dim) r.dim else r.text, bg, false);
-            try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
         },
         else => {},
     }

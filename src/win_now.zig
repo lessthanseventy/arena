@@ -76,7 +76,6 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             try bench.say(w, age_x, y, age, r.dim, bg, false);
             try bench.say(w, place_x, y, place, r.dim, bg, false);
             try sayCut(w, x0 + 7, y, win.label(), place_x -| (x0 + 8), r.text, bg, false);
-            try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
         },
         else => {},
     }
