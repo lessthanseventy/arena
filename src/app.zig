@@ -4620,6 +4620,15 @@ pub const App = struct {
             for (card.blocked_by) |id| wr.print(" #{d}", .{id}) catch {};
             head.add(.dim, "{s}", .{wr.buffered()});
         }
+        if (card.clash) |said| head.add(.warn, "◷ {s}", .{said});
+        for (card.overlaps) |overlap| {
+            wr = .fixed(&meta);
+            for (overlap.files, 0..) |file, i| wr.print("{s}{s}", .{ if (i > 0) ", " else "", file }) catch {};
+            if (overlap.worse())
+                head.add(.warn, "⚠ overlaps #{d}: {s} · lines, a conflict is likely", .{ overlap.ticket, wr.buffered() })
+            else
+                head.add(.dim, "overlaps #{d}: {s} · file", .{ overlap.ticket, wr.buffered() });
+        }
         if (card.proposal) |proposal| head.add(.warn, "▲ proposed: {s}", .{proposal.why});
         if (card.ask) |ask| {
             head.add(.warn, "▲ asks: {s}", .{ask.question});
@@ -7387,6 +7396,33 @@ test "a session shows the review state that most wants looking at" {
     try std.testing.expectEqual(Review.queued, App.sessionReview(&s));
     a.review = .changes;
     try std.testing.expectEqual(Review.changes, App.sessionReview(&s));
+}
+
+test "a card's modal says its overlaps, lines marked worse than file, and a todo card's clash" {
+    var overlaps = [_]tickets.Overlap{
+        .{ .ticket = 7, .kind = "lines", .files = &.{"src/draw.zig"} },
+        .{ .ticket = 8, .kind = "file", .files = &.{"src/app.zig"} },
+    };
+    const doing: tickets.Card = .{ .id = 1, .title = "A", .status = .doing, .overlaps = &overlaps };
+    var head: App.CardHead = undefined;
+    App.cardHead(&doing, 80, 0, false, &head);
+    var seen: usize = 0;
+    for (head.lines[0..head.n], head.kinds[0..head.n]) |line, kind| {
+        if (std.mem.indexOf(u8, line, "overlaps #7: src/draw.zig") != null) {
+            try std.testing.expect(kind == .warn);
+            seen += 1;
+        }
+        if (std.mem.indexOf(u8, line, "overlaps #8: src/app.zig") != null) {
+            try std.testing.expect(kind == .dim);
+            seen += 1;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 2), seen);
+    const todo: tickets.Card = .{ .id = 2, .title = "B", .status = .todo, .clash = "waiting for #7: src/a.zig" };
+    App.cardHead(&todo, 80, 0, false, &head);
+    var clash = false;
+    for (head.lines[0..head.n]) |line| clash = clash or std.mem.indexOf(u8, line, "waiting for #7: src/a.zig") != null;
+    try std.testing.expect(clash);
 }
 
 test "a card's modal lists every option of its ask and its words, and ⏎ answers the lit one" {

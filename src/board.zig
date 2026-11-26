@@ -17,6 +17,19 @@ pub const Ask = struct {
     asked_at: ?[]const u8 = null,
 };
 
+/// An open ticket of the same repo that edits the same files: `kind` is `lines` where the hunks
+/// meet (a conflict is likely) or `file` where only the file is shared.
+pub const Overlap = struct {
+    ticket: u32,
+    kind: []const u8 = "file",
+    files: []const []const u8 = &.{},
+
+    /// Whether the hunks meet, which is worse than sharing a file.
+    pub fn worse(o: Overlap) bool {
+        return std.mem.eql(u8, o.kind, "lines");
+    }
+};
+
 /// One step of a to-try ticket: `result` is null until tried, then `ok` or `no`.
 pub const Check = struct {
     n: u32,
@@ -82,6 +95,9 @@ pub const Card = struct {
     checks: []Check = &.{},
     landed_at: ?[]const u8 = null,
     waiting_on: ?WaitingOn = null,
+    overlaps: []Overlap = &.{},
+    /// For a todo card whose body names a path an open ticket edits: `waiting for #N: src/a.zig`.
+    clash: ?[]const u8 = null,
 
     /// Whether it is an epic: a goal over other tickets, which no session ever holds.
     pub fn isEpic(card: *const Card) bool {
@@ -370,6 +386,12 @@ pub const Board = struct {
                 wait.@"for" = try cleanLine(arena, words);
             };
             for (card.checks) |*check| check.text = try cleanLine(arena, check.text);
+            if (card.clash) |words| card.clash = try cleanLine(arena, words);
+            for (card.overlaps) |*overlap| {
+                const files = try arena.alloc([]const u8, overlap.files.len);
+                for (overlap.files, files) |file, *slot| slot.* = try cleanLine(arena, file);
+                overlap.files = files;
+            }
         }
         for (parsed.value.backlog) |*card| card.title = try cleanLine(arena, card.title);
         for (parsed.value.needs_you) |*need| {
@@ -901,6 +923,21 @@ test "the repos are each named once, in order" {
     try std.testing.expectEqual(@as(usize, 2), n);
     try std.testing.expectEqualStrings("arena", out[0]);
     try std.testing.expectEqualStrings("tlon", out[1]);
+}
+
+test "overlaps and clash come from the board json, and a clash is one clean line" {
+    var b = try Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1,"title":"A","status":"doing","overlaps":[{"ticket":7,"kind":"lines","files":["src/draw.zig","src/app.zig"]}]},
+        \\{"id":2,"title":"B","status":"todo","clash":"waiting for #7:\u001b[31m src/a.zig\n"},
+        \\{"id":3,"title":"C","status":"todo"}]}
+    );
+    defer b.deinit();
+    const cards = b.cards();
+    try std.testing.expectEqual(@as(usize, 1), cards[0].overlaps.len);
+    try std.testing.expect(cards[0].overlaps[0].worse());
+    try std.testing.expectEqualStrings("src/app.zig", cards[0].overlaps[0].files[1]);
+    try std.testing.expectEqualStrings("waiting for #7: src/a.zig ", cards[1].clash.?);
+    try std.testing.expect(cards[2].clash == null and cards[2].overlaps.len == 0);
 }
 
 test "waiting_on says whom a card or a now row waits on, ticket or words" {

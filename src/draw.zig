@@ -1902,6 +1902,7 @@ pub fn benchState(app: *const App, card: *const tickets.Card, r: theme.Roles, bu
         const said = cardStage(app, card, 0, stage, &inner);
         return .{ .label = std.fmt.bufPrint(buf, "{s} {s}", .{ mark, said }) catch said, .lead = lead, .words = r.text, .filled = false };
     }
+    if (card.clash) |words| return .{ .label = std.fmt.bufPrint(buf, "◷ {s}", .{words}) catch "◷ clash", .lead = r.dim, .words = r.dim, .filled = false };
     if (card.blocked_by.len > 0) return .{ .label = std.fmt.bufPrint(buf, "\u{f0c1} waits #{d}", .{card.blocked_by[0]}) catch "waits", .lead = r.dim, .words = r.dim, .filled = false };
     if (card.status == .doing) return if (card.holder() != null)
         .{ .label = "\u{f013} building", .lead = r.building, .words = r.text, .filled = false }
@@ -2691,6 +2692,11 @@ fn lookBox(app: *App, w: *Writer, look: App.Look) !void {
             blocks = true;
         };
         if (rw.end > 0) p.add(.dim, "{s}", .{rw.buffered()});
+        if (card.clash) |said| p.add(.dim, "◷ {s}", .{said});
+        for (card.overlaps) |overlap| {
+            const first: []const u8 = if (overlap.files.len > 0) overlap.files[0] else "";
+            if (overlap.worse()) p.add(.plain, "⚠ overlaps #{d}: {s} · lines", .{ overlap.ticket, first }) else p.add(.dim, "overlaps #{d}: {s} · file", .{ overlap.ticket, first });
+        }
         const since: u32 = if (tickets.epochOf(card.stage_at orelse card.claimed_at)) |e| @intCast(@max(0, e)) else 0;
         const age = ago(&age_buf, app.epoch, since);
         const gap: []const u8 = if (age.len > 0) " · " else "";
