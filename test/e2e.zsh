@@ -145,10 +145,8 @@ outer_pid=$(outer display -p '#{pid}')
 # what arena writes, for what a picture of the screen does not show
 outer pipe-pane -t o "cat >$tmp/raw"
 
-check "the strip shows, the first column flush against the rail" see '^╭─ sessions ─+╮ ╭─ 1 one '
-foot() { local s=$(screen); [[ $(sed -n 3p <<<$s) == '│ alpha '* && $(sed -n 4p <<<$s) == '│ beta '* && $(sed -n 20p <<<$s) == ├─*┤* && $(sed -n 21p <<<$s) == '│ + new '* && $(sed -n 22p <<<$s) == '│ ≡ menu '* ]] }
-check "the rail keeps + new and the menu at its foot" await foot
-dots() { local s=$(screen); [[ $(sed -n 23p <<<$s) == ╰* && $(sed -n 24p <<<$s) =~ "[^ ]+ +$1 │ s go to  ≡" ]] }
+check "the strip shows, its first column at the screen's left edge" see '^╭─ 1 one '
+dots() { local s=$(screen); [[ $(sed -n 23p <<<$s) == *[╰╯]* && $(sed -n 24p <<<$s) =~ "[^ ]+ +$1 │ s go to  ≡" ]] }
 check "a row of its own under the strip has a dot per window, centred on it" await dots '●○○'
 # the column, from 1, where $1 starts on the screen's last row
 col() { local l=$(settled | sed -n 24p); local pre=${l%%$1*}; print $(( ${#pre} + 1 )) }
@@ -209,19 +207,16 @@ see '^NORMAL'
 mouse 0 60 10 M
 mouse 0 60 10 m
 check "a click on a pane is insert" gone '^NORMAL'
-mouse 0 5 3 M
-mouse 0 5 3 m
-check "a click on the rail is normal" see '^NORMAL'
 key -l i
 
 # j and k in normal mode step to the session below and above, and stay in normal
 key C-Space
 see '^NORMAL'
 key -l j
-check "in normal mode j goes to the next session" await shows '^│[ ▌]beta'
+check "in normal mode j goes to the next session" await shows '^╭─ 1 solo '
 check "and the keys are written under the strip" await shows '^NORMAL .*j k session'
 key -l k
-check "k goes back" await shows '^│[ ▌]alpha'
+check "k goes back" await shows '^╭─ 1 one '
 
 # the switcher: s lists the Claudes, the sessions and + new session; Enter on a session goes there
 key -l s
@@ -229,7 +224,7 @@ check "s opens the switcher" see '→ Go to'
 check "it lists the sessions in tmux's order, then + new session" see "alpha +[0-9]+ windows?"
 key -l j
 key Enter
-check "Enter on a session goes there, in insert" await shows '^│[ ▌]beta'
+check "Enter on a session goes there, in insert" await shows '^╭─ 1 solo '
 check "and the switcher is closed" gone '→ Go to'
 key C-Space
 see '^NORMAL'
@@ -245,7 +240,7 @@ key Escape
 key C-Space
 see '^NORMAL'
 key -l k
-await shows '^│[ ▌]alpha'
+await shows '^╭─ 1 one '
 key -l i
 
 # A tmux with the pixels patch gives arena's terminal cells of 9x19 pixels, as a real one has.
@@ -262,12 +257,6 @@ if poll outer_cells; then
 else
   print "skip  the terminal's cell size in pixels reaches the panes: this tmux has no pixels patch"
 fi
-
-inner new-session -d sh
-last() { screen | sed -n 5p | grep -qE '^│ [0-9]+ +1 │' }
-check "a new session goes under the others in the rail" await last
-inner kill-session -t "$(inner list-sessions -F '#{session_name}' | grep -E '^[0-9]+$')"
-gone '^│ [0-9]+ +1 │'
 
 wrote_bytes() { grep -qaF -- "$1" $tmp/raw }
 print -rn -- $'\ePtmux;\e\e_Ga=T,f=24,s=1,v=1,i=66051,U=1,q=2;AAAA\e\e\\\e\\\e[38;2;1;2;3m\U0010EEEE̅̅\e[m\n' >$tmp/picture
@@ -310,7 +299,7 @@ inner send-keys -t alpha:two clear Enter
 
 print -rn -- $'\e[?1000h\e[?1016h' >$tmp/pixels
 inner send-keys -t alpha:one "stty -echo -icanon; cat $tmp/pixels; head -c 11 | od -c; printf '\\033[?1016l\\033[?1000l'; stty sane" Enter
-await shows '╭─ sessions ─+╮ ╭─ 1 one '
+await shows '^╭─ 1 one '
 mousing() { [[ $(inner display -p -t $1 '#{mouse_standard_flag}') == 1 ]] }
 await mousing alpha:one
 # the pane's third column, second row: its frame starts at the title's corner
@@ -328,7 +317,7 @@ inner send-keys -t alpha:one clear Enter
 print -rn -- $'\e[?1000h\e[?1006h' >$tmp/clicks
 inner send-keys -t alpha:two "stty -echo -icanon; cat $tmp/clicks; timeout 2 cat -v; printf '\\033[?1006l\\033[?1000l'; stty sane" Enter
 await mousing alpha:two
-# a capture taken mid-frame can lack the title, and index's 0 would click the rail
+# a capture taken mid-frame can lack the title, and index's 0 would click nothing
 titled() { two=$(screen | awk 'NR == 1 { print index($0, "╭─ 2 two") }'); (( two > 0 )) }
 check "window two's title is on the top line, to click under" await titled
 two=$((two + 3))
@@ -372,36 +361,29 @@ check "and the program is not sent the click" unclicked
 zselect -t 350
 inner send-keys -t alpha:two clear Enter
 key M-h
-see '^╭─ sessions ─+╮ ╭─ 1 one '
+see '^╭─ 1 one '
 
 wide() { [[ $(inner display -p -t alpha:one '#{window_width} #{@arena_width}') == $1 ]] }
 # a ; that ends an argument ends the command for tmux, unless escaped
 key -l $'\e\\;'
-check "Alt+; makes the window narrower" see '╭─ 1 one ─{49}╮'
-check "and tmux has it that wide, and keeps the width" await wide '57 70'
+check "Alt+; makes the window narrower" see '╭─ 1 one ─{75}╮'
+check "and tmux has it that wide, and keeps the width" await wide '83 70'
 key "M-'"
-check "Alt+' makes it wider" see '╭─ 1 one ─{57}╮'
+check "Alt+' makes it wider" see '╭─ 1 one ─{87}╮'
 
 windows() { [[ $(inner list-windows -t $1 -F '#{window_name}' | tr '\n' ' ') == "$2 " ]] }
-mouse 0 41 1 M
+mouse 0 4 1 M
 mouse 32 111 1 M
 mouse 32 113 1 M
 mouse 32 116 1 M
 mouse 0 116 1 m
 check "a title dropped on another column takes its place, and goes no further" await windows alpha 'two one three'
 see '─╮ ╭─ 2 one '
-mouse 0 49 1 M
-mouse 32 39 1 M
-mouse 0 39 1 m
+mouse 0 12 1 M
+mouse 32 2 1 M
+mouse 0 2 1 m
 check "and back" await windows alpha 'one two three'
-see '^╭─ sessions ─+╮ ╭─ 1 one '
-mouse 0 41 1 M
-mouse 32 5 4 M
-mouse 0 5 4 m
-check "a title dropped on a session of the rail sends its window there" await windows beta 'solo one'
-inner move-window -s beta:one -t alpha:0
-inner select-window -t alpha:one
-see '^╭─ sessions ─+╮ ╭─ 1 one '
+see '^╭─ 1 one '
 
 key M-l
 check "Alt+l focuses the next window, its neighbour peeking" see '─╮ ╭─ 2 two ─'
@@ -447,22 +429,23 @@ check "a pane showing lines like tmux's own replies is drawn whole" see '│%beg
 key M-k
 see '╭─ 2 two '
 
-rail() { [[ $(screen | sed '/├─ agents/q' | grep -oE '^│ (alpha|beta) ' | tr -d '│ \n') == $1 ]] }
 order() { [[ $(inner list-sessions -F '#{@arena_order}#{session_name}' | sort | tr -d '\n') == $1 ]] }
 key M-J
-check "Alt+J moves the session down the rail" await rail betaalpha
-check "and its place is kept in tmux" await order 1beta2alpha
+check "Alt+J moves the session down, and its place is kept in tmux" await order 1beta2alpha
 key M-K
-check "Alt+K moves it up" await rail alphabeta
+check "Alt+K moves it up" await order 1alpha2beta
 
 sessions() { [[ $(inner list-sessions | wc -l) -eq $1 ]] }
-mouse 0 5 21 M
-mouse 0 5 21 m
-check "a click on + new makes a session" await sessions 3
-see '│.[0-9]+ +1 │'
-mouse 1 5 5 M
-mouse 1 5 5 m
-check "a middle click on a session asks before closing it" see 'Close session [0-9]+\?'
+normal; key -l s
+see '→ Go to'
+key -l jj
+key Enter
+check "Enter on the switcher's + new session makes a session" await sessions 3
+normal; key -l s
+see '→ Go to'
+key -l jj
+key -l x
+check "x on a session of the switcher asks before closing it" see 'Close session [0-9]+\?'
 key y
 check "and closes it" await sessions 2
 key M-k
@@ -537,15 +520,15 @@ check "a step back from the last column lands where tmux puts it" see ' Y│$'
 claude() { print -r -- ${3:-'{}'} | TMUX="$(inner display -p '#{socket_path}'),0,0" TMUX_PANE=$1 sh $root/hooks/claude-state.sh $2 }
 inner send-keys -t alpha:one 'echo news' Enter
 zselect -t 250
-check "output alone marks nothing in the rail" shows '│ alpha +3 │'
+check "output alone marks no window" await dots '○●○'
 claude alpha:one prompt
-check "a Claude working marks its session ◐" see '│ alpha +◐ +3 │'
+check "a Claude working marks its window's dot ◐" await dots '◐●○'
 claude alpha:one stop '{"background_tasks": [{"id": "b1", "status": "running"}]}'
-check "between turns, with work in the background, ◔" see '│ alpha +◔ +3 │'
+check "between turns, with work in the background, ◔" await dots '◔●○'
 claude alpha:one stop '{"last_assistant_message": "\"status\": \"running\"", "background_tasks": []}'
-check "done and not looked at, ◉, whatever its last words say" see '│ alpha +◉ +3 │'
+check "done and not looked at, ◉, whatever its last words say" await dots '◉●○'
 claude alpha:three waiting
-check "waiting on an answer, ▲, over a done one" see '│ alpha +▲ +3 │'
+check "waiting on an answer, ▲, in another window's dot" await dots '◉●▲'
 opt() { inner show -pqv -t alpha:one @arena_claude_$1 }
 is_opt() { [[ $(opt $1) == $2 ]] }
 claude alpha:one prompt $'{"prompt": "\\n  \\nfix the \\"rail\\"\\nand the rest"}'
@@ -574,54 +557,15 @@ check "a turn that ends on an API error is stalled, not working" marked
 check "and says the error's first line" is_opt said 'You are out of usage credits.'
 claude alpha:one end
 claude alpha:three end
-check "a session's end takes its mark off" see '│ alpha +3 │'
+check "a session's end takes its mark off" await dots '○●○'
 unset_all() { [[ -z $(inner show -p -t alpha:one | grep arena_claude) ]] }
 check "and every option the hook set" unset_all
-line() { sed -n $1p <<<$(screen) }
 claude alpha:three waiting '{"message": "Claude needs your permission to use Bash"}'
 claude alpha:one prompt '{"prompt": "go"}'
 claude beta:solo tool '{"tool_name": "Read", "tool_input": {"file_path": "/a/b.zig"}}'
-inner set -p -t alpha:three @arena_review changes
-listed() {
-  [[ $(line 6) == ├─' agents · urgency '─*┤* && $(line 7) == '│ alpha '* && $(line 8) =~ '^│ ▲ three +[0-9]+s │' &&
-    $(line 9) == '│   allow Bash '* && $(line 10) == '│   branch unknown  ✗ changes '* && $(line 11) =~ '^│ ◐ one +[0-9]+s │' &&
-    $(line 12) == '│   go '* && $(line 13) == '│ beta '* && $(line 14) =~ '^│ ◐ solo +[0-9]+s │' &&
-    $(line 15) == '│   Read b.zig '* ]]
-}
-check "the rail lists each session's Claudes under a rule of their own, each over what it is doing and its review" await listed
-inked() { sed -n $1p <<<$(outer capture-pane -ep -t o) }
-lit() { [[ $(inked 14) == *$'\e[1;7m'*' ◐ solo '* && $(inked 15) == *$'\e[1;7m'*' Read b.zig '* && $(inked 13) != *$'\e[1;7m'* && $(inked 11) != *$'\e[1;7m'* ]] }
-check "the Claude in view has all its rows lit, and its session's header is not" lit
-bar_whole() { [[ $(inked 18) =~ $'\e\\[1;7m(\e\\[[0-9;]*m)*   ◔ a shell' ]] }
-claude alpha:renamed prompt '{"prompt": "more"}'
-for w in alpha:one alpha:renamed beta:solo; inner set -p -t $w @arena_claude_background 'a shell'
-check "more than it has rows for, the list scrolls to the Claude in view" await eval '[[ $(line 16) =~ "^│ ◐ solo " && $(line 18) =~ "^│   ◔ a shell +│" ]] && ! screen | grep -q "▲ three"'
-check "and the bar runs unbroken from the left through its background row" bar_whole
-for w in alpha:one beta:solo; inner set -pu -t $w @arena_claude_background
-claude alpha:renamed end
-inner set -pu -t alpha:three @arena_review
 claude alpha:three end
-claude beta:solo waiting '{"message": "Claude is waiting for your input"}'
-beta_first() {
-  [[ $(line 7) == '│ beta '* && $(line 8) =~ '^│ ▲ solo ' && $(line 9) == '│   is waiting for your input '* &&
-    $(line 10) == '│ alpha '* && $(line 11) =~ '^│ ◐ one ' ]]
-}
-check "the session whose Claude most wants looking at comes first" await beta_first
 claude alpha:one end
 claude beta:solo end
-check "with no Claudes left the rule over them goes" gone '├─ agents'
-claude alpha:one waiting
-claude alpha:three waiting
-check "a session with several Claudes at its mark counts them" see '│ alpha +▲2 +3 │'
-claude alpha:one end
-claude alpha:three end
-inner new-window -d -t beta -n loud sh
-inner set -w -t beta:loud monitor-activity on
-inner send-keys -t beta:loud 'echo out' Enter
-check "a window out of view that tmux saw output in, where it watches for it, marks its session #" see '│ beta +# +2 │'
-inner send-keys -t beta:loud "printf '\\a'" Enter
-check "and one that rang its bell, !" see '│ beta +! +2 │'
-inner kill-window -t beta:loud
 
 transcript=$tmp/transcript.jsonl
 {
@@ -636,7 +580,6 @@ said() { claude alpha:one $1 '{"prompt": "p", "transcript_path": "'$transcript'"
 titled() { [[ $(inner show -pqv -t alpha:one @arena_claude_title) == $1 ]] }
 said prompt
 check "a Claude is called by the title its conversation began with" titled 'Started Here'
-check "which the rail shows in place of its window's name" see '│ ◐ Started Here +[0-9]+s │'
 repeat 4 said prompt
 check "every fifth prompt Haiku is asked what it is about now" await titled 'Topic From Haiku'
 asked() { [[ $(<$tmp/asked) == $'Began as: Started Here\nCalled now: Started Here\nLatest requests, oldest first:\nask one\nask two\nask three' && -z $(<$tmp/asked-pane) ]] }
@@ -659,15 +602,9 @@ check "its subagents still in the background" is_opt agents 'Explore the rail'
 check "and the shells there" is_opt background '1 shell: sleep 9'
 check "the context its last answer was given" is_opt tokens 253190
 check "and the branch it works on" is_opt branch "$(worked_on | cut -c1-40)"
-check "the rail has its last words under it" see '│   Done. It loads '
-check "and a row for each subagent in the background" see '│   ◔ Explore the rail +│'
-check "with its shells at the foot" see '│   ◔ 1 shell: sleep 9 +│'
-check "with a shell and nothing heard from its agent, its mark is still" see '│ ◔ Named By Hand '
 claude alpha:one tool '{"agent_id": "a1", "agent_type": "Explore", "tool_name": "Grep", "tool_input": {"pattern": "rail"}}'
 check "a subagent's tool leaves the session as it was" [ "$(opt doing)" = '' -a "$(inner show -pqv -t alpha:one @arena_claude)" = background ]
 check "and what runs as it was" [ "$(opt agents)" = 'Explore the rail' -a "$(opt background)" = '1 shell: sleep 9' ]
-check "but with its agent at work it is drawn working" see '│ ◐ Named By Hand '
-check "and its subagent's row with it, its shells' still" await eval 'shows "│   ◐ Explore the rail +│" && shows "│   ◔ 1 shell: sleep 9 +│"'
 claude alpha:one prompt '{"prompt": "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>"}'
 check "a shell's notice that it finished takes it off" [ "$(opt agents)" = 'Explore the rail' -a "$(opt background)" = '' ]
 check "and is not taken for a prompt" is_opt prompt 'p'
@@ -697,13 +634,9 @@ inner set -p -t alpha:one @arena_claude_began $(($(date +%s) - 3725))
 claude alpha:one stop '{"last_assistant_message": "Done. It loads"}'
 took() { [[ $(opt took) == 372[56] ]] }
 check "a stop says how long its turn took" took
-check "which the rail has beside its last words" see '│   Done. It loads +1h2m │'
 claude alpha:one prompt '{"prompt": "go on"}'
 inner set -p -t alpha:one @arena_claude_at $(($(date +%s) - 700))
-check "working with nothing heard for ten minutes, it is quiet" see '│   go on +quiet 11m │'
-check "and its branch under that, its context at the right" see "│   $(worked_on | cut -c1-12).* +253k ctx │"
 inner set -p -t alpha:one @arena_claude_ctx 88
-check "the share of its budget, where its status line says it" see "│   $(worked_on | cut -c1-12).* +88% ctx │"
 mkdir $tmp/norepo
 claude alpha:one stop '{"cwd": "'$tmp/norepo'"}'
 check "outside a repo, no repo" is_opt branch 'no repo'
@@ -715,94 +648,40 @@ said end
 check "the end takes the title and its count off too" await [ -z "$(inner show -p -t alpha:one | grep arena_claude)" ]
 
 at() { [[ $(inner list-clients -F '#{session_name}:#{window_name}') == $1 ]] }
-# stands in for Claude Code's list of agents at the foot of its screen: Down from its box goes
-# to the row of shells, then into the list, and Enter shows the agent the pointer is on
-cat >$tmp/bin/fake-agents <<'EOF'
-#!/usr/bin/env zsh
-rows=(main 'general-purpose  Explore the rail' 'general-purpose  Review it')
-at=0 shown=1
-while true; do
-  out=$'\e[H\e[2J❯ box\n  auto mode on · 1 shell'
-  for i in 1 2 3; do
-    [[ $at == $((i + 1)) ]] && p='❯' || p=' '
-    [[ $shown == $i ]] && m='●' || m='◯'
-    out+=$'\n'"$p $m $rows[i]"
-  done
-  print -rn -- "$out"
-  read -sk1 c || exit
-  case $c in
-    $'\e')
-      read -sk2 c
-      [[ $c == '[B' && $at -lt 4 ]] && at=$((at + 1))
-      [[ $c == '[A' && $at -gt 0 ]] && at=$((at - 1))
-      ;;
-    $'\n' | $'\r') [[ $at -gt 1 ]] && shown=$((at - 1)) ;;
-  esac
-done
-EOF
-inner new-window -d -t alpha -n subs "zsh $tmp/bin/fake-agents"
-claude alpha:subs stop '{"last_assistant_message": "Waiting", "background_tasks": [
-  {"id": "s1", "type": "subagent", "status": "running", "description": "Explore the rail"},
-  {"id": "s2", "type": "subagent", "status": "running", "description": "Review it"}]}'
-row() { settled | grep -n -- "$1" | head -1 | cut -d: -f1 }
-see '│   ◔ Review it '
-y=$(row '│   ◔ Review it ')
-mouse 0 8 $y M
-mouse 0 8 $y m
-check "a click on a subagent's row in the rail goes to its Claude's window" await at alpha:subs
-fake() { inner capture-pane -p -t alpha:subs | grep -qx -- "$1" }
-check "and steps that Claude's list of agents to it: past the shells, down to its row, Enter" await fake '❯ ● general-purpose  Review it'
-# a lit row has its text in its mark's ink, a dim one a change of ink between the two; the
-# pointer left on a row underlines it
-sub_lit() { [[ $(inked $(row "│   ◔ $1 ")) == *$'\e[1;'(|4\;)'7m'* ]] }
-sub_dim() { [[ $(inked $(row "│   ◔ $1 ")) != *$'\e[1;7m'* && $(inked $(row "│   ◔ $1 ")) == *$'\e[7m'* ]] }
-check "the subagent its Claude shows has its row in bold on the Claude's bar" await sub_lit 'Review it'
-check "and no other, though the bar runs through it" sub_dim 'Explore the rail'
-y=$(row '│   ◔ Explore the rail ')
-mouse 0 8 $y M
-mouse 0 8 $y m
-check "a click on another, with the pointer in the list, goes up from it" await fake '❯ ● general-purpose  Explore the rail'
-check "and the light goes with it" await eval 'sub_lit "Explore the rail" && sub_dim "Review it"'
-claude alpha:subs end
-inner kill-window -t alpha:subs
-claude beta:solo prompt
-mouse 0 5 4 M
-mouse 0 5 4 m
-await at beta:solo
-see '│.◐ solo '
+in_view_cleared() { [[ -z $(inner show -pqv -t alpha:renamed @arena_claude) ]] }
+claude alpha:renamed prompt
 claude alpha:three waiting '{"message": "Claude needs your permission to use Bash"}'
-see '│ ▲ three '
-notified() { [[ $(tail -1 $tmp/notified 2>/dev/null) == $1 ]] }
+await dots '○●▲'
 check "a Claude out of view come to wait is a desktop notification" await eval '[[ $(tail -1 $tmp/notified 2>/dev/null) == "-a|arena|--hint=string:x-canonical-private-synchronous:arena-%"*"|--|three|allow Bash|" ]]'
 told=$(wc -l <$tmp/notified)
-claude beta:solo stop '{"last_assistant_message": "All done"}'
-see '│.○ solo '
+claude alpha:renamed stop '{"last_assistant_message": "All done"}'
+await in_view_cleared
 check "and the one in view is not" [ $(wc -l <$tmp/notified) -eq $told ]
 told=$(wc -l <$tmp/notified)
 for round in 1 2 3 4 5; do
   claude alpha:three stop '{"last_assistant_message": "$(touch '$tmp'/ran) \"q\" `x` #{pane_id}"}'
-  see '│ ◉ three '
+  await dots '○●◉'
   claude alpha:three prompt
-  see '│ ◐ three '
+  await dots '○●◐'
 done
 check "a Claude cycling between working and done is no notice" [ $(wc -l <$tmp/notified) -eq $told ]
 claude alpha:three stopfailure '{"error": "rate_limit", "error_details": "$(touch '$tmp'/ran) \"q\" `x` #{pane_id}"}'
-see '│ ✖ three '
+await dots '○●✖'
 hostile='$(touch '$tmp'/ran) "q" x #{pane_id}'
 stall_notice() { [[ $(tail -1 $tmp/notified) == "-a|arena|--hint=string:x-canonical-private-synchronous:arena-%"*"|--|three|$hostile|" ]] }
 check "a Claude out of view come to stall is a notice, its words as they are" await stall_notice
 check "run by no shell, nor by tmux" [ ! -e $tmp/ran ]
 claude alpha:three prompt
-see '│ ◐ three '
+await dots '○●◐'
 claude alpha:three waiting '{"message": "Claude needs your permission to use Bash"}'
-see '│ ▲ three '
+await dots '○●▲'
 key M-n
 check "Alt+n goes to the Claude that most wants looking at" await at alpha:three
 key M-n
 check "and stays where it is with no other waiting or done" at alpha:three
 claude alpha:one waiting '{"message": "Claude is waiting for your input"}'
 inner set -p -t alpha:one @arena_claude_since $(($(date +%s) - 100))
-see '│ ▲ one '
+await dots '▲○●'
 key M-n
 check "with another, Alt+n goes on to it, the longer waiting first" await at alpha:one
 key M-n
@@ -810,53 +689,17 @@ check "and round to the first" await at alpha:three
 key M-N
 check "Alt+N goes back" await at alpha:one
 claude alpha:one end
-gone '│ ▲ one '
+await dots '●○▲'
 key M-n
 check "from a window not listed, Alt+n goes to the first" await at alpha:three
-mouse 0 5 11 M
-mouse 0 5 11 m
-check "a click on a Claude in the rail goes to its window" await at beta:solo
-mouse 0 5 6 M
-mouse 0 5 6 m
-check "a click on the rule over them orders them by when they were last heard from" see '├─ agents · recent '
-inner set -p -t alpha:three @arena_claude_at 0
-inner set -p -t alpha:three @arena_claude_since $(($(date +%s) - 900))
-inner set -p -t beta:solo @arena_claude_at $(date +%s)
-first() { screen | grep -A1 -- '├─ agents' | tail -1 | grep -q -- "$1" }
-check "the one heard from last first" await first '│ beta '
-mouse 0 5 6 M
-mouse 0 5 6 m
-check "another click orders them by ticket" see '├─ agents · ticket '
-mouse 0 5 6 M
-mouse 0 5 6 m
-see '├─ agents · urgency '
-normal; key w i
-inner set -p -t beta:solo @arena_claude_branch t324-lights
-check "normal w narrows the rail to a session's short name, its mark and its windows" see '^│ alpha.3│ '
-check "a Claude by its mark and its ticket's number" see '^│[ ▌]. 324 +│ '
-check "or its window's place when it has no ticket" see '^│ . w3 +│ '
-check "a session over its Claudes is a rule with its name" see '^│─alpha──│ '
-sel() { [[ $(inked $(row "$1")) == *$'\e[1;7m'* ]] }
-check "the Claude in view has its whole row in the selected style" await sel ' 324 '
-check "and its session's rule and another Claude's row do not" test "$(sel '─beta─' && print y)$(sel ' w3 ' && print y)" = ""
-mouse 35 3 9 M
-check "the pointer resting on it draws it wide over the strip" see '├─ agents · urgency '
-check "with a Claude's age at the right of its row" see '^│[ ▌]. .* [0-9]+[smhd] │'
-mouse 35 72 3 M
-check "and leaving it, narrow again" gone '├─ agents · urgency '
-normal; key w i
-check "w again widens it" see '^╭─ sessions ─+╮ '
 
 # the popup: a Claude's pane in another session, read-only, over the strip
 inner send-keys -t alpha:three 'echo three-pane-line' Enter
 shows '^NORMAL' || key C-Space
 see '^NORMAL'
-key -l ']'
-see '^│▌.* three'
-# the rail's ages tick on their own, popup or not
-unaged() { screen | sed -E 's/ [0-9]+[smhd] │/ │/g' }
-before=$(unaged)
-beside() { screen | sed -n '1,2p;24p'; screen | cut -c1-30 }
+
+before=$(screen)
+beside() { screen | sed -n '24p' }
 beside_before=$(beside)
 key -l ' '
 check "space opens the popup, its head naming the Claude and its window" await shows '^.*╭─ ▲ three .*alpha'
@@ -869,7 +712,7 @@ key -l 'jkgG'
 check "a key of its own is not typed into the pane" eval '! screen | grep -q "three-pane-linex"'
 key -l q
 check "q closes it" await hides '╰─ j k scroll'
-check "and the screen is as it was" await eval '[[ $(unaged) == "$before" ]]'
+check "and the screen is as it was" await eval '[[ $(screen) == "$before" ]]'
 key -l ' '
 see '╰─ j k scroll'
 key Escape
@@ -879,9 +722,11 @@ check "Esc closes it too" gone '╰─ j k scroll'
 mkdir -p $tmp/run/babylon
 print -r -- '{"tickets":[{"id":324,"repo":"arena","title":"Lights","kind":"ticket","status":"doing","priority":"med","claimed_by":"%99",'\
 '"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[],"ask":{"id":7,"question":"Keep it?","options":["yes","no"]}}]}' >$tmp/run/babylon/board.json
-see '^│ ▤ board'
+inner set -p -t beta:solo @arena_claude_branch t324-lights
+claude beta:solo prompt
+zselect -t 300
 key -l j
-see '^│▌.* solo'
+await at beta:solo
 key -l ' '
 see '╭─ .*solo'
 key -l a
@@ -898,11 +743,11 @@ check "and Enter types it into the pane" await eval 'inner capture-pane -p -t be
 check "the popup stays open" shows '╭─ .* solo'
 key -l q
 rm -f $tmp/run/babylon/board.json
-gone '^│ ▤ board'
+zselect -t 300
 # Claude Code's own question, on the screen
 inner send-keys -t alpha:three "printf 'Do you want to proceed?\n❯ 1. Yes\n  2. No\n'" Enter
 key -l k
-see '^│▌.* three'
+await at alpha:three
 key -l ' '
 see '╭─ ▲ three'
 see 'Do you want to proceed'
@@ -915,93 +760,14 @@ key -l q
 claude alpha:three end
 claude beta:solo end
 
-# 24 Claudes across three repos, ticket 10 landed, the last two of each repo waiting in the pipeline
-board='{"tickets":['
-repos=(amber birch cedar)
-for s in 1 2 3; do
-  repo=${repos[s]}
-  inner new-session -d -s c$s -n n${s}0 sh
-  for w in 0 1 2 3 4 5 6 7 8; do
-    id=$s$w
-    [[ $w != 0 ]] && inner new-window -d -t c$s -n n$id sh
-    state=doing stage=null
-    [[ $w == 0 ]] && state=done
-    [[ $w -ge 7 ]] && state=review stage='"queued"'
-    board+="{\"id\":$id,\"repo\":\"$repo\",\"title\":\"t\",\"status\":\"$state\",\"stage\":$stage},"
-  done
-done
-mkdir -p $tmp/run/babylon
-print -r -- "${board%,}]}" >$tmp/run/babylon/board.json
-tick() { claude $1 prompt; inner set -p -t $1 @arena_claude_branch t${1##*n}-x }
-for s in 1 2 3; do for w in 0 1 2 3 4 5 6 7 8; do tick c$s:n$s$w; done; done
-agents_y() { row '├─ agents' }
-click_title() { local y=$(agents_y); mouse 0 5 $y M; mouse 0 5 $y m }
-check "the rail lists the Claudes, with how many more there are" see "[0-9]+ more"
-check "and a landed ticket's Claude is not listed" gone ' n10 '
-# a wheel step a time over the agents until the screen shows or hides what it is for
-wheel_until() {
-  local i y=$(($(agents_y) + 3))
-  for i in {1..60}; do
-    "$@" && return 0
-    mouse $dir 5 $y M
-    zselect -t 15
-  done
-  return 1
-}
-dir=65
-check "the wheel over the agents scrolls them to the last one" wheel_until shows '◌ 2 in the pipeline · cedar'
-check "which leaves a row for those above" see '↑ [0-9]+ above'
-dir=64
-check "and back up to the first" wheel_until hides '↑ [0-9]+ above'
-click_title
-click_title
-check "the title's click cycles on to the stable order" see '├─ agents · ticket '
-order() { local y=$(agents_y); screen | sed -n "$((y + 1)),$((y + 9))p" | grep -oE '(c[0-9]|n[0-9]+)' | tr -d '\n' }
-before=$(order)
-check "which lists by repo, then ticket" [ "${before#c1n11n12n13}" != "$before" ]
-claude c1:n12 stop
-inner set -p -t c1:n12 @arena_claude_branch t12-x
-check "a Claude changing state" see '◉ n12'
-check "does not move a row in it" [ "$(order)" = "$before" ]
-dir=65
-wheel_until shows '◌ 2 in the pipeline · cedar'
-y=$(row '◌ 2 in the pipeline · cedar')
-mouse 0 5 $y M
-mouse 0 5 $y m
-check "a click on a fold opens it onto its Claudes, which are listed, and it is left open to close" wheel_until shows '▾ 2 in the pipeline · cedar'
-click_title
-check "and the title's click goes round to urgency again" see '├─ agents · urgency '
-for s in 1 2 3; do inner kill-session -t c$s; done
-rm -f $tmp/run/babylon/board.json
-gone '├─ agents'
-mouse 0 5 4 M
-mouse 0 5 4 m
+normal; key j
 await at beta:solo
-review() { inner set -p -t $1 @arena_review $2 }
-review alpha:one landed
-check "a landed branch marks its session ◆" see '│ alpha +◆ +3 │'
-review alpha:one reviewed
-check "an approved one ✓" see '│ alpha +✓ +3 │'
-review alpha:three queued
-check "a queued one » over an approved one" see '│ alpha +» +3 │'
-review alpha:one changes
-check "changes asked for ✗ over the rest" see '│ alpha +✗ +3 │'
-claude alpha:one prompt
-claude alpha:one stop '{"background_tasks": []}'
-check "the review mark sits beside the Claude mark" see '│ alpha +✗◉ +3 │'
-claude alpha:one end
-review alpha:one nonsense
-check "a value it does not know marks nothing but what else is there" see '│ alpha +» +3 │'
-inner set -pu -t alpha:one @arena_review
-inner set -pu -t alpha:three @arena_review
-see '│ alpha +3 │'
 claude beta:solo tool
-check "the session in view shows its own mark too" see '│ beta +◐ +1 │'
 claude beta:solo stop
 in_view_cleared() { [[ -z $(inner show -pqv -t beta:solo @arena_claude) ]] }
 check "a done Claude in view is taken as looked at" await in_view_cleared
 for w in $(inner list-windows -t alpha -F "#{window_index}"); claude alpha:$w stop
-see '│ alpha +◉3 +3 │'
+zselect -t 300
 key M-k
 looked() { [[ -z $(inner show -pqv -t "alpha:$(inner display -p -t alpha '#{window_index}')" @arena_claude) ]] }
 await looked
@@ -1012,20 +778,13 @@ for w in $(inner list-windows -t alpha -F "#{window_index}"); claude alpha:$w en
 normal; key j Enter
 see '╭─ 1 solo '
 
-mouse 0 3 4 M
-mouse 32 3 3 M
-mouse 0 3 3 m
-check "dragging a session moves it up the rail" await rail betaalpha
-check "and its place is kept in tmux" await order 1beta2alpha
-# a click on the rail is normal mode
-key -l i
 
 key 'echo hello brave world' Enter
 see '│hello brave world'
 row=$(settled | grep -n '│hello brave world' | cut -d: -f1)
-mouse 0 45 $row M
-mouse 32 55 $row M
-mouse 0 55 $row m
+mouse 0 8 $row M
+mouse 32 18 $row M
+mouse 0 18 $row m
 copied() { [[ $(outer show-buffer 2>/dev/null) == $1 ]] }
 check "dragging selects text and copies it" await copied 'brave world'
 
@@ -1045,7 +804,7 @@ gone 'browser-stub'
 key 'exit' Enter
 # three was the last window dropped on alpha, which makes it the one alpha shows
 check "a session ending moves arena to one that is left" see '╭─ 3 three '
-check "and takes it off the rail" gone '│ beta '
+check "and the session is gone" await sessions 1
 
 # Plan drives what the board drove: the tickets, their modals, the keys on a row, the orchestrator's column beside it.
 # Workbench's look (a palette) gives Plan its windows and rows for not planned; the plain look keeps what the typing
@@ -1067,7 +826,7 @@ print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket",
 cp $tmp/run/babylon/board.json $tmp/board.kept
 for name in AMBER VIOLET AMBERDIM EMBERDIM INK DIM GREY SURFACE0 SURFACE2 SURFACE3 SURFACE4 BG CYAN MOSS PINK RED; do print -r -- "PALETTE_$name=#808080"; done >$tmp/.config/ficciones/theme/palette.sh
 outer resize-window -t o -x 200 -y 40
-see '^│ ▤ board +1 todo  1 doing │'
+zselect -t 300
 normal
 key b
 see 'in flight[^0-9]*2'
@@ -1262,7 +1021,7 @@ check "off, the state is gone" gone 'auto [0-9]'
 check "with nothing of the orchestrator in babylon's file, Plan's head has no button for it" hides ' ● orch '
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":4,"working":4,"tools":{"working":1,"cap":1}}}' >$tmp/run/babylon/board.json
 check "with room, Plan's head says the tools slots when babylon's file gives them" see ' ◐ auto 4/4 · tools 1/1( |$)'
-outer resize-window -t o -x 112
+outer resize-window -t o -x 75
 check "and with less room, without the tools slots" see ' ◐ auto 4/4 +✓ 0 today'
 outer resize-window -t o -x 200
 cp $tmp/board.noauto $tmp/run/babylon/board.json
@@ -1450,7 +1209,6 @@ print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket",
 '"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[],"stage":"queued"}],'\
 '"backlog":[{"id":12,"repo":"arena","title":"Someday","kind":"ticket","status":"backlog","priority":"med","blocked_by":[]}]}' \
   >$tmp/run/babylon/board.json
-check "babylon's board has a row atop the rail, with its counts" see '^│ ▤ board +1 todo  1 doing │'
 key M-b
 check "Alt+b opens it in place of the strip, its repos as tabs" see ' every [0-9]+ +arena [0-9]+ +tlon [0-9]+ '
 check "and where its keys are" see '\? keys'
@@ -1475,7 +1233,7 @@ filed() { [[ -f $tmp/babylon ]] && grep -q '^file hover sticks on a card --repo 
 check "and Enter files a ticket in arena with the line" await filed
 told_of() { grep -q -- "$1" $tmp/babylon }
 check "which says what the pointer is over" told_of '^pointer: x=[0-9]* y=[0-9]* over card #7 Lights$'
-check "and the window's size, the rail and the view" told_of '^size: 121x24$'
+check "and the window's size and the view" told_of '^size: 121x24$'
 capture=$(sed -n 's/^capture, with the screen as text and the last input: //p' $tmp/babylon)
 check "and names the capture file" test -f "$capture"
 capture_has() { local p; for p in "$@"; do grep -q -- "$p" "$capture" || return 1; done }
@@ -1487,9 +1245,6 @@ check "? shows the board's keys" see "the board's keys"
 key x
 check "and any key puts them away" gone "the board's keys"
 check "a column a status, with its count" see '╭─ doing 1 ─'
-railed() { local l=$(inked $1); print -r -- "${${l#*│}%%│*}" }
-alone() { [[ $(railed 2) == *$'\e[1;7m'* && $(railed 3)$(railed 4)$(railed 5) != *$'\e[1;7m'* ]] }
-check "and the board's row is the one lit, not the session's" alone
 check "in each column, a heading for each repo with cards there, with its count" see '│ tlon ▾ ▲ ─+ 1│ *│ arena ▾ ─+ 1│'
 check "an empty column says none" see '│ none +│'
 check "and is no wider than its heading" see '╭─ recent 0 ╮'
@@ -1731,7 +1486,6 @@ shows '╭─ ○ orchestrator · idle ' || key '`'
 see '╭─ ○ orchestrator · idle '
 see '#40 Hover'
 see '╭─ doing 1 '
-check "the rail lists a Claude for the pointer to rest on" see '│ . one +2h'
 rest_x=$(( $(colof 2 '╭─ doing') + 3 )) rest_y=18
 r=1 c=$(colof 1 ' menard ')
 check "the pointer on a tab changes no cell" hovered $((c + 2)) $r
@@ -1743,16 +1497,11 @@ check "on a card" hovered $((c + 3)) $r
 r=$(rowof ' G give ')
 c=$(colof $r ' G give ')
 check "and on one of the picked card's actions" hovered $((c + 2)) $r
-rail_w=$(colof 1 '╮')
-r=$(rowof '│ alpha ')
-check "on the rail, a session's row" hovered 4 $r
-r=$(rowof ' one ')
-check "and a Claude's" hovered 4 $r
 ox=$(colof 1 '╭─ ○ orchestrator')
 divide=$(barof 3 $((ox + 1)))
 for x y what in $ox 10 'its left edge' 160 10 'its right edge' $((ox + 12)) 1 'its top edge' \
   $((ox + 4)) 23 'its foot' $((ox + 4)) 24 'the row under it' $divide 10 'the line between its panes' \
-  $((ox - 1)) 10 'the gap between it and the board' $rail_w 10 "the rail's edge"; do
+  $((ox - 1)) 10 'the gap between it and the board'; do
   check "with the orchestrator's column beside the board, the pointer on $what changes nothing" hovered $x $y
 done
 
@@ -1798,7 +1547,6 @@ peeks() {
   park
   await hides "esc away" || { print "      peek stays"; return 1 }
 }
-r=$(rowof ' one '); check "resting on a Claude in the rail peeks its last words" peeks 4 $r 'said: Hovered'
 r=$(rowof 'P4 Start #40'); c=$(colof $r 'P4 Start')
 check "on a needs you item in the feed, its ticket" peeks $((c + 2)) $r 'arena · med · default model'
 r=$(rowof '#42 Landed'); c=$(colof $r '#42 Landed')
@@ -1973,7 +1721,7 @@ check "a click on the switch in Plan's head turns auto on" await last 'auto on'
 cp $tmp/run/babylon/board.json $tmp/board.plan
 print -r -- "${$(<$tmp/board.plan)%\}}"',"auto":{"on":true,"cap":4,"working":2,"tools":{"working":1,"cap":1}}}' >$tmp/run/babylon/board.json
 check "on, Plan's head says how many work of the cap" see '◐ auto 2/4'
-check "and the orchestrator's column and the rail say nothing of auto" eval '[[ $(screen | grep -c "auto 2/4") == 1 ]]'
+check "and the orchestrator's column says nothing of auto" eval '[[ $(screen | grep -c "auto 2/4") == 1 ]]'
 auto_offs() { grep -cx 'auto off' $tmp/babylon }
 offs=$(auto_offs)
 r=$(rowof '◐ auto'); c=$(colof $r '◐ auto')
@@ -2184,50 +1932,13 @@ inner kill-window -t "$(inner list-windows -a -F '#{window_id} #{window_name}' |
 key M-b
 cp $tmp/board.nolook $tmp/run/babylon/board.json
 # home takes the plan as it opens, so arena must have read it back before b
-see '▤ board.*1 todo  0 doing'
+zselect -t 300
 
-# the narrow rail at home holds only what moves: a working and a waiting Claude, the rest of a
-# session's folded into one line, and no orchestrator
 inner new-session -d -s gamma -n g1 sh
-for n in 2 3 4 5; inner new-window -t gamma -n g$n sh
-for n in {1..5}; do
-  inner set -p -t gamma:g$n @arena_claude_branch t90$n-rail
-  claude gamma:g$n prompt
-done
-claude gamma:g1 waiting '{"message": "Claude needs your permission to use Bash"}'
-for n in 3 4 5; claude gamma:g$n stop
-shows '^NORMAL' || key C-Space
-see '^NORMAL'
-key w
-see '^│─gamma──│'
-key b
-see 'b plan · B board'
-check "the narrow rail at home lists the session's waiting Claude by ticket" see '^│[ ▌]▲ 901 *│'
-check "and its working one" see '^│[ ▌]◐ 902 *│'
-check "and folds the three idle ones into one line" see '^│[ ▌]· 3 *│'
-check "none of the idle ones is listed, and no orchestrator row is" eval '! screen | grep -qE "^│[ ▌]. (903|904|905|orch)"'
-
-# off home, every Claude of a session is listed: a header says it holds the one in view by going
-# dim, a Claude with no ticket is named by its place in its session, and a list longer than the
-# rail says how many it scrolled past
-key M-b
-gone 'b plan · B board'
-mouse 0 4 4 M
-mouse 0 4 4 m
-rail_has() { outer capture-pane -p -e -t o | grep -qF -- "$1" }
-check "a session's header goes dim while a Claude of it is the one in view" await rail_has $'\e[38;5;8m│─gamma──│'
-inner new-window -t gamma -n g6 sh
+for n in 2 3 4 5 6 7; inner new-window -t gamma -n g$n sh
 claude gamma:g6 prompt
-check "a Claude on no ticket's branch is named by its place in its session" see '^│[ ▌]◐ w6 *│'
-inner new-window -t gamma -n g7 sh
-check "and the header is lit, in bold, when none is" await rail_has $'\e[1m\e[38;5;4m─gamma'
-for n in {8..18}; do
-  inner new-window -t gamma -n g$n sh
-  inner set -p -t gamma:g$n @arena_claude_branch t9$n-rail
-  claude gamma:g$n prompt
-done
-check "a list longer than the rail says how many Claudes are scrolled above" see '^│ ↑[1-9][0-9]* *│'
-check "and the one in view is still in it" see '^│▌◐ 918 *│'
+$bin -L $in show $(inner display -p -t gamma:g7 '#{pane_id}')
+await at gamma:g7
 
 # resting on a card shows a peek of its ticket and its Claude, over the board; leaving takes it
 # away and the board is as it was. Claimed days ago: an age chip that ticks over from 9s to 10s
@@ -2375,7 +2086,7 @@ outer kill-session -t o
 outer new-session -d -s o -x 121 -y 24 \
   "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 $tmp/arena-copy -L $in alpha 2>$tmp/update-err; echo EXIT \$?; cat"
 check "the terminal's server outlives the session restarted in it" eval '[[ $(outer display -p "#{pid}") == $outer_pid ]]'
-see '^╭─ sessions'
+see '^╭─ 1 one '
 key M-b
 see ' every [0-9]+ +arena [0-9]+ '
 click ${(z)$(spot '#9')}
