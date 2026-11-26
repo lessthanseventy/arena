@@ -6,9 +6,13 @@ const color = @import("color.zig");
 const theme = @import("theme.zig");
 const text_mod = @import("text.zig");
 const report = @import("report.zig");
+const grab_mod = @import("grab.zig");
 const Writer = std.Io.Writer;
 const RGB = theme.RGB;
 const Roles = theme.Roles;
+
+/// While a window's rows are drawn, where the text they say is recorded for the mouse to select.
+pub var tap: ?struct { grab: *grab_mod.Grab, gpa: std.mem.Allocator } = null;
 
 fn paint(w: *Writer, fg: RGB, bg: RGB, bold: bool) !void {
     try w.print("\x1b[0{s};38;2;{d};{d};{d};48;2;{d};{d};{d}m", .{ if (bold) ";1" else "", fg.r, fg.g, fg.b, bg.r, bg.g, bg.b });
@@ -58,6 +62,7 @@ pub fn chipOn(w: *Writer, x: usize, y: usize, label: []const u8, lead: RGB, word
     try w.writeAll("▎");
     try paint(w, words, face, filled);
     try w.print("{s} ", .{label});
+    if (tap) |t| try t.grab.note(t.gpa, x + 1, y, label);
     return text_mod.cells(label) + 2;
 }
 
@@ -66,6 +71,7 @@ pub fn say(w: *Writer, x: usize, y: usize, s: []const u8, fg: RGB, bg: RGB, bold
     try moveTo(w, x, y);
     try paint(w, fg, bg, bold);
     try w.writeAll(s);
+    if (tap) |t| try t.grab.note(t.gpa, x, y, s);
 }
 
 /// `width` cells of `bg` from (`x`, `y`).

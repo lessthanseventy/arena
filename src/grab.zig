@@ -25,7 +25,10 @@ pub const Area = struct {
     }
 };
 
+const max_panes = 8;
+
 const Row = struct {
+    pane: u8,
     x: u16,
     y: u16,
     at: u32,
@@ -40,9 +43,19 @@ pub const Selection = struct { from: Point, to: Point };
 pub const Grab = struct {
     rows: std.ArrayList(Row) = .empty,
     bytes: std.ArrayList(u8) = .empty,
-    /// The window this frame recorded, if it drew one.
-    area: ?Area = null,
+    /// The windows this frame recorded, later ones over earlier; a row belongs to the one drawn
+    /// last when it was recorded, `cur`.
+    areas: [max_panes]Area = undefined,
+    n_areas: u8 = 0,
+    cur: u8 = 0,
+    /// Set when the last window is a modal, drawn over everything else.
+    modal: bool = false,
+    /// The window `sel` is in: a drag stays in the one it began in.
+    active: u8 = 0,
     sel: ?Selection = null,
+    /// What `sel` read when it was picked, to tell a redraw that put other text under it.
+    held: std.ArrayList(u8) = .empty,
+    held_valid: bool = false,
     /// Where the button went down, until it is let go or becomes a drag.
     pressed: ?Point = null,
     dragging: bool = false,
@@ -55,18 +68,66 @@ pub const Grab = struct {
     pub fn deinit(g: *Grab, gpa: std.mem.Allocator) void {
         g.rows.deinit(gpa);
         g.bytes.deinit(gpa);
+        g.held.deinit(gpa);
     }
 
     /// A frame starts: what the last one recorded is dropped.
     pub fn begin(g: *Grab) void {
-        g.rows.clearRetainingCapacity();
-        g.bytes.clearRetainingCapacity();
-        g.area = null;
+        g.cover();
     }
 
-    /// The frame drew a window whose text lies in `area`.
+    /// Something drawn over the windows that records no text: nothing under it is selectable.
+    pub fn cover(g: *Grab) void {
+        g.rows.clearRetainingCapacity();
+        g.bytes.clearRetainingCapacity();
+        g.n_areas = 0;
+        g.modal = false;
+    }
+
+    /// The frame drew a window over all the others, whose text lies in `area`.
     pub fn window(g: *Grab, area: Area) void {
-        g.area = area;
+        g.cover();
+        g.areas[0] = area;
+        g.n_areas = 1;
+        g.cur = 0;
+        g.modal = true;
+    }
+
+    /// The frame drew one more window beside the others, whose text lies in `area`.
+    pub fn pane(g: *Grab, area: Area) void {
+        if (g.n_areas == max_panes) return;
+        g.areas[g.n_areas] = area;
+        g.cur = g.n_areas;
+        g.n_areas += 1;
+    }
+
+    /// The window whose text lies under `p`, the one drawn over the rest.
+    pub fn paneAt(g: *const Grab, p: Point) ?u8 {
+        var at: u8 = g.n_areas;
+        while (at > 0) {
+            at -= 1;
+            if (g.areas[at].contains(p)) return at;
+        }
+        return null;
+    }
+
+    /// Text a window drew at (`x`, `y`), kept when it is readable and lies in the window being
+    /// recorded; a later draw on the same cell takes the place of an earlier one.
+    pub fn note(g: *Grab, gpa: std.mem.Allocator, x: usize, y: usize, text: []const u8) !void {
+        if (g.n_areas == 0 or !readable(text)) return;
+        const area = g.areas[g.cur];
+        if (x < area.x or y < area.y or y >= area.y + area.h or x >= area.x + area.w) return;
+        const room = area.x + area.w - x;
+        const shown = cellSlice(text, 0, room);
+        const at: u16 = @intCast(x);
+        const line: u16 = @intCast(y);
+        var i = g.rows.items.len;
+        while (i > 0 and (g.rows.items[i - 1].y > line or (g.rows.items[i - 1].y == line and g.rows.items[i - 1].x > at))) i -= 1;
+        const entry: Row = .{ .pane = g.cur, .x = at, .y = line, .at = @intCast(g.bytes.items.len), .len = @intCast(shown.len), .dropped = null };
+        if (i > 0 and g.rows.items[i - 1].y == line and g.rows.items[i - 1].x == at and g.rows.items[i - 1].pane == g.cur) {
+            g.rows.items[i - 1] = entry;
+        } else try g.rows.insert(gpa, i, entry);
+        try g.bytes.appendSlice(gpa, shown);
     }
 
     /// The frame drew `text` from cell (`x`, `y`). `dropped` is set for a row that runs on from
@@ -74,6 +135,7 @@ pub const Grab = struct {
     pub fn row(g: *Grab, gpa: std.mem.Allocator, x: u16, y: u16, text: []const u8, dropped: ?usize) !void {
         if (text.len == 0) return;
         try g.rows.append(gpa, .{
+            .pane = g.cur,
             .x = x,
             .y = y,
             .at = @intCast(g.bytes.items.len),
@@ -88,19 +150,24 @@ pub const Grab = struct {
     }
 
     fn rowAt(g: *const Grab, y: u16) ?usize {
-        for (g.rows.items, 0..) |r, i| if (r.y == y) return i;
+        for (g.rows.items, 0..) |r, i| if (r.pane == g.active and r.y == y) return i;
+        return null;
+    }
+
+    fn pieceAt(g: *const Grab, p: Point) ?usize {
+        for (g.rows.items, 0..) |r, i| {
+            if (r.pane == g.active and r.y == p.y and p.x >= r.x and p.x - r.x < cells(g.slice(r))) return i;
+        }
         return null;
     }
 
     /// Where a press at `p` meant to select: its word, or its whole line. A word is what lies
     /// between spaces, so a path or a command's flag is one.
     pub fn word(g: *const Grab, p: Point) ?Selection {
-        const r = g.rows.items[g.rowAt(p.y) orelse return null];
+        const r = g.rows.items[g.pieceAt(p) orelse return null];
         const row_text = g.slice(r);
-        if (p.x < r.x) return null;
         const n = cells(row_text);
         const at = p.x - r.x;
-        if (at >= n) return null;
         if (cellAt(row_text, at) == ' ') return null;
         var from = at;
         while (from > 0 and cellAt(row_text, from - 1) != ' ') from -= 1;
@@ -113,8 +180,11 @@ pub const Grab = struct {
     pub fn wholeLine(g: *const Grab, p: Point) ?Selection {
         var first = g.rowAt(p.y) orelse return null;
         var last = first;
-        while (g.rows.items[first].dropped != null and first > 0 and g.rows.items[first - 1].y + 1 == g.rows.items[first].y) first -= 1;
-        while (last + 1 < g.rows.items.len and g.rows.items[last + 1].dropped != null and g.rows.items[last + 1].y == g.rows.items[last].y + 1) last += 1;
+        const mine = g.rows.items[first].pane;
+        while (first > 0 and g.rows.items[first - 1].pane == mine and (g.rows.items[first - 1].y == g.rows.items[first].y or
+            (g.rows.items[first].dropped != null and g.rows.items[first - 1].y + 1 == g.rows.items[first].y))) first -= 1;
+        while (last + 1 < g.rows.items.len and g.rows.items[last + 1].pane == mine and (g.rows.items[last + 1].y == g.rows.items[last].y or
+            (g.rows.items[last + 1].dropped != null and g.rows.items[last + 1].y == g.rows.items[last].y + 1))) last += 1;
         const a = g.rows.items[first];
         const b = g.rows.items[last];
         return .{
@@ -130,16 +200,18 @@ pub const Grab = struct {
         var out: std.ArrayList(u8) = .empty;
         errdefer out.deinit(gpa);
         var seen = false;
+        var line: u16 = 0;
         for (g.rows.items) |r| {
-            if (r.y < reading.from.y or r.y > reading.to.y) continue;
+            if (r.pane != g.active or r.y < reading.from.y or r.y > reading.to.y) continue;
             const line_cells = cells(g.slice(r));
             const first: usize = if (r.y == reading.from.y and reading.from.x > r.x) reading.from.x - r.x else 0;
             const last: usize = if (r.y == reading.to.y) (if (reading.to.x < r.x) continue else @min(reading.to.x - r.x, line_cells - 1)) else line_cells - 1;
             if (first > last) continue;
             if (seen) {
-                if (r.dropped) |n| try out.appendNTimes(gpa, ' ', n) else try out.append(gpa, '\n');
+                if (r.y == line) try out.append(gpa, ' ') else if (r.dropped) |n| try out.appendNTimes(gpa, ' ', n) else try out.append(gpa, '\n');
             }
             seen = true;
+            line = r.y;
             try out.appendSlice(gpa, cellSlice(g.slice(r), first, last + 1));
         }
         return out.toOwnedSlice(gpa);
@@ -150,7 +222,7 @@ pub const Grab = struct {
         const reading = order(s);
         var n: usize = 0;
         for (g.rows.items) |r| {
-            if (r.y < reading.from.y or r.y > reading.to.y) continue;
+            if (r.pane != g.active or r.y < reading.from.y or r.y > reading.to.y) continue;
             const line_cells = cells(g.slice(r));
             const first: usize = if (r.y == reading.from.y and reading.from.x > r.x) reading.from.x - r.x else 0;
             const last: usize = if (r.y == reading.to.y) (if (reading.to.x < r.x) continue else @min(reading.to.x - r.x, line_cells - 1)) else line_cells - 1;
@@ -159,6 +231,28 @@ pub const Grab = struct {
             n += 1;
         }
         return null;
+    }
+
+    /// A frame is drawn with `sel` picked: a drag keeps what it reads current, and a selection
+    /// whose text is no longer what was picked (a scroll, a move of the pick, a board update)
+    /// is dropped. Whether `sel` is still set.
+    pub fn settle(g: *Grab, gpa: std.mem.Allocator) !bool {
+        const s = g.sel orelse return false;
+        if (g.n_areas == 0 or g.active >= g.n_areas) {
+            g.sel = null;
+            return false;
+        }
+        const now = try g.read(gpa, s);
+        defer gpa.free(now);
+        if (g.held_valid and !g.dragging and !std.mem.eql(u8, g.held.items, now)) {
+            g.sel = null;
+            g.held_valid = false;
+            return false;
+        }
+        g.held.clearRetainingCapacity();
+        try g.held.appendSlice(gpa, now);
+        g.held_valid = true;
+        return true;
     }
 
     /// Whether this press goes on the last one: the same cell, soon after. The count of presses
@@ -172,6 +266,17 @@ pub const Grab = struct {
         return g.clicks;
     }
 };
+
+/// Whether `text` says something: a letter or digit, not a bar, a rule or an icon.
+fn readable(text: []const u8) bool {
+    var it = std.unicode.Utf8View.initUnchecked(text).iterator();
+    while (it.nextCodepoint()) |c| {
+        if (c < 0x80) {
+            if (std.ascii.isAlphanumeric(@intCast(c))) return true;
+        } else if ((c >= 0xC0 and c < 0x2000) or (c >= 0x3000 and c < 0xE000)) return true;
+    }
+    return false;
+}
 
 fn order(s: Selection) Selection {
     const swap = s.to.y < s.from.y or (s.to.y == s.from.y and s.to.x < s.from.x);

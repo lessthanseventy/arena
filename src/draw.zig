@@ -5,6 +5,7 @@ const menu = @import("menu.zig");
 const color = @import("color.zig");
 const theme = @import("theme.zig");
 const bench = @import("parts.zig");
+const grab_mod = @import("grab.zig");
 const app_mod = @import("app.zig");
 const tickets = @import("board.zig");
 const feed = @import("feed.zig");
@@ -1887,12 +1888,23 @@ fn planView(app: *App, w: *Writer, view: app_mod.HomeView) !void {
         try pen.set(w, .{}, null);
         for (cellCount(row.text) + 1..width) |_| try w.writeAll(" ");
     }
-    if (view.giving) |picked| if (app.pickedCard()) |card| try giveBox(app, w, card.id, picked);
+    if (view.giving) |picked| if (app.pickedCard()) |card| {
+        app.grab.cover();
+        try giveBox(app, w, card.id, picked);
+    };
     if (view.detail) |id| try detailBox(app, w, id, view.detail_scroll);
+    if (app.autoRect() != null) app.grab.cover();
     try autoBox(app, w);
-    if (view.goal_open) try goalBox(app, w);
+    if (view.goal_open) {
+        app.grab.cover();
+        try goalBox(app, w);
+    }
+    if (app.draftRect() != null) app.grab.cover();
     try draftBox(app, w);
-    if (view.help) try helpBox(app, w);
+    if (view.help) {
+        app.grab.cover();
+        try helpBox(app, w);
+    }
 }
 
 const goal_prompt = "what should be true when it's done? as rough as you like";
@@ -2044,6 +2056,12 @@ fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet
     if (win == .unplanned and !whole) try win_unplanned.frame(app, w, r);
     if (win == .goals and !whole) try win_goals.frame(app, w, r);
     if (win == .driving) try win_driving.frame(app, w, r, rect, ww, bar);
+    if (lit) {
+        const text_area: grab_mod.Area = .{ .x = rect.x, .y = rect.y + 1, .w = @intCast(ww), .h = @intCast(body) };
+        if (whole) app.grab.window(text_area) else app.grab.pane(text_area);
+        bench.tap = .{ .grab = &app.grab, .gpa = app.gpa };
+    }
+    defer bench.tap = null;
     for (0..body) |line| {
         const at = if (lit) app.planRowOnLine(sheet, win, body, line) else line;
         if (at >= mine.len) break;
@@ -2968,11 +2986,8 @@ fn reportSaid(app: *App, w: *Writer, text: []const u8) !void {
 
 /// The cells the mouse has picked, drawn inverted over what the frame drew.
 fn grabOverlay(app: *App, w: *Writer) !void {
-    const sel = app.grab.sel orelse return;
-    if (app.grab.area == null) {
-        app.grab.sel = null;
-        return;
-    }
+    if (!try app.grab.settle(app.gpa)) return;
+    const sel = app.grab.sel.?;
     var i: usize = 0;
     while (app.grab.spans(sel, i)) |picked| : (i += 1) {
         try w.print("\x1b[{d};{d}H\x1b[0;7m{s}\x1b[0m", .{ picked.y + 1, picked.x + 1, picked.text });
@@ -3069,6 +3084,7 @@ test "a stalled orchestrator's head says stalled in the frame" {
     orch.wins = .fromOwnedSlice(&wins);
     var sessions = [_]*Session{&orch};
     var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
     app.sessions = .fromOwnedSlice(&sessions);
     var buf: [65536]u8 = undefined;
     var out: Writer = .fixed(&buf);
@@ -3087,6 +3103,7 @@ test "a frame of the board with an orchestrator column draws at every width from
     orch.wins = .fromOwnedSlice(&wins);
     var sessions = [_]*Session{&orch};
     var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
     app.sessions = .fromOwnedSlice(&sessions);
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
@@ -3106,6 +3123,7 @@ test "the report's answer is drawn under the picked feed line" {
     );
     defer board.deinit();
     var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
     app.report_said = try std.testing.allocator.dupe(u8, "filed #9");
     defer std.testing.allocator.free(app.report_said.?);
     var f: feed.Feed = undefined;
@@ -3328,6 +3346,7 @@ test "Home in Workbench's look: the focal goal is the one with a step building, 
     );
     defer board.deinit();
     var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
     app.term_w = 120;
     app.view_w = 80;
     app.view_h = 31;
@@ -3374,6 +3393,7 @@ test "a goal with a step to try reads ▲ 1 to try after its bar in the you colo
     );
     defer board.deinit();
     var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
     app.term_w = 120;
     app.view_w = 80;
     app.view_h = 31;
@@ -3417,6 +3437,7 @@ test "babylon's refusal, said while the plan is shown, is on screen" {
     );
     defer board.deinit();
     var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
     app.term_w = 80;
     app.view_w = 80;
     app.view_h = 23;
@@ -3497,6 +3518,7 @@ test "the orchestrator's column in Workbench: Your move's three items are tiles 
     );
     defer board.deinit();
     var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
     app.term_w = 80;
     app.view_w = 80;
     app.view_h = 23;
@@ -3682,6 +3704,7 @@ test "next is one line a row, and only the picked row shows its why" {
     );
     defer board.deinit();
     var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
     app.view_w = 80;
     app.view_h = 31;
     app.roles = bench.roles();
@@ -3711,6 +3734,108 @@ test "next is one line a row, and only the picked row shows its why" {
     try std.testing.expectEqual(@as(usize, 1), whys);
 }
 
+/// Drags the mouse over the recorded text that starts with `from`, to the end of the line it is on.
+fn dragOver(app: *App, from: []const u8) !void {
+    const g = &app.grab;
+    var found: ?struct { x: u16, y: u16 } = null;
+    for (g.rows.items) |r| {
+        if (std.mem.startsWith(u8, g.bytes.items[r.at..][0..r.len], from)) found = .{ .x = r.x, .y = r.y };
+    }
+    const at = found.?;
+    try std.testing.expect(!try app.grabMouse(.{ .code = 0, .x = at.x, .y = at.y, .release = false }));
+    try std.testing.expect(try app.grabMouse(.{ .code = 32, .x = at.x + 1, .y = at.y, .release = false }));
+    try std.testing.expect(try app.grabMouse(.{ .code = 32, .x = 900, .y = at.y, .release = false }));
+    _ = try app.grabMouse(.{ .code = 0, .x = 900, .y = at.y, .release = true });
+}
+
+test "a drag over a next row and over a goal's title in the driving window each copy their text" {
+    var app = try epicApp(true, 40, 100);
+    defer app.board.?.deinit();
+    defer app.out.deinit(std.testing.allocator);
+    defer app.grab.deinit(std.testing.allocator);
+    defer if (app.report_said) |said| std.testing.allocator.free(said);
+    var shot: Writer.Allocating = .init(std.testing.allocator);
+    defer shot.deinit();
+    try planView(&app, &shot.writer, app.home.?);
+
+    try dragOver(&app, "The board");
+    var text = try app.grab.read(std.testing.allocator, app.grab.sel.?);
+    try std.testing.expect(std.mem.indexOf(u8, text, "The board, redesigned") != null);
+    try std.testing.expect(std.mem.indexOf(u8, app.out.items, "\x1b]52;c;") != null);
+    std.testing.allocator.free(text);
+
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],
+        \\"plan":{"now":[],"next":[
+        \\{"ticket":1,"repo":"arena","title":"one thing","why":"why one"},
+        \\{"ticket":2,"repo":"arena","title":"two things","why":"why two"}],
+        \\"goals":[],"landed_today":{"count":0,"newest":[]},
+        \\"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer board.deinit();
+    var next_app = homeApp(&board);
+    defer next_app.out.deinit(std.testing.allocator);
+    defer if (next_app.report_said) |said| std.testing.allocator.free(said);
+    defer next_app.grab.deinit(std.testing.allocator);
+    next_app.view_w = 100;
+    next_app.term_w = 100;
+    next_app.view_h = 31;
+    next_app.roles = bench.roles();
+    next_app.home = .{ .alone = false, .focus = .plan };
+    var again: Writer.Allocating = .init(std.testing.allocator);
+    defer again.deinit();
+    try frame(&next_app, &again.writer, .all);
+    try dragOver(&next_app, "#2");
+    text = try next_app.grab.read(std.testing.allocator, next_app.grab.sel.?);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.startsWith(u8, text, "#2 two things"));
+    try std.testing.expect(std.mem.indexOfScalar(u8, text, '\n') == null);
+}
+
+test "a selection is dropped when a redraw puts other text under it" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],
+        \\"plan":{"now":[],"next":[
+        \\{"ticket":1,"repo":"arena","title":"one thing","why":"why one"},
+        \\{"ticket":2,"repo":"arena","title":"two things","why":"why two"}],
+        \\"goals":[],"landed_today":{"count":0,"newest":[]},
+        \\"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer board.deinit();
+    var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
+    defer app.out.deinit(std.testing.allocator);
+    defer if (app.report_said) |said| std.testing.allocator.free(said);
+    app.view_w = 100;
+    app.term_w = 100;
+    app.view_h = 31;
+    app.roles = bench.roles();
+    app.home = .{ .alone = false, .focus = .plan };
+    var shot: Writer.Allocating = .init(std.testing.allocator);
+    defer shot.deinit();
+    try frame(&app, &shot.writer, .all);
+    try dragOver(&app, "#2");
+    try std.testing.expect(app.grab.sel != null);
+
+    shot.clearRetainingCapacity();
+    try frame(&app, &shot.writer, .all);
+    try std.testing.expect(app.grab.sel != null);
+
+    var swapped = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],
+        \\"plan":{"now":[],"next":[
+        \\{"ticket":2,"repo":"arena","title":"two things","why":"why two"},
+        \\{"ticket":1,"repo":"arena","title":"one thing","why":"why one"}],
+        \\"goals":[],"landed_today":{"count":0,"newest":[]},
+        \\"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer swapped.deinit();
+    app.board = swapped;
+    shot.clearRetainingCapacity();
+    try frame(&app, &shot.writer, .all);
+    try std.testing.expect(app.grab.sel == null);
+}
+
 test "a peek row too long for its slot is cut at a whole character and ends in …" {
     var p: PeekRows = .{};
     var long: [250]u8 = undefined;
@@ -3733,6 +3858,7 @@ test "the plan's head is one title, ◆ plan, with no tabs after it" {
     var board = try tickets.Board.parse(std.testing.allocator, epic_board);
     defer board.deinit();
     var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
     app.view_w = 80;
     app.term_w = 80;
     app.home = .{ .alone = false, .focus = .plan };
@@ -3749,6 +3875,7 @@ test "Plan draws the same cells with the drawer open and closed, outside the dra
     var board = try tickets.Board.parse(std.testing.allocator, epic_board);
     defer board.deinit();
     var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
     app.term_w = 140;
     app.view_w = 60;
     app.view_h = 24;
@@ -3783,6 +3910,7 @@ test "auto is in Plan's head alone, with its tools; the orchestrator's column, t
     );
     defer board.deinit();
     var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
     app.term_w = 140;
     app.view_w = 60;
     app.home = .{ .focus = .plan };
@@ -3915,6 +4043,7 @@ test "Plan's windows keep their slots: another window's rows, a count or a fold 
         var board = try tickets.Board.parse(std.testing.allocator, shape.text);
         defer board.deinit();
         var app = homeApp(&board);
+        defer app.grab.deinit(std.testing.allocator);
         app.term_w = 80;
         app.view_w = 80;
         app.view_h = 23;
@@ -3948,6 +4077,7 @@ test "Plan's rows start with a ▌ in their repo's colour, and a goal's card has
     );
     defer board.deinit();
     var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
     app.term_w = 120;
     app.view_w = 80;
     app.view_h = 31;
@@ -3995,6 +4125,7 @@ test "an in-flight row with a Claude says its session, window and pane on a seco
     session.wins = .fromOwnedSlice(&wins);
     var sessions = [_]*Session{&session};
     var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
     app.sessions = .fromOwnedSlice(&sessions);
     app.term_w = 80;
     app.view_w = 80;
@@ -4087,6 +4218,7 @@ test "Plan and a pane view start at column 0 at 220 and 110 cells" {
     var row: [4096]u8 = undefined;
     for ([_]u16{ 220, 110 }) |cols| {
         var app = homeApp(&board);
+        defer app.grab.deinit(std.testing.allocator);
         app.term_w = cols;
         app.view_w = cols;
         app.sessions = .fromOwnedSlice(&sessions);
@@ -4176,6 +4308,7 @@ test "Your move with 8 items scrolls inside its five rows to the picked one" {
     var board = try tickets.Board.parse(std.testing.allocator, json.buffered());
     defer board.deinit();
     var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
     app.term_w = 80;
     app.view_w = 80;
     app.view_h = 31;
@@ -4195,6 +4328,7 @@ test "on the e2e's 24-row screen every Plan window keeps its title and a body ro
     );
     defer board.deinit();
     var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
     app.term_w = 121;
     app.view_w = 60;
     app.view_h = 24;
@@ -4222,6 +4356,7 @@ test "Your move's open check wraps over as many rows as it needs, its buttons on
     );
     defer board.deinit();
     var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
     app.term_w = 80;
     app.view_w = 80;
     app.view_h = 40;

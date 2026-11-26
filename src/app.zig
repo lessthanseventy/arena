@@ -6049,14 +6049,16 @@ pub const App = struct {
     /// The mouse over the text of the window drawn over the rest: a drag selects, and copies on
     /// let go; a second press on the same cell picks its word, a third its line. A first press is
     /// still the press of what is under it. Whether the event was the selection's.
-    fn grabMouse(app: *App, m: keys.Mouse) !bool {
+    pub fn grabMouse(app: *App, m: keys.Mouse) !bool {
         const g = &app.grab;
-        const area = g.area orelse {
+        if (g.n_areas == 0 or (!g.modal and (app.menu != null or app.prompt != null or app.popup != null))) {
             g.pressed = null;
             g.dragging = false;
             return false;
-        };
+        }
         const at: grab_mod.Point = .{ .x = m.x, .y = m.y };
+        if (m.leftPress()) g.active = g.paneAt(at) orelse g.active;
+        const area = g.areas[g.active];
         if (g.dragging) {
             if (m.release or m.hover()) {
                 g.dragging = false;
@@ -6073,13 +6075,14 @@ pub const App = struct {
                 g.sel = null;
                 app.dirty = true;
             }
-            if (!area.contains(at)) return false;
+            if (g.paneAt(at) == null) return false;
             const clicks = g.press(app.now, at);
             if (clicks == 1) {
                 g.pressed = at;
                 return false;
             }
             g.sel = (if (clicks == 2) g.word(at) else g.wholeLine(at)) orelse return false;
+            g.held_valid = false;
             try app.copyPicked();
             app.dirty = true;
             return true;
@@ -6089,6 +6092,7 @@ pub const App = struct {
                 g.dragging = true;
                 g.pressed = null;
                 g.sel = .{ .from = from, .to = area.clamp(at) };
+                g.held_valid = false;
                 app.dirty = true;
                 return true;
             }
@@ -8319,7 +8323,7 @@ test "a drag over a wrapped line of the modal copies it as one line, inside the 
     var shot: Writer.Allocating = .init(std.testing.allocator);
     defer shot.deinit();
     try draw.frame(&app, &shot.writer, .all);
-    const area = app.grab.area.?;
+    const area = app.grab.areas[0];
     var wrapped: ?usize = null;
     for (app.grab.rows.items, 0..) |r, at| if (r.dropped != null and wrapped == null) {
         wrapped = at;
