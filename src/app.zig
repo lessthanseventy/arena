@@ -8852,6 +8852,8 @@ test "every box opened from Plan is the one column left of the orchestrator, and
     const card = app.modalRect().?;
     try std.testing.expect(card.x + card.w <= app.term_w - app.view_w);
     try std.testing.expectEqual(card, app.wordsRect());
+    const words = app.wordsRect();
+    try std.testing.expect(words.x + words.w <= app.term_w - app.view_w);
     app.home.?.gate = true;
     try std.testing.expectEqual(card, app.modalRect().?);
     app.home = .{ .goal_open = true };
