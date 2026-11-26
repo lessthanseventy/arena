@@ -965,7 +965,10 @@ key Z
 check "Z on the chip opens only that repo's rows" see '#7 Lights'
 check "and the fold is gone from the repo folds" await eval '! grep -qx tlon $folded_file'
 inner set -p -t alpha:one @arena_claude_since $(date +%s)
+inner new-window -d -t alpha: -n spare sh
+inner set -p -t alpha:spare @arena_claude_since $(date +%s)
 see 'other Claudes 1'
+inner kill-window -t alpha:spare
 $bin -L $in plan 7
 zselect -t 200
 key G
