@@ -188,7 +188,7 @@ fn decode(text: []const u8) Arrival {
 test "a view and a ticket come back as they went" {
     var text: Writer.Allocating = .init(std.testing.allocator);
     defer text.deinit();
-    const view: BoardView = .{ .focus = .orchestrator, .back = 7, .col = 2, .row = 3, .repo = 1, .plan = true, .pick = 4, .unfolded = 5, .alone = false };
+    const view: BoardView = .{ .focus = .orchestrator, .back = 7, .pick = 4, .unfolded = 5, .alone = false };
     try encode(&text.writer, .{ .kept = .{ .view = view, .folded = true }, .ticket = 822 });
     const back = decode(text.written());
     try std.testing.expectEqual(@as(?u32, 822), back.ticket);
@@ -209,9 +209,9 @@ test "the installed ticket file is removed once taken, so the next restart finds
 
 test "no view is no kept home, and a stranger's lines are skipped" {
     try std.testing.expectEqual(@as(?app_mod.App.Kept, null), decode("ticket=9\n").kept);
-    const back = decode("folded=0\nview.col=x\nview.row=3\nview.nothing=1\nnonsense\n");
-    try std.testing.expectEqual(@as(usize, 0), back.kept.?.view.col);
-    try std.testing.expectEqual(@as(usize, 3), back.kept.?.view.row);
+    const back = decode("folded=0\nview.pick=x\nview.plan_pick=3\nview.nothing=1\nnonsense\n");
+    try std.testing.expectEqual(@as(usize, 0), back.kept.?.view.pick);
+    try std.testing.expectEqual(@as(usize, 3), back.kept.?.view.plan_pick);
 }
 
 test "the build is run again only once it has stopped changing" {

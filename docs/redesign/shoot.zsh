@@ -12,7 +12,7 @@ browse() { agent-browser --session arena-mock "$@" >/dev/null }
 
 browse set viewport 1820 979
 for dir in ${@:-phosphor workbench neon}; do
-  for screen in home board popup orch; do
+  for screen in home popup orch; do
     $mock $dir $screen $here/board.json $palette 220x51 $pages/$dir-$screen.html
     browse open file://$pages/$dir-$screen.html
     browse screenshot $here/$dir-$screen.png

@@ -860,10 +860,10 @@ fn findLine(app: *const App, w: *Writer) !?Cursor {
     if (!typing and text.len == 0) return null;
     var pen: Pen = .{};
     var slots: [33]App.RepoTab = undefined;
-    const x: usize = if (app.planShown()) app.planRepoTabs(&slots).end + 2 else cellCount(App.board_title) + 2;
+    const x: usize = app.planRepoTabs(&slots).end + 2;
     const hint = if (typing) "  ⏎ keep  esc clear" else "  esc clear";
     if (app.roles) |r| return benchFind(app, w, r, x, text, hint, typing);
-    const room = @as(usize, app.boardW()) -| cellCount(App.board_title) -| 3;
+    const room = @as(usize, app.boardW()) -| cellCount(App.plan_title) -| 3;
     var shown = text;
     while (cellCount(shown) + 2 + cellCount(hint) > room and shown.len > 0) shown = shown[1..];
     while (shown.len > 0 and shown[0] & 0xC0 == 0x80) shown = shown[1..];
@@ -883,11 +883,7 @@ fn findLine(app: *const App, w: *Writer) !?Cursor {
 /// The find line on the title bar's raised face, in the room the right group leaves: the hint goes
 /// first when it does not fit, then the text, cut with `…`.
 fn benchFind(app: *const App, w: *Writer, r: theme.Roles, x: usize, text: []const u8, hint: []const u8, typing: bool) !?Cursor {
-    var heads: [48]App.Button = undefined;
-    var right: usize = app.boardW();
-    if (app.planShown()) right = planHeadStart(app) else for (heads[0..app.header(&heads).n]) |b| {
-        if (b.y == 0) right = @min(right, b.x);
-    }
+    const right = planHeadStart(app);
     const room = right -| x -| 1;
     const lead = 2;
     const hinted = lead + cellCount(text) + cellCount(hint) <= room;
@@ -1802,10 +1798,7 @@ fn planView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
     try pen.set(w, .{}, null);
     try w.writeAll(" ");
     try pen.set(w, heading(app), null);
-    try w.writeAll(App.plan_tab);
-    try pen.set(w, dim, null);
-    try w.writeAll(App.tab_sep);
-    try w.writeAll(App.board_tab);
+    try w.writeAll(App.plan_title[1..]);
     if (app.halfHome()) {
         try pen.set(w, .{}, null);
         try w.writeAll("  ");
@@ -2147,148 +2140,6 @@ pub fn repoHue(r: theme.Roles, repo: ?[]const u8) struct { glyph: []const u8, hu
     return .{ .glyph = "\u{f10c}", .hue = r.dim };
 }
 
-/// The board in Workbench's look: its columns windows, their cards tiles, and the last closed a
-/// strip along its foot.
-fn benchBoard(app: *App, w: *Writer, r: theme.Roles, view: app_mod.BoardView) !void {
-    const ox: u16 = 0;
-    for (App.first_line - 1..app.view_h) |y| try bench.tabRow(w, r, ox, @intCast(y), app.boardW());
-    try benchEpics(app, w, r);
-    const lanes = app.boardLanes();
-    for (0..app.boardCols()) |c| {
-        const cw = app.boardColW(c);
-        if (cw < 8) continue;
-        const x = app.boardColX(c);
-        const total = if (lanes) app.boardCount(tickets.statuses[c]) else app.boardColumnAll(c);
-        const lit = if (app.drag == .card) app.cardTarget() == (if (app.boardBacklog()) tickets.Status.backlog else tickets.statuses[c]) else c == view.col and !app.columnFocused();
-        try bench.window(w, r, x, app.colTop() - 1, cw - 1, app.listH() - app.colTop(), app.columnName(c), total, lit);
-        if (total == 0) try bench.say(w, x + 2, app.colTop(), "none", r.dim, r.panel, false);
-        try benchLines(app, w, r, view, c, x, cw);
-    }
-    if (app.footRows() > 0) try benchRecent(app, w, r, view);
-    try benchBar(app, w, r);
-    if (app.drag == .card) try benchHeld(app, w, r);
-}
-
-/// The epics along the board's top, side by side as slim bars: `◆ #N title` over a bar in its
-/// repo's hue, `landed/total`, and a chip when a child is being built. An epic is never a card.
-fn benchEpics(app: *const App, w: *Writer, r: theme.Roles) !void {
-    const goals = app.epicBars();
-    if (goals.len == 0) return;
-    const b = &app.board.?;
-    const n = goals.len;
-    const gap = App.epic_gap;
-    const slot = (app.boardW() -| 2 - gap * (n - 1)) / n;
-    const y = App.first_line - 1;
-    for (goals, 0..) |goal, i| {
-        const x = 1 + i * (slot + gap);
-        const progress = b.epicProgress(goal.epic) orelse continue;
-        const hue = goalHue(b, r, goal);
-        var building: usize = 0;
-        for (b.cards()) |card| building += @intFromBool(card.epic_id == goal.epic and card.status == .doing);
-        var head: [24]u8 = undefined;
-        const id = std.fmt.bufPrint(&head, "◆ #{d} ", .{goal.epic}) catch "";
-        try bench.say(w, x, y, id, hue, r.ground, true);
-        try bench.say(w, x + cellCount(id), y, clip(goal.title, slot -| cellCount(id)), r.text, r.ground, false);
-        var count: [24]u8 = undefined;
-        const label = std.fmt.bufPrint(&count, "{d}/{d}", .{ progress.landed, progress.total }) catch "";
-        var chip_buf: [24]u8 = undefined;
-        const chip_text = std.fmt.bufPrint(&chip_buf, "{d} building", .{building}) catch "";
-        const chip_w = cellCount(chip_text) + 5;
-        const with_chip = building > 0 and slot >= 24 + chip_w;
-        const tail = cellCount(label) + 1 + if (with_chip) chip_w + 1 else 0;
-        const bar_w = slot -| tail;
-        try bench.bar(w, r, x, y + 1, bar_w, progress.landed, progress.total, hue);
-        try bench.say(w, x + bar_w + 1, y + 1, label, r.text, r.ground, false);
-        if (with_chip) _ = try bench.chipInk(w, r, x + bar_w + 2 + cellCount(label), y + 1, chip_text, r.accent, r.text, false);
-    }
-}
-
-/// The board's last row: its keys, each a chip with the key in amber, in three groups with a rule
-/// between; babylon's word of a drop or a report is said in its place.
-fn benchBar(app: *const App, w: *Writer, r: theme.Roles) !void {
-    if (app.barRows() == 0) return;
-    const y = app.view_h - 1;
-    try bench.fill(w, 0, y, app.boardW(), r.ground);
-    if (app.report_said != null and !app.feedFocused()) {
-        const room = app.boardW() -| 2;
-        try bench.say(w, 1, y, clip(app.report_said.?, room), if (app.report_failed) r.failed else r.accent, r.ground, false);
-        return;
-    }
-    var keys: [24]App.BarKey = undefined;
-    for (app.keyBar(&keys)) |k| {
-        if (k.group) try bench.say(w, k.x - 2, y, "│", r.dim, r.ground, false);
-        try bench.say(w, k.x, y, " ", r.text, r.raised, false);
-        try bench.say(w, k.x + 1, y, k.key, r.accent, r.raised, true);
-        try bench.say(w, k.x + 1 + cellCount(k.key), y, " ", r.text, r.raised, false);
-        try bench.say(w, k.x + 2 + cellCount(k.key), y, k.word, r.text, r.raised, false);
-        try bench.say(w, k.x + 2 + cellCount(k.key) + cellCount(k.word), y, " ", r.text, r.raised, false);
-    }
-}
-
-/// The card being dragged, under the pointer.
-fn benchHeld(app: *const App, w: *Writer, r: theme.Roles) !void {
-    const card = app.cardById(app.drag.card.id) orelse return;
-    var buf: [160]u8 = undefined;
-    const text = std.fmt.bufPrint(&buf, " #{d} {s} ", .{ card.id, card.title }) catch return;
-    const x = app.pointer.x + 1;
-    const room = app.term_w -| x;
-    try bench.say(w, x, app.pointer.y, clip(text, @min(room, 32)), r.text, r.card(true), true);
-}
-
-fn benchLines(app: *const App, w: *Writer, r: theme.Roles, view: app_mod.BoardView, c: usize, x: u16, cw: u16) !void {
-    var lines = App.ColumnLines.init(app, c);
-    for (0..app.columnScroll(c)) |_| _ = lines.next();
-    var y: u16 = app.colTop();
-    while (y + 1 < app.listH()) : (y += 1) {
-        const at = lines.next() orelse break;
-        switch (at.what) {
-            .heading => try benchHeading(w, r, app.laneRepo(at.lane).?, app.laneCounts(at.lane, c).total, at.lane == view.lane and c == view.col, foldMark(app, at.lane), x + 1, y, cw -| 3),
-            .more => {
-                var buf: [24]u8 = undefined;
-                const n = app.groupCounts(at.lane, c);
-                try bench.say(w, x + 2, y, std.fmt.bufPrint(&buf, "↓ {d} more", .{n.total - n.shown}) catch "", r.dim, r.panel, false);
-            },
-            .card => |spot| {
-                const card = app.groupCard(at.lane, c, spot.row).?;
-                if (app.boardStrip(c)) {
-                    var buf: [160]u8 = undefined;
-                    const trying = card.status == .@"try";
-                    const text = std.fmt.bufPrint(&buf, "{s} #{d} {s}", .{ if (trying) "▲" else "✓", card.id, card.title }) catch card.title;
-                    const lit = app.cardPicked(at.lane, c, spot.row) and !app.columnFocused();
-                    try bench.say(w, x + 2, y, clip(text, cw -| 5), if (lit) r.accent else if (trying) r.you else r.dim, r.panel, lit);
-                } else try benchTile(app, w, r, card, spot.part, app.cardPicked(at.lane, c, spot.row), x + 1, y, cw - 3, cw);
-            },
-        }
-    }
-}
-
-/// What a group's heading says after its name: whether it is folded, and whether a card in it
-/// waits on the human, which a fold must not hide.
-fn foldMark(app: *const App, lane: usize) []const u8 {
-    const folded = app.folded(app.laneRepo(lane) orelse "");
-    const needs = app.laneNeeds(lane);
-    return if (folded and needs) " ▸ ▲" else if (folded) " ▸" else if (needs) " ▾ ▲" else " ▾";
-}
-
-/// A repo's heading row in a column of `width` cells at `x`: its glyph and name in its hue, a dim
-/// dashes, and its count of cards there.
-fn benchHeading(w: *Writer, r: theme.Roles, repo: []const u8, count: usize, lit: bool, fold: []const u8, x: usize, y: usize, width: usize) !void {
-    var buf: [24]u8 = undefined;
-    const num = std.fmt.bufPrint(&buf, "{d}", .{count}) catch "";
-    const mark = repoHue(r, repo);
-    const name = clip(if (repo.len == 0) "no repo" else repo, width -| (cellCount(num) + 6 + cellCount(fold)));
-    try bench.say(w, x + 1, y, mark.glyph, mark.hue, r.panel, false);
-    try bench.say(w, x + 3, y, name, mark.hue, r.panel, true);
-    try bench.say(w, x + 3 + cellCount(name), y, fold, if (std.mem.endsWith(u8, fold, "▲")) r.you else r.dim, r.panel, false);
-    const from = x + 4 + cellCount(name) + cellCount(fold);
-    const to = x + width -| (cellCount(num) + 1);
-    var dashes: [128]u8 = undefined;
-    var out: Writer = .fixed(&dashes);
-    if (to > from) for (from..to) |_| out.writeAll("─") catch break;
-    try bench.say(w, from, y, out.buffered(), if (lit) r.accent else r.dim, r.panel, false);
-    try bench.say(w, @max(from, to) + 1, y, num, r.dim, r.panel, false);
-}
-
 /// What a card says of where it is, as a chip: a question open, sent back, proposed, where the
 /// pipeline has it, what it waits on, who holds it.
 fn benchState(app: *const App, card: *const tickets.Card, r: theme.Roles, buf: []u8) ?struct { label: []const u8, lead: color.RGB, words: color.RGB, filled: bool } {
@@ -2315,206 +2166,6 @@ fn benchState(app: *const App, card: *const tickets.Card, r: theme.Roles, buf: [
     else
         .{ .label = "\u{f10c} no Claude", .lead = r.failed, .words = r.text, .filled = false };
     return null;
-}
-
-/// An epic's progress as words, `epic · 3/7 landed` after `lead`, `epic` alone when the board has no count for it.
-fn epicWords(app: *const App, card: *const tickets.Card, lead: []const u8, buf: []u8) []const u8 {
-    const progress = if (app.board) |*b| b.epicProgress(card.id) else null;
-    const got = progress orelse return std.fmt.bufPrint(buf, "{s}epic", .{lead}) catch "epic";
-    return std.fmt.bufPrint(buf, "{s}epic · {d}/{d} landed", .{ lead, got.landed, got.total }) catch "epic";
-}
-
-/// Row `part` of a card as a tile at `x` and `tw` cells wide, in a column `col_w` wide: the bevel,
-/// its title on two rows at most, then its chips. The picked one is raised, with a row for its
-/// buttons and its shadow.
-fn benchTile(app: *const App, w: *Writer, r: theme.Roles, card: *const tickets.Card, part: usize, picked: bool, x: u16, y: u16, tw: usize, col_w: u16) !void {
-    const bg = r.card(picked);
-    const text_w = App.tileTextW(col_w);
-    const edge = repoHue(r, card.repo).hue;
-    var count: usize = 0;
-    var counted = app_mod.TitleLines.init(card.title, text_w);
-    while (counted.next()) |_| count += 1;
-    const t: usize = @max(1, @min(count, App.tile_title_rows));
-    if (picked and part >= 1 and part <= t + 2) try bench.say(w, x + tw, y, "▌", r.well, r.panel, false);
-    if (part == 0) {
-        try bench.bevel(w, x, y, tw, if (picked) r.text.mix(bg, 0.5) else r.card(true), bg);
-    } else if (part <= t) {
-        try bench.fill(w, x, y, tw, bg);
-        try bench.say(w, x, y, "▎", edge, bg, false);
-        var lines = app_mod.TitleLines.init(card.title, text_w);
-        var line: []const u8 = "";
-        for (0..part) |_| line = lines.next() orelse "";
-        const cut = part == App.tile_title_rows and count > App.tile_title_rows;
-        var buf: [200]u8 = undefined;
-        const shown = if (cut) (std.fmt.bufPrint(&buf, "{s}…", .{clip(line, text_w -| 1)}) catch line) else line;
-        try bench.say(w, x + 1, y, shown, if (card.blocked_by.len > 0) r.dim else r.text, bg, true);
-        if (part == 1) {
-            const high = std.mem.eql(u8, card.priority, "high");
-            const low = std.mem.eql(u8, card.priority, "low");
-            try bench.say(w, x + tw - 2, y, if (high) "●" else if (low) "○" else "◉", if (high) r.failed else r.dim, bg, false);
-        }
-    } else if (part == t + 1) {
-        try bench.fill(w, x, y, tw, bg);
-        try bench.say(w, x, y, "▎", edge, bg, false);
-        try benchChips(app, w, r, card, x + 1, y, tw - 2);
-    } else if (picked and part == t + 2) {
-        try bench.fill(w, x, y, tw, bg);
-    } else if (picked and part == t + 3) {
-        var under: [256]u8 = undefined;
-        var out: Writer = .fixed(&under);
-        for (0..@min(tw, 80)) |_| out.writeAll("▀") catch break;
-        try bench.say(w, x + 1, y, out.buffered(), r.well, r.panel, false);
-    }
-}
-
-/// A tile's chip row in `room` cells from `x`: the repo's glyph and the number in its hue, where
-/// the card is, its model, and how long it has been filed or held.
-fn benchChips(app: *const App, w: *Writer, r: theme.Roles, card: *const tickets.Card, x: u16, y: u16, room: usize) !void {
-    var at = x;
-    const end = x + room;
-    var buf: [96]u8 = undefined;
-    var state_buf: [96]u8 = undefined;
-    const mark = repoHue(r, card.repo);
-    const id = std.fmt.bufPrint(&buf, "{s} {d}", .{ mark.glyph, card.id }) catch "";
-    at += @as(u16, @intCast(try bench.chipOn(w, at, y, id, mark.hue, mark.hue, false, r.well)));
-    if (benchState(app, card, r, &state_buf)) |state| if (at + cellCount(state.label) + 2 <= end) {
-        at += 1;
-        at += @as(u16, @intCast(try bench.chipOn(w, at, y, state.label, state.lead, state.words, state.filled, r.well)));
-    };
-    if (card.model) |model| if (at + cellCount(modelName(model)) + 3 <= end) {
-        at += 1;
-        at += @as(u16, @intCast(try bench.chipAt(w, r, at, y, modelName(model), r.dim, r.well)));
-    };
-    if (card.handed_off_from) |pane| {
-        const text = std.fmt.bufPrint(&buf, "↩ {s}", .{pane}) catch "";
-        if (at + cellCount(text) + 3 <= end) {
-            at += 1;
-            at += @as(u16, @intCast(try bench.chipAt(w, r, at, y, text, r.dim, r.well)));
-        }
-    }
-    var age: [8]u8 = undefined;
-    var said: [24]u8 = undefined;
-    const since: []const u8 = switch (card.status) {
-        .todo => if (tickets.epochOf(card.inserted_at)) |t| ago(&age, app.epoch, @intCast(@max(1, t))) else "",
-        .doing => if (card.claimedAt()) |t| ago(&age, app.epoch, @intCast(@max(1, t))) else "",
-        else => "",
-    };
-    if (since.len > 0) {
-        const text = std.fmt.bufPrint(&said, "{s}{s}", .{ if (card.status == .todo) "filed " else "", since }) catch since;
-        if (at + 1 + cellCount(text) + 2 <= end) _ = try bench.chipAt(w, r, at + 1, y, text, r.dim, r.well);
-    }
-}
-
-/// The recent strip along the foot: a title bar, a timeline of the last closed with how long ago
-/// each, and under it each one's number and title. The picked one is lit and has its button.
-fn benchRecent(app: *App, w: *Writer, r: theme.Roles, view: app_mod.BoardView) !void {
-    const y0 = app.listH();
-    const x: u16 = 0;
-    const focused = view.col == 3 and !app.columnFocused();
-    var total: usize = 0;
-    if (app.board != null) total = app.columnOf(.done, app.boardRepo(), app.findText(), &.{});
-    try bench.titleBar(w, r, x, y0, app.boardW(), "recent", focused);
-    var nbuf: [16]u8 = undefined;
-    _ = try bench.chip(w, r, x + 4 + "recent".len, y0, std.fmt.bufPrint(&nbuf, "{d}", .{total}) catch "", r.dim, false);
-    var cards: [App.strip_n]*const tickets.Card = undefined;
-    const n = app.stripCards(&cards);
-    const picked_id: ?u32 = if (view.col == 3) (if (app.boardCard(view.col, view.row)) |c| c.id else null) else null;
-    const span_w = app.stripCell();
-    for (cards[0..n], 0..) |card, k| {
-        const cx = x + @as(u16, @intCast(k)) * span_w;
-        const lit = picked_id == card.id and !app.columnFocused();
-        const landed = card.stage != null and std.mem.eql(u8, card.stage.?, "landed");
-        var age: [8]u8 = undefined;
-        const since = if (tickets.epochOf(card.closed_at)) |t| ago(&age, app.epoch, @intCast(@max(1, t))) else "";
-        var buf: [200]u8 = undefined;
-        const trying = card.status == .@"try";
-        const head = if (trying) "▲ try it " else std.fmt.bufPrint(&buf, "{s} {s} ", .{ if (landed) "◆" else "✓", since }) catch "◆";
-        try bench.say(w, cx + 1, y0 + 1, head, if (lit) r.accent else if (trying) r.you else if (landed) r.landed else r.dim, r.ground, lit);
-        var dashes: [256]u8 = undefined;
-        var out: Writer = .fixed(&dashes);
-        for (@min(cx + 1 + cellCount(head), cx + span_w)..cx + span_w) |_| out.writeAll("─") catch break;
-        try bench.say(w, cx + 1 + cellCount(head), y0 + 1, out.buffered(), r.dim, r.ground, false);
-        const id = std.fmt.bufPrint(&buf, "#{d}", .{card.id}) catch "";
-        const hue = repoHue(r, card.repo).hue;
-        try bench.say(w, cx + 1, y0 + 2, id, hue, r.ground, true);
-        try bench.say(w, cx + 2 + cellCount(id), y0 + 2, clip(card.title, span_w -| (cellCount(id) + 3)), if (lit) r.text else r.dim, r.ground, lit);
-    }
-}
-
-/// babylon's board in place of the strip: a row naming the repo it is narrowed to and its keys,
-/// then a column a status, each a box of its cards, a card a box of its own: the ticket's number
-/// and title on two rows, a footer of what else is so of it, its left edge its priority, and
-/// the picked one's border lit.
-fn boardView(app: *App, w: *Writer, view: app_mod.BoardView) !void {
-    if (app.planShown()) return planView(app, w, view);
-    const ox: u16 = 0;
-    const dim = ink(app, "dim", 8);
-    const edge: vt.Style = .{ .fg_color = .palette(8) };
-    var pen: Pen = .{};
-    var buf: [160]u8 = undefined;
-
-    if (app.roles) |r| {
-        try bench.titleBar(w, r, ox, 0, app.boardW(), "", true);
-        const plan_at = ox + 1;
-        const board_at = plan_at + cellCount(App.plan_tab) + cellCount(App.tab_sep);
-        try bench.say(w, plan_at, 0, App.plan_tab ++ App.tab_sep, r.dim, r.raised, false);
-        try bench.say(w, board_at, 0, App.board_tab, r.text, r.raised, true);
-        try bench.tabRow(w, r, ox, 1, app.boardW());
-    } else {
-        try w.print("\x1b[1;{d}H", .{ox + 1});
-        try pen.set(w, .{}, null);
-        try w.writeAll(" ");
-        try pen.set(w, dim, null);
-        try w.writeAll(App.plan_tab ++ App.tab_sep);
-        try pen.set(w, heading(app), null);
-        try w.writeAll(App.board_tab);
-        try pen.set(w, .{}, null);
-        try fitted(w, "", app.boardW() -| cellCount(App.board_title));
-    }
-
-    if (app.roles) |r| {
-        try benchBoard(app, w, r, view);
-        return benchOver(app, w, view);
-    }
-    const lanes = app.boardLanes();
-    for (0..app.boardCols()) |c| {
-        const name = app.columnName(c);
-        const x = app.boardColX(c);
-        const inner = app.boardColW(c) -| 2;
-        const total = if (lanes) app.boardCount(tickets.statuses[c]) else app.boardColumnAll(c);
-        const label = std.fmt.bufPrint(&buf, " {s} {d} ", .{ name, total }) catch "";
-        try pen.set(w, edge, null);
-        try w.print("\x1b[{d};{d}H╭─", .{ app.colTop(), x + 1 });
-        try pen.set(w, dim, null);
-        const shown = clip(label, inner -| 1);
-        try w.writeAll(shown);
-        try pen.set(w, edge, null);
-        for (@min(cellCount(shown) + 1, inner)..inner) |_| try w.writeAll("─");
-        try w.writeAll("╮");
-        try columnLines(app, w, &pen, view, c, x, inner);
-        if (total == 0 and app.view_h > 3) {
-            try pen.set(w, dim, null);
-            try w.print("\x1b[{d};{d}H", .{ app.colTop() + 1, x + 2 });
-            try fitted(w, " none", inner);
-            try pen.set(w, edge, null);
-        }
-        try w.print("\x1b[{d};{d}H╰", .{ app.view_h, x + 1 });
-        for (0..inner) |_| try w.writeAll("─");
-        try w.writeAll("╯");
-    }
-    try benchOver(app, w, view);
-}
-
-/// What lies over the board's columns: its buttons, the find line and the boxes opened on it.
-fn benchOver(app: *App, w: *Writer, view: app_mod.BoardView) !void {
-    try boardButtons(app, w, view);
-    _ = try findLine(app, w);
-    if (view.answering) if (app.pickedCard()) |card| if (card.ask) |ask| try askBox(app, w, card.id, ask);
-    if (view.giving) |picked| if (app.pickedCard()) |card| try giveBox(app, w, card.id, picked);
-    if (view.detail) |id| try detailBox(app, w, id, view.detail_scroll);
-    try autoBox(app, w);
-    try draftBox(app, w);
-    if (view.help) try helpBox(app, w);
 }
 
 const DraftTone = enum { plain, dim, pick };
@@ -3074,145 +2725,6 @@ fn doneNote(app: *const App, id: u32) []const u8 {
     return "";
 }
 
-/// A header button in Workbench's look, over the title bar or on its tab row; false for one that
-/// is not part of the header.
-fn workbenchButton(app: *const App, w: *Writer, r: theme.Roles, button: App.Button, view: app_mod.BoardView, buf: []u8) !bool {
-    const label = app.buttonLabel(button, buf);
-    const board = if (app.board) |*b| b else return false;
-    switch (button.what) {
-        .repo => |i| try bench.tab(w, r, button.x, button.y, label, i == view.repo and !view.backlog, app.tabCount(i) == 0),
-        .backlog => try bench.tab(w, r, button.x, button.y, label, view.backlog, board.backlog().len == 0),
-        .needs => {
-            const n = board.needsYou().len;
-            try bench.headButton(w, r, button.x, button.y, label, if (n > 0) r.you else r.dim, n > 0);
-        },
-        .new => {
-            const focused = view.col == 0 and !app.columnFocused();
-            try bench.say(w, button.x, button.y, label, r.accent, if (focused) r.raised else r.tile, true);
-        },
-        .card => |action| {
-            const trimmed = std.mem.trim(u8, label, " ");
-            const split = std.mem.indexOfScalar(u8, trimmed, ' ') orelse return false;
-            var buttons: [48]App.Button = undefined;
-            const first = for (app.boardButtons(&buttons)) |b| {
-                if (b.what == .card) break b;
-            } else return false;
-            _ = action;
-            _ = try bench.button(w, r, button.x, button.y, trimmed[0..split], trimmed[split + 1 ..], button.x == first.x and button.y == first.y, null);
-        },
-        .gate => try bench.headButton(w, r, button.x, button.y, label, r.checking, false),
-        .orch => try bench.headButton(w, r, button.x, button.y, label, if (app.orchestrator().?.running) r.text else r.dim, false),
-        .auto => {
-            const armed = app.auto() != null and app.now < app.auto_armed_until;
-            if (armed) {
-                try bench.headButton(w, r, button.x, button.y, label, r.accent, true);
-                return true;
-            }
-            const used = try bench.toggle(w, r, button.x, button.y, if (button.short) "" else "auto", app.auto() != null, r.raised);
-            const at = std.mem.indexOf(u8, label, "▌") orelse return true;
-            const rest = label[at + "▌".len ..];
-            if (rest.len > 0 and used < button.w) try bench.headButton(w, r, button.x + used, button.y, rest, r.dim, false);
-        },
-    }
-    return true;
-}
-
-/// The board's buttons over what is drawn under them: the repo tabs, the one shown lit, and the
-/// gate; the + on the to-do column; the picked card's actions as chips; and, at the first row's
-/// end, where its keys are.
-fn boardButtons(app: *App, w: *Writer, view: app_mod.BoardView) !void {
-    var pen: Pen = .{};
-    var buf: [64]u8 = undefined;
-    var buttons: [48]App.Button = undefined;
-    const shown = app.boardButtons(&buttons);
-    var end: u16 = @as(u16, @intCast(cellCount(App.board_title)));
-    var right = app.boardW();
-    var refusal_at: ?App.Button = null;
-    const said: ?[]const u8 = if (app.start_refused) |text| text else if (app.report_said != null and !app.feedFocused() and app.barRows() == 0) app.report_said else null;
-    const said_ink = if (app.start_refused != null) ink(app, "emberdim", 1) else reportInk(app);
-    for (shown) |button| {
-        if (said != null and button.what == .card) {
-            if (refusal_at == null) refusal_at = button;
-            continue;
-        }
-        const style: vt.Style = switch (button.what) {
-            .repo => |i| if (i == view.repo and !view.backlog) chip(app) else if (app.tabCount(i) > 0) .{} else ink(app, "dim", 8),
-            .backlog => if (view.backlog) chip(app) else if (app.board.?.backlog().len > 0) .{} else ink(app, "dim", 8),
-            .gate => ink(app, "violet", 5),
-            .orch => if (app.orchestrator().?.running) ink(app, "violet", 5) else ink(app, "dim", 8),
-            .auto => if (app.auto() != null) autoOn(app) else ink(app, "dim", 8),
-            .needs => if (app.board.?.needsYou().len > 0) heading(app) else ink(app, "dim", 8),
-            .new => heading(app),
-            .card => blk: {
-                var lit = if (app.columnFocused()) ink(app, "dim", 8) else ink(app, "amber", 4);
-                lit.flags.inverse = true;
-                break :blk lit;
-            },
-        };
-
-        const drawn = if (app.roles) |r| try workbenchButton(app, w, r, button, view, &buf) else false;
-        if (!drawn) {
-            try pen.set(w, style, null);
-            try w.print("\x1b[{d};{d}H{s}", .{ button.y + 1, button.x + 1, app.buttonLabel(button, &buf) });
-        }
-        if (button.y != 0) continue;
-        switch (button.what) {
-            .repo, .backlog => end = button.x + button.w,
-            else => right = @min(right, button.x),
-        }
-    }
-    // babylon's refusal of the start, or its answer to the report key, takes the place of the
-    // card's action row
-    if (refusal_at) |at| if (said) |text| {
-        const edge = app.boardColX(view.col) + app.boardColW(view.col) -| 2;
-        if (app.roles) |r| {
-            try bench.say(w, at.x, at.y, clip(text, edge -| at.x -| 1), if (app.start_refused != null) r.failed else r.accent, r.raised, false);
-        } else {
-            try pen.set(w, said_ink, null);
-            try w.print("\x1b[{d};{d}H{s}", .{ at.y + 1, at.x + 1, clip(text, edge -| at.x) });
-        }
-    };
-    var heads: [48]App.Button = undefined;
-    if (app.header(&heads).more) |at| {
-        try pen.set(w, ink(app, "dim", 8), null);
-        try w.print("\x1b[2;{d}H…", .{at + 1});
-    }
-    const hint = for ([_][]const u8{ "? keys · esc close", "? keys" }) |text| {
-        if (end + 2 + cellCount(text) + 1 <= right) break text;
-    } else "";
-    if (hint.len > 0) {
-        if (app.roles) |r| {
-            try bench.say(w, right - 1 - cellCount(hint) - 1, 0, hint, r.dim, r.raised, false);
-        } else {
-            try pen.set(w, ink(app, "dim", 8), null);
-            try w.print("\x1b[1;{d}H{s}", .{ right - 1 - cellCount(hint), hint });
-        }
-    }
-    try pen.set(w, .{}, null);
-}
-
-const board_keys = [_][2][]const u8{
-    .{ "hjkl, arrows", "pick a card" },
-    .{ "⏎, click it", "go to the Claude holding it, or start one on a free todo card" },
-    .{ "space", "its whole ticket: body, links, gate log" },
-    .{ "a G H x P", "answer, give, ask its Claude to hand off, no to a proposal, oldest proposed" },
-    .{ "e", "edit its title, repo and body" },
-    .{ "p", "raise its priority, high back to low" },
-    .{ "> <", "close a ticket to do, reopen a done one" },
-    .{ "J K", "move it down or up among its repo's cards" },
-    .{ "+ n /", "file a ticket; the inbox; find cards by number, title or repo" },
-    .{ "r z Z", "next repo, backlog, or a tab; fold a repo or a heading; Z all but it" },
-    .{ "t w W", "backlog card to todo; todo card to next, asking its why; W at top" },
-    .{ "g", "the gate's modal on the run in progress, else its session" },
-    .{ "o", "the orchestrator, started if it is not running" },
-    .{ "A", "babylon's auto mode, on or off" },
-    .{ "`", "fold the orchestrator's window beside it, or unfold" },
-    .{ "alt+l", "to that window, and alt+h back to the board" },
-    .{ "esc, q", "close the board" },
-    .{ "▌", "its priority: amber for high, dim for low" },
-    .{ "◐ » ✗ ◆ ?", "working, queued, sent back, landed, asks" },
-};
-
 const plan_keys = [_][2][]const u8{
     .{ "j k, arrows", "pick a row: now, next, goals, ideas, landed, not planned" },
     .{ "⏎, click it", "go: its Claude, the gate, start it, plan an idea, unfold a row, the board on it" },
@@ -3232,11 +2744,9 @@ const plan_keys = [_][2][]const u8{
     .{ "◐ ◒ » ◇", "building, in the pipeline, queued, stalled" },
 };
 
-/// The board's keys, or the plan's, boxed over its middle until the next key.
+/// The plan's keys, boxed over its middle until the next key.
 fn helpBox(app: *App, w: *Writer) !void {
-    const list: []const [2][]const u8 = if (app.planShown()) &plan_keys else &board_keys;
-    const title = if (app.planShown()) " the plan's keys " else " the board's keys ";
-    return keysBox(app, w, list, title, 0, app.boardW());
+    return keysBox(app, w, &plan_keys, " the plan's keys ", 0, app.boardW());
 }
 
 const strip_keys = [_][2][]const u8{
@@ -3287,56 +2797,6 @@ fn keysBox(app: *App, w: *Writer, list: []const [2][]const u8, title: []const u8
     }
     y += 1;
     try boxLine(w, &pen, edge, ink(app, "dim", 8), x, y, "any key puts this away", inner);
-    y += 1;
-    try pen.set(w, edge, null);
-    try w.print("\x1b[{d};{d}H╰", .{ y, x + 1 });
-    for (0..bw - 2) |_| try w.writeAll("─");
-    try w.writeAll("╯");
-}
-
-/// The question a card waits on, boxed over the middle of the board: the question wrapped to the
-/// box, then each option by its number.
-fn askBox(app: *App, w: *Writer, id: u32, ask: tickets.Ask) !void {
-    const bw: u16 = @min(app.boardW() -| 4, 64);
-    const inner = bw -| 4;
-    const x = (app.boardW() -| bw) / 2;
-    const edge = ink(app, "amber", 4);
-    var pen: Pen = .{};
-    var buf: [48]u8 = undefined;
-    var y: u16 = 4;
-
-    const title = std.fmt.bufPrint(&buf, " #{d} asks ", .{id}) catch " asks ";
-    try pen.set(w, edge, null);
-    try w.print("\x1b[{d};{d}H╭─", .{ y, x + 1 });
-    try pen.set(w, heading(app), null);
-    try w.writeAll(title);
-    try pen.set(w, edge, null);
-    for (cellCount(title) + 1..bw - 2) |_| try w.writeAll("─");
-    try w.writeAll("╮");
-
-    var rest = ask.question;
-    while (rest.len > 0 and y < 10) {
-        const line = clip(rest, inner);
-        y += 1;
-        try boxLine(w, &pen, edge, .{}, x, y, line, inner);
-        rest = std.mem.trimStart(u8, rest[line.len..], " ");
-    }
-    y += 1;
-    try boxLine(w, &pen, edge, .{}, x, y, "", inner);
-    for (ask.options, 1..) |option, n| {
-        if (n > 9) break;
-        y += 1;
-        try pen.set(w, edge, null);
-        try w.print("\x1b[{d};{d}H│ ", .{ y, x + 1 });
-        try pen.set(w, heading(app), null);
-        try w.print("{d}  ", .{n});
-        try pen.set(w, .{}, null);
-        try fitted(w, option, inner -| 3);
-        try pen.set(w, edge, null);
-        try w.writeAll(" │");
-    }
-    y += 1;
-    try boxLine(w, &pen, edge, ink(app, "dim", 8), x, y, "its number answers · esc puts it away", inner);
     y += 1;
     try pen.set(w, edge, null);
     try w.print("\x1b[{d};{d}H╰", .{ y, x + 1 });
@@ -3407,198 +2867,6 @@ fn boxLine(w: *Writer, pen: *Pen, edge: vt.Style, style: vt.Style, x: u16, y: u1
     try w.writeAll(" │");
 }
 
-/// Column `c`'s lines inside its border, scrolled: in the every view each repo with cards in it a
-/// heading row, `arena ──── 13`, its cards under it; a card as tall as what it says. The strip's
-/// are a dim row each, ✓ and its number and title, the picked one lit.
-fn columnLines(app: *const App, w: *Writer, pen: *Pen, view: app_mod.BoardView, c: usize, x: u16, inner: u16) !void {
-    const edge: vt.Style = .{ .fg_color = .palette(8) };
-    const with_repo = app.cardRepoShown();
-    var lines = App.ColumnLines.init(app, c);
-    for (0..app.columnScroll(c)) |_| _ = lines.next();
-    var y: u16 = app.colTop();
-    while (y + 1 < app.view_h) : (y += 1) {
-        try w.print("\x1b[{d};{d}H", .{ y + 1, x + 1 });
-        try pen.set(w, edge, null);
-        try w.writeAll("│");
-        const at = lines.next() orelse {
-            try pen.set(w, .{}, null);
-            try fitted(w, "", inner);
-            try pen.set(w, edge, null);
-            try w.writeAll("│");
-            continue;
-        };
-        switch (at.what) {
-            .heading => try groupHeading(app, w, pen, app.laneRepo(at.lane).?, app.laneCounts(at.lane, c).total, at.lane == view.lane and c == view.col, foldMark(app, at.lane), inner),
-            .more => {
-                var buf: [24]u8 = undefined;
-                const n = app.groupCounts(at.lane, c);
-                try pen.set(w, ink(app, "dim", 8), null);
-                try fitted(w, std.fmt.bufPrint(&buf, " {d} more", .{n.total - n.shown}) catch "", inner);
-            },
-            .card => |spot| {
-                const it = app.groupCard(at.lane, c, spot.row).?;
-                const picked = app.cardPicked(at.lane, c, spot.row);
-                if (app.boardStrip(c)) {
-                    var buf: [160]u8 = undefined;
-                    const style = if (picked and !app.columnFocused()) heading(app) else ink(app, "dim", 8);
-                    try pen.set(w, style, null);
-                    try w.writeAll(" ");
-                    try fitted(w, std.fmt.bufPrint(&buf, "{s} #{d} {s}", .{ if (it.status == .@"try") "▲" else "✓", it.id, it.title }) catch it.title, inner -| 1);
-                } else try cardLine(app, w, pen, it, spot.part, picked, with_repo, inner);
-            },
-        }
-        try pen.set(w, edge, null);
-        try w.writeAll("│");
-    }
-}
-
-/// A repo's heading row in a column, `arena ──── 13`: its name, lit where the pick is, then a
-/// dim rule to its count of cards there.
-fn groupHeading(app: *const App, w: *Writer, pen: *Pen, repo: []const u8, count: usize, lit: bool, fold: []const u8, inner: u16) !void {
-    var buf: [24]u8 = undefined;
-    const num = std.fmt.bufPrint(&buf, " {d}", .{count}) catch "";
-    const name = clip(if (repo.len == 0) "no repo" else repo, inner -| (cellCount(num) + 3 + cellCount(fold)));
-    try pen.set(w, if (lit) heading(app) else .{}, null);
-    try w.writeAll(" ");
-    try w.writeAll(name);
-    try pen.set(w, ink(app, "dim", 8), null);
-    try w.writeAll(fold);
-    const used = 2 + cellCount(name) + cellCount(fold) + cellCount(num);
-    if (used > inner) return fitted(w, "", inner -| (1 + cellCount(name)));
-    try w.writeAll(" ");
-    for (used..inner) |_| try w.writeAll("─");
-    try w.writeAll(num);
-}
-
-/// Row `part` of a card in `inner` cells. One not picked has a bar down its left, amber for high
-/// and dim for low, its number and title wrapped to the column, the last of `title_rows` cut with
-/// `…`, and a last row when it has something to say. The picked one is boxed in its place, lit
-/// (dim while the orchestrator's column has the keys), its title whole, its priority and how long
-/// since it was filed on its top edge. A card waiting on another is dim.
-fn cardLine(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, part: usize, picked: bool, with_repo: bool, inner: u16) !void {
-    if (inner < 4) return fitted(w, "", inner);
-    var buf: [160]u8 = undefined;
-    const dim = ink(app, "dim", 8);
-    const border: vt.Style = if (picked and app.columnFocused()) dim else if (picked) heading(app) else .{};
-    const bar: vt.Style = if (picked) border else if (std.mem.eql(u8, card.priority, "high")) ink(app, "amber", 4) else if (std.mem.eql(u8, card.priority, "low")) dim else .{};
-    const title = App.cardTitle(card, &buf);
-    const width = App.cardTextW(inner + 2);
-    var count: usize = 0;
-    var counted = app_mod.TitleLines.init(title, width);
-    while (counted.next()) |_| count += 1;
-    const rows = if (picked) count else @min(count, App.title_rows);
-    const last = @intFromBool(App.cardHasLast(card, with_repo));
-    if (picked and (part == 0 or part == rows + last + 3)) {
-        try pen.set(w, border, null);
-        if (part == 0) {
-            try w.writeAll("╭");
-            for (0..inner - 2) |_| try w.writeAll("─");
-            try w.writeAll("╮");
-        } else {
-            try w.writeAll("╰");
-            for (0..inner - 2) |_| try w.writeAll("─");
-            try w.writeAll("╯");
-        }
-        return;
-    }
-    const row = if (picked) part - 1 else part;
-    try pen.set(w, bar, null);
-    try w.writeAll(if (picked) "│" else "▌");
-    if (row < rows) {
-        var lines = app_mod.TitleLines.init(title, width);
-        var line: []const u8 = "";
-        for (0..row + 1) |_| line = lines.next() orelse "";
-        const style: vt.Style = if (card.blocked_by.len > 0) dim else .{};
-        try pen.set(w, style, null);
-        try w.writeAll(" ");
-        if (!picked and row + 1 == App.title_rows and count > App.title_rows) {
-            const shown = clip(line, width -| 1);
-            try w.writeAll(shown);
-            try w.writeAll("…");
-            try pen.set(w, .{}, null);
-            try fitted(w, "", width -| (cellCount(shown) + 1));
-        } else try fitted(w, line, width);
-    } else if (row < rows + last) {
-        try cardLast(app, w, pen, card, with_repo, inner - 2);
-    } else if (row == rows + last) {
-        try cardAge(app, w, pen, card, inner - 2);
-    } else try fitted(w, "", inner - 2);
-    try pen.set(w, border, null);
-    try w.writeAll(if (picked) "│" else " ");
-}
-
-/// The picked card's detail row in `width` cells: its priority and how long since it was filed.
-fn cardAge(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, width: usize) !void {
-    var buf: [48]u8 = undefined;
-    var age: [8]u8 = undefined;
-    const filed = if (tickets.epochOf(card.inserted_at)) |at| ago(&age, app.epoch, @intCast(@max(1, at))) else "";
-    const text = if (filed.len > 0) std.fmt.bufPrint(&buf, "{s} · filed {s}", .{ card.priority, filed }) catch card.priority else card.priority;
-    try pen.set(w, ink(app, "dim", 8), null);
-    try w.writeAll(" ");
-    try fitted(w, text, width -| 1);
-}
-
-/// Where the pipeline has a card: its glyph, none when it has none, the word for it, and the
-/// colour of both. A queued one with a question open is held: babylon moves it once it is answered.
-fn stageOf(app: *const App, card: *const tickets.Card) ?struct { style: vt.Style, glyph: u21, word: []const u8 } {
-    const s = card.stage orelse return null;
-    const eql = std.mem.eql;
-    if (eql(u8, s, "failed")) return .{ .style = ink(app, "emberdim", 1), .glyph = '✗', .word = "sent back" };
-    if (eql(u8, s, "landed")) return .{ .style = ink(app, "amber", 4), .glyph = '◆', .word = "landed" };
-    if (eql(u8, s, "queued")) return .{ .style = ink(app, "violet", 5), .glyph = if (card.ask == null) '»' else 0, .word = if (card.ask == null) "queued" else "held: asks" };
-    if (eql(u8, s, "verifying") or eql(u8, s, "reviewing")) return .{ .style = ink(app, "amber", 4), .glyph = glyph(app, .working), .word = s };
-    return .{ .style = ink(app, "dim", 8), .glyph = 0, .word = s };
-}
-
-/// A card's last row in `width` cells, what is so of it past its title joined by ` · `: the
-/// orchestrator's proposal, a question waiting on the human, where the pipeline has it as a glyph
-/// in its colour, the Claude holding it, and its detail.
-fn cardLast(app: *const App, w: *Writer, pen: *Pen, card: *const tickets.Card, with_repo: bool, width: usize) !void {
-    var buf: [160]u8 = undefined;
-    var held: [96]u8 = undefined;
-    var spun: [48]u8 = undefined;
-    var proposed: [160]u8 = undefined;
-    const dim = ink(app, "dim", 8);
-    const stage: struct { vt.Style, []const u8 } = if (stageOf(app, card)) |s|
-        .{ s.style, cardStage(app, card, s.glyph, s.word, &spun) }
-    else
-        .{ dim, "" };
-    const queued = card.stage != null and std.mem.eql(u8, card.stage.?, "queued");
-    const parts = [_]struct { vt.Style, []const u8 }{
-        .{ heading(app), if (card.proposal) |p| std.fmt.bufPrint(&proposed, "▲ proposed: {s}", .{p.why}) catch "▲ proposed" else "" },
-        .{ ink(app, "amber", 4), if (card.ask != null and !queued) "? asks" else "" },
-        stage,
-        .{ dim, if (card.status != .review and !card.isEpic()) cardHolder(app, card, &held) else "" },
-        .{ dim, cardDetail(app, card, with_repo, &buf) },
-    };
-    var left = width -| 2;
-    try pen.set(w, .{}, null);
-    try w.writeAll(" ");
-    var first = true;
-    for (parts) |part| {
-        if (part[1].len == 0) continue;
-        if (!first) {
-            const sep = clip(" · ", left);
-            try pen.set(w, dim, null);
-            try w.writeAll(sep);
-            left -= cellCount(sep);
-        }
-        first = false;
-        const cut = cellCount(part[1]) > left;
-        const shown = clip(part[1], if (cut) left -| 1 else left);
-        try pen.set(w, part[0], null);
-        try w.writeAll(shown);
-        left -= cellCount(shown);
-        if (cut and left > 0) {
-            try w.writeAll("…");
-            left -= 1;
-        }
-    }
-    try pen.set(w, .{}, null);
-    try w.writeAll(" ");
-    for (0..left) |_| try w.writeAll(" ");
-}
-
 /// Where the pipeline has a card, said: its glyph and word, then for one queued its place in its
 /// repo's line, and for one being gated how long it has been there.
 fn cardStage(app: *const App, card: *const tickets.Card, mark: u21, word: []const u8, buf: []u8) []const u8 {
@@ -3639,68 +2907,10 @@ fn queuePlace(app: *const App, card: *const tickets.Card) usize {
     return place;
 }
 
-/// The Claude holding a card: its window with that Claude's mark, the model it was started with,
-/// and how long it has held it; a doing card no Claude holds says so, and since when.
-fn cardHolder(app: *const App, card: *const tickets.Card, buf: []u8) []const u8 {
-    var out: Writer = .fixed(buf);
-    var age: [8]u8 = undefined;
-    const since = if (card.claimedAt()) |at| ago(&age, app.epoch, @intCast(@max(1, at))) else "";
-    const pane = card.holder() orelse {
-        if (card.status != .doing) return "";
-        out.writeAll("○ no Claude holds it") catch {};
-        if (since.len > 0) out.print(" · {s}", .{since}) catch {};
-        return out.buffered();
-    };
-    if (app.paneWindow(pane)) |at| {
-        const win = at.session.wins.items[at.index];
-        if (win.claude != .none) out.print("{u} ", .{glyph(app, win.claude)}) catch {};
-        out.writeAll(win.name) catch {};
-    } else out.writeAll(card.heldBy().?) catch {};
-    if (card.model) |model| out.print(" · {s}", .{modelName(model)}) catch {};
-    if (since.len > 0) out.print(" · {s}", .{since}) catch {};
-    return out.buffered();
-}
-
 /// A model id as a card says it: `claude-opus-5-5` is `opus`.
 fn modelName(model: []const u8) []const u8 {
     const rest = if (std.mem.startsWith(u8, model, "claude-")) model["claude-".len..] else return model;
     return rest[0 .. std.mem.indexOfScalar(u8, rest, '-') orelse rest.len];
-}
-
-/// What else is so of a card, joined: its repo where nothing else says it, the tickets it waits
-/// on, that it is an epic, a todo card's model, why a done one's Claude was left running.
-fn cardDetail(app: *const App, card: *const tickets.Card, with_repo: bool, buf: []u8) []const u8 {
-    var out: Writer = .fixed(buf);
-    var sep: []const u8 = "";
-    if (with_repo) {
-        out.print("{s}{s}", .{ sep, card.repo orelse "no repo" }) catch {};
-        sep = " · ";
-    }
-    if (card.waiting_on) |wait| {
-        var said: [96]u8 = undefined;
-        out.print("{s}{s}", .{ sep, wait.say(&said) }) catch {};
-        sep = " · ";
-    }
-    if (card.blocked_by.len > 0) {
-        out.print("{s}waits", .{sep}) catch {};
-        for (card.blocked_by) |id| out.print(" #{d}", .{id}) catch {};
-        sep = " · ";
-    }
-    if (card.isEpic()) {
-        var words: [48]u8 = undefined;
-        out.print("{s}{s}", .{ sep, epicWords(app, card, "◆ ", &words) }) catch {};
-        sep = " · ";
-    }
-    if (card.status == .todo) if (card.model) |model| {
-        out.print("{s}{s}", .{ sep, modelName(model) }) catch {};
-        sep = " · ";
-    };
-    if (card.handed_off_from) |pane| {
-        out.print("{s}handed off from {s}", .{ sep, pane }) catch {};
-        sep = " · ";
-    }
-    if (card.status == .done and card.session_note.len > 0) out.print("{s}{s}", .{ sep, card.session_note }) catch {};
-    return out.buffered();
 }
 
 fn reportInk(app: *const App) vt.Style {
@@ -3708,8 +2918,7 @@ fn reportInk(app: *const App) vt.Style {
 }
 
 /// babylon's answer to the report key, where the key was pressed: directly under the picked feed
-/// line while the feed has the keys; on the board, on the picked card's action row, which
-/// boardButtons draws; else, with nowhere of its own, the last row of the view.
+/// line while the feed has the keys; else the last row of the view.
 fn reportSaid(app: *App, w: *Writer, text: []const u8) !void {
     const ox = app.term_w - app.view_w;
     var pen: Pen = .{};
@@ -3721,7 +2930,6 @@ fn reportSaid(app: *App, w: *Writer, text: []const u8) !void {
         for (cellCount(clip(text, room))..room) |_| try w.writeAll(" ");
         return;
     };
-    if (app.board_view != null and app.board_view.?.detail == null and !app.planShown() and !app.feedFocused() and (cardActionsShown(app) or app.barRows() > 0)) return;
     try w.print("\x1b[{d};{d}H{s}", .{ app.view_h, ox + 1, clip(text, app.view_w) });
 }
 
@@ -3736,12 +2944,6 @@ fn grabOverlay(app: *App, w: *Writer) !void {
     while (app.grab.spans(sel, i)) |picked| : (i += 1) {
         try w.print("\x1b[{d};{d}H\x1b[0;7m{s}\x1b[0m", .{ picked.y + 1, picked.x + 1, picked.text });
     }
-}
-
-fn cardActionsShown(app: *const App) bool {
-    var buttons: [48]App.Button = undefined;
-    for (app.boardButtons(&buttons)) |button| if (button.what == .card) return true;
-    return false;
 }
 
 /// One frame: the current session's strip (and, mid-slide, the one being left) or the
@@ -3759,7 +2961,7 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
         try overview(app, w, spot);
         try modeRow(app, w);
     } else if (app.board_view) |view| {
-        if (!app.columnAlone()) try boardView(app, w, view);
+        if (!app.columnAlone()) try planView(app, w, view);
         try modeRow(app, w);
         // the orchestrator's window beside it, once arena is in its session
         if (app.sideShown()) {
@@ -3813,387 +3015,13 @@ fn sgr(buf: []u8, style: vt.Style) ![]const u8 {
     return out.buffered();
 }
 
-test "a queued card says its place in its repo's line, and with a question open it is held" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":1,"repo":"arena","title":"a","status":"review","stage":"queued","submitted_at":"2026-11-23T02:00:00Z"},
-        \\{"id":2,"repo":"arena","title":"b","status":"review","stage":"queued","submitted_at":"2026-11-23T01:00:00Z"},
-        \\{"id":3,"repo":"tlon","title":"c","status":"review","stage":"queued","submitted_at":"2026-11-23T00:00:00Z"}
-        \\]}
-    );
-    defer app.board.?.deinit();
-    var buf: [512]u8 = undefined;
-    var card = app.board.?.cards()[0];
-
-    var waiting: Writer = .fixed(&buf);
-    var pen: Pen = .{};
-    try cardLast(&app, &waiting, &pen, &card, false, 30);
-    try std.testing.expect(std.mem.indexOf(u8, waiting.buffered(), "» queued · 2nd") != null);
-
-    card.ask = .{ .id = 5, .question = "Which colour?" };
-    var held: Writer = .fixed(&buf);
-    pen = .{};
-    try cardLast(&app, &held, &pen, &card, false, 30);
-    const drawn = held.buffered();
-    try std.testing.expect(std.mem.indexOf(u8, drawn, "held: asks") != null);
-    try std.testing.expect(std.mem.indexOf(u8, drawn, "queued") == null);
-    try std.testing.expect(std.mem.indexOf(u8, drawn, "? asks") == null);
-}
-
-test "a card handed off says from which pane, on a last row of its own" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    var card: tickets.Card = .{ .id = 7, .title = "t", .status = .todo };
-    try std.testing.expect(!App.cardHasLast(&card, false));
-    card.handed_off_from = "%407";
-    try std.testing.expect(App.cardHasLast(&card, false));
-    var buf: [160]u8 = undefined;
-    try std.testing.expectEqualStrings("handed off from %407", cardDetail(&app, &card, false, &buf));
-}
-
-test "a card not picked: its priority bar, its whole title wrapped to four rows, and a last row only with something to say" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    var buf: [1024]u8 = undefined;
-    const Drawn = struct {
-        fn row(a: *App, out: []u8, card: *const tickets.Card, part: usize, inner: u16) ![]const u8 {
-            var w: Writer = .fixed(out);
-            var pen: Pen = .{};
-            try cardLine(a, &w, &pen, card, part, false, false, inner);
-            return w.buffered();
-        }
-    };
-    const long: tickets.Card = .{ .id = 7, .title = "one two three four five six seven eight nine ten eleven twelve", .status = .todo, .priority = "high" };
-    try std.testing.expect(!App.cardHasLast(&long, false));
-    var first = try Drawn.row(&app, &buf, &long, 0, 16);
-    try std.testing.expect(std.mem.indexOf(u8, first, "▌") != null);
-    try std.testing.expect(std.mem.indexOf(u8, first, "#7 one two") != null);
-    try std.testing.expect(std.mem.indexOf(u8, first, try sgr(buf[900..], ink(&app, "amber", 4))) != null);
-    const fourth = try Drawn.row(&app, &buf, &long, 3, 16);
-    try std.testing.expect(std.mem.indexOf(u8, fourth, "…") != null);
-
-    const held: tickets.Card = .{ .id = 8, .title = "short", .status = .doing, .model = "claude-opus-5-5" };
-    try std.testing.expect(App.cardHasLast(&held, false));
-    first = try Drawn.row(&app, &buf, &held, 1, 40);
-    try std.testing.expect(std.mem.indexOf(u8, first, "○ no Claude holds it") != null);
-    const todo: tickets.Card = .{ .id = 9, .title = "short", .status = .todo, .model = "claude-opus-5-5", .blocked_by = &.{4} };
-    first = try Drawn.row(&app, &buf, &todo, 1, 40);
-    try std.testing.expect(std.mem.indexOf(u8, first, "waits #4 · opus") != null);
-}
-
-test "the board's first row ends on its keys' hint, the short one with less room, and a … stands after the last tab left in" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":1,"repo":"arena","title":"a","status":"todo"},
-        \\{"id":2,"repo":"menard","title":"b","status":"todo"},
-        \\{"id":3,"repo":"tlon","title":"c","status":"todo"}
-        \\],"auto":{"on":true,"cap":3,"working":2},"orchestrator":{"on":true,"running":true}}
-    );
-    defer app.board.?.deinit();
-    app.board_view = .{};
-    app.view_h = 20;
-    var buf: [8192]u8 = undefined;
-    const has = struct {
-        fn in(drawn: []const u8, text: []const u8) bool {
-            return std.mem.indexOf(u8, drawn, text) != null;
-        }
-    }.in;
-
-    app.view_w = 140;
-    app.term_w = 140;
-    var wide: Writer = .fixed(&buf);
-    try boardButtons(&app, &wide, app.board_view.?);
-    try std.testing.expect(has(wide.buffered(), "? keys · esc close"));
-    try std.testing.expect(!has(wide.buffered(), "…"));
-
-    app.view_w = 44;
-    app.term_w = 44;
-    var short: Writer = .fixed(&buf);
-    try boardButtons(&app, &short, app.board_view.?);
-    try std.testing.expect(has(short.buffered(), "? keys"));
-    try std.testing.expect(!has(short.buffered(), "esc close"));
-
-    app.view_w = 30;
-    app.term_w = 30;
-    var heads: [48]App.Button = undefined;
-    const more = app.header(&heads).more.?;
-    var narrow: Writer = .fixed(&buf);
-    try boardButtons(&app, &narrow, app.board_view.?);
-    var at: [24]u8 = undefined;
-    try std.testing.expect(has(narrow.buffered(), try std.fmt.bufPrint(&at, "\x1b[2;{d}H…", .{more + 1})));
-}
-
-test "the board's head in Workbench's look: a striped title bar, tabs under it that join the window, need-you filled violet, the auto switch" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 80;
-    app.view_w = 80;
-    app.view_h = 20;
-    app.roles = bench.roles();
-    const r = app.roles.?;
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":1,"repo":"arena","title":"a","status":"todo"},
-        \\{"id":2,"repo":"menard","title":"b","status":"todo"}
-        \\],"auto":{"on":true,"cap":3,"working":2},
-        \\"needs_you":[{"id":"ask:3","kind":"ask","ticket":1,"repo":"arena","text":"#1 arena  asks: Blue?",
-        \\ "actions":[{"key":"1","label":"Blue","argv":["babylon","answer","3","1"]}]}]}
-    );
-    defer app.board.?.deinit();
-    app.board_view = .{};
-    var buf: [16384]u8 = undefined;
-    var out: Writer = .fixed(&buf);
-    try boardView(&app, &out, app.board_view.?);
-    const drawn = out.buffered();
-
-    var buttons: [48]App.Button = undefined;
-    const head = app.header(&buttons);
-    var needs: ?App.Button = null;
-    var auto: ?App.Button = null;
-    for (buttons[0..head.n]) |b| switch (b.what) {
-        .needs => needs = b,
-        .auto => auto = b,
-        else => {},
-    };
-    const tab = buttons[0];
-    const next = buttons[1];
-    const eq = std.testing.expectEqual;
-
-    const bar = try bench.probe(drawn, 1, 0);
-    try eq(@as(u21, 'b'), bar.cp);
-    try eq(r.dim, bar.fg);
-    try eq(r.raised, bar.bg);
-    const lit = try bench.probe(drawn, 10, 0);
-    try eq(@as(u21, 'B'), lit.cp);
-    try eq(r.text, lit.fg);
-    const stripe = try bench.probe(drawn, 20, 0);
-    try eq(@as(u21, '═'), stripe.cp);
-    try eq(r.accent.mix(r.raised, 0.5), stripe.fg);
-
-    try eq(@as(u16, 1), tab.y);
-    const here = try bench.probe(drawn, tab.x + 1, 1);
-    try eq(@as(u21, 'e'), here.cp);
-    try eq(r.panel, here.bg);
-    try eq(r.tile, (try bench.probe(drawn, next.x + 1, 1)).bg);
-    try eq(r.ground, (try bench.probe(drawn, 79, 1)).bg);
-
-    const ask = needs.?;
-    const asks = try bench.probe(drawn, ask.x + 1, 0);
-    try eq(@as(u21, '▲'), asks.cp);
-    try eq(r.on_accent, asks.fg);
-    try eq(r.you, asks.bg);
-
-    const sw = auto.?;
-    try eq(@as(u21, 'a'), (try bench.probe(drawn, sw.x, 0)).cp);
-    const cap = try bench.probe(drawn, sw.x + 5, 0);
-    try eq(@as(u21, '▐'), cap.cp);
-    try eq(r.accent, cap.fg);
-    const knob = try bench.probe(drawn, sw.x + 7, 0);
-    try eq(@as(u21, '●'), knob.cp);
-    try eq(r.accent, knob.bg);
-    try eq(@as(u21, '2'), (try bench.probe(drawn, sw.x + 10, 0)).cp);
-    try eq(app.boardW(), sw.x + sw.w);
-}
-
-test "the board in Workbench's look: windows, the picked tile raised with its chips, buttons and shadow, and the recent strip" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 80;
-    app.view_w = 80;
-    app.view_h = 24;
-    app.roles = bench.roles();
-    const r = app.roles.?;
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":1,"repo":"arena","title":"first","status":"todo","priority":"high","model":"claude-opus-5-5"},
-        \\{"id":3,"repo":"arena","title":"second","status":"todo"},
-        \\{"id":2,"repo":"menard","title":"old","status":"done","closed_at":"2026-11-24T00:00:00Z"}
-        \\]}
-    );
-    defer app.board.?.deinit();
-    app.board_view = .{};
-    var buf: [65536]u8 = undefined;
-    var out: Writer = .fixed(&buf);
-    try boardView(&app, &out, app.board_view.?);
-    const drawn = out.buffered();
-    const eq = std.testing.expectEqual;
-    const arena = r.repo[0];
-
-    // todo is a window on its own: a title bar with its count, the gap beside it the shadow's
-    try eq(@as(u21, 't'), (try bench.probe(drawn, 3, 2)).cp);
-    try eq(@as(u21, '▌'), (try bench.probe(drawn, app.boardColW(0) - 1, 4)).cp);
-
-    // the picked tile: its bevel, its title with the priority dot in its corner, its chip row
-    const tw = app.boardColW(0) - 3;
-    const bevel = try bench.probe(drawn, 1, 4);
-    try eq(@as(u21, '▔'), bevel.cp);
-    try eq(r.card(true), bevel.bg);
-    const title = try bench.probe(drawn, 2, 5);
-    try eq(@as(u21, 'f'), title.cp);
-    try std.testing.expect(title.bold);
-    try eq(r.card(true), title.bg);
-    const dot = try bench.probe(drawn, 1 + tw - 2, 5);
-    try eq(@as(u21, '●'), dot.cp);
-    try eq(r.failed, dot.fg);
-    const lead = try bench.probe(drawn, 2, 6);
-    try eq(@as(u21, '▎'), lead.cp);
-    try eq(arena, lead.fg);
-    const mark = try bench.probe(drawn, 3, 6);
-    try eq(@as(u21, 0xf120), mark.cp);
-    try eq(arena, mark.fg);
-    const number = try bench.probe(drawn, 5, 6);
-    try eq(@as(u21, '1'), number.cp);
-    try eq(arena, number.fg);
-    const model = try bench.probe(drawn, 9, 6);
-    try eq(@as(u21, 'o'), model.cp);
-    try eq(r.text, model.fg);
-    try eq(r.dim, (try bench.probe(drawn, 8, 6)).fg);
-
-    // its shadow, and the first button on the row it has for them filled amber, the next raised
-    try eq(@as(u21, '▌'), (try bench.probe(drawn, 1 + tw, 5)).cp);
-    try eq(@as(u21, '▀'), (try bench.probe(drawn, 2, 8)).cp);
-    try eq(r.well, (try bench.probe(drawn, 2, 8)).fg);
-    var buttons: [48]App.Button = undefined;
-    const shown = app.boardButtons(&buttons);
-    var cards: usize = 0;
-    for (shown) |b| if (b.what == .card) {
-        try eq(@as(u16, 7), b.y);
-        const face = (try bench.probe(drawn, b.x, b.y)).bg;
-        try eq(if (cards == 0) r.accent else r.raised, face);
-        cards += 1;
-    };
-    try std.testing.expect(cards >= 2);
-
-    // the card under it is a tile, not raised, and has no buttons
-    const next = try bench.probe(drawn, 1, 9);
-    try eq(r.card(false), next.bg);
-    try eq(r.card(false), (try bench.probe(drawn, 2, 10)).bg);
-
-    // recent is a strip along the foot, its entry a mark and its number in the repo's hue
-    const foot = app.listH();
-    try eq(@as(u16, 19), foot);
-    try eq(@as(u21, 'r'), (try bench.probe(drawn, 3, foot)).cp);
-    try eq(@as(u21, '✓'), (try bench.probe(drawn, 1, foot + 1)).cp);
-    const entry = try bench.probe(drawn, 1, foot + 2);
-    try eq(@as(u21, '#'), entry.cp);
-    try eq(r.repo[3], entry.fg);
-
-    // the foot bar on the last row: the picked card's keys, a rule, the board's, a rule, ?
-    const bar_y = app.view_h - 1;
-    var keys: [24]App.BarKey = undefined;
-    const bar = app.keyBar(&keys);
-    const first = try bench.probe(drawn, bar[0].x + 1, bar_y);
-    try eq(@as(u21, '⏎'), first.cp);
-    try eq(r.accent, first.fg);
-    try eq(r.raised, first.bg);
-    try std.testing.expect(bar.len >= 6);
-    for (bar) |k| if (k.group) try eq(@as(u21, '│'), (try bench.probe(drawn, k.x - 2, bar_y)).cp);
-    try std.testing.expectEqualStrings("?", bar[bar.len - 1].key);
-    try std.testing.expectEqualStrings("keys", bar[bar.len - 1].word);
-}
-
-test "unpicked cards are filled tiles a blank row apart, their chips pills on their own fill" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 80;
-    app.view_w = 80;
-    app.view_h = 24;
-    app.roles = bench.roles();
-    const r = app.roles.?;
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":1,"repo":"arena","title":"first","status":"todo"},
-        \\{"id":2,"repo":"arena","title":"second","status":"todo","model":"claude-opus-5-5"},
-        \\{"id":3,"repo":"arena","title":"third","status":"todo"}
-        \\]}
-    );
-    defer app.board.?.deinit();
-    app.board_view = .{};
-    var buf: [65536]u8 = undefined;
-    var out: Writer = .fixed(&buf);
-    try boardView(&app, &out, app.board_view.?);
-    const drawn = out.buffered();
-    const eq = std.testing.expectEqual;
-
-    const last = app.boardColW(0) - 3;
-    for ([_]u16{ 9, 10, 11 }) |y| try eq(r.card(false), (try bench.probe(drawn, last, y)).bg);
-    try eq(r.panel, (try bench.probe(drawn, last, 12)).bg);
-    for ([_]u16{ 13, 14, 15 }) |y| try eq(r.card(false), (try bench.probe(drawn, last, y)).bg);
-    try std.testing.expect(color.contrast(r.card(false), r.panel) >= 1.15);
-    try eq(r.repo[0], (try bench.probe(drawn, 1, 10)).fg);
-    try eq(r.well, (try bench.probe(drawn, 4, 11)).bg);
-}
-
-test "with the roles set, the find line is on the bar's face, clipped before the right group, and the hint is dim on it" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 70;
-    app.view_w = 70;
-    app.view_h = 20;
-    app.roles = bench.roles();
-    const r = app.roles.?;
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[{"id":1,"repo":"arena","title":"a","status":"todo"}],"auto":{"on":true,"cap":3,"working":2}}
-    );
-    defer app.board.?.deinit();
-    app.board_view = .{};
-    app.find_len = 30;
-    @memset(app.find[0..30], 'x');
-    var buf: [16384]u8 = undefined;
-    var out: Writer = .fixed(&buf);
-    try boardView(&app, &out, app.board_view.?);
-    const drawn = out.buffered();
-    const eq = std.testing.expectEqual;
-
-    var heads: [48]App.Button = undefined;
-    var right: u16 = app.boardW();
-    for (heads[0..app.header(&heads).n]) |b| right = @min(right, b.x);
-    try std.testing.expect(right < app.boardW());
-    const slash = try bench.probe(drawn, 19, 0);
-    try eq(@as(u21, '/'), slash.cp);
-    try eq(r.raised, slash.bg);
-    try eq(@as(u21, '…'), (try bench.probe(drawn, right - 2, 0)).cp);
-    try eq(r.raised, (try bench.probe(drawn, right - 2, 0)).bg);
-    try eq(r.raised, (try bench.probe(drawn, right - 1, 0)).bg);
-    try std.testing.expect(std.mem.indexOf(u8, drawn, "esc clear") == null);
-
-    app.find_len = 2;
-    var short: Writer = .fixed(&buf);
-    try boardView(&app, &short, app.board_view.?);
-    const hint = try bench.probe(short.buffered(), 25, 0);
-    try eq(@as(u21, 'e'), hint.cp);
-    try eq(r.dim, hint.fg);
-    try eq(r.raised, hint.bg);
-}
-
-test "the board's keys end on a card's edge and its marks, and a 24-row terminal has them whole" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.view_w = 80;
-    const x = 10;
-    var buf: [8192]u8 = undefined;
-    var at: [24]u8 = undefined;
-
-    app.view_h = 23;
-    var short: Writer = .fixed(&buf);
-    try helpBox(&app, &short);
-    var drawn = short.buffered();
-    for ([_][]const u8{ "▌", "its priority: amber for high, dim for low", "◐ » ✗ ◆ ?", "working, queued, sent back, landed, asks" }) |text| {
-        try std.testing.expect(std.mem.indexOf(u8, drawn, text) != null);
-    }
-    try std.testing.expect(std.mem.indexOf(u8, drawn, try std.fmt.bufPrint(&at, "\x1b[1;{d}H╭", .{x + 1})) != null);
-    try std.testing.expect(std.mem.indexOf(u8, drawn, try std.fmt.bufPrint(&at, "\x1b[{d};{d}H╰", .{ board_keys.len + 3, x + 1 })) != null);
-    try std.testing.expect(board_keys.len + 3 <= app.view_h);
-
-    app.view_h = 40;
-    var tall: Writer = .fixed(&buf);
-    try helpBox(&app, &tall);
-    drawn = tall.buffered();
-    try std.testing.expect(std.mem.indexOf(u8, drawn, try std.fmt.bufPrint(&at, "\x1b[3;{d}H╭", .{x + 1})) != null);
-}
-
 fn homeApp(board: *tickets.Board) App {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     app.term_w = 120;
     app.view_w = 60;
     app.view_h = 24;
     app.board = board.*;
-    app.board_view = .{ .home = true, .focus = .orchestrator };
+    app.board_view = .{ .focus = .orchestrator };
     return app;
 }
 
@@ -4280,7 +3108,7 @@ test "the feed draws at every width and with every item picked, with a long next
         var f: feed.Feed = undefined;
         feed.build(&f, &b, &.{}, width, 80, 1795262400);
         for (0..f.itemCount() + 1) |pick| {
-            app.board_view = .{ .home = true, .focus = .orchestrator, .pick = pick };
+            app.board_view = .{ .focus = .orchestrator, .pick = pick };
             for (0..f.count() + 1) |row| {
                 for (2..140) |inner| {
                     var out: Writer = .fixed(&buf);
@@ -4313,35 +3141,6 @@ fn bigBoard(gpa: std.mem.Allocator) !tickets.Board {
     return tickets.Board.parse(gpa, json.written());
 }
 
-test "a frame of a board of five repos and 362 cards walks the cards under 3000 times" {
-    const gpa = std.testing.allocator;
-    var board = try bigBoard(gpa);
-    defer board.deinit();
-    var app: App = .{ .gpa = gpa, .io = std.testing.io, .tmux_in = undefined };
-    app.term_w = 240;
-    app.view_w = 80;
-    app.view_h = 60;
-    app.board = board;
-    app.listed = true;
-    var out: std.Io.Writer.Allocating = .init(gpa);
-    defer out.deinit();
-    const views = [_]app_mod.BoardView{
-        .{ .home = true },
-        .{ .home = true, .col = 0, .row = 3, .lane = 2 },
-        .{ .home = true, .repo = 1 },
-        .{ .home = true, .backlog = true },
-    };
-    // Walks, not time, which a loaded machine stretches: a frame is slow when per-line helpers each
-    // walk the whole board. Today's views take 157 to 2420; a helper scanning per line takes far more.
-    for (views) |view| {
-        app.board_view = view;
-        tickets.passes = 0;
-        out.clearRetainingCapacity();
-        try frame(&app, &out.writer, .all);
-        try std.testing.expect(tickets.passes < 3000);
-    }
-}
-
 test "a draft's modal draws the outcome, a row to each step with what it waits on, the pick, and the keys" {
     const gpa = std.testing.allocator;
     var board = try tickets.Board.parse(gpa,
@@ -4358,7 +3157,7 @@ test "a draft's modal draws the outcome, a row to each step with what it waits o
     app.view_w = 100;
     app.view_h = 40;
     app.board = board;
-    app.board_view = .{ .home = true, .plan = true, .draft = 830, .draft_pick = 1 };
+    app.board_view = .{ .draft = 830, .draft_pick = 1 };
     var out: std.Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
     try frame(&app, &out.writer, .all);
@@ -4377,7 +3176,7 @@ fn wordsFrame(gpa: std.mem.Allocator, json: []const u8, prompt: menu.Prompt, out
     app.view_w = 60;
     app.view_h = 40;
     app.board = try tickets.Board.parse(gpa, json);
-    app.board_view = .{ .home = true, .plan = true, .focus = .orchestrator };
+    app.board_view = .{ .focus = .orchestrator };
     app.prompt = prompt;
     try frame(&app, &out.writer, .all);
     return app;
@@ -4480,62 +3279,6 @@ fn epicApp(roles: bool, view_h: u16, width: u16) !App {
     return app;
 }
 
-test "an epic with no bar is a row in its column, never a Claude: a short terminal, the classic look, the backlog" {
-    const has = std.mem.indexOf;
-    var buf: [1 << 18]u8 = undefined;
-    var short = try epicApp(true, 14, 200);
-    defer short.board.?.deinit();
-    try std.testing.expectEqual(@as(u16, 0), short.epicRows());
-    try std.testing.expectEqual(@as(usize, 2), short.boardColumnAll(1));
-    var out: Writer = .fixed(&buf);
-    try boardView(&short, &out, short.board_view.?);
-    try std.testing.expect(has(u8, out.buffered(), "epic 3/7") != null);
-
-    var classic = try epicApp(false, 24, 200);
-    defer classic.board.?.deinit();
-    try std.testing.expectEqual(@as(u16, 0), classic.epicRows());
-    out = .fixed(&buf);
-    try boardView(&classic, &out, classic.board_view.?);
-    try std.testing.expect(has(u8, out.buffered(), "epic · 3/7 landed") != null);
-    try std.testing.expect(has(u8, out.buffered(), "no Claude holds it") == null);
-
-    var backlog = try epicApp(true, 24, 80);
-    defer backlog.board.?.deinit();
-    backlog.board_view = .{ .backlog = true };
-    try std.testing.expectEqual(@as(u16, 0), backlog.epicRows());
-    out = .fixed(&buf);
-    try boardView(&backlog, &out, backlog.board_view.?);
-    try std.testing.expect(has(u8, out.buffered(), "Later goal") != null);
-    try std.testing.expect(has(u8, out.buffered(), "epic") != null);
-}
-
-test "an epic on the board in Workbench's look is a bar over the columns, counted from its children, and no card in doing" {
-    var app = try epicApp(true, 24, 80);
-    defer app.board.?.deinit();
-    const r = app.roles.?;
-    var buf: [1 << 18]u8 = undefined;
-    var out: Writer = .fixed(&buf);
-    try boardView(&app, &out, app.board_view.?);
-    const drawn = out.buffered();
-    const eq = std.testing.expectEqual;
-    const hue = r.repo[0];
-
-    try eq(@as(u16, 3), app.epicRows());
-    const y = App.first_line - 1;
-    try eq(@as(u21, '◆'), (try bench.probe(drawn, 1, y)).cp);
-    try eq(hue, (try bench.probe(drawn, 1, y)).fg);
-    try eq(@as(u21, '#'), (try bench.probe(drawn, 3, y)).cp);
-    try eq(hue, (try bench.probe(drawn, 4, y + 1)).fg);
-
-    try std.testing.expect(std.mem.indexOf(u8, drawn, "3/7") != null);
-    try std.testing.expect(std.mem.indexOf(u8, drawn, "/99") == null);
-    try std.testing.expect(std.mem.indexOf(u8, drawn, "1 building") != null);
-
-    // the columns start under the bars, and doing holds the step alone
-    try eq(@as(u16, 6), app.colTop());
-    try eq(@as(usize, 1), app.boardColumnAll(1));
-}
-
 test "Home in Workbench's look: the focal goal is the one with a step building, and a goal's card has its bar in its repo's hue" {
     var board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[
@@ -4556,7 +3299,7 @@ test "Home in Workbench's look: the focal goal is the one with a step building, 
     app.view_w = 80;
     app.view_h = 31;
     app.roles = bench.roles();
-    app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
+    app.board_view = .{ .alone = false, .focus = .plan };
     const r = bench.roles();
 
     var sheet: sheets.Sheet = undefined;
@@ -4602,7 +3345,7 @@ test "a goal with a step to try reads ▲ 1 to try after its bar in the you colo
     app.view_w = 80;
     app.view_h = 31;
     app.roles = bench.roles();
-    app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
+    app.board_view = .{ .alone = false, .focus = .plan };
     const r = bench.roles();
 
     var sheet: sheets.Sheet = undefined;
@@ -4645,9 +3388,8 @@ test "babylon's refusal, said while the plan is shown, is on screen" {
     app.view_w = 80;
     app.view_h = 23;
     app.roles = bench.roles();
-    app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
+    app.board_view = .{ .alone = false, .focus = .plan };
     try std.testing.expect(app.planShown());
-    try std.testing.expect(app.barRows() > 0);
     app.report_said = try std.testing.allocator.dupe(u8, "babylon: repo arena is held");
     defer std.testing.allocator.free(app.report_said.?);
     var buf: [65536]u8 = undefined;
@@ -4668,13 +3410,13 @@ test "a card's popup in Workbench's look: a window with its ✕, the title whole
         \\{"tickets":[
         \\{"id":4,"repo":"tlon","title":"Which direction should the board take","status":"doing","priority":"high","model":"claude-opus-5-5","claimed_by":"%12","claimed_at":"2026-11-24T00:00:00Z",
         \\ "ask":{"id":9,"question":"Which one?","options":["Phosphor","Workbench"]}}
-        \\]}
+        \\],"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .col = 1, .detail = 4 };
+    app.board_view = .{ .detail = 4 };
     var buf: [65536]u8 = undefined;
     var out: Writer = .fixed(&buf);
-    try boardView(&app, &out, app.board_view.?);
+    try planView(&app, &out, app.board_view.?);
     const drawn = out.buffered();
     const eq = std.testing.expectEqual;
     const rect = app.modalRect().?;
@@ -4903,27 +3645,20 @@ test "a peek row too long for its slot is cut at a whole character and ends in �
     try std.testing.expectEqualStrings("short", p.rows[2].text);
 }
 
-test "the plan's head and the board's head show the same pair of tabs, the current one lit" {
+test "the plan's head is one title, ◆ plan, with no tabs after it" {
     var board = try tickets.Board.parse(std.testing.allocator, epic_board);
     defer board.deinit();
     var app = homeApp(&board);
     app.view_w = 80;
     app.term_w = 80;
-    const eq = std.testing.expectEqual;
+    app.board_view = .{ .alone = false, .focus = .plan };
     var buf: [1 << 17]u8 = undefined;
-    const views = [_]app_mod.BoardView{ .{ .home = true, .plan = true, .alone = false, .focus = .board }, .{} };
-    for (views, 0..) |view, i| {
-        app.board_view = view;
-        var out: Writer = .fixed(&buf);
-        try boardView(&app, &out, view);
-        const drawn = out.buffered();
-        const plan = try bench.probe(drawn, app.planTab().x, 0);
-        const link = try bench.probe(drawn, app.planLink().x, 0);
-        try eq(@as(u21, 'b'), plan.cp);
-        try eq(@as(u21, 'B'), link.cp);
-        try eq(i == 0, plan.bold);
-        try eq(i == 1, link.bold);
-    }
+    var out: Writer = .fixed(&buf);
+    try planView(&app, &out, app.board_view.?);
+    const drawn = out.buffered();
+    try std.testing.expectEqual(@as(u21, '◆'), (try bench.probe(drawn, 1, 0)).cp);
+    try std.testing.expectEqual(@as(u21, 'p'), (try bench.probe(drawn, 3, 0)).cp);
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "B board") == null);
 }
 
 test "Plan draws the same cells with the drawer open and closed, outside the drawer's box" {
@@ -4933,15 +3668,15 @@ test "Plan draws the same cells with the drawer open and closed, outside the dra
     app.term_w = 140;
     app.view_w = 60;
     app.view_h = 24;
-    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    app.board_view = .{ .focus = .plan };
     var shut_buf: [1 << 17]u8 = undefined;
     var open_buf: [1 << 17]u8 = undefined;
     app.side_folded = true;
     var shut: Writer = .fixed(&shut_buf);
-    try boardView(&app, &shut, app.board_view.?);
+    try planView(&app, &shut, app.board_view.?);
     app.side_folded = false;
     var open: Writer = .fixed(&open_buf);
-    try boardView(&app, &open, app.board_view.?);
+    try planView(&app, &open, app.board_view.?);
     const left = app.term_w - app.view_w;
     for (0..app.view_h) |y| {
         var a: [512]u8 = undefined;
@@ -4966,7 +3701,7 @@ test "auto is in Plan's head alone, with its tools; the orchestrator's column, t
     var app = homeApp(&board);
     app.term_w = 140;
     app.view_w = 60;
-    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    app.board_view = .{ .focus = .plan };
     var buf: [1 << 17]u8 = undefined;
     var out: Writer = .fixed(&buf);
     try frame(&app, &out, .all);
@@ -4982,15 +3717,15 @@ test "auto is in Plan's head alone, with its tools; the orchestrator's column, t
     try std.testing.expectEqual(@as(usize, 0), count(drawn, "idle"));
     app.term_w = 80;
     app.view_w = 80;
-    app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
+    app.board_view = .{ .alone = false, .focus = .plan };
     var head_out: Writer = .fixed(&buf);
-    try boardView(&app, &head_out, app.board_view.?);
+    try planView(&app, &head_out, app.board_view.?);
     const at = planAutoSwitch(&app).?;
     const mark = try bench.probe(head_out.buffered(), at.x, 0);
     try std.testing.expectEqual(@as(u21, '◐'), mark.cp);
 }
 
-test "a card to try wears ▲ try it in the you colour, filled, and leads the recent strip with the same mark" {
+test "a card to try wears ▲ try it in the you colour, filled" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     app.term_w = 80;
     app.view_w = 80;
@@ -5015,14 +3750,6 @@ test "a card to try wears ▲ try it in the you colour, filled, and leads the re
     const asks = benchState(&app, &app.board.?.cards()[2], r, &buf).?;
     try std.testing.expectEqualStrings("▲ asks you", asks.label);
     try std.testing.expect(!std.mem.eql(u8, state.label, asks.label));
-
-    app.board_view = .{};
-    var out_buf: [65536]u8 = undefined;
-    var out: Writer = .fixed(&out_buf);
-    try boardView(&app, &out, app.board_view.?);
-    const first = try bench.probe(out.buffered(), 1, app.listH() + 1);
-    try eq(@as(u21, '▲'), first.cp);
-    try eq(r.you, first.fg);
 }
 
 test "a to-try tile is drawn: its chip, its age in the you colour at a week, the machine's line, a check's rows, the picked check's buttons and its tile's close untried" {
@@ -5108,7 +3835,7 @@ test "Plan's windows keep their slots: another window's rows, a count or a fold 
         app.view_w = 80;
         app.view_h = 23;
         app.roles = bench.roles();
-        app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
+        app.board_view = .{ .alone = false, .focus = .plan };
         if (shape.fold) app.plan_shut.insert(.now);
         var buf: [262144]u8 = undefined;
         var out: Writer = .fixed(&buf);
@@ -5142,7 +3869,7 @@ test "Plan's rows start with a ▌ in their repo's colour, and a goal's card has
     app.view_h = 31;
     app.roles = bench.roles();
     const r = bench.roles();
-    app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
+    app.board_view = .{ .alone = false, .focus = .plan };
     var buf: [262144]u8 = undefined;
     var out: Writer = .fixed(&buf);
     try planView(&app, &out, app.board_view.?);
@@ -5189,7 +3916,7 @@ test "an in-flight row with a Claude says its session, window and pane on a seco
     app.view_w = 80;
     app.view_h = 23;
     app.roles = bench.roles();
-    app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
+    app.board_view = .{ .alone = false, .focus = .plan };
     var buf: [262144]u8 = undefined;
     var out: Writer = .fixed(&buf);
     try planView(&app, &out, app.board_view.?);
@@ -5281,11 +4008,11 @@ test "Plan and a pane view start at column 0 at 220 and 110 cells" {
         app.sessions = .fromOwnedSlice(&sessions);
         app.roles = bench.roles();
         app.current = s.id;
-        app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
+        app.board_view = .{ .alone = false, .focus = .plan };
         var out: Writer = .fixed(&buf);
         try planView(&app, &out, app.board_view.?);
         const head = try screenRow(out.buffered(), cols, 0, &row);
-        try std.testing.expect(std.mem.startsWith(u8, head, " b plan"));
+        try std.testing.expect(std.mem.startsWith(u8, head, " ◆ plan"));
         const underline = try screenRow(out.buffered(), cols, 1, &row);
         try std.testing.expect(std.mem.startsWith(u8, underline, "──"));
 
@@ -5369,7 +4096,7 @@ test "Your move with 8 items scrolls inside its five rows to the picked one" {
     app.view_w = 80;
     app.view_h = 31;
     app.roles = bench.roles();
-    app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board, .plan_pick = 7 };
+    app.board_view = .{ .alone = false, .focus = .plan, .plan_pick = 7 };
     var screen: [262144]u8 = undefined;
     var out: Writer = .fixed(&screen);
     try planView(&app, &out, app.board_view.?);
@@ -5388,7 +4115,7 @@ test "on the e2e's 24-row screen every Plan window keeps its title and a body ro
     app.view_w = 60;
     app.view_h = 24;
     app.roles = bench.roles();
-    app.board_view = .{ .home = true, .plan = true, .alone = false, .focus = .board };
+    app.board_view = .{ .alone = false, .focus = .plan };
     var screen: [262144]u8 = undefined;
     var out: Writer = .fixed(&screen);
     try planView(&app, &out, app.board_view.?);
@@ -5415,7 +4142,7 @@ test "Your move's open check wraps over as many rows as it needs, its buttons on
     app.view_w = 80;
     app.view_h = 40;
     app.roles = bench.roles();
-    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    app.board_view = .{ .focus = .plan };
     app.plan_open.set(.move, 52);
     var sheet: sheets.Sheet = undefined;
     try std.testing.expect(app.planSheet(&sheet));

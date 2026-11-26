@@ -71,34 +71,15 @@ always did; arena draws them and leaves them running when it quits.
     actions, then what is landing in queue order, what is being built, and how many landed today. It
     is read from babylon's file, so it stays while the orchestrator is off or restarting. The plan's
     pick and the feed's light each other's ticket, dim.
-- **The board** is the drill-down, `B` from anywhere in normal mode or a click on the head's
-  `B board`, for finding a ticket, reading it whole, editing it and moving it; `b` comes home.
-  The goals row of the plan opens it on one epic. Closing it goes back to the session you were in.
-
-  ![The board: columns of todo, doing, review and a strip of what is done](docs/screenshots/board.png)
-
-  - **Columns** are todo, doing and review, and in each the cards are grouped by repo, a
-    heading to a repo. Done is the `recent` strip along the foot, a timeline of the last few
-    closed with how long ago each, and the picked one has `reopen`. An epic is not a card but a slim bar along the top, its progress counted
-    from its children. The row of tabs atop narrows the board to one repo (`r` goes to the next);
-    the gate is a button beside them while babylon runs one.
-  - **A card** has its number and title, as tall as its text, and its repo, the Claude holding it
-    with that Claude's mark and how long, what it waits on, where it is on the way to main (queued,
-    `held`, verifying, reviewing, landing, `✗ sent back`, `◆ landed`) and `? asks` when its Claude
-    waits on you. The one picked shows what can be done to it as buttons, each run by a click, and
-    the key bar at the foot says the keys: `?` shows every one.
-  - **Moving** a card: `⏎`, or a second click, goes to the Claude holding it. `a` shows a question and
-    its options, and an option's number answers it, typed into that Claude by babylon. `G` on a free
-    todo card lists the running Claudes and gives it to one. `e` edits it in `$EDITOR`, `p` raises its
-    priority, `>` closes a ticket still to do and `<` opens it again, `J` `K` move it in its column
-    among its repo's cards, and `+` files a ticket. `w` puts the card at the bottom of next and asks
-    its why, `W` at the top. Dragging a card to another column moves it where babylon allows
-    (todo to backlog or done, and back); onto the `▤ board` title it joins next, as `w`. `/` finds
-    cards by number or title. `space` shows the whole ticket over the board: its body, links,
-    stage and the note on it, and the last of its gate's log.
-  - `o` goes to the orchestrator, started first when it is not running. While babylon's auto mode
+  - On a ticket's row: `G` on a free ticket lists the running Claudes and gives it to one, `H` asks
+    its Claude to hand it off, `e` edits it in `$EDITOR`, `p` raises its priority, `>` closes a
+    ticket still to do and `<` opens it again, `w` puts it at the bottom of next and asks its why,
+    `W` at the top, and `+` files a ticket. `/` finds by number or title and `r` narrows every
+    window to one repo. `space` shows the whole ticket: its body, links, stage and the note on it,
+    and the last of its gate's log.
+  - `o` opens the orchestrator, started first when it is not running. While babylon's auto mode
     is on, babylon starts a Claude on each free ticket, from the top of next, up to its cap of
-    Claudes working, and the header says `auto 1/2`. `A`, or a click on the header's `auto`,
+    Claudes working, and the head says `auto 1/2`. `A`, or a click on the head's `auto`,
     opens its settings: auto and hold as switches, and each repo's cap as `[-] 2 [+]`, 0 pausing
     it (`j` `k` pick, `+` `-` step, `a` `H` switch, `esc` closes). A change shows at once and
     babylon is told the last value; a click on the switch itself still turns auto on or off.
@@ -158,16 +139,15 @@ arena show '#324' # the pane of the Claude holding ticket 324
 arena inbox       # home, with what needs you atop the orchestrator's column
 ```
 
-`board`, `show` and `inbox` are the only supported way in from outside arena: the shell's popups,
+`plan`, `show` and `inbox` are the only supported way in from outside arena: the shell's popups,
 babylon's notices and other Claudes all call them, so each place sends the human somewhere
 through arena, which follows, not behind its back through tmux's `select-window`, which it
 does not. With no arena running, `show` and `inbox` exit 3 and leave opening one to the caller.
 
-`arena board <id>` has the running arena open its board with that
-ticket picked, the ticket's question over it when it waits on one, and comes back at once. A
-ticket the board shows nowhere, a done one older than its repo's last three, has its whole
-detail over the board in the pick's place. With
-no arena running it starts one, so opened. It reaches arena through tmux, and only arena: each
+`arena plan <id>` has the running arena open the plan with that
+ticket picked and comes back at once. A ticket the plan shows in no window has its whole
+detail over the plan in the pick's place. `arena board <id>` is the same, kept one more release.
+With no arena running it starts one, so opened. It reaches arena through tmux, and only arena: each
 arena names its client in the server's `@arena_clients`, so another control-mode client there,
 as iTerm's, is told nothing. `-L` names the server there too.
 
@@ -175,7 +155,7 @@ There are two modes, and a single letter is never arena's in the first. In inser
 every key goes to the shown pane, apart from a few Alt chords. `Ctrl+Space` makes it normal,
 where no key is typed into a pane, `NORMAL` shows at the bottom-left and the row under the strip
 says the keys; `i`, `Esc` or `Ctrl+Space` is insert again. A click on a pane is insert, and one
-on the foot row is normal. With the board open, `Ctrl+Space` focuses the orchestrator's column, as
+on the foot row is normal. With home open, `Ctrl+Space` focuses the orchestrator's column, as
 `Alt+l`.
 
 Alt+j, Alt+m, Alt+o, Alt+p and Alt+w are not arena's, so they reach Claude Code: Alt+o toggles
@@ -198,7 +178,6 @@ In normal mode:
 | `/` | find: a window by name, a Claude by its branch, a ticket by its number or title; `⏎` goes |
 | `o` | the overview |
 | `b` | home, the plan |
-| `B` | the board |
 | `n` | the needs-you inbox |
 | `g` | the gate's modal, for the run in progress |
 | `m` | the menu |

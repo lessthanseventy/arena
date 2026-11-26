@@ -91,22 +91,14 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
     }
 }
 
-/// Enter on a row of not planned: the board on its first lane for the summary, a chip's repo
+/// Enter on a row of not planned: the window's fold for the summary, a chip's repo
 /// toggled for the chips, and a todo row's ticket gone to.
 pub fn act(app: *App, row: *const sheets.Row) !void {
     const view = &app.board_view.?;
     switch (row.kind) {
         .chips => try app.toggleChip(view.plan_chip),
         .todo => try app.act(.go),
-        .unplanned => {
-            try app.toBoard();
-            const bv = &app.board_view.?;
-            bv.repo = 0;
-            bv.backlog = false;
-            bv.row = 0;
-            bv.lane = app.firstLane();
-            bv.col = 0;
-        },
+        .unplanned => try app.togglePlanFold(row.win),
         else => {},
     }
 }

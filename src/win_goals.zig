@@ -115,7 +115,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
     }
 }
 
-/// Enter on an idea: plans it, or goes to the Claude planning it. On a goal: the board on its
+/// Enter on an idea: plans it, or goes to the Claude planning it. On a goal: the detail of its
 /// first step that has not landed.
 pub fn act(app: *App, row: *const sheets.Row) !void {
     const given = app.board.?.plan().?;
@@ -129,12 +129,11 @@ pub fn act(app: *App, row: *const sheets.Row) !void {
             }
         },
         .goal, .focal => {
-            try app.toBoard();
             for (given.goals) |goal| {
                 if (goal.epic != row.ticket) continue;
                 for (goal.steps) |step| {
                     if (std.mem.eql(u8, step.state, "landed")) continue;
-                    _ = app.pickCard(step.ticket);
+                    _ = try app.openDetail(step.ticket);
                     return;
                 }
             }

@@ -1,5 +1,8 @@
 # The board, redesigned
 
+> Superseded by [plan-replaces-board.md](plan-replaces-board.md) for the board itself, which is
+> gone. Its Workbench look is still in force.
+
 A design for arena's board, decided as a TUI in arena (#320). The mockups use the real board of
 2026-11-22. Nothing here is built yet: the build is a stack of tickets, listed at the end.
 

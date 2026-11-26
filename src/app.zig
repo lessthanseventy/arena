@@ -353,21 +353,10 @@ const Pending = union(enum) {
 
 pub const BoardView = struct {
     /// Which has the keys and is lit: the board, or the orchestrator's column beside it.
-    focus: enum { board, orchestrator } = .board,
+    focus: enum { plan, orchestrator } = .plan,
     /// The session the human was in when arena went to the orchestrator's to have its window
     /// live beside the board: gone back to when the board closes or the side is folded.
     back: ?u32 = null,
-    /// The column and the card in it picked, and in the every view the repo whose group it is
-    /// in, by its place among `laneRepos`.
-    col: usize = 0,
-    row: usize = 0,
-    lane: usize = 0,
-    /// The repo it is narrowed to: 0 for every one, else its place in the board's repos from 1.
-    repo: usize = 0,
-    /// The backlog shown as the one column, in place of the four.
-    backlog: bool = false,
-    /// The picked card's question shown over the board, waiting on its answer's number.
-    answering: bool = false,
     /// The Claudes the picked card can be given to shown over the board, and the one picked.
     giving: ?usize = null,
     /// The ticket whose whole detail is shown over the board, and how far down it is scrolled.
@@ -398,13 +387,9 @@ pub const BoardView = struct {
     auto_normal: bool = false,
     /// The board's keys shown over it, until the next key.
     help: bool = false,
-    /// Opened as home: the orchestrator's column beside it while the orchestrator is not running.
-    home: bool = false,
     /// The feed's pick, by its place: Your move's items, then next's and auto's line, then
     /// landing's tickets, then building's.
     pick: usize = 0,
-    /// Home drawn as the plan, when babylon's file has one, in the board's place.
-    plan: bool = false,
     /// The plan's pick among its rows that can be picked, and the stages unfolded, a bit each.
     plan_pick: usize = 0,
     /// Not planned's chip the pick is on, by its place on the chip row, and whether the backlog's
@@ -423,7 +408,7 @@ pub const BoardView = struct {
 
     /// Whether a box lies over the board, the keys its own.
     pub fn boxed(view: BoardView) bool {
-        return view.help or view.detail != null or view.answering or view.giving != null or view.auto_pick != null or view.goal_open or view.draft != null or view.whole != null;
+        return view.help or view.detail != null or view.giving != null or view.auto_pick != null or view.goal_open or view.draft != null or view.whole != null;
     }
 };
 
@@ -578,13 +563,6 @@ pub const App = struct {
         select: struct { pane: u32, x: u16, y: u16 },
         /// A click that focused a window: its program gets none of it, not even the let go.
         focus,
-        /// A board card by its ticket, to move to the column it is let go over.
-        card: struct {
-            id: u32,
-            /// The press was on the picked card, which a let go without a move opens.
-            opens: bool,
-            moved: bool = false,
-        },
         /// A row of the plan's next by its place (from 0), to move to the row it is let go on.
         next_row: struct {
             from: usize,
@@ -1273,9 +1251,10 @@ pub const App = struct {
             app.hash_len = null;
             const id = std.fmt.parseInt(u32, app.hash[0..len], 10) catch return;
             app.normal = false;
-            try app.showCard(id);
-            if (app.board_view) |*view| view.answering = false;
-            if (app.board_view != null) _ = try app.openDetail(id);
+            try app.showPlan(id);
+            if (app.board_view) |view| if (view.detail == null) {
+                _ = try app.openDetail(id);
+            };
         }
     }
 
@@ -1318,12 +1297,7 @@ pub const App = struct {
             if (row.kind == .other) return .{ .window = (app.otherAt(row.item) orelse return null).win.id };
             return if (opensInPlace(&row)) .{ .ticket = row.ticket.? } else null;
         }
-        if (app.board_view == null) return null;
-        var buttons: [48]Button = undefined;
-        for (app.boardButtons(&buttons)) |button| if (button.hit(x, y)) return null;
-        const at = app.boardCardAt(x, y) orelse return null;
-        const card = if (app.boardLanes()) app.laneCard(at.lane, at.col, at.row) else app.boardCard(at.col, at.row);
-        return if (card) |c| .{ .ticket = c.id } else null;
+        return null;
     }
 
     /// The ticket of the feed item at (`x`, `y`), where the orchestrator's column is beside the
@@ -1376,7 +1350,7 @@ pub const App = struct {
     /// What the pick is on, the board's card, which a peek follows after a pause with no key.
     fn focusLook(app: *const App) ?Look {
         const view = app.board_view orelse return null;
-        if (!app.key_typed or view.boxed() or view.focus != .board or app.menu != null or app.prompt != null) return null;
+        if (!app.key_typed or view.boxed() or view.focus != .plan or app.menu != null or app.prompt != null) return null;
         const card = app.pickedCard() orelse return null;
         return .{ .ticket = card.id };
     }
@@ -1466,8 +1440,8 @@ pub const App = struct {
         if (app.typing() or was == null) return false;
         if (std.mem.eql(u8, text, "\r")) {
             if (look == .ticket and app.board_view != null) {
-                _ = app.pickCard(look.ticket);
-                app.board_view.?.focus = .board;
+                app.pickPlan(look.ticket);
+                app.board_view.?.focus = .plan;
                 if (was.?.card) |card| if (card.ask != null) {
                     _ = try app.openDetail(card.id);
                     return true;
@@ -1530,8 +1504,7 @@ pub const App = struct {
 
     /// Whether home has the room of half a screen.
     pub fn halfHome(app: *const App) bool {
-        const view = app.board_view orelse return false;
-        return view.home and app.term_w < half_below and app.hasPlan();
+        return app.board_view != null and app.term_w < half_below and app.hasPlan();
     }
 
     /// Whether home shows the orchestrator's column alone, the plan or the board being one key away.
@@ -1545,13 +1518,13 @@ pub const App = struct {
     pub fn sided(app: *const App) bool {
         const view = app.board_view orelse return false;
         if (app.halfHome() and !view.alone) return false;
-        return !app.side_folded and (view.home or app.orchestratorSession() != null);
+        return !app.side_folded;
     }
 
     /// The orchestrator's drawer opened over home, from the right edge: the whole width at half a
     /// screen. It has the keys, in insert, so typing goes straight to the chat.
     pub fn openDrawer(app: *App) !void {
-        if (app.board_view == null or !app.board_view.?.home) try app.goHome();
+        if (app.board_view == null) try app.goHome();
         const view = &app.board_view.?;
         view.alone = true;
         view.focus = .orchestrator;
@@ -1568,7 +1541,7 @@ pub const App = struct {
     pub fn closeDrawer(app: *App) !void {
         const view = &app.board_view.?;
         view.alone = false;
-        view.focus = .board;
+        view.focus = .plan;
         app.normal = false;
         app.side_folded = true;
         app.dirty = true;
@@ -1579,8 +1552,7 @@ pub const App = struct {
 
     /// Whether the drawer is open over home.
     pub fn drawerOpen(app: *const App) bool {
-        const view = app.board_view orelse return false;
-        return view.home and !app.side_folded;
+        return app.board_view != null and !app.side_folded;
     }
 
     /// Whether the column has the keys: its window's once arena is in its session, else its own.
@@ -1752,7 +1724,6 @@ pub const App = struct {
                 app.openDraft(id);
                 return true;
             };
-            _ = app.pickCard(id);
             app.pickPlan(id);
             _ = try app.openDetail(id);
         } else if (anyKey(key, &.{"Y"}) and try app.feedCopy(f.item(view.pick).?)) {
@@ -1760,7 +1731,6 @@ pub const App = struct {
         } else return app.feedAct(f.item(view.pick).?, key);
         app.dirty = true;
         if (view.pick != was) if (f.item(view.pick).?.ticket) |id| {
-            _ = app.pickCard(id);
             app.pickPlan(id);
         };
         return true;
@@ -1869,7 +1839,8 @@ pub const App = struct {
             var id_buf: [12]u8 = undefined;
             return app.runNeed(need.id, &.{ "babylon", "start", std.fmt.bufPrint(&id_buf, "{d}", .{ticket}) catch return true });
         }
-        if (std.mem.eql(u8, needs, "pick") and app.pickCard(ticket)) {
+        if (std.mem.eql(u8, needs, "pick")) {
+            app.pickPlan(ticket);
             app.board_view.?.giving = 0;
             app.dirty = true;
         }
@@ -1899,7 +1870,6 @@ pub const App = struct {
         app.dirty = true;
         const item = f.item(i).?;
         if (item.ticket) |id| {
-            _ = app.pickCard(id);
             app.pickPlan(id);
         }
         const line = f.line(row);
@@ -2031,7 +2001,6 @@ pub const App = struct {
         app.dirty = true;
         const item = f.item(i).?;
         if (item.ticket) |id| {
-            _ = app.pickCard(id);
             app.pickPlan(id);
         }
         const inner = app.view_w -| 2;
@@ -2176,8 +2145,6 @@ pub const App = struct {
         app.dirty = true;
         const view = if (app.board_view) |*open| open else return;
         view.plan_pick = 0;
-        view.row = 0;
-        view.lane = app.firstLane();
     }
 
     /// The words line gone, the feed having its keys back.
@@ -2619,8 +2586,7 @@ pub const App = struct {
     }
 
     pub fn boardW(app: *const App) u16 {
-        if (app.planShown()) return app.term_w;
-        return if (app.sided()) app.term_w -| app.view_w -| 1 else app.view_w;
+        return app.term_w;
     }
 
     /// A new terminal size, with its cells' in pixels when the terminal says (0 when not):
@@ -3233,7 +3199,7 @@ pub const App = struct {
             try app.closeGoneDocs(b);
             b.deinit();
         }
-        if (app.board == null) try app.closeBoard();
+        if (!app.hasPlan()) try app.closeBoard();
         try app.syncWaiting();
         try app.frameSync();
         app.settleAuto();
@@ -3254,10 +3220,6 @@ pub const App = struct {
             app.gpa.free(r.id);
             app.gpa.free(r.text);
             _ = app.refusals.orderedRemove(i);
-        }
-        if (app.board_view) |*view| {
-            var repos: [max_repos + 1][]const u8 = undefined;
-            view.lane = @min(view.lane, app.laneRepos(&repos) -| 1);
         }
         app.dirty = true;
     }
@@ -3322,44 +3284,18 @@ pub const App = struct {
         for (id) |c| try w.writeByte(if (c == ':') '-' else c);
     }
 
-    fn toggleBoard(app: *App) !void {
+    fn toggleHome(app: *App) !void {
         app.orchestrating = false;
         app.dirty = true;
         if (app.board_view != null) return app.closeBoard();
-        if (app.board == null) return;
-        app.board_view = .{ .lane = app.firstLane() };
-        try app.toSide();
-    }
-
-    /// The board opened on ticket `id`, over whatever had the keys, with its question shown
-    /// when it asks one: what `arena board <id>` asks for. A ticket the board shows nowhere, a
-    /// done one older than its repo's last few or one babylon has none of, opens the board as
-    /// Alt+b does with what babylon says of it over it; with no board there is nothing to open.
-    pub fn showCard(app: *App, id: u32) !void {
-        if (app.board == null) return;
-        app.menu = null;
-        app.prompt = null;
-        app.overview = null;
-        app.orchestrating = false;
-        app.dirty = true;
-        if (app.board_view == null) app.board_view = .{};
-        const view = &app.board_view.?;
-        view.focus = .board;
-        view.help = false;
-        view.detail = null;
-        view.giving = null;
-        const picked = app.pickCard(id);
-        view.answering = picked and app.boardCard(view.col, view.row).?.ask != null;
-        if (!picked) _ = try app.openDetail(id);
-        try app.toSide();
+        try app.goHome();
     }
 
     /// Home's plan opened with the pick on ticket `id`: what `arena plan <id>` asks for. The find
     /// line and the repo filter are cleared, and a window folded over the ticket is opened. A
-    /// ticket the plan shows in no window opens its detail instead; with no plan, the board
-    /// opens on it.
+    /// ticket the plan shows in no window opens its detail instead; with no plan, nothing opens.
     pub fn showPlan(app: *App, id: u32) !void {
-        if (!app.hasPlan()) return app.showCard(id);
+        if (!app.hasPlan()) return;
         app.menu = null;
         app.prompt = null;
         app.overview = null;
@@ -3372,13 +3308,10 @@ pub const App = struct {
         view.help = false;
         view.detail = null;
         view.giving = null;
-        view.answering = false;
         view.whole = null;
         view.plan_repo = 0;
-        view.home = true;
-        view.plan = true;
         view.alone = false;
-        view.focus = .board;
+        view.focus = .plan;
         if (!try app.pickPlanTicket(id)) _ = try app.openDetail(id);
         app.reflow();
         try app.toSide();
@@ -3464,38 +3397,6 @@ pub const App = struct {
         return true;
     }
 
-    /// The open board's pick put on ticket `id`: in the every view where it shows there, else
-    /// in its repo's own columns, else in the backlog. False when the board shows it nowhere,
-    /// the board then as it opens.
-    pub fn pickCard(app: *App, id: u32) bool {
-        const view = &app.board_view.?;
-        var repos: [max_repos][]const u8 = undefined;
-        const n = if (app.board) |*b| b.repos(&repos) else 0;
-        for (0..n + 2) |narrowed| {
-            view.backlog = narrowed == n + 1;
-            view.repo = if (view.backlog) 0 else narrowed;
-            var lanes: [max_repos + 1][]const u8 = undefined;
-            for (0..if (app.boardLanes()) app.laneRepos(&lanes) else 1) |lane| {
-                view.lane = lane;
-                for (0..app.boardCols()) |col| {
-                    var out: [max_cards]*const tickets.Card = undefined;
-                    const shown = @min(app.boardColumn(col, &out), max_cards);
-                    for (out[0..shown], 0..) |card, row| if (card.id == id) {
-                        view.col = col;
-                        view.row = row;
-                        return true;
-                    };
-                }
-            }
-        }
-        view.backlog = false;
-        view.repo = 0;
-        view.col = 0;
-        view.row = 0;
-        view.lane = app.firstLane();
-        return false;
-    }
-
     /// The board put away, and the side with it, back in the session the human was in.
     fn closeBoard(app: *App) !void {
         const view = app.board_view orelse return;
@@ -3531,16 +3432,6 @@ pub const App = struct {
         app.dirty = true;
     }
 
-    /// The repo the open board is narrowed to; null for every one.
-    pub fn boardRepo(app: *const App) ?[]const u8 {
-        const view = app.board_view orelse return null;
-        if (view.repo == 0 or view.backlog) return null;
-        const b = if (app.board) |*b| b else return null;
-        var repos: [max_repos][]const u8 = undefined;
-        const n = b.repos(&repos);
-        return if (view.repo <= n) repos[view.repo - 1] else null;
-    }
-
     /// The rows the card's detail takes in its box.
     pub fn detailRows(app: *const App) usize {
         const inner = detailWidth(app.boardW()).inner;
@@ -3561,82 +3452,10 @@ pub const App = struct {
         return std.fmt.bufPrint(buf, "{s}/detail-{d}.txt", .{ dir, id }) catch null;
     }
 
-    /// The cards of the board's column `col` as it is narrowed, as many as fit in `out`; the
-    /// count of those it shows.
-    pub fn boardColumn(app: *const App, col: usize, out: []*const tickets.Card) usize {
-        const b = if (app.board) |*b| b else return 0;
-        if (app.footStrip(col)) return app.stripPicks(out);
-        if (app.boardBacklog()) {
-            var n: usize = 0;
-            for (b.backlog()) |*card| if (card.finds(app.findText())) {
-                if (n < out.len) out[n] = card;
-                n += 1;
-            };
-            return n;
-        }
-        if (app.boardLanes()) if (app.pickRepo()) |repo| if (app.folded(repo)) return 0;
-        return app.shownIn(tickets.statuses[col], app.pickRepo(), app.columnOf(tickets.statuses[col], app.pickRepo(), app.findText(), out));
-    }
-
     /// What the board's cards are narrowed to: what is being typed after `/`, else what Enter kept.
     pub fn findText(app: *const App) []const u8 {
         if (app.prompt) |*prompt| if (prompt.what == .find) return prompt.text();
         return app.find[0..app.find_len];
-    }
-
-    /// The count of every card in the board's column `col` as it is narrowed, shown or not.
-    pub fn boardColumnAll(app: *const App, col: usize) usize {
-        if (app.boardBacklog()) return app.boardColumn(col, &.{});
-        return app.columnOf(tickets.statuses[col], app.pickRepo(), app.findText(), &.{});
-    }
-
-    /// Done shows its last few closed, the first in its column, and then how many more it has.
-    pub const done_shown = 3;
-
-    /// Of `total` cards in `status`'s column of `repo`, how many are shown: in done, every `try`
-    /// card, pinned above the capped recent ones.
-    pub fn shownIn(app: *const App, status: tickets.Status, repo: ?[]const u8, total: usize) usize {
-        if (status != .done) return total;
-        const tries = app.columnOf(.@"try", repo, app.findText(), &.{});
-        return @min(total, tries + @as(usize, if (app.workbench()) strip_n else done_shown));
-    }
-
-    /// The cards in column `col` of lane `lane`: those shown, and all of them.
-    pub fn laneCounts(app: *const App, lane: usize, col: usize) struct { shown: usize, total: usize } {
-        if (app.footStrip(col)) {
-            const n = if (lane == app.pickLane()) app.stripPicks(&.{}) else 0;
-            return .{ .shown = n, .total = n };
-        }
-        const repo = app.laneRepo(lane) orelse return .{ .shown = 0, .total = 0 };
-        const total = app.columnOf(tickets.statuses[col], repo, app.findText(), &.{});
-        const shown = if (app.folded(repo)) 0 else app.shownIn(tickets.statuses[col], repo, total);
-        return .{ .shown = shown, .total = total };
-    }
-
-    /// Whether the open board is the every view, a lane a repo, not one repo's columns.
-    pub fn boardLanes(app: *const App) bool {
-        const view = app.board_view orelse return false;
-        return view.repo == 0 and !view.backlog;
-    }
-
-    /// The repos the every view has a lane for, those with a card to do, doing or in review, in
-    /// order of name, then "" for such cards of none.
-    pub fn laneRepos(app: *const App, out: *[max_repos + 1][]const u8) usize {
-        const b = if (app.board) |*b| b else return 0;
-        const n = @min(out.len, b.lanes().len);
-        @memcpy(out[0..n], b.lanes()[0..n]);
-        return n;
-    }
-
-    /// The cards to do, doing or in review on tab `i`: every repo's, or one's. The backlog's
-    /// own count is its cards'.
-    pub fn tabCount(app: *const App, i: usize) usize {
-        const b = if (app.board) |*b| b else return 0;
-        var repos: [max_repos][]const u8 = undefined;
-        const n = b.repos(&repos);
-        if (i > n) return 0;
-        const repo: ?[]const u8 = if (i == 0) null else repos[i - 1];
-        return app.columnOf(.todo, repo, "", &.{}) + app.columnOf(.doing, repo, "", &.{}) + app.columnOf(.review, repo, "", &.{});
     }
 
     /// Whether `repo`'s group is folded to its heading.
@@ -3697,7 +3516,6 @@ pub const App = struct {
     pub fn toggleRepoFold(app: *App, repo: []const u8) !void {
         app.setFold(repo, !app.folded(repo));
         app.dirty = true;
-        app.settleLane();
         try app.saveFolds();
     }
 
@@ -3706,293 +3524,12 @@ pub const App = struct {
         if (app.fold_n > 0) {
             app.fold_n = 0;
         } else {
-            var repos: [max_repos + 1][]const u8 = undefined;
-            for (repos[0..app.laneRepos(&repos)]) |repo| if (!std.mem.eql(u8, repo, keep)) app.setFold(repo, true);
+            var repos: [max_repos][]const u8 = undefined;
+            const b = if (app.board) |*b| b else return;
+            for (repos[0..b.repos(&repos)]) |repo| if (!std.mem.eql(u8, repo, keep)) app.setFold(repo, true);
         }
         app.dirty = true;
-        app.settleLane();
         try app.saveFolds();
-    }
-
-    /// Whether lane `lane`'s group holds a card the human must decide: an ask or a proposal.
-    pub fn laneNeeds(app: *const App, lane: usize) bool {
-        const repo = app.laneRepo(lane) orelse return false;
-        var out: [max_cards]*const tickets.Card = undefined;
-        for ([_]tickets.Status{ .todo, .doing, .review }) |status| {
-            const n = @min(app.columnOf(status, repo, "", &out), max_cards);
-            for (out[0..n]) |card| if (card.ask != null or card.proposal != null) return true;
-        }
-        return false;
-    }
-
-    /// The pick moved, when its group has no card shown in its column, to the first that has.
-    fn settleLane(app: *App) void {
-        const view = &(app.board_view orelse return);
-        if (!app.boardLanes()) return;
-        var repos: [max_repos + 1][]const u8 = undefined;
-        const lanes = app.laneRepos(&repos);
-        if (app.laneCounts(view.lane, view.col).shown > 0) return;
-        for (0..lanes) |k| {
-            if (app.laneCounts(k, view.col).shown == 0) continue;
-            view.lane = k;
-            view.row = 0;
-            break;
-        }
-    }
-
-    pub fn laneRepo(app: *const App, lane: usize) ?[]const u8 {
-        var repos: [max_repos + 1][]const u8 = undefined;
-        const n = app.laneRepos(&repos);
-        return if (lane < n) repos[lane] else null;
-    }
-
-    /// The groups a column's cards are in: a repo's each in the every view, by its place among
-    /// `laneRepos`, else the one of what the board is narrowed to.
-    fn groupCount(app: *const App) usize {
-        if (!app.boardLanes()) return 1;
-        var repos: [max_repos + 1][]const u8 = undefined;
-        return app.laneRepos(&repos);
-    }
-
-    /// The cards of group `lane` in column `col`: those shown, and all of them.
-    pub fn groupCounts(app: *const App, lane: usize, col: usize) struct { shown: usize, total: usize } {
-        if (app.boardLanes()) {
-            const n = app.laneCounts(lane, col);
-            return .{ .shown = n.shown, .total = n.total };
-        }
-        return .{ .shown = @min(app.boardColumn(col, &.{}), max_cards), .total = app.boardColumnAll(col) };
-    }
-
-    /// Card `row` of group `lane` in column `col`.
-    pub fn groupCard(app: *const App, lane: usize, col: usize, row: usize) ?*const tickets.Card {
-        return if (app.boardLanes()) app.laneCard(lane, col, row) else app.boardCard(col, row);
-    }
-
-    /// A line of a column, counted from its first: a repo's heading in the every view, row `part`
-    /// of card `row`, or the line under a group's last saying how many more it has.
-    pub const ColumnLine = struct {
-        lane: usize,
-        what: union(enum) { heading, card: struct { row: usize, part: usize }, more },
-    };
-
-    /// A column's lines from its first, each card as many as it is tall.
-    pub const ColumnLines = struct {
-        app: *const App,
-        col: usize,
-        groups: usize,
-        lane: usize = 0,
-        headed: bool = false,
-        row: usize = 0,
-        part: usize = 0,
-
-        pub fn init(app: *const App, col: usize) ColumnLines {
-            return .{ .app = app, .col = col, .groups = app.groupCount() };
-        }
-
-        pub fn next(it: *ColumnLines) ?ColumnLine {
-            while (it.lane < it.groups) {
-                const n = it.app.groupCounts(it.lane, it.col);
-                if (n.total > 0 and !it.headed) {
-                    it.headed = true;
-                    if (it.app.boardLanes()) return .{ .lane = it.lane, .what = .heading };
-                }
-                if (it.row < n.shown) {
-                    const line: ColumnLine = .{ .lane = it.lane, .what = .{ .card = .{ .row = it.row, .part = it.part } } };
-                    it.part += 1;
-                    if (it.part >= it.app.cardHeight(it.lane, it.col, it.row)) {
-                        it.part = 0;
-                        it.row += 1;
-                    }
-                    return line;
-                }
-                const hidden = it.app.boardLanes() and it.app.folded(it.app.laneRepo(it.lane) orelse "");
-                const more = it.row == n.shown and n.total > n.shown and !hidden;
-                it.row += 1;
-                if (more) return .{ .lane = it.lane, .what = .more };
-                it.lane += 1;
-                it.headed = false;
-                it.row = 0;
-            }
-            return null;
-        }
-    };
-
-    pub fn columnLineAt(app: *const App, col: usize, line: usize) ?ColumnLine {
-        var lines = ColumnLines.init(app, col);
-        for (0..line) |_| _ = lines.next() orelse return null;
-        return lines.next();
-    }
-
-    /// The line of column `col` card `row` of group `lane` starts on.
-    pub fn cardStart(app: *const App, col: usize, lane: usize, row: usize) ?usize {
-        var lines = ColumnLines.init(app, col);
-        var at: usize = 0;
-        while (lines.next()) |line| : (at += 1) switch (line.what) {
-            .card => |card| if (line.lane == lane and card.row == row and card.part == 0) return at,
-            else => {},
-        };
-        return null;
-    }
-
-    /// The line of column `col` on its first row inside its border: the picked card's column is
-    /// scrolled to keep it in view down to its bottom edge, or its top when it is taller than
-    /// the column.
-    pub fn columnScroll(app: *const App, col: usize) usize {
-        const view = app.board_view orelse return 0;
-        if (col != view.col) return 0;
-        const lane = app.pickLane();
-        const top = app.cardStart(col, lane, view.row) orelse return 0;
-        const bottom = top + app.cardHeight(lane, col, view.row) -| 1;
-        const rows = @max(1, app.listH() -| (app.colTop() + 1));
-        return if (bottom >= rows) @min(top, bottom - rows + 1) else 0;
-    }
-
-    /// The group the pick is in: its repo's in the every view, else the one.
-    fn pickLane(app: *const App) usize {
-        return if (app.boardLanes()) app.board_view.?.lane else 0;
-    }
-
-    /// Card `row` of column `col` in lane `lane`.
-    pub fn laneCard(app: *const App, lane: usize, col: usize, row: usize) ?*const tickets.Card {
-        if (app.footStrip(col)) return app.boardCard(col, row);
-        const repo = app.laneRepo(lane) orelse return null;
-        var out: [max_cards]*const tickets.Card = undefined;
-        const n = app.shownIn(tickets.statuses[col], repo, app.columnOf(tickets.statuses[col], repo, app.findText(), &out));
-        return if (row < @min(n, max_cards)) out[row] else null;
-    }
-
-    /// The lane the every view opens on: the first with a card in its first column.
-    pub fn firstLane(app: *const App) usize {
-        var repos: [max_repos + 1][]const u8 = undefined;
-        for (0..app.laneRepos(&repos)) |k| if (app.laneCard(k, 0, 0) != null) return k;
-        return 0;
-    }
-
-    /// The repo the pick moves within: the one the board is narrowed to, or in the every view
-    /// the picked lane's.
-    pub fn pickRepo(app: *const App) ?[]const u8 {
-        if (!app.boardLanes()) return app.boardRepo();
-        return app.laneRepo(app.board_view.?.lane);
-    }
-
-    pub fn boardBacklog(app: *const App) bool {
-        const view = app.board_view orelse return false;
-        return view.backlog;
-    }
-
-    /// The columns the open board shows: the four statuses, or the backlog alone.
-    pub fn boardCols(app: *const App) usize {
-        return if (app.boardBacklog()) 1 else tickets.statuses.len;
-    }
-
-    /// What the board's epic bars come to: none outside Workbench, in the backlog, with no goals or
-    /// with too little room, else a title row, a bar row and a blank one.
-    pub fn epicRows(app: *const App) u16 {
-        const b = if (app.board) |*b| b else return 0;
-        const plan = b.plan() orelse return 0;
-        if (plan.goals.len == 0 or !app.workbench() or app.boardBacklog() or app.view_h < first_line + epic_rows + foot_rows + 6) return 0;
-        return epic_rows;
-    }
-
-    pub const epic_rows: u16 = 3;
-
-    /// The epics the board draws as bars, as many as the width holds side by side.
-    pub fn epicBars(app: *const App) []const tickets.Goal {
-        if (app.epicRows() == 0) return &.{};
-        const goals = app.board.?.plan().?.goals;
-        return goals[0..@max(1, @min(goals.len, (app.boardW() -| 2 + epic_gap) / (epic_min_w + epic_gap)))];
-    }
-
-    pub const epic_gap = 2;
-    pub const epic_min_w = 24;
-
-    /// `Board.column` on this board: an epic is left out only while its bar is drawn.
-    pub fn columnOf(app: *const App, status: tickets.Status, repo: ?[]const u8, find: []const u8, out: []*const tickets.Card) usize {
-        const b = if (app.board) |*b| b else return 0;
-        return b.columnBars(status, repo, find, app.epicBars(), out);
-    }
-
-    /// The row the board's columns start at: under the epic bars, when it has them.
-    pub fn colTop(app: *const App) u16 {
-        return first_line + app.epicRows();
-    }
-
-    /// The cards in `status` on the whole board, whatever repo it is narrowed to, that the find
-    /// holds; an epic is no work for a Claude, so it is not counted.
-    pub fn boardCount(app: *const App, status: tickets.Status) usize {
-        const b = if (app.board) |*b| b else return 0;
-        return b.work(status, app.findText());
-    }
-
-    pub fn boardCard(app: *const App, col: usize, row: usize) ?*const tickets.Card {
-        var out: [max_cards]*const tickets.Card = undefined;
-        const n = app.boardColumn(col, &out);
-        return if (row < @min(n, max_cards)) out[row] else null;
-    }
-
-    /// The board's columns side by side under a row of its own; in each, cards stacked from the
-    /// second row inside its border.
-    pub fn boardColW(app: *const App, col: usize) u16 {
-        var widths: [tickets.statuses.len]u16 = undefined;
-        app.boardWidths(&widths);
-        return widths[col];
-    }
-
-    /// Width goes to what has cards: an empty column is as narrow as its heading, done takes
-    /// `recent_w`, doing and review a share each by their cards, and todo the rest, the most.
-    fn boardWidths(app: *const App, out: *[tickets.statuses.len]u16) void {
-        const room = app.boardW();
-        if (app.boardBacklog()) {
-            out[0] = room;
-            return;
-        }
-        var counts: [tickets.statuses.len]usize = undefined;
-        var left = room;
-        for (tickets.statuses, 0..) |status, c| {
-            counts[c] = if (app.boardLanes()) app.boardCount(status) else app.boardColumnAll(c);
-            out[c] = if (status == .done and app.footRows() > 0) 0 else if (counts[c] == 0) app.emptyColWidth(c) else if (status == .done) @min(recent_w, room / 4) else 0;
-            left -|= out[c];
-        }
-        const sum = counts[0] + counts[1] + counts[2];
-        if (sum == 0) {
-            out[0] += left;
-            return;
-        }
-        var rest = left;
-        for (1..3) |c| if (counts[c] > 0) {
-            const share: u16 = @intCast(left * counts[c] / sum);
-            out[c] = if (counts[0] > 0) std.math.clamp(share, left / 4, left / 3) else share;
-            rest -= out[c];
-        };
-        out[if (counts[0] > 0) 0 else if (counts[2] > 0) 2 else 1] += rest;
-    }
-
-    pub const recent_w = 40;
-
-    /// An empty column's width: its heading, ` name 0 `, in its border, and todo's + beside it; a
-    /// Workbench window's bar has its stripes, count badge and box.
-    fn emptyColWidth(app: *const App, col: usize) u16 {
-        const name = app.columnName(col);
-        if (app.workbench()) return @intCast(cellCount(name) + 12 + @as(usize, if (col == 0) 8 else 0));
-        return @intCast(cellCount(name) + 4 + 3 + @as(usize, if (col == 0) 4 else 0));
-    }
-
-    /// What column `col` is headed: its status, recent for the every view's strip, or backlog.
-    pub fn columnName(app: *const App, col: usize) []const u8 {
-        if (app.boardBacklog()) return "backlog";
-        return if (app.boardStrip(col)) "recent" else @tagName(tickets.statuses[col]);
-    }
-
-    pub fn boardColX(app: *const App, col: usize) u16 {
-        var x: u16 = 0;
-        for (0..col) |c| x += app.boardColW(c);
-        return x;
-    }
-
-    /// Whether column `col` is the every view's strip of what each repo closed last: done, a
-    /// card a row with no box.
-    pub fn boardStrip(app: *const App, col: usize) bool {
-        return (app.boardLanes() or app.footRows() > 0) and tickets.statuses[col] == .done;
     }
 
     /// Whether the board is drawn in Workbench's look, which has geometry of its own.
@@ -4000,269 +3537,8 @@ pub const App = struct {
         return app.roles != null;
     }
 
-    /// Rows of Workbench's recent strip along the board's foot: its title bar, the timeline, the
-    /// labels and the picked one's button.
-    pub const foot_rows: u16 = 4;
-
-    /// How many of the last closed the strip shows.
-    pub const strip_n = tickets.Board.recent_n;
-
-    /// The rows the recent strip takes: none outside Workbench, in the backlog, or with no room.
-    pub fn footRows(app: *const App) u16 {
-        if (!app.workbench() or app.boardBacklog() or app.view_h < app.colTop() + foot_rows + 6) return 0;
-        return foot_rows;
-    }
-
-    /// The row after the last the columns' windows take: their shadow is on the one before.
-    pub fn listH(app: *const App) u16 {
-        return app.view_h - app.footRows() - app.barRows();
-    }
-
-    /// The board's last row is its key bar in Workbench's look, when there is room for the columns above it.
-    pub fn barRows(app: *const App) u16 {
-        return if (app.workbench() and app.view_h >= first_line + 8) 1 else 0;
-    }
-
-    /// A key of the board's foot bar, where it is drawn and clicked: 0-based, as the mouse has it.
-    pub const BarKey = struct {
-        what: union(enum) { card: CardAction, key: []const u8 },
-        key: []const u8,
-        word: []const u8,
-        x: u16,
-        /// A rule is drawn before it: it starts a group.
-        group: bool,
-
-        pub fn width(k: BarKey) u16 {
-            return @intCast(cellCount(k.key) + cellCount(k.word) + 3);
-        }
-
-        pub fn hit(k: BarKey, app: *const App, x: u16, y: u16) bool {
-            return y == app.view_h - 1 and x >= k.x and x < k.x + k.width();
-        }
-    };
-
-    /// Below this many cells the bar keeps fewer keys.
-    const bar_full_w = 110;
-
-    /// The foot bar's keys, in three groups: the picked card's, the board's, and `?` with `esc`.
-    /// Half width keeps `⏎ start  space open  G give  e edit │ + new  / find │ ? keys`. None
-    /// while a word of babylon's is said in the bar's place.
-    pub fn keyBar(app: *const App, out: []BarKey) []BarKey {
-        if (app.barRows() == 0 or (app.report_said != null and !app.feedFocused())) return out[0..0];
-        if (app.board_view == null) return out[0..0];
-        const full = app.boardW() >= bar_full_w;
-        const Item = struct { what: @FieldType(BarKey, "what"), key: []const u8, word: []const u8, group: u8 };
-        var items: [24]Item = undefined;
-        var m: usize = 0;
-        if (app.pickedCard()) |card| {
-            var have: [12]CardAction = undefined;
-            const actions = cardActions(card, &have);
-            const order = [_]CardAction{ .go, .open, .no, .answer, .give, .handoff, .edit, .priority, .close, .reopen, .to_todo, .up, .down, .to_next };
-            const plan = app.planShown();
-            for (order) |action| {
-                const there = action == .open or std.mem.indexOfScalar(CardAction, actions, action) != null;
-                const wanted = full or action == .go or action == .open or action == .give or action == .edit;
-                const on_plan = !plan or (action != .no and action != .answer and action != .up and action != .down);
-                if (there and wanted and on_plan) {
-                    items[m] = .{ .what = .{ .card = action }, .key = action.key(), .word = cardWord(card, action), .group = 0 };
-                    m += 1;
-                }
-            }
-        }
-        const board = [_]struct { []const u8, []const u8, bool }{
-            .{ "+", "new", true },   .{ "r", "repo", false }, .{ "/", "find", true },
-            .{ "A", "auto", false }, .{ "o", "orch", false }, .{ "g", "gate", false },
-        };
-        for (board) |pair| if (full or pair[2]) {
-            items[m] = .{ .what = .{ .key = pair[0] }, .key = pair[0], .word = pair[1], .group = 1 };
-            m += 1;
-        };
-        items[m] = .{ .what = .{ .key = "?" }, .key = "?", .word = if (full) "all keys" else "keys", .group = 2 };
-        m += 1;
-        if (full) {
-            items[m] = .{ .what = .{ .key = "\x1b" }, .key = "esc", .word = "close", .group = 2 };
-            m += 1;
-        }
-        const right = app.boardW();
-        var x: u16 = 1;
-        var n: usize = 0;
-        for (items[0..m], 0..) |item, i| {
-            const group = i > 0 and items[i - 1].group != item.group;
-            const k: BarKey = .{ .what = item.what, .key = item.key, .word = item.word, .x = x + @as(u16, if (group) 3 else 1), .group = group };
-            if (k.x + k.width() > right or n == out.len) break;
-            out[n] = k;
-            n += 1;
-            x = k.x + k.width();
-        }
-        return out[0..n];
-    }
-
-    /// The word a card's key says on the board: a free card's `⏎` starts it, a review card's
-    /// `space` is its log.
-    fn cardWord(card: *const tickets.Card, action: CardAction) []const u8 {
-        return switch (action) {
-            .go => if (card.proposal == null and card.holder() == null) "start" else action.label(),
-            .open => if (card.status == .review) "log" else action.label(),
-            else => action.label(),
-        };
-    }
-
-    /// The cards the recent strip shows, the last closed first.
-    pub fn stripCards(app: *const App, out: *[strip_n]*const tickets.Card) usize {
-        var all: [max_cards]*const tickets.Card = undefined;
-        const n = @min(app.columnOf(.done, app.boardRepo(), app.findText(), &all), strip_n);
-        @memcpy(out[0..n], all[0..n]);
-        return n;
-    }
-
-    /// Whether column `col` is the recent strip drawn along the board's foot, from `stripCards`,
-    /// not as lanes of its own.
-    fn footStrip(app: *const App, col: usize) bool {
-        return app.footRows() > 0 and app.boardStrip(col);
-    }
-
-    /// The strip's entries as the pick has them: by their place among those drawn, whatever lane
-    /// they are in; the count of those drawn, as many as fit in `out` copied.
-    fn stripPicks(app: *const App, out: []*const tickets.Card) usize {
-        var cards: [strip_n]*const tickets.Card = undefined;
-        const n = app.stripCards(&cards);
-        const m = @min(n, out.len);
-        @memcpy(out[0..m], cards[0..m]);
-        return n;
-    }
-
-    /// The width of one of the strip's entries.
-    pub fn stripCell(app: *const App) u16 {
-        return app.boardW() / strip_n;
-    }
-
-    /// Where the pick of card `card` is in column `col`, that column's own rows or, in the every
-    /// view, its repo's lane.
-    fn spotOf(app: *const App, col: usize, id: u32) ?CardAt {
-        if (app.footStrip(col)) {
-            var out: [strip_n]*const tickets.Card = undefined;
-            const n = app.stripPicks(&out);
-            for (out[0..n], 0..) |card, row| if (card.id == id) return .{ .lane = app.pickLane(), .col = col, .row = row };
-            return null;
-        }
-        if (!app.boardLanes()) {
-            var out: [max_cards]*const tickets.Card = undefined;
-            const n = @min(app.boardColumn(col, &out), max_cards);
-            for (out[0..n], 0..) |card, row| if (card.id == id) return .{ .lane = 0, .col = col, .row = row };
-            return null;
-        }
-        var repos: [max_repos + 1][]const u8 = undefined;
-        for (0..app.laneRepos(&repos)) |lane| {
-            var row: usize = 0;
-            while (app.laneCard(lane, col, row)) |card| : (row += 1) {
-                if (card.id == id) return .{ .lane = lane, .col = col, .row = row };
-            }
-        }
-        return null;
-    }
-
-    /// The card of the strip under (`x`, `y`), where the strip is drawn.
-    fn stripCardAt(app: *const App, x: u16, y: u16) ?CardAt {
-        const foot = app.footRows();
-        if (foot == 0 or y <= app.listH() or y + 1 >= app.view_h -| app.barRows()) return null;
-        const k = x / @max(1, app.stripCell());
-        var cards: [strip_n]*const tickets.Card = undefined;
-        if (k >= app.stripCards(&cards)) return null;
-        const done = for (tickets.statuses, 0..) |status, c| {
-            if (status == .done) break c;
-        } else return null;
-        return app.spotOf(done, cards[k].id);
-    }
-
-    /// Whether card `row` of group `lane` in column `col` is the one picked.
-    pub fn cardPicked(app: *const App, lane: usize, col: usize, row: usize) bool {
-        const view = app.board_view orelse return false;
-        return col == view.col and row == view.row and lane == app.pickLane();
-    }
-
-    /// The rows card `row` of group `lane` takes in column `col`: one in the strip; else its
-    /// title's, `title_rows` at most unless picked, a last row when it has something to say, and
-    /// the picked one's top and bottom edges.
-    pub fn cardHeight(app: *const App, lane: usize, col: usize, row: usize) usize {
-        if (app.boardStrip(col)) return 1;
-        const card = app.groupCard(lane, col, row) orelse return 1;
-        var buf: [160]u8 = undefined;
-        if (app.workbench()) {
-            var tile = TitleLines.init(card.title, tileTextW(app.boardColW(col)));
-            var rows: usize = 0;
-            while (tile.next()) |_| rows += 1;
-            return @max(1, @min(rows, tile_title_rows)) + @as(usize, if (app.cardPicked(lane, col, row)) 4 else 3);
-        }
-        var lines = TitleLines.init(cardTitle(card, &buf), cardTextW(app.boardColW(col)));
-        var n: usize = 0;
-        while (lines.next()) |_| n += 1;
-        const last = @intFromBool(cardHasLast(card, app.cardRepoShown()));
-        return if (app.cardPicked(lane, col, row)) n + last + 4 else @max(1, @min(n, title_rows) + last);
-    }
-
-    pub const title_rows = 4;
-
-    /// A Workbench tile's title takes two rows at most, the picked one's too.
-    pub const tile_title_rows = 2;
-
-    /// The cells a Workbench tile's title has in a column `w` wide: its window's and its own
-    /// gutters, a cell of the tile's, and the priority dot's.
-    pub fn tileTextW(w: u16) usize {
-        return w -| 7;
-    }
-
-    /// The cells a card's text has in a column `w` wide: the column's edges, the card's left mark
-    /// and a space, and a cell after.
-    pub fn cardTextW(w: u16) usize {
-        return w -| 5;
-    }
-
     pub fn cardTitle(card: *const tickets.Card, buf: []u8) []const u8 {
         return std.fmt.bufPrint(buf, "#{d} {s}", .{ card.id, card.title }) catch card.title;
-    }
-
-    /// Whether a card says its repo: in the backlog, where no heading or tab does.
-    pub fn cardRepoShown(app: *const App) bool {
-        return !app.boardLanes() and app.boardRepo() == null;
-    }
-
-    /// Whether a card has a last row, something to say past its title: a proposal, a question,
-    /// where the pipeline has it, who holds it, what it waits on, and the rest of what is so of it.
-    pub fn cardHasLast(card: *const tickets.Card, with_repo: bool) bool {
-        return card.proposal != null or card.ask != null or card.stage != null or
-            (card.status != .review and (card.holder() != null or card.status == .doing)) or
-            with_repo or card.blocked_by.len > 0 or std.mem.eql(u8, card.kind, "epic") or
-            (card.status == .todo and card.model != null) or
-            (card.status == .done and card.session_note.len > 0) or card.handed_off_from != null or
-            card.waiting_on != null;
-    }
-
-    pub const CardAt = struct { lane: usize, col: usize, row: usize };
-
-    /// The group whose heading is at cell (`x`, `y`), in the every view.
-    fn headingAt(app: *const App, x: u16, y: u16) ?usize {
-        if (!app.boardLanes() or x < app.boardColX(0) or y < app.colTop() or y + 1 >= app.listH()) return null;
-        const col = for (0..app.boardCols()) |c| {
-            if (x < app.boardColX(c) + app.boardColW(c)) break c;
-        } else return null;
-        if (app.boardColW(col) == 0 or app.footStrip(col)) return null;
-        const at = app.columnLineAt(col, y - app.colTop() + app.columnScroll(col)) orelse return null;
-        return if (at.what == .heading) at.lane else null;
-    }
-
-    fn boardCardAt(app: *const App, x: u16, y: u16) ?CardAt {
-        if (app.stripCardAt(x, y)) |at| return at;
-        const left = app.boardColX(0);
-        if (x < left or y < app.colTop() or y + 1 >= app.listH()) return null;
-        const col = for (0..app.boardCols()) |c| {
-            if (x < app.boardColX(c) + app.boardColW(c)) break c;
-        } else return null;
-        if (app.boardColW(col) == 0) return null;
-        const at = app.columnLineAt(col, y - app.colTop() + app.columnScroll(col)) orelse return null;
-        return switch (at.what) {
-            .card => |card| .{ .lane = at.lane, .col = col, .row = card.row },
-            else => null,
-        };
     }
 
     /// The window with pane `id` in it, and that window's place in its session.
@@ -4271,19 +3547,6 @@ pub const App = struct {
             if (pane.id == id) return .{ .session = s, .index = wi };
         };
         return null;
-    }
-
-    /// Goes to the Claude holding the card picked, closing the board; nothing when none does.
-    fn goCard(app: *App) !void {
-        const card = app.pickedCard() orelse return;
-        const pane = card.holder() orelse {
-            if (!givable(card)) return;
-            // babylon refuses what it will not start and says why; the board closes when it does
-            var id_buf: [12]u8 = undefined;
-            _ = try app.runWith("start", &.{ "babylon", "start", std.fmt.bufPrint(&id_buf, "{d}", .{card.id}) catch return }, true);
-            return;
-        };
-        try app.showPane(pane);
     }
 
     /// Pane `id` put in front, its session and window as needed, closing the board; nothing
@@ -4307,48 +3570,22 @@ pub const App = struct {
     /// Home: the board with the orchestrator's column beside it, which has the keys, in insert.
     /// With no board there is none.
     pub fn goHome(app: *App) !void {
-        if (app.board == null) return;
+        if (!app.hasPlan()) return;
         app.menu = null;
         app.prompt = null;
         app.overview = null;
         app.orchestrating = false;
         app.normal = false;
         app.dirty = true;
-        if (app.board_view == null) app.board_view = .{ .lane = app.firstLane() };
+        if (app.board_view == null) app.board_view = .{};
         const view = &app.board_view.?;
         view.help = false;
         view.detail = null;
         view.giving = null;
-        view.answering = false;
         app.side_folded = true;
-        view.home = true;
-        view.plan = app.hasPlan();
         view.alone = false;
-        view.focus = .board;
+        view.focus = .plan;
         app.reflow();
-    }
-
-    /// The board, from anywhere in normal mode: where home's plan goes to find, read or move a
-    /// ticket. With no board there is none.
-    pub fn toBoard(app: *App) !void {
-        if (app.board == null) return;
-        app.menu = null;
-        app.prompt = null;
-        app.overview = null;
-        app.orchestrating = false;
-        app.normal = false;
-        app.dirty = true;
-        if (app.board_view == null) app.board_view = .{ .lane = app.firstLane() };
-        const view = &app.board_view.?;
-        view.help = false;
-        view.detail = null;
-        view.giving = null;
-        view.answering = false;
-        view.plan = false;
-        view.alone = false;
-        view.focus = .board;
-        app.reflow();
-        try app.toSide();
     }
 
     /// Whether babylon's file carries a plan.
@@ -4358,8 +3595,7 @@ pub const App = struct {
 
     /// Whether home draws the plan, in the board's place.
     pub fn planShown(app: *const App) bool {
-        const view = app.board_view orelse return false;
-        return view.plan and app.hasPlan();
+        return app.board_view != null and app.hasPlan();
     }
 
     /// The plan laid out in rows for the board's width, less the cell the pick bar takes; false
@@ -4437,16 +3673,23 @@ pub const App = struct {
         return .{ .n = n, .end = if (n == 0) x else x - 3 };
     }
 
-    /// The card the keys and buttons act on: the plan's picked row's ticket while the plan is
-    /// shown, else the board's pick.
+    /// The card the keys and buttons act on: the plan's picked row's ticket.
     pub fn pickedCard(app: *const App) ?*const tickets.Card {
         const view = app.board_view orelse return null;
-        if (!app.planShown()) return app.boardCard(view.col, view.row);
         var sheet: sheets.Sheet = undefined;
         if (!app.planSheet(&sheet)) return null;
         const row = sheet.picked(view.plan_pick) orelse return null;
         if (row.kind != .now and row.kind != .next and row.kind != .landed and row.kind != .todo and row.kind != .backlog) return null;
         return app.cardById(row.ticket orelse return null);
+    }
+
+    /// The word a card's key says: a free card's `⏎` starts it, a review card's `space` is its log.
+    fn cardWord(card: *const tickets.Card, action: CardAction) []const u8 {
+        return switch (action) {
+            .go => if (card.proposal == null and card.holder() == null) "start" else action.label(),
+            .open => if (card.status == .review) "log" else action.label(),
+            else => action.label(),
+        };
     }
 
     /// A button of an open ticket's row on the plan, where it is drawn and clicked.
@@ -4611,7 +3854,7 @@ pub const App = struct {
     }
 
     /// `win` folded to its summary, or opened again; the pick stays where it was.
-    fn togglePlanFold(app: *App, win: sheets.Window) !void {
+    pub fn togglePlanFold(app: *App, win: sheets.Window) !void {
         const place = app.planPlace();
         app.plan_shut.toggle(win);
         app.dirty = true;
@@ -4659,23 +3902,8 @@ pub const App = struct {
         return (at + 3) -| (app.view_h -| 2 -| @intFromBool(app.halfHome()));
     }
 
-    pub const plan_tab = "b plan";
-    pub const board_tab = "B board";
-    pub const tab_sep = " · ";
-    /// The first row's left end on the plan and on the board alike: the same pair of tabs.
-    pub const tabs_title = " " ++ plan_tab ++ tab_sep ++ board_tab;
-    pub const plan_title = tabs_title;
+    pub const plan_title = " ◆ plan";
     pub const orch_link = "o orchestrator";
-
-    /// Where the plan tab is drawn and clicked, on the plan and on the board.
-    pub fn planTab(_: *const App) struct { x: u16, w: u16 } {
-        return .{ .x = 1, .w = @intCast(cellCount(plan_tab)) };
-    }
-
-    /// Where the board tab is drawn and clicked, on the plan and on the board.
-    pub fn planLink(_: *const App) struct { x: u16, w: u16 } {
-        return .{ .x = 1 + @as(u16, @intCast(cellCount(plan_tab) + cellCount(tab_sep))), .w = @intCast(cellCount(board_tab)) };
-    }
 
     /// Where the head's `o orchestrator` is drawn and clicked, at half a screen.
     pub fn orchLink(_: *const App) struct { x: u16, w: u16 } {
@@ -4701,7 +3929,7 @@ pub const App = struct {
         if (view.whole != null and is(key, &.{ "\x1b", "q" })) return app.closeWhole();
         if (view.whole != null and !is(key, &.{ "J", "K", "x", "e", "\r", " ", "t", "o", "p", ">", "<", "G", "w", "W", "H" })) return;
         if (app.workbench()) if (sheet.picked(view.plan_pick)) |row| {
-            if (row.kind == .need and !is(key, &.{ "j", "k", "h", "l", "z", "Z", "f", "/", "r", "?", "B", "q", "\x1b", "`", "g", "A", "P", "]", "[", " ", "o", "O", "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D" }) and try win_move.answer(app, row, key)) return;
+            if (row.kind == .need and !is(key, &.{ "j", "k", "h", "l", "z", "Z", "f", "/", "r", "?", "q", "\x1b", "`", "g", "A", "]", "[", " ", "o", "O", "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D" }) and try win_move.answer(app, row, key)) return;
             if (row.kind == .chips and try app.chipKey(key)) return;
             if (is(key, &.{"z"})) return app.togglePlanFold(row.win);
             if (is(key, &.{"Z"})) return app.foldPlanAll(row.win);
@@ -4728,7 +3956,6 @@ pub const App = struct {
             if (row.kind == .goal or row.kind == .focal) return app.driveGoal(row.ticket.?);
         };
         if (key.len == 1 and key[0] >= '1' and key[0] <= '9') return app.driveAnswer(key[0] - '1');
-        if (is(key, &.{"B"})) return app.toBoard();
 
         if (is(key, &.{ "J", "K", "x", "e" })) {
             const row = sheet.picked(view.plan_pick) orelse return;
@@ -4770,7 +3997,6 @@ pub const App = struct {
         if (is(key, &.{"o"})) return app.openDrawer();
         if (is(key, &.{"O"})) return app.openOverview();
         if (is(key, &.{"A"})) return app.openAuto();
-        if (is(key, &.{"P"})) return app.jumpProposed();
         if (is(key, &.{ "]", "[" })) return app.toFeed(key, null);
         if (is(key, &.{ "l", "\x1b[C", "\x1bOC" }) and app.sided()) {
             view.focus = .orchestrator;
@@ -4922,7 +4148,7 @@ pub const App = struct {
             .now => try win_now.act(app, row),
             .next => try win_next.act(app, row),
             .chips, .todo, .unplanned => try win_unplanned.act(app, row),
-            .goals_more => try app.toBoard(),
+            .goals_more => app.openWhole(.goals),
             .landed => try win_landed.act(app, row),
             .need => try win_move.act(app, row),
             else => {},
@@ -4943,8 +4169,6 @@ pub const App = struct {
                 app.dirty = true;
                 return;
             };
-            const link = app.planLink();
-            if (m.x >= link.x and m.x < link.x + link.w) try app.toBoard();
             const orch = app.orchLink();
             if (app.halfHome() and m.x >= orch.x and m.x < orch.x + orch.w) return app.openDrawer();
             if (draw.planHeadHit(app, m.x)) |hit| switch (hit) {
@@ -5114,7 +4338,6 @@ pub const App = struct {
         view.whole = null;
         view.detail = null;
         view.giving = null;
-        view.answering = false;
         return .{ .view = view, .folded = app.side_folded };
     }
 
@@ -5131,9 +4354,8 @@ pub const App = struct {
     /// starts it when it is off, h gives the board the keys, and Escape and q close the board.
     fn columnKey(app: *App, key: []const u8) !void {
         const view = &app.board_view.?;
-        if (anyKey(key, &.{ "h", "\x1b[D", "\x1bOD" })) view.focus = .board;
+        if (anyKey(key, &.{ "h", "\x1b[D", "\x1bOD" })) view.focus = .plan;
         if (anyKey(key, &.{"q"})) return app.closeBoard();
-        if (anyKey(key, &.{"B"})) return app.toBoard();
         if (anyKey(key, &.{"A"})) return app.openAuto();
         if (anyKey(key, &.{"\r"}) and app.orchestratorState() == .off) {
             return app.send(.ignore, captured("babylon orchestrator"), .{});
@@ -5161,7 +4383,6 @@ pub const App = struct {
             break;
         };
         if (f.item(view.pick).?.ticket) |id| {
-            _ = app.pickCard(id);
             app.pickPlan(id);
         }
     }
@@ -5170,7 +4391,7 @@ pub const App = struct {
     /// `ticket` when it has one; the plan has the keys.
     fn toMove(app: *App, key: []const u8, ticket: ?u32) !void {
         const view = &app.board_view.?;
-        view.focus = .board;
+        view.focus = .plan;
         view.whole = null;
         app.dirty = true;
         var sheet: sheets.Sheet = undefined;
@@ -5182,115 +4403,25 @@ pub const App = struct {
         };
     }
 
-    /// A key on the board: h, l and the arrows go between columns, j and k along one, r narrows
-    /// it to the next repo and from the last back to every one, Enter goes to the Claude holding
-    /// the card picked or starts one on a free todo card, Escape and q close.
-    fn boardKey(app: *App, key: []const u8) !void {
+    /// The side folded away, or back beside the board; the board opens so from then on.
+    fn homeKey(app: *App, key: []const u8) !void {
         app.clearStartRefusal();
         app.dirty = true;
         const view = &app.board_view.?;
-        const is = anyKey;
         if (view.goal_open) return app.goalKey(key);
         if (view.draft != null) return app.draftKey(key);
         if (view.auto_pick != null) return app.autoKey(key);
-        if (view.answering) return app.answerKey(key);
         if (view.giving != null) return app.giveKey(key);
         if (view.help) {
             view.help = false;
             return;
         }
         if (view.detail != null) return app.modalKey(key);
-        if (is(key, &.{"s"})) return app.openSwitcher();
+        if (anyKey(key, &.{"s"})) return app.openSwitcher();
         if (app.columnFocused()) return app.columnKey(key);
-        if (app.planShown()) return app.planKey(key);
-        if (is(key, &.{"b"}) and app.hasPlan()) return app.goHome();
-        if (is(key, &.{" "})) if (app.boardCard(view.col, view.row)) |card| {
-            if (try app.openDetail(card.id)) return;
-        };
-        if (is(key, &.{"?"})) {
-            view.help = true;
-            return;
-        }
-        if (is(key, &.{"a"})) return app.act(.answer);
-        if (is(key, &.{ "h", "\x1b[D", "\x1bOD" })) view.col -|= 1;
-        if (is(key, &.{ "l", "\x1b[C", "\x1bOC" }) and view.col + 1 < app.boardCols()) view.col += 1;
-        const up = is(key, &.{ "k", "\x1b[A", "\x1bOA" });
-        const down = is(key, &.{ "j", "\x1b[B", "\x1bOB" });
-        if (app.boardLanes()) {
-            // off a repo's group the pick goes on to the next with a card in the same column
-            var repos: [max_repos + 1][]const u8 = undefined;
-            const lanes = app.laneRepos(&repos);
-            if (app.laneCounts(view.lane, view.col).shown == 0) for (0..lanes) |k| {
-                if (app.laneCounts(k, view.col).shown == 0) continue;
-                view.lane = k;
-                break;
-            };
-            if (is(key, &.{"z"})) if (app.pickRepo()) |repo| return app.toggleRepoFold(repo);
-            if (is(key, &.{"Z"})) return app.focusFold(app.pickRepo() orelse "");
-            if (up and view.row > 0) {
-                view.row -= 1;
-            } else if (up) {
-                var k = view.lane;
-                while (k > 0) {
-                    k -= 1;
-                    if (app.laneCounts(k, view.col).shown == 0) continue;
-                    view.lane = k;
-                    view.row = std.math.maxInt(usize);
-                    break;
-                }
-            }
-            if (down and view.row + 1 < app.boardColumn(view.col, &.{})) {
-                view.row += 1;
-            } else if (down) {
-                for (view.lane + 1..lanes) |k| if (app.laneCounts(k, view.col).shown > 0) {
-                    view.lane = k;
-                    view.row = 0;
-                    break;
-                };
-            }
-        } else {
-            if (up) view.row -|= 1;
-            if (down) view.row += 1;
-        }
-        if (is(key, &.{"r"})) {
-            var repos: [max_repos][]const u8 = undefined;
-            const n = if (app.board) |*b| b.repos(&repos) else 0;
-            if (view.backlog) {
-                view.backlog = false;
-                view.repo = 0;
-            } else if (view.repo == n) {
-                view.backlog = true;
-                view.col = 0;
-            } else view.repo += 1;
-            view.row = 0;
-            view.lane = app.firstLane();
-        }
-        view.row = @min(view.row, app.boardColumn(view.col, &.{}) -| 1);
-        if (is(key, &.{"/"})) return app.openFind();
-        if (is(key, &.{"\x1b"}) and app.find_len > 0) return app.clearFind();
-        if (is(key, &.{ "\x1b", "q" })) return app.closeBoard();
-        if (is(key, &.{"`"})) return app.foldSide();
-        if (is(key, &.{"g"})) return app.gateModal();
-        if (is(key, &.{"o"})) return if (app.board_view.?.home) app.openDrawer() else app.toOrchestrator();
-        if (is(key, &.{"O"})) return app.openOverview();
-        if (is(key, &.{"A"})) return app.openAuto();
-        if (is(key, &.{"P"})) return app.jumpProposed();
-        if (is(key, &.{ "]", "[" })) return app.toFeed(key, null);
-        if (is(key, &.{"x"})) return app.act(.no);
-        if (is(key, &.{"W"})) if (app.boardCard(view.col, view.row)) |card| {
-            if (card.status == .todo) return app.toNext(card.id, true);
-        };
-        if (is(key, &.{"+"})) return app.newTicket();
-        if (is(key, &.{"n"})) return app.showInbox();
-        const keyed = [_]struct { []const u8, CardAction }{
-            .{ "\r", .go },    .{ "e", .edit },    .{ "p", .priority }, .{ ">", .close },
-            .{ "<", .reopen }, .{ "J", .down },    .{ "K", .up },       .{ "t", .to_todo },
-            .{ "G", .give },   .{ "w", .to_next }, .{ "H", .handoff },
-        };
-        for (keyed) |pair| if (std.mem.eql(u8, key, pair[0])) return app.act(pair[1]);
+        return app.planKey(key);
     }
 
-    /// The side folded away, or back beside the board; the board opens so from then on.
     fn foldSide(app: *App) !void {
         const view = &app.board_view.?;
         app.dirty = true;
@@ -5299,7 +4430,7 @@ pub const App = struct {
             return app.toSide();
         }
         app.side_folded = true;
-        view.focus = .board;
+        view.focus = .plan;
         app.reflow();
         if (view.back) |id| try app.switchTo(id);
         view.back = null;
@@ -5455,7 +4586,7 @@ pub const App = struct {
             return;
         }
         view.draft_from_column = view.focus == .orchestrator;
-        view.focus = .board;
+        view.focus = .plan;
         app.dirty = true;
     }
 
@@ -5515,7 +4646,7 @@ pub const App = struct {
         }
         view.auto_from_column = view.focus == .orchestrator;
         view.auto_normal = app.normal;
-        view.focus = .board;
+        view.focus = .plan;
         app.dirty = true;
     }
 
@@ -5745,7 +4876,7 @@ pub const App = struct {
 
     pub fn newTicket(app: *App) !void {
         var buf: [80]u8 = undefined;
-        const narrowed = if (app.boardRepo()) |r| (if (plainName(r)) std.fmt.bufPrint(&buf, " --repo {s}", .{r}) catch "" else "") else "";
+        const narrowed = if (app.planRepo()) |r| (if (plainName(r)) std.fmt.bufPrint(&buf, " --repo {s}", .{r}) catch "" else "") else "";
         try app.ticketWindow("babylon new{s}", .{narrowed});
     }
 
@@ -5753,15 +4884,12 @@ pub const App = struct {
     pub const CardAction = enum {
         go,
         no,
-        answer,
         give,
         edit,
         priority,
         close,
         reopen,
         to_todo,
-        up,
-        down,
         to_next,
         handoff,
         open,
@@ -5771,15 +4899,12 @@ pub const App = struct {
             return switch (action) {
                 .go => "⏎",
                 .no => "x",
-                .answer => "a",
                 .give => "G",
                 .edit => "e",
                 .priority => "p",
                 .close => ">",
                 .reopen => "<",
                 .to_todo => "t",
-                .up => "K",
-                .down => "J",
                 .to_next => "w",
                 .handoff => "H",
                 .open => "space",
@@ -5791,15 +4916,12 @@ pub const App = struct {
                 .open => "open",
                 .go => "go",
                 .no => "no",
-                .answer => "answer",
                 .give => "give",
                 .edit => "edit",
                 .priority => "priority",
                 .close => "close",
                 .reopen => "reopen",
                 .to_todo => "to todo",
-                .up => "↑",
-                .down => "↓",
                 .to_next => "next",
                 .handoff => "hand off",
             };
@@ -5807,20 +4929,16 @@ pub const App = struct {
     };
 
     /// The actions `card` has: go while a proposal is open on it, a Claude holds it or it can be
-    /// started, no beside a proposal, answer while it asks, give while it is
-    /// free to claim, close while still to
-    /// do and reopen once done, to todo while in the backlog, and edit and priority always, and
-    /// moving it along its column but in the backlog or without a repo the move can be narrowed
-    /// to, babylon having no move among the cards of none alone.
+    /// started, no beside a proposal, give while it is free to claim, close while still to
+    /// do and reopen once done, to todo while in the backlog, and edit and priority always.
     pub fn cardActions(card: *const tickets.Card, out: *[12]CardAction) []CardAction {
         var n: usize = 0;
-        const movable = card.status != .backlog and card.status != .@"try" and plainName(card.repo orelse "");
         const all = [_]struct { CardAction, bool }{
-            .{ .go, card.proposal != null or card.holder() != null or givable(card) }, .{ .no, card.proposal != null },    .{ .answer, card.ask != null },
-            .{ .give, givable(card) },                                                 .{ .edit, true },                   .{ .priority, true },
-            .{ .close, card.status == .todo },                                         .{ .reopen, card.status == .done }, .{ .to_todo, card.status == .backlog },
-            .{ .up, movable },                                                         .{ .down, movable },                .{ .to_next, card.status == .todo },
-            .{ .handoff, card.status == .doing and card.holder() != null },
+            .{ .go, card.proposal != null or card.holder() != null or givable(card) }, .{ .no, card.proposal != null },
+            .{ .give, givable(card) },                                                 .{ .edit, true },
+            .{ .priority, true },                                                      .{ .close, card.status == .todo },
+            .{ .reopen, card.status == .done },                                        .{ .to_todo, card.status == .backlog },
+            .{ .to_next, card.status == .todo },                                       .{ .handoff, card.status == .doing and card.holder() != null },
         };
         for (all) |pair| if (pair[1]) {
             out[n] = pair[0];
@@ -5831,8 +4949,8 @@ pub const App = struct {
 
     /// Edit opens $EDITOR in a window of its own; priority goes from low up to high and round;
     /// close and reopen move a ticket between to do and done, the columns between being a claim's
-    /// and the pipeline's; up and down move it along its column, the pick going with it. Each
-    /// through babylon's command line. An action the picked card has not does nothing.
+    /// and the pipeline's. Each through babylon's command line. An action the picked card has not
+    /// does nothing.
     pub fn act(app: *App, action: CardAction) !void {
         const view = if (app.board_view) |*open| open else return;
         const card = app.pickedCard() orelse return;
@@ -5842,12 +4960,9 @@ pub const App = struct {
         }
         var have: [12]CardAction = undefined;
         if (std.mem.indexOfScalar(CardAction, cardActions(card, &have), action) == null) return;
-        var buf: [80]u8 = undefined;
-        const narrowed = if (app.pickRepo()) |r| (if (plainName(r)) std.fmt.bufPrint(&buf, " --repo {s}", .{r}) catch "" else "") else "";
         switch (action) {
             .go => if (card.proposal) |proposal| try app.settleProposal("go", proposal.id) else try app.goCard(),
             .no => if (card.proposal) |proposal| try app.settleProposal("no", proposal.id),
-            .answer => view.answering = true,
             .give => view.giving = 0,
             .edit => try app.ticketWindow("babylon edit {d}", .{card.id}),
             .priority => {
@@ -5860,14 +4975,20 @@ pub const App = struct {
             .handoff => try app.askHandoff(card),
             .reopen, .to_todo => try app.send(.ignore, captured("babylon update {d} --status todo"), .{card.id}),
             .open => unreachable,
-            .up, .down => {
-                // a move babylon could not be narrowed to the repo shown would order every repo's cards
-                if (app.pickRepo() != null and narrowed.len == 0) return;
-                const down = action == .down;
-                try app.send(.ignore, captured("babylon move {d} {s}{s}"), .{ card.id, if (down) "down" else "up", narrowed });
-                view.row = if (down) @min(view.row + 1, app.boardColumn(view.col, &.{}) -| 1) else view.row -| 1;
-            },
         }
+    }
+
+    /// Goes to the Claude holding the card picked, closing home; with none, starts one on a free
+    /// card, babylon refusing what it will not start and saying why.
+    fn goCard(app: *App) !void {
+        const card = app.pickedCard() orelse return;
+        const pane = card.holder() orelse {
+            if (!givable(card)) return;
+            var id_buf: [12]u8 = undefined;
+            _ = try app.runWith("start", &.{ "babylon", "start", std.fmt.bufPrint(&id_buf, "{d}", .{card.id}) catch return }, true);
+            return;
+        };
+        try app.showPane(pane);
     }
 
     /// The session holding `card` asked to hand it off, in the words babylon's own handoff
@@ -5877,20 +4998,6 @@ pub const App = struct {
         try app.send(.ignore, "send-keys -t %{d} -l 'Your human asks you to hand #{d} off: commit what is uncommitted as a WIP commit, then call handoff.'", .{ pane, card.id });
         try app.send(.ignore, "send-keys -t %{d} Enter", .{pane});
     }
-
-    /// A button on the board, where it is drawn and clicked: 0-based, as the mouse has it.
-    pub const Button = struct {
-        what: union(enum) { repo: usize, backlog, gate, orch, auto, needs, new, card: CardAction },
-        x: u16,
-        y: u16,
-        w: u16,
-        /// Drawn without its words, as a header with no room for them has it.
-        short: bool = false,
-
-        pub fn hit(button: Button, x: u16, y: u16) bool {
-            return y == button.y and x >= button.x and x < button.x + button.w;
-        }
-    };
 
     /// What a modal button does when pressed.
     pub const ModalAction = union(enum) { close, card: CardAction, option: u8, sub: u8, words, claude, whole_log, ticket, bump, withdraw, tried_ok, tried_no, copy_check, run_check };
@@ -5976,13 +5083,10 @@ pub const App = struct {
         }
     };
 
-    /// The card the open modal shows, when the board's pick is on it: the one its buttons act on.
+    /// The card the open modal shows: the one its buttons act on.
     pub fn modalCard(app: *const App) ?*const tickets.Card {
         const view = app.board_view orelse return null;
-        const id = view.detail orelse return null;
-        if (app.planShown()) return app.cardById(id);
-        const card = app.boardCard(view.col, view.row) orelse return null;
-        return if (card.id == id) card else null;
+        return app.cardById(view.detail orelse return null);
     }
 
     /// Fills `head` with the card's title whole, its stage, holder, model and branch, what blocks
@@ -6344,270 +5448,9 @@ pub const App = struct {
         try app.pressModal(action);
     }
 
-    pub fn buttonLabel(app: *const App, button: Button, buf: []u8) []const u8 {
-        const short = button.short;
-        const b = if (app.board) |*b| b else null;
-        return switch (button.what) {
-            .repo => |i| blk: {
-                var repos: [max_repos][]const u8 = undefined;
-                const n = if (b) |board| board.repos(&repos) else 0;
-                const name = if (i == 0) "every" else if (i <= n) repos[i - 1] else "?";
-                break :blk std.fmt.bufPrint(buf, " {s} {d} ", .{ name, app.tabCount(i) }) catch " ? ";
-            },
-            .backlog => std.fmt.bufPrint(buf, " backlog {d} ", .{if (b) |board| board.backlog().len else 0}) catch " ? ",
-            .gate => blk: {
-                var runs: [1]*const tickets.Card = undefined;
-                const card: ?*const tickets.Card = if (b) |board| (if (board.running(&runs) > 0) runs[0] else null) else null;
-                const word = if (short) "" else "gate ";
-                break :blk if (card) |c| std.fmt.bufPrint(buf, " ◒ {s}#{d} ", .{ word, c.id }) catch " ◒ " else if (short) " ◒ " else " ◒ gate ";
-            },
-            .orch => if (short) " ● " else " ● orch ",
-            .auto => blk: {
-                if (app.roles != null and !(app.auto() != null and app.now < app.auto_armed_until)) {
-                    const state = app.auto() orelse break :blk if (short) " ▐● ▌" else "auto ▐● ▌";
-                    const lead = if (short) " " else "auto ";
-                    break :blk (if (state.tools) |t| (if (short) std.fmt.bufPrint(buf, " ▐ ●▌ {d}/{d}", .{ state.working, state.cap }) else std.fmt.bufPrint(buf, "auto ▐ ●▌ {d}/{d} · tools {d}/{d}", .{ state.working, state.cap, t.working, t.cap })) else std.fmt.bufPrint(buf, "{s}▐ ●▌ {d}/{d}", .{ lead, state.working, state.cap })) catch "▐ ●▌";
-                }
-                const word = if (short) "" else "auto ";
-                if (app.auto() != null and app.now < app.auto_armed_until) break :blk " ◐ turn off? ";
-                break :blk if (app.auto()) |state|
-                    (if (state.tools) |t| (if (short) std.fmt.bufPrint(buf, " ◐ {d}/{d} ", .{ state.working, state.cap }) else std.fmt.bufPrint(buf, " ◐ auto {d}/{d} · tools {d}/{d} ", .{ state.working, state.cap, t.working, t.cap })) else std.fmt.bufPrint(buf, " ◐ {s}{d}/{d} ", .{ word, state.working, state.cap })) catch " ◐ "
-                else if (short) " ◐ " else " ◐ auto ";
-            },
-            .needs => blk: {
-                const n = if (b) |board| board.needsYou().len else 0;
-                break :blk if (short) std.fmt.bufPrint(buf, " ▲ {d} ", .{n}) catch " ▲ " else std.fmt.bufPrint(buf, " ▲ {d} need you ", .{n}) catch " ▲ ";
-            },
-            .new => if (app.workbench()) " + new " else " + ",
-            .card => |action| app.cardButtonText(action, buf),
-        };
-    }
-
-    /// A picked card's button in the box: its key, then what it does, `⏎ start`; the strip's
-    /// one row has no room for the key. A review card's `space` is its log, a free card's `⏎` starts it.
-    fn cardButtonText(app: *const App, action: CardAction, buf: []u8) []const u8 {
-        const view = app.board_view orelse return " ? ";
-        const card = app.boardCard(view.col, view.row);
-        const word = if (card) |c| switch (action) {
-            .go => if (c.proposal == null and c.holder() == null) "start" else action.label(),
-            .open => if (c.status == .review) "log" else action.label(),
-            else => action.label(),
-        } else action.label();
-        if (app.boardStrip(view.col) and app.footRows() == 0) return std.fmt.bufPrint(buf, " {s} ", .{word}) catch " ? ";
-        return std.fmt.bufPrint(buf, " {s} {s} ", .{ action.key(), word }) catch " ? ";
-    }
-
     /// Rows the board's head takes: its title bar, then its tabs. The columns' top edge is the next, and their lines start under it.
     pub const head_rows: u16 = 2;
     pub const first_line: u16 = head_rows + 1;
-
-    /// The title the board's first row begins with.
-    pub const board_title = tabs_title;
-
-    /// Where the board's first row ends its tabs: how many of its buttons there are, and where
-    /// the `…` stands when tabs are left out.
-    pub const Header = struct { n: usize, more: ?u16 };
-
-    /// The board's first row in three groups: the title, the tabs (`every`, the repos, the
-    /// backlog, each with its count), and, against the right edge, what babylon is doing
-    /// (those needing the human, the gate, the orchestrator, auto). The right group drops its
-    /// words when the tabs would not all fit beside it, and tabs that still do not fit are
-    /// left out with a `…` after the last.
-    pub fn header(app: *const App, out: []Button) Header {
-        const finding = app.findText().len > 0 or (app.prompt != null and app.prompt.?.what == .find);
-        if (finding and !app.workbench()) return .{ .n = 0, .more = null };
-        var buf: [64]u8 = undefined;
-        var repos: [max_repos][]const u8 = undefined;
-        const count = if (app.board) |*b| b.repos(&repos) else 0;
-        const ox: u16 = 0;
-        const right = ox + app.boardW();
-        const title_end = ox + @as(u16, @intCast(cellCount(board_title))) + 1;
-        const start = ox + 1;
-
-        var tabs: [max_repos + 2]Button = undefined;
-        var tab_n: usize = 0;
-        for (0..count + 1) |i| {
-            tabs[tab_n] = .{ .what = .{ .repo = i }, .x = 0, .y = 0, .w = 0 };
-            tab_n += 1;
-        }
-        tabs[tab_n] = .{ .what = .backlog, .x = 0, .y = 0, .w = 0 };
-        tab_n += 1;
-
-        var group: [4]Button = undefined;
-        var group_n: usize = 0;
-        group[group_n] = .{ .what = .needs, .x = 0, .y = 0, .w = 0 };
-        group_n += 1;
-        if (app.gateSession() != null) {
-            group[group_n] = .{ .what = .gate, .x = 0, .y = 0, .w = 0 };
-            group_n += 1;
-        }
-        if (app.orchestrator() != null) {
-            group[group_n] = .{ .what = .orch, .x = 0, .y = 0, .w = 0 };
-            group_n += 1;
-        }
-        group[group_n] = .{ .what = .auto, .x = 0, .y = 0, .w = 0 };
-        group_n += 1;
-
-        const full_w = groupWidth(app, group[0..group_n], false);
-        const short = title_end + full_w > right;
-        for (group[0..group_n]) |*item| item.short = short;
-        var group_w: u16 = @intCast(groupWidth(app, group[0..group_n], short));
-
-        // what does not fit beside the title
-        var first_w: u16 = 0;
-        while (group_n > 0 and title_end + group_w > right) {
-            group_n -= 1;
-            group_w = @intCast(groupWidth(app, group[0..group_n], short));
-        }
-
-        var n: usize = 0;
-        var x = right - group_w;
-        for (group[0..group_n]) |item| {
-            const w: u16 = @intCast(cellCount(app.buttonLabel(item, &buf)));
-            out[n] = .{ .what = item.what, .x = x, .y = 0, .w = w, .short = short };
-            n += 1;
-            x += w + 1;
-        }
-        const limit = right;
-
-        // the tabs, in room before the right group's, and one cell of it for a `…` when some are left
-        var left: [max_repos + 2]Button = undefined;
-        var left_n: usize = 0;
-        x = start;
-        for (tabs[0..if (finding) 0 else tab_n]) |tab| {
-            first_w = @intCast(cellCount(app.buttonLabel(tab, &buf)));
-            if (x + first_w > limit) break;
-            left[left_n] = .{ .what = tab.what, .x = x, .y = 1, .w = first_w };
-            left_n += 1;
-            x += first_w + 1;
-        }
-        var more: ?u16 = null;
-        if (left_n < tab_n and !finding) {
-            while (left_n > 1 and left[left_n - 1].x + left[left_n - 1].w + 1 > limit) left_n -= 1;
-            more = if (left_n > 0) left[left_n - 1].x + left[left_n - 1].w else start;
-        }
-        // the tabs go first in the order, so a click finds them before the right group's
-        std.mem.copyBackwards(Button, out[left_n .. left_n + n], out[0..n]);
-        @memcpy(out[0..left_n], left[0..left_n]);
-        return .{ .n = left_n + n, .more = more };
-    }
-
-    fn groupWidth(app: *const App, group: []const Button, short: bool) usize {
-        var buf: [64]u8 = undefined;
-        var w: usize = 0;
-        for (group) |item| {
-            var button = item;
-            button.short = short;
-            w += cellCount(app.buttonLabel(button, &buf)) + 1;
-        }
-        return w -| 1;
-    }
-
-    /// The board's buttons: the tabs and what babylon is doing on its first row, a + on
-    /// the to-do column's top edge, and the picked card's actions on the row above its bottom
-    /// edge, each kept to the room it has. A row of the strip has no edge: the strip's own foot has its reopen.
-    pub fn boardButtons(app: *const App, out: []Button) []Button {
-        const view = app.board_view orelse return out[0..0];
-        const cw = app.boardColW(0);
-        var buf: [64]u8 = undefined;
-        var n = app.header(out).n;
-        const bench = app.workbench();
-        if (cw >= @as(u16, if (bench) 26 else 12) and n < out.len) {
-            out[n] = if (bench)
-                .{ .what = .new, .x = app.boardColX(0) + cw - 12, .y = app.colTop() - 1, .w = 7 }
-            else
-                .{ .what = .new, .x = app.boardColX(0) + cw - 4, .y = app.colTop() - 1, .w = 3 };
-            n += 1;
-        }
-        const card = app.boardCard(view.col, view.row) orelse return out[0..n];
-        const strip = app.boardStrip(view.col);
-        const foot = app.footRows() > 0;
-        const y: u16 = if (strip) app.view_h -| 1 -| app.barRows() else blk: {
-            const lane = app.pickLane();
-            const top = app.cardStart(view.col, lane, view.row) orelse return out[0..n];
-            const line = top + app.cardHeight(lane, view.col, view.row) - 2;
-            const scroll = app.columnScroll(view.col);
-            if (line < scroll) return out[0..n];
-            break :blk @intCast(@min(app.colTop() + line - scroll, app.listH()));
-        };
-        if (!strip and y + 1 >= app.listH()) return out[0..n];
-        var have: [12]CardAction = undefined;
-        var x: u16 = app.boardColX(view.col) + 2;
-        var edge = app.boardColX(view.col) + app.boardColW(view.col) -| 2;
-        if (strip and foot) {
-            var cards: [strip_n]*const tickets.Card = undefined;
-            const shown_n = app.stripCards(&cards);
-            const k = for (cards[0..shown_n], 0..) |c, i| {
-                if (c.id == card.id) break i;
-            } else return out[0..n];
-            x = @as(u16, @intCast(k)) * app.stripCell() + 1;
-            edge = x + app.stripCell();
-        } else if (bench) edge -= 1;
-        for (cardActions(card, &have)) |action| {
-            if (strip and action != .reopen) continue;
-            const w: u16 = @intCast(cellCount(app.buttonLabel(.{ .what = .{ .card = action }, .x = 0, .y = 0, .w = 0 }, &buf)));
-            if (x + w > edge or n == out.len) break;
-            out[n] = .{ .what = .{ .card = action }, .x = x, .y = y, .w = w };
-            n += 1;
-            x += w + 1;
-        }
-        if (!strip and n < out.len) {
-            const open: CardAction = .open;
-            const w: u16 = @intCast(cellCount(app.buttonLabel(.{ .what = .{ .card = open }, .x = 0, .y = 0, .w = 0 }, &buf)));
-            if (x + w <= edge) out[n] = .{ .what = .{ .card = open }, .x = x, .y = y, .w = w };
-            if (x + w <= edge) n += 1;
-        }
-        return out[0..n];
-    }
-
-    /// Whether `m` is on a button of the board's first row, not a card's. The plan draws none.
-    fn onHeaderButton(app: *App, m: keys.Mouse) bool {
-        if (app.planShown()) return false;
-        var buttons: [48]Button = undefined;
-        for (app.boardButtons(&buttons)) |button| if (button.what != .card and button.hit(m.x, m.y)) return true;
-        return false;
-    }
-
-    /// Whether column `x` of the auto button is on its switch, not its words.
-    fn onAutoSwitch(app: *const App, button: Button, x: u16) bool {
-        var buf: [96]u8 = undefined;
-        const label = app.buttonLabel(button, &buf);
-        const at = x - button.x;
-        const knob = std.mem.indexOf(u8, label, "▐") orelse return at < 3;
-        const from = cellCount(label[0..knob]);
-        return at >= from and at < from + 4;
-    }
-
-    fn pressButton(app: *App, button: Button, x: u16) !void {
-        const view = &app.board_view.?;
-        switch (button.what) {
-            .repo => |i| {
-                view.repo = i;
-                view.backlog = false;
-                view.row = 0;
-                view.lane = app.firstLane();
-            },
-            .backlog => {
-                view.backlog = true;
-                view.col = 0;
-                view.row = 0;
-            },
-            .gate => try app.gateModal(),
-            .orch => try app.toOrchestrator(),
-            .auto => if (app.now >= app.auto_armed_until and !app.onAutoSwitch(button, x)) {
-                try app.openAuto();
-            } else if (app.auto() != null and app.now >= app.auto_armed_until) {
-                app.auto_armed_until = app.now + auto_confirm_ms;
-                app.dirty = true;
-            } else {
-                app.auto_armed_until = 0;
-                try app.toggleAuto();
-            },
-            .needs => try app.toFeed("]", null),
-            .new => try app.newTicket(),
-            .card => |action| try app.act(action),
-        }
-    }
 
     /// A command over a ticket that wants the terminal, as $EDITOR does: in a window by the
     /// focused one, kept open on a refusal to be read.
@@ -6621,28 +5464,6 @@ pub const App = struct {
     fn settleProposal(app: *App, comptime word: []const u8, id: u32) !void {
         try app.send(.ignore, "run-shell -b \"out=\\$(babylon " ++ word ++ " {d} 2>&1) || " ++
             "{{ command -v notify-send >/dev/null && notify-send -a arena -- \\\"\\$out\\\"; }}\"", .{id});
-    }
-
-    /// The pick on the card with the oldest open proposal, when the board has one.
-    fn jumpProposed(app: *App) void {
-        const id = (if (app.board) |*b| b.oldestProposed() else null) orelse return;
-        _ = app.pickCard(id);
-        app.dirty = true;
-    }
-
-    /// A key while a question is shown: its option's number answers it through babylon, which
-    /// types the answer into the asking session; Esc puts it away unanswered.
-    fn answerKey(app: *App, key: []const u8) !void {
-        const view = &app.board_view.?;
-        if (anyKey(key, &.{ "\x1b", "q" })) view.answering = false;
-        if (key.len != 1 or key[0] < '1' or key[0] > '9') return;
-        const card = app.boardCard(view.col, view.row) orelse return;
-        const ask = card.ask orelse return;
-        const choice = key[0] - '0';
-        if (choice > ask.options.len) return;
-        // babylon's refusal (the session that asked is gone) is said, or the ask stays with no word why
-        try app.answerAsk(ask.id, choice);
-        view.answering = false;
     }
 
     /// A key while the Claudes the picked card can be given to are shown: j and k pick one, and
@@ -6669,13 +5490,13 @@ pub const App = struct {
         view.giving = null;
     }
 
-    /// The mouse on the board: a click on a card picks it, and on the card picked goes to the
-    /// Claude holding it; the wheel moves along the column. Whether it was the board's: on the
-    /// orchestrator's column beside it a click focuses the column, as one on any window out of
-    /// focus, and the wheel, or anything once it is focused, is the column's.
-    fn boardMouse(app: *App, m: keys.Mouse) !bool {
-        // a card's let go that never came: a new press ends that drag unseen
-        if ((app.drag == .card or app.drag == .next_row or app.drag == .todo_row) and m.leftPress()) app.drag = .none;
+    /// The card with ticket `id`, on the board or in the backlog.
+    /// The mouse at home: a box over the plan takes the click, as a key would; on the drawer a click
+    /// focuses it, as one on any window out of focus, and the wheel, or anything once it is
+    /// focused, is the drawer's; else it is the plan's.
+    fn homeMouse(app: *App, m: keys.Mouse) !bool {
+        // a drag's let go that never came: a new press ends that drag unseen
+        if ((app.drag == .next_row or app.drag == .todo_row) and m.leftPress()) app.drag = .none;
         if (app.drag != .none) return false;
 
         const view = &app.board_view.?;
@@ -6691,17 +5512,15 @@ pub const App = struct {
             }
             return true;
         }
-        // a click on the header's buttons leaves the keys where they were: what is typed next
-        // still reaches the orchestrator's column
-        if (m.leftPress() and !app.onHeaderButton(m)) view.focus = .board;
+        if (m.leftPress()) view.focus = .plan;
         if (m.wheel()) {
-            if (app.navStep()) try app.boardKey(if (m.code & 1 == 0) "k" else "j");
+            if (app.navStep()) try app.homeKey(if (m.code & 1 == 0) "k" else "j");
             return true;
         }
         if (!m.leftPress()) return true;
         app.dirty = true;
         const open = &app.board_view.?;
-        // a box over the board takes the click, as a key would, so nothing hidden under it is pressed
+        // a box over the plan takes the click, so nothing hidden under it is pressed
         if (open.boxed()) {
             if (open.goal_open) {
                 try app.goalClick(m);
@@ -6727,135 +5546,24 @@ pub const App = struct {
                 }
                 if (rect.contains(m.x, m.y)) return true;
             }
-            if (open.whole != null and open.detail == null and !open.help and !open.answering and open.giving == null) {
+            if (open.whole != null and open.detail == null and !open.help and open.giving == null) {
                 try app.planClick(m);
                 return true;
             }
             open.help = false;
             open.detail = null;
-            open.answering = false;
             open.giving = null;
             return true;
         }
-        if (app.planShown()) {
-            try app.planClick(m);
-            return true;
-        }
-        if (m.y == 0 and app.onPlanTab(m.x) and app.hasPlan()) {
-            try app.goHome();
-            return true;
-        }
-        if (m.y == 0 and m.x < cellCount(board_title)) return true;
-        var bar: [24]BarKey = undefined;
-        for (app.keyBar(&bar)) |k| if (k.hit(app, m.x, m.y)) {
-            switch (k.what) {
-                .card => |action| try app.act(action),
-                .key => |key| try app.boardKey(key),
-            }
-            return true;
-        };
-        var buttons: [48]Button = undefined;
-        for (app.boardButtons(&buttons)) |button| if (button.hit(m.x, m.y)) {
-            try app.pressButton(button, m.x);
-            return true;
-        };
-        if (app.headingAt(m.x, m.y)) |lane| {
-            try app.toggleRepoFold(app.laneRepo(lane) orelse "");
-            return true;
-        }
-        const at = app.boardCardAt(m.x, m.y) orelse return true;
-        if (try app.cardNeedsClick(at, m)) return true;
-        view.answering = false;
-        const clicked = if (app.boardLanes()) app.laneCard(at.lane, at.col, at.row) else app.boardCard(at.col, at.row);
-        const picked = app.boardCard(view.col, view.row);
-        const again = clicked != null and picked != null and clicked.?.id == picked.?.id;
-        if (!again) view.* = .{ .back = view.back, .col = at.col, .row = at.row, .lane = at.lane, .repo = view.repo, .backlog = view.backlog, .home = view.home };
-        if (clicked) |card| app.drag = .{ .card = .{ .id = card.id, .opens = again } };
+        try app.planClick(m);
         return true;
     }
 
-    /// The card with ticket `id`, on the board or in the backlog.
     pub fn cardById(app: *const App, id: u32) ?*const tickets.Card {
         const b = if (app.board) |*b| b else return null;
         for (b.cards()) |*card| if (card.id == id) return card;
         for (b.backlog()) |*card| if (card.id == id) return card;
         return null;
-    }
-
-    /// What a card let go in a column of `to` does: stays, takes that status through babylon, or is
-    /// refused for a reason. todo↔backlog, todo→done (closed) and done→todo (reopened) are the
-    /// moves; doing and review are a claim's and the pipeline's.
-    pub const CardDrop = union(enum) { stay, status: []const u8, refuse: []const u8 };
-
-    pub fn cardDrop(from: tickets.Status, to: tickets.Status) CardDrop {
-        if (from == to) return .stay;
-        return switch (to) {
-            .doing, .review => .{ .refuse = "doing and review are a claim's and the pipeline's, not a drop's" },
-            .@"try" => .{ .refuse = "a card to try is tried, not dropped" },
-            .todo => if (from == .backlog or from == .done) .{ .status = "todo" } else .{ .refuse = "a claimed card goes on through the pipeline, not back to todo" },
-            .done => if (from == .todo) .{ .status = "done" } else .{ .refuse = "only a todo card is closed by hand" },
-            .backlog => if (from == .todo) .{ .status = "backlog" } else .{ .refuse = "only a todo card goes to the backlog" },
-        };
-    }
-
-    /// The status a card let go at the pointer would take: the column under it, a repo's tab in
-    /// the backlog (back to todo), or the backlog's button (to the backlog). None over anything else.
-    pub fn cardTarget(app: *const App) ?tickets.Status {
-        const x = app.pointer.x;
-        const y = app.pointer.y;
-        var buttons: [48]Button = undefined;
-        for (app.boardButtons(&buttons)) |button| if (button.what != .card and button.hit(x, y)) return switch (button.what) {
-            .backlog => .backlog,
-            .repo => if (app.boardBacklog()) .todo else null,
-            else => null,
-        };
-        if (x >= app.boardW()) return null;
-        if (app.footRows() > 0 and y >= app.listH() and y < app.listH() + app.footRows()) return .done;
-        if (y < app.colTop() or y + 1 >= app.listH()) return null;
-        for (0..app.boardCols()) |c| if (app.boardColW(c) > 0 and x < app.boardColX(c) + app.boardColW(c)) {
-            return if (app.boardBacklog()) .backlog else tickets.statuses[c];
-        };
-        return null;
-    }
-
-    /// Card `id` let go over `target`: moved where babylon allows, else the reason is said on the
-    /// bottom row and it stays.
-    fn dropCard(app: *App, id: u32, over: ?tickets.Status) !void {
-        const to = over orelse return;
-        const card = app.cardById(id) orelse return;
-        switch (cardDrop(card.status, to)) {
-            .stay => {},
-            .status => |word| {
-                var id_buf: [12]u8 = undefined;
-                _ = try app.runWith("move", &.{ "babylon", "update", std.fmt.bufPrint(&id_buf, "{d}", .{id}) catch return, "--status", word }, false);
-            },
-            .refuse => |why| {
-                var buf: [160]u8 = undefined;
-                try app.reportAnswered(std.fmt.bufPrint(&buf, "no {s}", .{why}) catch "no");
-            },
-        }
-    }
-
-    /// A click on the `▲ proposed` that starts a card's last row, whose ticket has an item of Your
-    /// move: the feed's pick goes to that item. Whether it was that click.
-    fn cardNeedsClick(app: *App, at: CardAt, m: keys.Mouse) !bool {
-        const card = app.groupCard(at.lane, at.col, at.row) orelse return false;
-        if (card.proposal == null or app.boardStrip(at.col) or app.workbench()) return false;
-        const line = app.columnLineAt(at.col, m.y - app.colTop() + app.columnScroll(at.col)) orelse return false;
-        const part = switch (line.what) {
-            .card => |spot| spot.part,
-            else => return false,
-        };
-        const picked = app.cardPicked(at.lane, at.col, at.row);
-        if (part + 1 + 3 * @as(usize, @intFromBool(picked)) != app.cardHeight(at.lane, at.col, at.row)) return false;
-        const x = app.boardColX(at.col) + 2;
-        if (m.x < x or m.x >= x + cellCount("▲ proposed")) return false;
-        const b = if (app.board) |*b| b else return false;
-        for (b.needsYou()) |need| if (need.ticket == card.id) {
-            try app.toFeed("]", card.id);
-            return true;
-        };
-        return false;
     }
 
     /// The mouse in the overview: a click on a picture goes to its window; a picture dragged
@@ -6964,9 +5672,10 @@ pub const App = struct {
             .window => |at| try app.jumpTo(at.session, at.index),
             .ticket => |card| {
                 app.normal = false;
-                try app.showCard(card.id);
-                if (app.board_view) |*view| view.answering = false;
-                if (app.board_view != null) _ = try app.openDetail(card.id);
+                try app.showPlan(card.id);
+                if (app.board_view) |view| if (view.detail == null) {
+                    _ = try app.openDetail(card.id);
+                };
             },
         }
     }
@@ -7143,7 +5852,6 @@ pub const App = struct {
 
     /// The held button moved to `m`, or let go, wherever the pointer is by then.
     fn dragTo(app: *App, m: keys.Mouse) !void {
-        if (app.drag == .card) return app.dragCard(m);
         if (app.drag == .next_row) return app.dragNextRow(m);
         if (app.drag == .todo_row) return app.dragTodoRow(m);
         const s = app.cur() orelse {
@@ -7165,7 +5873,7 @@ pub const App = struct {
         const ox: i32 = app.term_w - app.view_w;
         switch (app.drag) {
             .none, .thumb, .focus => {},
-            .card, .next_row, .todo_row => {},
+            .next_row, .todo_row => {},
             // Past the pane's top or bottom the history scrolls under the pointer.
             .select => |from| {
                 const pane = app.paneById(from.pane) orelse return;
@@ -7201,32 +5909,6 @@ pub const App = struct {
             // Nothing moves until it is let go: where it would go is drawn.
             .title => app.dirty = true,
         }
-    }
-
-    /// The held button moved to `m`, or let go, with a board card in it: no session is needed.
-    fn dragCard(app: *App, m: keys.Mouse) !void {
-        const held = &app.drag.card;
-        app.dirty = true;
-        if (!m.release and m.motion() and !m.hover()) {
-            held.moved = true;
-            return;
-        }
-        const card = held.*;
-        const over = app.cardTarget();
-        const on_plan = app.onPlanLink();
-        app.drag = .none;
-        if (!m.release) return;
-        if (card.opens and !card.moved) _ = try app.openDetail(card.id) else if (on_plan) try app.dropOnNext(card.id) else try app.dropCard(card.id, over);
-    }
-
-    fn onPlanTab(app: *const App, x: u16) bool {
-        const tab = app.planTab();
-        return x >= tab.x and x < tab.x + tab.w;
-    }
-
-    /// Whether the pointer is on the board's `b plan` tab, the way back to the plan.
-    fn onPlanLink(app: *const App) bool {
-        return app.hasPlan() and app.pointer.y == 0 and app.onPlanTab(app.pointer.x);
     }
 
     /// Card `id` let go on the way back to the plan: a todo card joins next at its bottom, and
@@ -7496,7 +6178,7 @@ pub const App = struct {
             if (m.leftPress()) try app.wordsClick(prompt, m);
             return;
         };
-        if (app.board_view != null) if (try app.boardMouse(m)) return;
+        if (app.board_view != null) if (try app.homeMouse(m)) return;
         if (app.prompt) |*prompt| {
             if (!m.leftPress() and !m.rightPress()) return;
             app.dirty = true;
@@ -7759,7 +6441,7 @@ pub const App = struct {
                 app.dirty = true;
             },
             'g' => {
-                if (app.board_view == null) try app.toggleBoard();
+                if (app.board_view == null) try app.toggleHome();
                 if (app.board_view != null) try app.gateModal();
             },
             'Q' => app.quit = true,
@@ -7823,7 +6505,6 @@ pub const App = struct {
                     app.dirty = true;
                 }
                 if (std.mem.eql(u8, key, "b")) try app.goHome();
-                if (std.mem.eql(u8, key, "B")) try app.toBoard();
                 if (app.board_view == null) {
                     try app.stripKey(key);
                     // a key that opened a menu, prompt or overview leaves the rest of the read to it
@@ -7832,7 +6513,7 @@ pub const App = struct {
             } else if (app.overview != null and !asking) {
                 try app.overviewKey(key);
             } else if (app.board_view != null and !app.sideFocused() and !asking) {
-                try app.boardKey(key);
+                try app.homeKey(key);
             } else if (app.prompt) |*prompt| {
                 app.dirty = true;
                 if (try app.switcherKey(prompt, key)) continue;
@@ -7910,7 +6591,7 @@ pub const App = struct {
                     .full_width => app.toggleFull(),
                     .jump => app.openSwitcher(),
                     .overview => app.openOverview(),
-                    .board => try app.toggleBoard(),
+                    .home => try app.toggleHome(),
 
                     .report => try app.startReport(),
                     .split_right => try app.send(.ignore, "split-window -h -c '#{{pane_current_path}}'", .{}),
@@ -7970,18 +6651,13 @@ pub const App = struct {
             return w.print("the overview's picture of window {s} of session {s}", .{ s.wins.items[spot.win].name, s.name });
         }
         if (app.board_view) |view| {
-            if (view.boxed()) return w.writeAll("a box over the board");
-            if (p.x >= app.boardW()) return w.writeAll(if (app.sided()) "the orchestrator column" else "the board's edge");
-            var buttons: [48]Button = undefined;
-            for (app.boardButtons(&buttons)) |button| if (button.hit(p.x, p.y)) {
-                var label: [48]u8 = undefined;
-                return w.print("board {s} {s}", .{ if (button.what == .card) "card action" else "header button", std.mem.trim(u8, app.buttonLabel(button, &label), " ") });
+            if (view.boxed()) return w.writeAll("a box over the plan");
+            if (p.x >= app.boardW()) return w.writeAll(if (app.sided()) "the orchestrator column" else "the plan's edge");
+            var sheet: sheets.Sheet = undefined;
+            if (app.planSheet(&sheet)) if (app.planRowAt(&sheet, p.x, p.y)) |at| if (sheet.rows[at].ticket) |id| if (app.cardById(id)) |c| {
+                return w.print("card #{d} {s}", .{ c.id, c.title });
             };
-            if (app.boardCardAt(p.x, p.y)) |at| {
-                const card = if (app.boardLanes()) app.laneCard(at.lane, at.col, at.row) else app.boardCard(at.col, at.row);
-                if (card) |c| return w.print("card #{d} {s}", .{ c.id, c.title });
-            }
-            return w.writeAll("the board's background");
+            return w.writeAll("the plan's background");
         }
         const s = app.cur() orelse return w.writeAll("nothing");
         if (p.y == app.view_h) return w.writeAll("the dots under the strip");
@@ -7998,8 +6674,8 @@ pub const App = struct {
     fn writeView(app: *const App, w: *Writer) !void {
         if (app.overview != null) return w.writeAll("overview");
         if (app.board_view) |view| {
-            try w.writeAll(if (view.home) "home" else "board");
-            if (view.backlog) try w.writeAll(", backlog") else if (app.boardRepo()) |repo| try w.print(", {s} only", .{repo});
+            try w.writeAll("home");
+            if (app.planRepo()) |repo| try w.print(", {s} only", .{repo});
             if (view.boxed()) try w.writeAll(", a box open");
             if (app.sided()) try w.print(", orchestrator column {s}", .{if (view.focus == .orchestrator) "focused" else "beside"});
             return;
@@ -8009,12 +6685,11 @@ pub const App = struct {
         if (s.focused()) |win| try w.print(", window {s}", .{win.name});
     }
 
-    /// What is picked: the board's card, the column's feed item or the focused window.
+    /// What is picked: the plan's card, the column's feed item or the focused window.
     fn writePicked(app: *const App, w: *Writer) !void {
         if (app.board_view) |view| {
             if (view.focus == .orchestrator and app.sided()) return w.print("the orchestrator column's feed item {d}", .{view.pick});
-            const card = if (app.boardLanes()) app.laneCard(view.lane, view.col, view.row) else app.boardCard(view.col, view.row);
-            if (card) |c| return w.print("card #{d} {s}", .{ c.id, c.title });
+            if (app.pickedCard()) |c| return w.print("card #{d} {s}", .{ c.id, c.title });
             return w.writeAll("no card");
         }
         const s = app.cur() orelse return w.writeAll("nothing");
@@ -8119,11 +6794,11 @@ pub const App = struct {
         if (app.menu == null and app.prompt == null and app.sideDue()) {
             const view = &app.board_view.?;
             const s = app.sessionById(app.bound()).?;
-            const at_board = view.focus == .board;
+            const at_board = view.focus == .plan;
             // the board is the column before the orchestrator's first
             if (letter == 'h' and !at_board and s.focus == 0 and app.drawerOpen()) return app.closeDrawer();
             if (!view.boxed() and ((at_board and letter == 'l') or (!at_board and letter == 'h' and s.focus == 0))) {
-                view.focus = if (at_board) .orchestrator else .board;
+                view.focus = if (at_board) .orchestrator else .plan;
                 app.dirty = true;
                 return;
             }
@@ -8150,7 +6825,7 @@ pub const App = struct {
             'z' => app.toggleFull(),
             ';' => try app.widenBy(-share_step),
             '\'' => try app.widenBy(share_step),
-            'b' => try app.toggleBoard(),
+            'b' => try app.toggleHome(),
             'n' => try app.stepAgent(1),
             'N' => try app.stepAgent(-1),
             '/' => app.openSearch(),
@@ -8702,11 +7377,11 @@ test "home: the board with the orchestrator's column focused, its own keys while
     try expect(app.board_view == null);
 
     app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[{"id":1,"repo":"arena","title":"a","status":"todo"}]}
+        \\{"tickets":[{"id":1,"repo":"arena","title":"a","status":"todo"}],"plan":{"next":[]}}
     );
     app.normal = true;
     try app.goHome();
-    try expect(app.board_view.?.home and app.board_view.?.focus == .board);
+    try expect(app.board_view.?.focus == .plan);
     try expect(!app.drawerOpen() and !app.sided() and !app.columnFocused());
     try expect(app.orchestratorState() == .off);
 
@@ -8714,18 +7389,18 @@ test "home: the board with the orchestrator's column focused, its own keys while
     try expect(app.drawerOpen() and app.sided() and app.columnFocused() and !app.normal);
     try expect(!app.typing());
     try app.closeDrawer();
-    try expect(!app.drawerOpen() and app.board_view.?.focus == .board and !app.columnFocused());
+    try expect(!app.drawerOpen() and app.board_view.?.focus == .plan and !app.columnFocused());
 
     try app.openDrawer();
     app.board_view.?.focus = .orchestrator;
     app.board_view.?.help = true;
     const was = app.kept().?;
-    try expect(!was.view.help and was.view.home and was.view.focus == .orchestrator);
+    try expect(!was.view.help and was.view.focus == .orchestrator);
     app.board_view.?.help = false;
     _ = try app.onInput("q");
     try expect(app.board_view == null);
     try app.restore(was);
-    try expect(app.board_view.?.home and app.columnFocused());
+    try expect(app.board_view != null and app.columnFocused());
 }
 
 test "a stalled Claude outranks one waiting, says its error, and draws its own glyph" {
@@ -8767,130 +7442,6 @@ test "the column's head says the orchestrator's state: its Claude's, else restar
         \\{"tickets":[],"orchestrator":{"on":false,"running":false}}
     );
     try eq(.off, app.orchestratorState());
-}
-
-test "a dragged card moves todo↔backlog and todo↔done, and a drop babylon would refuse says why and stays" {
-    const eq = std.testing.expectEqual;
-    try eq(App.CardDrop.stay, App.cardDrop(.todo, .todo));
-    try std.testing.expectEqualStrings("backlog", App.cardDrop(.todo, .backlog).status);
-    try std.testing.expectEqualStrings("todo", App.cardDrop(.backlog, .todo).status);
-    try std.testing.expectEqualStrings("done", App.cardDrop(.todo, .done).status);
-    try std.testing.expectEqualStrings("todo", App.cardDrop(.done, .todo).status);
-    for ([_][2]tickets.Status{ .{ .doing, .done }, .{ .review, .todo }, .{ .todo, .doing }, .{ .done, .review }, .{ .backlog, .done }, .{ .done, .backlog } }) |pair| {
-        try std.testing.expect(App.cardDrop(pair[0], pair[1]) == .refuse);
-    }
-
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    defer app.deinit();
-    app.term_w = 100;
-    app.view_w = 100;
-    app.view_h = 30;
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[{"id":1,"repo":"arena","title":"a","status":"doing"},{"id":2,"repo":"arena","title":"b","status":"todo"}]}
-    );
-    app.board_view = .{};
-    try app.dropCard(1, .done);
-    try std.testing.expect(app.report_failed);
-    try std.testing.expect(std.mem.startsWith(u8, app.report_said.?, "only a todo card"));
-    app.pointer = .{ .x = app.boardColX(1) + 2, .y = app.colTop() + 1 };
-    try eq(@as(?tickets.Status, .doing), app.cardTarget());
-    app.pointer = .{ .x = 0, .y = 0 };
-    try eq(@as(?tickets.Status, null), app.cardTarget());
-}
-
-test "a press on a card arms its drag, the picked one's included, with or without a session, and a drop babylon refuses says why" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    defer app.deinit();
-    app.term_w = 100;
-    app.view_w = 100;
-    app.view_h = 30;
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[{"id":1,"repo":"arena","title":"a","status":"todo"},{"id":2,"repo":"arena","title":"b","status":"todo"}]}
-    );
-    app.board_view = .{};
-    const eq = std.testing.expectEqual;
-    const x = app.boardColX(0) + 2;
-    var first: u16 = 0;
-    var second: u16 = 0;
-    for (app.colTop()..app.listH()) |y| if (app.boardCardAt(x, @intCast(y))) |at| {
-        if (at.row == 0 and first == 0) first = @intCast(y);
-        if (at.row == 1 and second == 0) second = @intCast(y);
-    };
-    try std.testing.expect(first > 0 and second > 0);
-
-    // the picked card: armed to open on a let go without a move
-    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = first, .release = false }));
-    try eq(@as(u32, 1), app.drag.card.id);
-    try std.testing.expect(app.drag.card.opens);
-
-    // dragged over doing, no session in the app: a drag all the same, and the drop is refused with its why
-    app.pointer = .{ .x = app.boardColX(1) + 2, .y = app.colTop() + 1 };
-    try app.dragTo(.{ .code = 32, .x = app.pointer.x, .y = app.pointer.y, .release = false });
-    try std.testing.expect(app.drag.card.moved);
-    try app.dragTo(.{ .code = 0, .x = app.pointer.x, .y = app.pointer.y, .release = true });
-    try eq(@as(@TypeOf(app.drag), .none), app.drag);
-    try std.testing.expect(app.report_failed);
-    try std.testing.expect(std.mem.startsWith(u8, app.report_said.?, "doing and review"));
-
-    // another card: picked by the press, which is not armed to open
-    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = second, .release = false }));
-    try eq(@as(u32, 2), app.drag.card.id);
-    try std.testing.expect(!app.drag.card.opens);
-    try eq(@as(usize, 1), app.board_view.?.row);
-}
-
-test "a click on a key of the foot bar does what the key does, and half width keeps fewer keys" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    defer app.deinit();
-    app.term_w = 100;
-    app.view_w = 100;
-    app.view_h = 30;
-    app.roles = @import("parts.zig").roles();
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[{"id":1,"repo":"arena","title":"a","status":"todo"}]}
-    );
-    app.board_view = .{};
-    var bar_keys: [24]App.BarKey = undefined;
-    const half = app.keyBar(&bar_keys).len;
-    try std.testing.expect(half >= 5);
-    app.term_w = 200;
-    app.view_w = 200;
-    try std.testing.expect(app.keyBar(&bar_keys).len > half);
-    app.term_w = 100;
-    app.view_w = 100;
-    const bar = app.keyBar(&bar_keys);
-    const help = bar[bar.len - 1];
-    try std.testing.expectEqualStrings("?", help.key);
-    try std.testing.expectEqual(true, try app.boardMouse(.{ .code = 0, .x = help.x + 1, .y = app.view_h - 1, .release = false }));
-    try std.testing.expectEqual(true, app.board_view.?.help);
-}
-
-test "in the backlog a card let go on a repo's tab is bound for todo" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    defer app.deinit();
-    app.term_w = 100;
-    app.view_w = 100;
-    app.view_h = 30;
-    app.roles = @import("parts.zig").roles();
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[{"id":2,"repo":"tlon","title":"b","status":"todo"}],"backlog":[{"id":1,"repo":"arena","title":"a","status":"backlog"}]}
-    );
-    app.board_view = .{ .backlog = true };
-    var seen: ?u16 = null;
-    for (app.colTop()..app.listH()) |y| if (app.boardCardAt(app.boardColX(0) + 3, @intCast(y))) |_| {
-        seen = @intCast(y);
-    };
-    try std.testing.expectEqual(true, try app.boardMouse(.{ .code = 0, .x = app.boardColX(0) + 3, .y = seen.?, .release = false }));
-    try std.testing.expectEqual(@as(u32, 1), app.drag.card.id);
-    try app.dragTo(.{ .code = 32, .x = 5, .y = 2, .release = false });
-    try std.testing.expectEqual(true, app.drag.card.moved);
-    var buttons: [48]App.Button = undefined;
-    for (app.boardButtons(&buttons)) |b| if (b.what == .repo) {
-        app.pointer = .{ .x = b.x + 1, .y = b.y };
-        try std.testing.expectEqual(@as(?tickets.Status, .todo), app.cardTarget());
-        return;
-    };
-    return error.NoRepoTab;
 }
 
 test "a refused report says babylon's reason, a filed one its number, and both go with the next key" {
@@ -8939,137 +7490,6 @@ test "two reports in one second keep two captures" {
     try std.testing.expect(std.mem.endsWith(u8, second, "/1000-1.txt"));
 }
 
-test "the every view's columns grouped by repo: their lines, the pick stepping across groups, the scroll, the widths" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 100;
-    app.view_w = 80;
-    app.view_h = 8;
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":1,"repo":"arena","title":"a","status":"todo"},
-        \\{"id":2,"repo":"arena","title":"b","status":"todo"},
-        \\{"id":3,"repo":"arena","title":"c","status":"doing"},
-        \\{"id":4,"repo":"tlon","title":"d","status":"doing"},
-        \\{"id":5,"title":"e","status":"todo"}
-        \\]}
-    );
-    defer app.board.?.deinit();
-    app.board_view = .{};
-    const eq = std.testing.expectEqual;
-
-    // in todo, arena's heading and its two cards, the picked one boxed on five rows (its edges,
-    // title, detail and actions) and the other a title's row, then the cards of no repo's; tlon
-    // has none there, so no rows
-    const Line = App.ColumnLine;
-    try eq(Line{ .lane = 0, .what = .heading }, app.columnLineAt(0, 0).?);
-    try eq(Line{ .lane = 0, .what = .{ .card = .{ .row = 0, .part = 0 } } }, app.columnLineAt(0, 1).?);
-    try eq(Line{ .lane = 0, .what = .{ .card = .{ .row = 0, .part = 4 } } }, app.columnLineAt(0, 5).?);
-    try eq(Line{ .lane = 0, .what = .{ .card = .{ .row = 1, .part = 0 } } }, app.columnLineAt(0, 6).?);
-    try eq(Line{ .lane = 2, .what = .heading }, app.columnLineAt(0, 7).?);
-    try eq(Line{ .lane = 2, .what = .{ .card = .{ .row = 0, .part = 0 } } }, app.columnLineAt(0, 8).?);
-    try eq(@as(?Line, null), app.columnLineAt(0, 9));
-    // in doing, arena's then tlon's, each card a title and a last row saying no Claude holds it
-    try eq(Line{ .lane = 0, .what = .{ .card = .{ .row = 0, .part = 1 } } }, app.columnLineAt(1, 2).?);
-    try eq(Line{ .lane = 1, .what = .heading }, app.columnLineAt(1, 3).?);
-
-    // review and done have nothing, so are as narrow as their headings; todo the widest
-    var sum: u16 = 0;
-    for (0..4) |c| sum += app.boardColW(c);
-    try eq(app.boardW(), sum);
-    try eq(@as(u16, " review 0 ".len + 3), app.boardColW(2));
-    try eq(@as(u16, " recent 0 ".len + 3), app.boardColW(3));
-    try std.testing.expect(app.boardColW(0) > app.boardColW(1));
-
-    const picked = struct {
-        fn id(a: *const App) ?u32 {
-            const view = a.board_view.?;
-            return if (a.boardCard(view.col, view.row)) |card| card.id else null;
-        }
-    }.id;
-    try eq(@as(?u32, 1), picked(&app));
-    try app.boardKey("j");
-    try eq(@as(?u32, 2), picked(&app));
-    // five lines shown: the picked card's bottom edge kept on the last of them
-    try eq(@as(usize, 2), app.columnScroll(0));
-    try eq(@as(usize, 0), app.columnScroll(1));
-    try app.boardKey("j");
-    try eq(@as(?u32, 5), picked(&app));
-    try eq(@as(usize, 4), app.columnScroll(0));
-    try app.boardKey("j");
-    try eq(@as(?u32, 5), picked(&app));
-    // the cards of no repo have none doing: l goes to the first group that has
-    try app.boardKey("l");
-    try eq(@as(?u32, 3), picked(&app));
-    try app.boardKey("h");
-    try eq(@as(?u32, 1), picked(&app));
-    try app.boardKey("l");
-    try eq(@as(?u32, 3), picked(&app));
-    try app.boardKey("j");
-    try eq(@as(?u32, 4), picked(&app));
-    try app.boardKey("j");
-    try eq(@as(?u32, 4), picked(&app));
-}
-
-test "the board's first row: tabs with their counts, then babylon's state against the right edge, each said once" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 140;
-    app.view_w = 140;
-    app.view_h = 20;
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":1,"repo":"arena","title":"a","status":"todo"},
-        \\{"id":2,"repo":"arena","title":"b","status":"doing"},
-        \\{"id":3,"repo":"tlon","title":"c","status":"review","stage":"reviewing"},
-        \\{"id":4,"repo":"menard","title":"d","status":"done"}
-        \\],"backlog":[{"id":7,"repo":"arena","title":"later","status":"backlog"}],
-        \\"auto":{"on":true,"cap":3,"working":2},"orchestrator":{"on":true,"running":true}}
-    );
-    defer app.board.?.deinit();
-    app.board_view = .{};
-
-    const labels = struct {
-        fn of(a: *const App, out: *[2048]u8) ![]const u8 {
-            var buttons: [48]App.Button = undefined;
-            const head = a.header(&buttons);
-            var len: usize = 0;
-            for (buttons[0..head.n]) |button| {
-                var buf: [64]u8 = undefined;
-                const text = std.mem.trim(u8, a.buttonLabel(button, &buf), " ");
-                len += (try std.fmt.bufPrint(out[len..], "{s}|", .{text})).len;
-            }
-            return out[0..len];
-        }
-    }.of;
-    var out: [2048]u8 = undefined;
-    // no gate session, so none; the orchestrator is said once, and auto once
-    try std.testing.expectEqualStrings("every 3|arena 2|menard 0|tlon 1|backlog 1|▲ 0 need you|● orch|◐ auto 2/3|", try labels(&app, &out));
-
-    var buttons: [48]App.Button = undefined;
-    const head = app.header(&buttons);
-    try std.testing.expectEqual(@as(?u16, null), head.more);
-    const last = buttons[head.n - 1];
-    try std.testing.expectEqual(app.boardW(), last.x + last.w);
-
-    // with less room the right group loses its words first, then tabs go, ending in …
-    app.view_w = 40;
-    try std.testing.expectEqualStrings("every 3|arena 2|menard 0|▲ 0|●|◐ 2/3|", try labels(&app, &out));
-    const narrow = app.header(&buttons);
-    try std.testing.expect(narrow.more != null);
-}
-
-test "the auto button says the tools slots when babylon gives them, and the short one drops them" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[],"auto":{"on":true,"cap":4,"working":4,"tools":{"working":1,"cap":1}}}
-    );
-    defer app.board.?.deinit();
-    var buf: [64]u8 = undefined;
-    var button: App.Button = .{ .what = .auto, .x = 0, .y = 0, .w = 0, .short = false };
-    try std.testing.expectEqualStrings(" ◐ auto 4/4 · tools 1/1 ", app.buttonLabel(button, &buf));
-    button.short = true;
-    try std.testing.expectEqualStrings(" ◐ 4/4 ", app.buttonLabel(button, &buf));
-}
-
 test "auto's modal shows a step at once, and a cap babylon refused is back at its own" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     app.term_w = 140;
@@ -9081,21 +7501,21 @@ test "auto's modal shows a step at once, and a cap babylon refused is back at it
     defer app.board.?.deinit();
     defer app.auto_wants.deinit(std.testing.allocator);
     app.board_view = .{ .focus = .orchestrator };
-    try app.boardKey("A");
+    try app.homeKey("A");
     try std.testing.expectEqual(@as(?usize, 0), app.board_view.?.auto_pick);
-    try std.testing.expect(app.board_view.?.focus == .board);
-    try app.boardKey("j");
-    try app.boardKey("j");
-    try app.boardKey("+");
-    try app.boardKey("+");
+    try std.testing.expect(app.board_view.?.focus == .plan);
+    try app.homeKey("j");
+    try app.homeKey("j");
+    try app.homeKey("+");
+    try app.homeKey("+");
     try std.testing.expectEqual(@as(u32, 4), app.autoRepo(0).?.cap);
     try std.testing.expectEqual(@as(usize, 1), app.auto_wants.list.items.len);
-    try app.boardKey("j");
-    try app.boardKey("-");
+    try app.homeKey("j");
+    try app.homeKey("-");
     try std.testing.expectEqual(@as(u32, 0), app.autoRepo(1).?.cap);
-    try app.boardKey("H");
+    try app.homeKey("H");
     try std.testing.expect(app.holding());
-    try app.boardKey("a");
+    try app.homeKey("a");
     try std.testing.expect(app.auto() == null);
 
     app.auto_wants.list.items[0].due = 0;
@@ -9103,269 +7523,11 @@ test "auto's modal shows a step at once, and a cap babylon refused is back at it
     try std.testing.expectEqual(@as(u32, 2), app.autoRepo(0).?.cap);
     try std.testing.expectEqualStrings("babylon: no such repo", app.auto_wants.refused.?);
 
-    try app.boardKey("\x1b");
+    try app.homeKey("\x1b");
     try std.testing.expectEqual(@as(?usize, null), app.board_view.?.auto_pick);
 }
 
-test "a click on the header's auto words opens its modal and one on its switch does not" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 140;
-    app.view_w = 120;
-    app.view_h = 24;
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[],"auto":{"on":false,"cap":4,"working":0}}
-    );
-    defer app.board.?.deinit();
-    app.board_view = .{};
-    const button: App.Button = .{ .what = .auto, .x = 10, .y = 0, .w = 8, .short = false };
-    try std.testing.expect(app.onAutoSwitch(button, 10));
-    try std.testing.expect(app.onAutoSwitch(button, 12));
-    try std.testing.expect(!app.onAutoSwitch(button, 16));
-    try app.pressButton(button, 16);
-    try std.testing.expectEqual(@as(?usize, 0), app.board_view.?.auto_pick);
-}
-
-test "the every view's done column is a strip: narrow, a card a row, its reopen on its foot" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 140;
-    app.view_w = 120;
-    app.view_h = 20;
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":1,"repo":"arena","title":"a","status":"todo"},
-        \\{"id":2,"repo":"arena","title":"b","status":"done"},
-        \\{"id":3,"repo":"arena","title":"c","status":"done"},
-        \\{"id":4,"repo":"arena","title":"d","status":"done"},
-        \\{"id":5,"repo":"arena","title":"e","status":"done"},
-        \\{"id":6,"repo":"arena","title":"f","status":"done"},
-        \\{"id":7,"repo":"arena","title":"g","status":"done"},
-        \\{"id":8,"repo":"arena","title":"h","status":"done"}
-        \\]}
-    );
-    defer app.board.?.deinit();
-    app.board_view = .{};
-    const eq = std.testing.expectEqual;
-
-    try eq(@min(App.recent_w, app.boardW() / 4), app.boardColW(3));
-    try std.testing.expect(app.boardColW(0) > app.boardColW(3));
-    try eq(app.boardColX(2) + app.boardColW(2), app.boardColX(3));
-    try std.testing.expect(app.boardColX(3) + app.boardColW(3) <= app.boardW());
-
-    try app.boardKey("l");
-    try app.boardKey("l");
-    try app.boardKey("l");
-    try app.boardKey("j");
-    const view = app.board_view.?;
-    try eq(@as(usize, 1), view.row);
-    // under arena's heading
-    try eq(view.row, app.boardCardAt(app.boardColX(3) + 1, app.colTop() + 2).?.row);
-    var buttons: [48]App.Button = undefined;
-    const shown = app.boardButtons(&buttons);
-    const last = shown[shown.len - 1];
-    try eq(App.CardAction.reopen, last.what.card);
-    try eq(app.view_h - 1, last.y);
-
-    // one repo's view keeps done's width, its cards boxed as the others'
-    app.board_view.?.repo = 1;
-    try eq(@min(App.recent_w, app.boardW() / 4), app.boardColW(3));
-    try std.testing.expect(!app.boardStrip(3));
-}
-
-test "in the every view a click on a recent entry whose repo has no open card picks it" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 100;
-    app.view_w = 100;
-    app.view_h = 30;
-    app.roles = @import("parts.zig").roles();
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":4,"repo":"tlon","title":"d","status":"doing"},
-        \\{"id":6,"repo":"arena","title":"f","status":"done"}
-        \\]}
-    );
-    defer app.board.?.deinit();
-    app.board_view = .{ .col = 1 };
-    const eq = std.testing.expectEqual;
-
-    var recent: [App.strip_n]*const tickets.Card = undefined;
-    try eq(@as(usize, 1), app.stripCards(&recent));
-    const x = 1;
-    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = app.listH() + 1, .release = false }));
-    try eq(@as(usize, 3), app.board_view.?.col);
-    try eq(@as(u32, 6), app.boardCard(3, app.board_view.?.row).?.id);
-}
-
-test "in the every view a find leaves a recent entry outside the last five closed, and it is picked by click" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 100;
-    app.view_w = 100;
-    app.view_h = 30;
-    app.roles = @import("parts.zig").roles();
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":4,"repo":"a","title":"d","status":"doing"},
-        \\{"id":10,"repo":"a","title":"x","status":"done"},
-        \\{"id":11,"repo":"a","title":"x","status":"done"},
-        \\{"id":12,"repo":"a","title":"x","status":"done"},
-        \\{"id":13,"repo":"a","title":"x","status":"done"},
-        \\{"id":14,"repo":"a","title":"x","status":"done"},
-        \\{"id":15,"repo":"b","title":"zeta","status":"done"}
-        \\]}
-    );
-    defer app.board.?.deinit();
-    app.board_view = .{ .col = 1 };
-    @memcpy(app.find[0..4], "zeta");
-    app.find_len = 4;
-    const eq = std.testing.expectEqual;
-
-    var recent: [App.strip_n]*const tickets.Card = undefined;
-    try eq(@as(usize, 1), app.stripCards(&recent));
-    const x = 1;
-    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = app.listH() + 1, .release = false }));
-    try eq(@as(usize, 3), app.board_view.?.col);
-    try eq(@as(u32, 15), app.boardCard(3, app.board_view.?.row).?.id);
-}
-
-test "in the every view a find leaves a recent entry no lane has, and the keys pick it and stay on it" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 100;
-    app.view_w = 100;
-    app.view_h = 30;
-    app.roles = @import("parts.zig").roles();
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":4,"repo":"a","title":"d","status":"doing"},
-        \\{"id":10,"repo":"a","title":"x","status":"done"},
-        \\{"id":11,"repo":"a","title":"x","status":"done"},
-        \\{"id":12,"repo":"a","title":"x","status":"done"},
-        \\{"id":13,"repo":"a","title":"x","status":"done"},
-        \\{"id":14,"repo":"a","title":"x","status":"done"},
-        \\{"id":15,"repo":"b","title":"zeta","status":"done"}
-        \\]}
-    );
-    defer app.board.?.deinit();
-    app.board_view = .{ .col = 3 };
-    @memcpy(app.find[0..4], "zeta");
-    app.find_len = 4;
-    const eq = std.testing.expectEqual;
-
-    for (0..3) |_| try app.boardKey("j");
-    try eq(@as(u32, 15), app.boardCard(3, app.board_view.?.row).?.id);
-    try app.boardKey("k");
-    try eq(@as(u32, 15), app.boardCard(3, app.board_view.?.row).?.id);
-}
-
-test "in the every view with epic bars shown, each drawn recent entry is picked by key and by click, the barred epic not among them" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 100;
-    app.view_w = 100;
-    app.view_h = 30;
-    app.roles = @import("parts.zig").roles();
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":4,"repo":"a","title":"d","status":"doing"},
-        \\{"id":326,"repo":"e","title":"Epic","kind":"epic","status":"done"},
-        \\{"id":10,"repo":"a","title":"x","status":"done"},
-        \\{"id":11,"repo":"b","title":"x","status":"done"}
-        \\],
-        \\"plan":{"goals":[{"epic":326,"title":"E","landed":0,"total":1,"steps":[]}]}}
-    );
-    defer app.board.?.deinit();
-    app.board_view = .{ .col = 3 };
-    const eq = std.testing.expectEqual;
-
-    try std.testing.expect(app.epicBars().len > 0);
-    var recent: [App.strip_n]*const tickets.Card = undefined;
-    const n = app.stripCards(&recent);
-    try eq(@as(usize, 2), n);
-    for (0..n) |k| {
-        const x = 1 + @as(u16, @intCast(k)) * app.stripCell();
-        try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = app.listH() + 1, .release = false }));
-        try eq(recent[k].id, app.boardCard(3, app.board_view.?.row).?.id);
-    }
-    app.board_view.?.row = 0;
-    for (0..n) |k| {
-        try eq(recent[k].id, app.boardCard(3, app.board_view.?.row).?.id);
-        try app.boardKey("j");
-    }
-    try eq(recent[n - 1].id, app.boardCard(3, app.board_view.?.row).?.id);
-}
-
-test "in the every view the keys step through the foot strip and stop at its ends, whatever its lanes" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 100;
-    app.view_w = 100;
-    app.view_h = 30;
-    app.roles = @import("parts.zig").roles();
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":4,"repo":"a","title":"d","status":"doing"},
-        \\{"id":5,"repo":"b","title":"d","status":"doing"},
-        \\{"id":10,"repo":"a","title":"x","status":"done"},
-        \\{"id":11,"repo":"b","title":"x","status":"done"},
-        \\{"id":12,"repo":"a","title":"x","status":"done"}
-        \\]}
-    );
-    defer app.board.?.deinit();
-    app.board_view = .{ .col = 3 };
-    const eq = std.testing.expectEqual;
-
-    for (0..6) |_| try app.boardKey("j");
-    try eq(@as(usize, 2), app.board_view.?.row);
-    try eq(@as(u32, 12), app.boardCard(3, app.board_view.?.row).?.id);
-    for (0..6) |_| try app.boardKey("k");
-    try eq(@as(usize, 0), app.board_view.?.row);
-    try eq(@as(u32, 10), app.boardCard(3, app.board_view.?.row).?.id);
-}
-
-test "in Workbench's look a click on the picked tile's button does its action, and one on a recent entry picks it" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 100;
-    app.view_w = 100;
-    app.view_h = 30;
-    app.roles = @import("parts.zig").roles();
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":4,"repo":"tlon","title":"d","status":"doing","ask":{"id":9,"question":"Which?","options":["x"]}},
-        \\{"id":6,"repo":"tlon","title":"f","status":"done"},
-        \\{"id":7,"repo":"tlon","title":"g","status":"done"}
-        \\]}
-    );
-    defer app.board.?.deinit();
-    app.board_view = .{ .col = 1 };
-    const eq = std.testing.expectEqual;
-
-    try eq(@as(u16, 0), app.boardColW(3));
-    var buttons: [48]App.Button = undefined;
-    var answer: ?App.Button = null;
-    for (app.boardButtons(&buttons)) |b| switch (b.what) {
-        .card => |action| if (action == .answer) {
-            answer = b;
-        },
-        else => {},
-    };
-    const on = answer.?;
-    try std.testing.expect(!app.board_view.?.answering);
-    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = on.x + 1, .y = on.y, .release = false }));
-    try std.testing.expect(app.board_view.?.answering);
-    app.board_view.?.answering = false;
-
-    var recent: [App.strip_n]*const tickets.Card = undefined;
-    try eq(@as(usize, 2), app.stripCards(&recent));
-    const second = recent[1].id;
-    const x = app.stripCell() + 1;
-    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = app.listH() + 1, .release = false }));
-    try eq(@as(usize, 3), app.board_view.?.col);
-    try eq(second, app.boardCard(3, app.board_view.?.row).?.id);
-    var picked: [48]App.Button = undefined;
-    const reopen = for (app.boardButtons(&picked)) |b| {
-        if (b.what == .card and b.what.card == .reopen) break b;
-    } else return error.NoReopen;
-    try eq(app.listH() + 3, reopen.y);
-    try eq(app.stripCell() + 1, reopen.x);
-}
-
-test "⏎ on a card's peek picks that card and is left to the board, not sent to a Claude's pane" {
+test "⏎ on a card's peek is left to home, not sent to a Claude's pane" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     app.term_w = 100;
     app.view_w = 100;
@@ -9377,115 +7539,11 @@ test "⏎ on a card's peek picks that card and is left to the board, not sent to
         \\]}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .col = 0, .row = 0, .focus = .orchestrator };
+    app.board_view = .{ .focus = .orchestrator };
     app.look = .{ .ticket = 6 };
     try std.testing.expect(!try app.lookKey("\r"));
     try std.testing.expect(app.look == null);
-    try std.testing.expect(app.board_view.?.focus == .board);
-    try std.testing.expectEqual(@as(u32, 6), app.boardCard(app.board_view.?.col, app.board_view.?.row).?.id);
-}
-
-test "the board opens on a ticket by its id: its lane, its repo's columns or the backlog, its question shown" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 100;
-    app.view_w = 80;
-    app.view_h = 24;
-    try app.showCard(4);
-    try std.testing.expect(app.board_view == null);
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":1,"repo":"arena","title":"a","status":"todo"},
-        \\{"id":4,"repo":"tlon","title":"d","status":"doing","ask":{"id":9,"question":"Which?","options":["x"]}},
-        \\{"id":6,"repo":"menard","title":"f","status":"done"},
-        \\{"id":5,"title":"e","status":"todo"}
-        \\],"backlog":[{"id":7,"repo":"arena","title":"g","status":"backlog"},{"id":8,"repo":"arena","title":"h","status":"backlog"}]}
-    );
-    defer app.board.?.deinit();
-    const eq = std.testing.expectEqual;
-    const picked = struct {
-        fn id(a: *const App) ?u32 {
-            const view = a.board_view.?;
-            return if (a.boardCard(view.col, view.row)) |card| card.id else null;
-        }
-    }.id;
-
-    app.overview = .{ .session = 0, .win = 0 };
-    try app.showCard(4);
-    try eq(@as(?u32, 4), picked(&app));
-    try std.testing.expect(app.overview == null);
-    try std.testing.expect(app.boardLanes());
-    try std.testing.expect(app.board_view.?.answering);
-
-    try app.showCard(5);
-    try eq(@as(?u32, 5), picked(&app));
-    try std.testing.expect(!app.board_view.?.answering);
-
-    // menard has only a closed card, among the recent ones: its lane is in the every view
-    try app.showCard(6);
-    try eq(@as(?u32, 6), picked(&app));
-    try std.testing.expect(app.boardLanes());
-
-    try app.showCard(8);
-    try eq(@as(?u32, 8), picked(&app));
-    try std.testing.expect(app.board_view.?.backlog);
-
-    try app.showCard(99);
-    try eq(@as(?u32, 1), picked(&app));
-    try std.testing.expect(app.boardLanes());
-}
-
-test "the picked card's box ends its buttons with space open, a review card's with space log" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 200;
-    app.view_w = 160;
-    app.view_h = 20;
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":1,"repo":"arena","title":"a","status":"todo"},
-        \\{"id":2,"repo":"arena","title":"b","status":"review"}
-        \\]}
-    );
-    defer app.board.?.deinit();
-    app.board_view = .{};
-    var buttons: [48]App.Button = undefined;
-    var buf: [64]u8 = undefined;
-    const last = struct {
-        fn text(a: *const App, out: []App.Button, b: []u8) []const u8 {
-            const shown = a.boardButtons(out);
-            return std.mem.trim(u8, a.buttonLabel(shown[shown.len - 1], b), " ");
-        }
-    }.text;
-    try std.testing.expectEqualStrings("space open", last(&app, &buttons, &buf));
-    app.board_view.?.col = 2;
-    const open: App.Button = .{ .what = .{ .card = .open }, .x = 0, .y = 0, .w = 0 };
-    try std.testing.expectEqualStrings("space log", std.mem.trim(u8, app.buttonLabel(open, &buf), " "));
-}
-
-test "a click on ▲ proposed finds the last row of a picked card's box as of an unpicked one" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 200;
-    app.view_w = 160;
-    app.view_h = 20;
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":1,"repo":"arena","title":"a","status":"todo"},
-        \\{"id":2,"repo":"arena","title":"b","status":"todo"}],
-        \\"proposals":[{"id":4,"action":"start","ticket_id":1,"what":"Start #1","why":"Next"},{"id":5,"action":"start","ticket_id":2,"what":"Start #2","why":"Next"}],
-        \\"needs_you":[{"id":"proposal:4","kind":"proposal","ticket":1,"repo":"arena","text":"P4","actions":[]},{"id":"proposal:5","kind":"proposal","ticket":2,"repo":"arena","text":"P5","actions":[]}]}
-    );
-    defer app.board.?.deinit();
-    app.board_view = .{};
-    const x = app.boardColX(0) + 2;
-    // each card's last row is a hit, whichever of them is picked
-    for (0..2) |_| {
-        var hits: usize = 0;
-        for (2..app.view_h - 1) |y| {
-            const at = app.boardCardAt(x, @intCast(y)) orelse continue;
-            if (try app.cardNeedsClick(at, .{ .code = 0, .x = x, .y = @intCast(y), .release = false })) hits += 1;
-        }
-        try std.testing.expectEqual(@as(usize, 2), hits);
-        app.board_view.?.row = 1;
-    }
+    try std.testing.expect(app.board_view.?.focus == .plan);
 }
 
 test "a gate run's last run is read into its stages, their results, times and output" {
@@ -9590,38 +7648,6 @@ test "a gate modal's scroll stops at the last line of the output it scrolls" {
     ;
     try std.testing.expectEqual(@as(usize, 2), gateOutputRows(gateOutput(run), 40));
     try std.testing.expectEqualStrings("", gateOutput("run submitted x\n  rebase: ok (2026-11-24T05:00:01Z to 2026-11-24T05:00:05Z)\n"));
-}
-
-test "a card moves along its column only with a repo, out of the backlog" {
-    var have: [12]App.CardAction = undefined;
-    const has = struct {
-        fn up(card: tickets.Card, out: *[12]App.CardAction) bool {
-            return std.mem.indexOfScalar(App.CardAction, App.cardActions(&card, out), .up) != null;
-        }
-    }.up;
-    try std.testing.expect(has(.{ .id = 1, .repo = "arena", .title = "a", .status = .todo }, &have));
-    try std.testing.expect(!has(.{ .id = 2, .title = "b", .status = .todo }, &have));
-    try std.testing.expect(!has(.{ .id = 4, .repo = "two words", .title = "d", .status = .todo }, &have));
-    try std.testing.expect(!has(.{ .id = 3, .repo = "arena", .title = "c", .status = .backlog }, &have));
-    try std.testing.expect(!has(.{ .id = 5, .repo = "arena", .title = "e", .status = .@"try" }, &have));
-}
-
-test "the done column's cap leaves the to-try cards out of its count, they are all shown" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    defer app.pending.deinit(std.testing.allocator);
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":1,"repo":"arena","title":"a","status":"try"},
-        \\{"id":2,"repo":"arena","title":"b","status":"try"},
-        \\{"id":3,"repo":"arena","title":"c","status":"done"},
-        \\{"id":4,"repo":"arena","title":"d","status":"done"},
-        \\{"id":5,"repo":"arena","title":"e","status":"done"},
-        \\{"id":6,"repo":"arena","title":"f","status":"done"}
-        \\]}
-    );
-    defer app.board.?.deinit();
-    try std.testing.expectEqual(@as(usize, 2 + App.done_shown), app.shownIn(.done, "arena", 6));
-    try std.testing.expectEqual(@as(usize, 4), app.shownIn(.done, "arena", 4));
 }
 
 test "a capture tmux refuses, its pane gone, takes the cursor asked with it off what is awaited" {
@@ -9825,32 +7851,6 @@ test "a session shows the review state that most wants looking at" {
     try std.testing.expectEqual(Review.changes, App.sessionReview(&s));
 }
 
-test "a find of a hundred bytes narrows the same before and after Enter" {
-    var typed_buf: [100]u8 = undefined;
-    @memset(&typed_buf, 'x');
-    @memcpy(typed_buf[0..6], "needle");
-    const typed: []const u8 = &typed_buf;
-    const json = try std.fmt.allocPrint(std.testing.allocator,
-        \\{{"tickets":[
-        \\{{"id":1,"repo":"arena","title":"{s}","status":"todo"}},
-        \\{{"id":2,"repo":"arena","title":"needle","status":"todo"}}
-        \\]}}
-    , .{typed});
-    defer std.testing.allocator.free(json);
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.board = try tickets.Board.parse(std.testing.allocator, json);
-    defer app.board.?.deinit();
-    var prompt: menu.Prompt = .{ .what = .find };
-    @memcpy(prompt.buf[0..typed.len], typed);
-    prompt.len = typed.len;
-    app.prompt = prompt;
-    const typing = app.boardCount(.todo);
-    app.keepFind(prompt);
-    try std.testing.expectEqual(typed.len, app.find_len);
-    try std.testing.expectEqual(typing, app.boardCount(.todo));
-    try std.testing.expectEqual(@as(usize, 1), app.boardCount(.todo));
-}
-
 test "a card's modal lists every option of its ask and its words, and ⏎ answers the lit one" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -9869,7 +7869,7 @@ test "a card's modal lists every option of its ask and its words, and ⏎ answer
         \\"actions":[{"key":"1","label":"a"},{"key":"c","label":"in words","argv":["babylon","answer","9","--words"],"needs":"words"}]}]}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .col = 1, .detail = 4 };
+    app.board_view = .{ .detail = 4 };
     var buttons: [16]App.ModalButton = undefined;
     var rows: [4]u16 = undefined;
     var seen: usize = 0;
@@ -9918,7 +7918,7 @@ test "in Workbench's look a click on a popup's option answers the ask and one on
         \\]}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .col = 1, .detail = 4 };
+    app.board_view = .{ .detail = 4 };
     const eq = std.testing.expectEqual;
     const rect = app.modalRect().?;
 
@@ -9926,14 +7926,14 @@ test "in Workbench's look a click on a popup's option answers the ask and one on
     const second = for (app.modalButtons(&buttons)) |b| {
         if (b.action == .option and b.action.option == 2) break b;
     } else return error.NoOption;
-    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = second.x + 1, .y = second.y, .release = false }));
+    try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = second.x + 1, .y = second.y, .release = false }));
     try eq(@as(?u32, null), app.board_view.?.detail);
     var got: [512]u8 = undefined;
     const len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon answer 9 2") != null);
 
     app.board_view.?.detail = 4;
-    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = rect.x + rect.w - 4, .y = rect.y, .release = false }));
+    try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = rect.x + rect.w - 4, .y = rect.y, .release = false }));
     try eq(@as(?u32, null), app.board_view.?.detail);
 }
 
@@ -9977,7 +7977,7 @@ test "the plan's pick lights its ticket's Your move item dim in the feed, and th
         \\{"ticket":99,"repo":"arena","title":"Three","state":"building"}]}}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    app.board_view = .{ .focus = .plan };
     const eq = std.testing.expectEqual;
     const view = &app.board_view.?;
 
@@ -10048,7 +8048,7 @@ test "⏎ on an idea plans it, e and x edit and withdraw it, and ⏎ on the fold
         \\{"epic":831,"title":"retro","state":"draft","steps":7}]}}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    app.board_view = .{ .focus = .plan };
     const eq = std.testing.expectEqual;
     const view = &app.board_view.?;
     var got: [1024]u8 = undefined;
@@ -10074,7 +8074,7 @@ test "⏎ on an idea plans it, e and x edit and withdraw it, and ⏎ on the fold
     try app.planKey("e");
     len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[then..len], "babylon edit 829") != null);
-    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    app.board_view = .{ .focus = .plan };
 
     app.board.?.deinit();
     app.board = try tickets.Board.parse(std.testing.allocator,
@@ -10105,7 +8105,7 @@ test "d on a goal runs babylon drive, and 3 under a landed goal opens the new go
         \\{"tickets":[],"plan":{"goals":[{"epic":326,"title":"board","landed":1,"total":2,"steps":[{"ticket":760,"state":"todo"}]}]}}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    app.board_view = .{ .focus = .plan };
     try app.planKey("d");
     var got: [1024]u8 = undefined;
     const len = try sent.readPositionalAll(std.testing.io, &got, 0);
@@ -10145,27 +8145,27 @@ test "space on a draft's tile opens its modal, j picks a step, y runs adopt and 
     app.view_h = 40;
     app.board = try tickets.Board.parse(std.testing.allocator, draft_board);
     defer app.board.?.deinit();
-    app.board_view = .{ .home = true, .plan = true, .focus = .orchestrator };
+    app.board_view = .{ .focus = .orchestrator };
     app.normal = true;
     const eq = std.testing.expectEqual;
     const view = &app.board_view.?;
 
     try std.testing.expect(try app.feedKey(" "));
     try eq(@as(?u32, 830), view.draft);
-    try eq(@as(@TypeOf(view.focus), .board), view.focus);
-    try app.boardKey("j");
+    try eq(@as(@TypeOf(view.focus), .plan), view.focus);
+    try app.homeKey("j");
     try eq(@as(usize, 1), view.draft_pick);
-    try app.boardKey("j");
+    try app.homeKey("j");
     try eq(@as(usize, 1), view.draft_pick);
 
-    try app.boardKey("y");
+    try app.homeKey("y");
     try eq(@as(?u32, null), view.draft);
     var got: [1024]u8 = undefined;
     const len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'adopt' '830'") != null);
 
     app.openDraft(830);
-    try app.boardKey("r");
+    try app.homeKey("r");
     try eq(@as(?u32, null), view.draft);
     try std.testing.expect(app.prompt.?.what == .words);
     try std.testing.expectEqualStrings("ask:61", app.prompt.?.item());
@@ -10183,12 +8183,12 @@ test "⏎ on a draft's row on Plan opens the draft modal, and e edits the step p
     app.view_h = 40;
     app.board = try tickets.Board.parse(std.testing.allocator, draft_board);
     defer app.board.?.deinit();
-    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    app.board_view = .{ .focus = .plan };
     const view = &app.board_view.?;
     try app.planKey("\r");
     try std.testing.expectEqual(@as(?u32, 830), view.draft);
-    try app.boardKey("j");
-    try app.boardKey("e");
+    try app.homeKey("j");
+    try app.homeKey("e");
     var got: [1024]u8 = undefined;
     const len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon edit 833") != null);
@@ -10209,7 +8209,7 @@ test "an item of any kind runs its action's argv: ⏎ on a digest with no ticket
         \\{"id":"digest:1795536000","kind":"digest","ticket":null,"repo":"","text":"digest","doc":"/home/a/.cache/babylon/digests/2026-11-24.md","actions":[{"label":"seen","key":"⏎","argv":["babylon","digest","ok"]}]}]}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .home = true, .plan = true, .focus = .orchestrator };
+    app.board_view = .{ .focus = .orchestrator };
     try std.testing.expect(try app.feedKey("\r"));
     var got: [512]u8 = undefined;
     var len = try sent.readPositionalAll(std.testing.io, &got, 0);
@@ -10223,13 +8223,13 @@ test "an item of any kind runs its action's argv: ⏎ on a digest with no ticket
     while (f.line(row).kind != .buttons) row += 1;
     // `o open   ⏎ seen`, after the lead of six: seen starts nine cells in
     const x: u16 = app.term_w - app.view_w + 2 + 6 + 10;
-    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = row + 1, .release = false }));
+    try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = x, .y = row + 1, .release = false }));
     len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(len > before);
     try std.testing.expect(std.mem.indexOf(u8, got[before..len], "'babylon' 'digest' 'ok'") != null);
 }
 
-test "a row of next dragged onto another takes its place, and a todo card let go on the way back to the plan joins next at its bottom" {
+test "a row of next dragged onto another takes its place" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
@@ -10247,7 +8247,7 @@ test "a row of next dragged onto another takes its place, and a todo card let go
         \\{"ticket":12,"repo":"arena","title":"b","why":"y"}]}}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    app.board_view = .{ .focus = .plan };
     const eq = std.testing.expectEqual;
 
     var sheet: sheets.Sheet = undefined;
@@ -10260,76 +8260,14 @@ test "a row of next dragged onto another takes its place, and a todo card let go
     };
     try eq(@as(usize, 2), n);
     const x = 3;
-    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = x, .y = ys[1], .release = false }));
+    try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = x, .y = ys[1], .release = false }));
     try eq(@as(usize, 1), app.drag.next_row.from);
     try app.dragTo(.{ .code = 32, .x = x, .y = ys[0], .release = false });
     try app.dragTo(.{ .code = 0, .x = x, .y = ys[0], .release = true });
     try eq(@as(@TypeOf(app.drag), .none), app.drag);
     var got: [512]u8 = undefined;
-    var len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'next' '12' '--at' '1'") != null);
-
-    app.board_view = .{};
-    app.drag = .{ .card = .{ .id = 8, .opens = false, .moved = true } };
-    app.pointer = .{ .x = 2, .y = 0 };
-    try app.dragTo(.{ .code = 0, .x = app.pointer.x, .y = 0, .release = true });
-    try std.testing.expect(app.report_failed);
-    try std.testing.expect(app.prompt == null);
-
-    app.drag = .{ .card = .{ .id = 7, .opens = false, .moved = true } };
-    try app.dragTo(.{ .code = 0, .x = app.pointer.x, .y = 0, .release = true });
-    len = try sent.readPositionalAll(std.testing.io, &got, 0);
-    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'next' '7' '--at' '3'") != null);
-    try eq(menu.Prompt.What.why, app.prompt.?.what);
-}
-
-test "j stays in its column, past the last todo card; a folded repo is its heading alone, skipped by the pick, its ask marked" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.term_w = 140;
-    app.view_w = 140;
-    app.view_h = 30;
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[
-        \\{"id":1,"repo":"arena","title":"a","status":"todo"},
-        \\{"id":2,"repo":"tlon","title":"b","status":"todo"},
-        \\{"id":3,"repo":"arena","title":"c","status":"doing"},
-        \\{"id":4,"repo":"tlon","title":"d","status":"review","ask":{"id":1,"question":"q?"}}
-        \\]}
-    );
-    defer app.board.?.deinit();
-    app.board_view = .{};
-    const eq = std.testing.expectEqual;
-    const picked = struct {
-        fn id(a: *const App) ?u32 {
-            const v = a.board_view.?;
-            return if (a.boardCard(v.col, v.row)) |c| c.id else null;
-        }
-    }.id;
-
-    try app.boardKey("j");
-    try app.boardKey("j");
-    try app.boardKey("j");
-    try eq(@as(?u32, 2), picked(&app));
-    try eq(@as(usize, 0), app.board_view.?.col);
-
-    try app.boardKey("z");
-    try std.testing.expect(app.folded("tlon"));
-    try eq(@as(?u32, 1), picked(&app));
-    try app.boardKey("j");
-    try eq(@as(?u32, 1), picked(&app));
-    try eq(@as(usize, 0), app.groupCounts(1, 0).shown);
-    try eq(@as(usize, 1), app.groupCounts(1, 0).total);
-    try std.testing.expect(app.laneNeeds(1));
-    try std.testing.expect(!app.laneNeeds(0));
-
-    try app.boardKey("Z");
-    try std.testing.expect(!app.folded("tlon"));
-    try app.boardKey("Z");
-    try std.testing.expect(app.folded("tlon") and !app.folded("arena"));
-
-    var fresh: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    fresh.loadFolds("tlon\n\narena\n");
-    try std.testing.expect(fresh.folded("tlon") and fresh.folded("arena") and !fresh.folded("menard"));
 }
 
 test "a to-try card's modal lists its checks, j and k pick one, y says it works and n asks what went wrong" {
@@ -10350,7 +8288,7 @@ test "a to-try card's modal lists its checks, j and k pick one, y says it works 
     const eq = std.testing.expectEqual;
     const eql = std.testing.expectEqualStrings;
 
-    app.board_view = .{ .col = 3, .detail = 7 };
+    app.board_view = .{ .detail = 7 };
     const card = app.modalCard().?;
     var head: App.CardHead = undefined;
     App.cardHead(card, 60, 0, false, &head);
@@ -10410,13 +8348,14 @@ test "a drag over a wrapped line of the modal copies it as one line, inside the 
     const long_check = "run systemctl --user show babylon -p Environment and read the path of the offer.conf it names, then say what is in it";
     const json = try std.fmt.allocPrint(std.testing.allocator,
         \\{{"tickets":[{{"id":7,"repo":"arena","title":"Lights","status":"try","stage":"landed",
-        \\"checks":[{{"n":1,"text":"it is told","result":null}},{{"n":2,"text":"{s}","result":null}}]}}]}}
+        \\"checks":[{{"n":1,"text":"it is told","result":null}},{{"n":2,"text":"{s}","result":null}}]}}],
+        \\"plan":{{"now":[],"next":[],"goals":[],"landed_today":{{"count":0,"newest":[]}},"not_planned":{{"count":0,"follow_ups":0,"by_repo":{{}}}}}}}}
     , .{long_check});
     defer std.testing.allocator.free(json);
     app.board = try tickets.Board.parse(std.testing.allocator, json);
     defer app.board.?.deinit();
     const eql = std.testing.expectEqualStrings;
-    app.board_view = .{ .col = 3, .detail = 7 };
+    app.board_view = .{ .detail = 7 };
     const inner = detailWidth(app.boardW()).inner;
     var body: std.ArrayList(u8) = .empty;
     defer body.deinit(std.testing.allocator);
@@ -10471,7 +8410,7 @@ fn tryApp(sent: std.Io.File, tmp_board: []const u8) !App {
     app.epoch = 1795262400;
     app.board_dir = "arena-test-board";
     app.board = try tickets.Board.parse(std.testing.allocator, tmp_board);
-    app.board_view = .{ .home = true, .plan = true, .focus = .orchestrator };
+    app.board_view = .{ .focus = .orchestrator };
     app.normal = true;
     return app;
 }
@@ -10591,17 +8530,17 @@ test "a click on a to-try tile picks a check, settles it with ✓, fails it with
     // a click on a check's row picks it
     view.pick = 0;
     try std.testing.expect(app.feedOf(&f));
-    try std.testing.expect(try app.boardMouse(feedPoint(&app, rowOf(&f, .try_step, 2), 8)));
+    try std.testing.expect(try app.homeMouse(feedPoint(&app, rowOf(&f, .try_step, 2), 8)));
     try std.testing.expect(app.feedOf(&f));
     try eq(@as(?usize, 2), app.feedPick(&f).?.step);
 
     // its buttons show under it; a click on ✓ is y
     const buttons = rowOf(&f, .try_buttons, 2);
-    try std.testing.expect(try app.boardMouse(feedPoint(&app, buttons, 3)));
+    try std.testing.expect(try app.homeMouse(feedPoint(&app, buttons, 3)));
     try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'tried' '825' '3' 'ok'") != null);
 
     // a click on ✗ is n: the modal for the words opens, a click outside its buttons does nothing to it
-    try std.testing.expect(try app.boardMouse(feedPoint(&app, buttons, 10)));
+    try std.testing.expect(try app.homeMouse(feedPoint(&app, buttons, 10)));
     try std.testing.expect(App.stepWords(app.prompt.?));
     for ("late") |byte| _ = app.prompt.?.press(&.{byte});
     try app.onMouse(feedPoint(&app, 3, 10));
@@ -10616,7 +8555,7 @@ test "a click on a to-try tile picks a check, settles it with ✓, fails it with
 
     // the number and the title open the ticket's modal
     try std.testing.expect(app.feedOf(&f));
-    try std.testing.expect(try app.boardMouse(feedPoint(&app, rowOf(&f, .try_title, null), 12)));
+    try std.testing.expect(try app.homeMouse(feedPoint(&app, rowOf(&f, .try_title, null), 12)));
     try eq(@as(?u32, 825), view.detail);
     view.detail = null;
 
@@ -10624,7 +8563,7 @@ test "a click on a to-try tile picks a check, settles it with ✓, fails it with
     try std.testing.expect(app.feedOf(&f));
     const machine = rowOf(&f, .try_machine, null);
     try std.testing.expect(f.line(machine).alt.len > 0);
-    try std.testing.expect(try app.boardMouse(feedPoint(&app, machine, 50)));
+    try std.testing.expect(try app.homeMouse(feedPoint(&app, machine, 50)));
     try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'tried' '825' 'skip'") != null);
 }
 
@@ -10667,7 +8606,7 @@ test "on Plan's windows z folds the picked one and keeps the pick, Z folds the r
         \\"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    app.board_view = .{ .focus = .plan };
     const eq = std.testing.expectEqual;
     const view = &app.board_view.?;
     var sheet: sheets.Sheet = undefined;
@@ -10720,7 +8659,7 @@ test "space opens a Plan ticket row in place, one to a window, with the card's o
         \\"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    app.board_view = .{ .focus = .plan };
     const eq = std.testing.expectEqual;
     var sheet: sheets.Sheet = undefined;
 
@@ -10748,15 +8687,6 @@ test "space opens a Plan ticket row in place, one to a window, with the card's o
 
     app.loadFolds("open:now:7\nopen:nowhere:3\n");
     try eq(@as(u32, 7), app.plan_open.get(.now));
-}
-
-test "esc with the column focused beside a board that is not home closes the board" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.board = try tickets.Board.parse(std.testing.allocator, "{\"tickets\":[]}");
-    defer app.board.?.deinit();
-    app.board_view = .{ .home = false, .focus = .orchestrator };
-    try app.columnKey("\x1b");
-    try std.testing.expect(app.board_view == null);
 }
 
 test "a session's repo is where its Claudes' panes are, a worktree's included, never its name" {
@@ -10815,7 +8745,7 @@ test "on not planned's chips ⏎ folds a repo's rows, h l walk the chips, Z open
     app.roles = @import("parts.zig").roles();
     app.board = try tickets.Board.parse(std.testing.allocator, not_planned_plan);
     defer app.board.?.deinit();
-    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    app.board_view = .{ .focus = .plan };
     const eq = std.testing.expectEqual;
     const view = &app.board_view.?;
     view.plan_pick = try chipsPick(&app);
@@ -10852,7 +8782,7 @@ test "J K on a todo row move it in its repo, W adds it to next, + opens the new 
     app.roles = @import("parts.zig").roles();
     app.board = try tickets.Board.parse(std.testing.allocator, not_planned_plan);
     defer app.board.?.deinit();
-    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    app.board_view = .{ .focus = .plan };
     const eq = std.testing.expectEqual;
     const view = &app.board_view.?;
     var got: [2048]u8 = undefined;
@@ -10879,7 +8809,7 @@ test "J K on a todo row move it in its repo, W adds it to next, + opens the new 
     len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon new") != null);
 
-    app.board_view = .{ .home = true, .plan = true, .focus = .board, .plan_backlog = true };
+    app.board_view = .{ .focus = .plan, .plan_backlog = true };
     app.board_view.?.plan_pick = (try chipsPick(&app)) + 1;
     try app.planKey("x");
     try std.testing.expect(app.prompt.?.what == .why);
@@ -10906,10 +8836,10 @@ test "a click on not planned's + new button opens the new ticket window, and a w
     app.roles = @import("parts.zig").roles();
     app.board = try tickets.Board.parse(std.testing.allocator, not_planned_plan);
     defer app.board.?.deinit();
-    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    app.board_view = .{ .focus = .plan };
     app.side_folded = true;
     const head = app.newHead().?;
-    try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = head.x + 1, .y = head.y, .release = false }));
+    try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = head.x + 1, .y = head.y, .release = false }));
     var got: [1024]u8 = undefined;
     const len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon new") != null);
@@ -10937,7 +8867,7 @@ test "on Plan r narrows every window to one repo and back, / dims what misses th
         \\"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    app.board_view = .{ .focus = .plan };
     const eq = std.testing.expectEqual;
     const view = &app.board_view.?;
     var sheet: sheets.Sheet = undefined;
@@ -11009,7 +8939,7 @@ test "⏎ on a subagent row in a card's modal shows that subagent, as a click on
     var sessions = [_]*Session{&s};
     app.sessions = .fromOwnedSlice(&sessions);
     app.current = 1;
-    app.board_view = .{ .col = 1, .detail = 4 };
+    app.board_view = .{ .detail = 4 };
 
     var buttons: [16]App.ModalButton = undefined;
     var rows: [2]u16 = undefined;
@@ -11049,7 +8979,7 @@ test "Your move is a fixed slot whatever it holds, the picked item opens to its 
         app.roles = @import("parts.zig").roles();
         app.board = try tickets.Board.parse(std.testing.allocator, try needsBoard(&buf, n));
         defer app.board.?.deinit();
-        app.board_view = .{ .home = true, .plan = true, .focus = .board };
+        app.board_view = .{ .focus = .plan };
         const rect = app.planSlot(.move);
         if (height) |h| try eq(h, rect.h) else height = rect.h;
         try eq(@as(u16, sheets.move_rows_full + sheets.window_chrome), rect.h);
@@ -11098,7 +9028,7 @@ test "⏎ on a Claude with no ticket in in flight's foot shows its window, space
     app.view_w = 60;
     app.view_h = 30;
     app.roles = @import("parts.zig").roles();
-    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    app.board_view = .{ .focus = .plan };
     const eq = std.testing.expectEqual;
 
     var sheet: sheets.Sheet = undefined;
@@ -11117,7 +9047,7 @@ test "⏎ on a Claude with no ticket in in flight's foot shows its window, space
     try std.testing.expect(app.popup != null and app.popup.?.entry == 2);
     app.closePopup();
 
-    app.board_view = .{ .home = true, .plan = true, .focus = .board, .plan_pick = first.pick.? };
+    app.board_view = .{ .focus = .plan, .plan_pick = first.pick.? };
     try app.planKey("\r");
     try eq(@as(?BoardView, null), app.board_view);
     try std.testing.expect(app.popup == null);
@@ -11189,7 +9119,7 @@ test "arena plan N opens the shut repo chip that holds N" {
         \\"not_planned":{"count":2,"follow_ups":0,"by_repo":{"tlon":1,"arena":1}}}}
     );
     defer app.board.?.deinit();
-    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    app.board_view = .{ .focus = .plan };
     var sheet: sheets.Sheet = undefined;
     app.setFold("tlon", true);
     app.plan_shut.insert(.unplanned);

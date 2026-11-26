@@ -9,13 +9,13 @@ const RGB = color.RGB;
 const Card = tickets.Card;
 const posix = std.posix;
 
-const usage = "usage: arena-mock phosphor|workbench|neon home|board|popup|orch|alone BOARD.json PALETTE.sh [COLSxROWS OUT.html]\n";
+const usage = "usage: arena-mock phosphor|workbench|neon home|popup|orch|alone BOARD.json PALETTE.sh [COLSxROWS OUT.html]\n";
 
 /// The moment the fixture is seen at: every age is counted from here.
 const now_at = "2026-11-24T05:00:00Z";
 
 pub const Direction = enum { phosphor, workbench, neon };
-pub const Screen = enum { home, board, popup, orch, alone };
+pub const Screen = enum { home, popup, orch, alone };
 
 const Ink = struct {
     fg: RGB,
@@ -705,7 +705,7 @@ const Layout = struct {
     }
 };
 
-fn titleBar(sc: *Scene, screen: Screen) void {
+fn titleBar(sc: *Scene) void {
     const s = sc.skin;
     const c = sc.c;
     const b = sc.board;
@@ -714,7 +714,6 @@ fn titleBar(sc: *Scene, screen: Screen) void {
     const needs = b.needsYou().len;
     var landing: usize = 0;
     for (plan.now) |item| landing += @intFromBool(!std.mem.eql(u8, item.state, "building"));
-    const on_board = screen == .board or screen == .popup;
     switch (s.dir) {
         .phosphor => {
             // a menu bar, the old application way: a solid amber strip, the view inverted
@@ -722,8 +721,8 @@ fn titleBar(sc: *Scene, screen: Screen) void {
             const ink: Ink = .{ .fg = s.on_accent, .bg = s.accent };
             _ = c.print(1, 0, "▚▞ ARENA", .{ .fg = s.on_accent, .bg = s.accent, .bold = true }, 10);
             var x: usize = 12;
-            for ([_][]const u8{ "home", "board", "backlog", "sessions" }, 0..) |tab, i| {
-                const lit = (i == 0 and !on_board) or (i == 1 and on_board);
+            for ([_][]const u8{ "home", "backlog", "sessions" }, 0..) |tab, i| {
+                const lit = i == 0;
                 const word = sc.fmt(" {s} ", .{tab});
                 x += c.print(x, 0, word, if (lit) .{ .fg = s.accent, .bg = s.ground, .bold = true } else ink, 20) + 1;
             }
@@ -739,12 +738,12 @@ fn titleBar(sc: *Scene, screen: Screen) void {
             // a screen title bar, then a row of tabs joined to the window under them
             c.fill(0, 0, c.w, 1, s.raised);
             _ = c.print(1, 0, "◆ arena", .{ .fg = s.accent, .bg = s.raised, .bold = true }, 10);
-            _ = c.print(10, 0, if (on_board) "— the board · every repo" else "— home · the plan", .{ .fg = s.dim, .bg = s.raised }, 40);
+            _ = c.print(10, 0, "— home · the plan", .{ .fg = s.dim, .bg = s.raised }, 40);
             const clock = "05:00  ─ ▫ ✕ ";
             _ = c.print(c.w - text_mod.cells(clock), 0, clock, .{ .fg = s.dim, .bg = s.raised }, 20);
             var x: usize = 2;
-            for ([_][]const u8{ "home", "board", "backlog" }, 0..) |tab, i| {
-                const lit = (i == 0 and !on_board) or (i == 1 and on_board);
+            for ([_][]const u8{ "home", "backlog" }, 0..) |tab, i| {
+                const lit = i == 0;
                 const word = sc.fmt("  {s}  ", .{tab});
                 const n = text_mod.cells(word);
                 c.fill(x, 1, n, 1, if (lit) s.panel else s.tile);
@@ -773,8 +772,8 @@ fn titleBar(sc: *Scene, screen: Screen) void {
         .neon => {
             _ = c.print(1, 0, "arena", .{ .fg = s.accent, .bold = true }, 5);
             var x: usize = 8;
-            for ([_][]const u8{ "home", "board", "backlog" }, 0..) |tab, i| {
-                const lit = (i == 0 and !on_board) or (i == 1 and on_board);
+            for ([_][]const u8{ "home", "backlog" }, 0..) |tab, i| {
+                const lit = i == 0;
                 x += if (lit) sc.chip(x, 0, tab, s.text, true) + 1 else c.print(x + 1, 0, tab, .{ .fg = s.dim }, 10) + 3;
             }
             var rx: usize = c.w - 1;
@@ -808,7 +807,7 @@ fn rail(sc: *Scene, screen: Screen) void {
     // home, lit
     const home_bg = if (s.dir == .workbench) s.raised else s.accent;
     c.fill(1, y0 + 1, l.rail - 2, 1, home_bg);
-    _ = c.print(2, y0 + 1, if (screen == .board or screen == .popup) " \u{f0db} " else " \u{f015} ", .{ .fg = if (s.dir == .workbench) s.accent else s.on_accent, .bg = home_bg, .bold = true }, 3);
+    _ = c.print(2, y0 + 1, " \u{f015} ", .{ .fg = if (s.dir == .workbench) s.accent else s.on_accent, .bg = home_bg, .bold = true }, 3);
     var y = y0 + 3;
     const Ses = struct { []const u8, []const u8, bool };
     const with_board = [_]Ses{
@@ -844,8 +843,7 @@ fn footBar(sc: *Scene, screen: Screen) void {
     const c = sc.c;
     const y = c.h - 1;
     const keys: []const [2][]const u8 = switch (screen) {
-        .home => &.{ .{ "⏎", "go" }, .{ "space", "open" }, .{ "j k", "pick" }, .{ "J K", "reorder next" }, .{ "B", "board" }, .{ "o", "orch" }, .{ "?", "keys" } },
-        .board => &.{ .{ "⏎", "go" }, .{ "space", "open" }, .{ "G", "give" }, .{ "e", "edit" }, .{ "p", "priority" }, .{ "/", "find" }, .{ "b", "home" }, .{ "?", "keys" } },
+        .home => &.{ .{ "⏎", "go" }, .{ "space", "open" }, .{ "j k", "pick" }, .{ "J K", "reorder next" }, .{ "o", "orch" }, .{ "?", "keys" } },
         .popup => &.{ .{ "1-3", "answer" }, .{ "⏎", "go to its Claude" }, .{ "G", "give" }, .{ "e", "edit" }, .{ "j k", "scroll" }, .{ "q", "close" } },
         .orch => &.{ .{ "1-3", "answer" }, .{ "c", "in words" }, .{ "⏎", "go" }, .{ "x", "no" }, .{ "j k", "pick" }, .{ "i", "tell it" }, .{ "h", "back to the plan" } },
         .alone => &.{ .{ "⏎", "go" }, .{ "1-3", "answer" }, .{ "space", "open" }, .{ "j k", "pick" }, .{ "] [", "next needing you" }, .{ "z", "fold" }, .{ "o", "overview" }, .{ "?", "keys" } },
@@ -1130,106 +1128,14 @@ fn home(sc: *Scene, focused: bool) void {
     _ = c.print(x0 + W - 12, sy + 1, "⏎ recent", .{ .fg = s.dim }, 12);
 }
 
-// ---- the board ----
-
-const board_pick: u32 = 760;
-
-fn boardView(sc: *Scene, focused: bool) void {
-    const s = sc.skin;
-    const c = sc.c;
-    const l: Layout = .{};
-    const x0 = l.mainX() + 1;
-    const W = l.mainW(c.w) - 1;
-    var y = l.top + 1;
-
-    // epics, as slim bars along the top
-    const plan = sc.board.plan().?;
-    var ex = x0;
-    const ew = (W - 3 * 2) / plan.goals.len;
-    for (plan.goals) |g| {
-        const repo = if (sc.card(g.epic)) |cd| cd.repo orelse "" else "";
-        _ = c.print(ex, y, sc.fmt("#{d} {s}", .{ g.epic, g.title }), .{ .fg = s.dim }, ew - 2);
-        _ = c.print(ex, y, sc.fmt("#{d}", .{g.epic}), .{ .fg = s.repoInk(repo), .bold = true }, 5);
-        sc.bar(ex, y + 1, ew - 10, g.landed, g.total, s.repoInk(repo));
-        _ = c.print(ex + ew - 9, y + 1, sc.fmt("{d}/{d}", .{ g.landed, g.total }), .{ .fg = s.text }, 7);
-        ex += ew + 2;
-    }
-    y += 3;
-
-    // the columns
-    const cols = [_]struct { tickets.Status, []const u8, usize }{
-        .{ .todo, "todo", 40 },
-        .{ .doing, "doing", 33 },
-        .{ .review, "review", 27 },
-    };
-    const strip_h: usize = 3;
-    const ch = c.h - y - l.foot - strip_h - 1;
-    var cx = x0;
-    for (cols, 0..) |col, ci| {
-        const cw = if (ci == cols.len - 1) x0 + W - cx else W * col[2] / 100;
-        var list: [64]*const Card = undefined;
-        const all = sc.board.column(col[0], null, "", &list);
-        var n: usize = 0;
-        for (list[0..@min(all, list.len)]) |cd| {
-            if (!std.mem.eql(u8, cd.kind, "epic")) {
-                list[n] = cd;
-                n += 1;
-            }
-        }
-        var cy = sc.panel(cx, y, cw - 2, ch, col[1], n, focused and ci == 1);
-        const add = if (col[0] == .todo) "+ new" else "";
-        if (add.len > 0) _ = c.print(cx + cw - 10, y, add, .{ .fg = if (s.dir == .phosphor) s.text else s.dim, .bg = c.bgAt(cx + cw - 10, y) }, 6);
-        for (repo_names) |repo| {
-            var k: usize = 0;
-            for (list[0..n]) |cd| k += @intFromBool(std.mem.eql(u8, cd.repo orelse "", repo));
-            if (k == 0) continue;
-            if (cy + 2 >= y + ch) break;
-            // a repo's group heading
-            const ink = s.repoInk(repo);
-            const hn = c.print(cx + 1, cy, sc.fmt("{s} {s}", .{ repo_glyphs[repoIndex(repo)], repo }), .{ .fg = ink, .bold = true }, 20);
-            for (cx + 2 + hn..cx + cw - 7) |xx| c.put(xx, cy, '┄', .{ .fg = s.rule });
-            _ = c.print(cx + cw - 6, cy, sc.fmt("{d}", .{k}), .{ .fg = s.dim }, 3);
-            cy += 1;
-            for (list[0..n]) |cd| {
-                if (!std.mem.eql(u8, cd.repo orelse "", repo)) continue;
-                if (cy + 5 >= y + ch) {
-                    _ = c.print(cx + 2, cy, "↓ more", .{ .fg = s.dim }, 8);
-                    cy = y + ch;
-                    break;
-                }
-                const picked = cd.id == board_pick;
-                cy += sc.cardTile(cx + 1, cy, cw - 5, cd, picked, focused) + 1;
-            }
-        }
-        cx += cw;
-    }
-
-    // recent: a thin timeline strip of the last five
-    const sy = c.h - l.foot - strip_h - 1;
-    var list: [64]*const Card = undefined;
-    const done = sc.board.column(.done, null, "", &list);
-    for (x0..x0 + W) |xx| c.put(xx, sy + 1, '━', .{ .fg = s.rule });
-    _ = c.print(x0, sy, "recent", .{ .fg = s.text, .bold = true }, 7);
-    _ = sc.badge(x0 + 7, sy, done, s.dim);
-    var tx = x0 + 12;
-    const step = (W - 14) / 5;
-    for (list[0..@min(5, done)]) |cd| {
-        const repo = cd.repo orelse "";
-        const landed = cd.stage != null;
-        c.put(tx, sy + 1, if (landed) '◆' else '◇', .{ .fg = if (landed) s.landed else s.dim, .bg = c.bgAt(tx, sy + 1) });
-        _ = c.print(tx + 2, sy + 1, sc.fmt(" {s} ", .{sc.ago(cd.closed_at)}), .{ .fg = s.dim, .bg = c.bgAt(tx + 2, sy + 1) }, 6);
-        const lw = sc.c.print(tx, sy + 2, sc.fmt("#{d} ", .{cd.id}), .{ .fg = s.repoInk(repo), .bold = true }, 6);
-        _ = c.print(tx + lw, sy + 2, cd.title, .{ .fg = s.text }, step - lw - 2);
-        tx += step;
-    }
-}
+const popup_pick: u32 = 760;
 
 // ---- a card, whole ----
 
 fn popup(sc: *Scene) void {
     const s = sc.skin;
     const c = sc.c;
-    const card = sc.card(board_pick).?;
+    const card = sc.card(popup_pick).?;
     const w: usize = 92;
     const h: usize = 31;
     const x = (c.w - w) / 2;
@@ -1531,7 +1437,7 @@ fn peekColumn(sc: *Scene) void {
 pub fn draw(c: *Canvas, board: *const tickets.Board, p: Palette, dir: Direction, screen: Screen) void {
     var sc: Scene = .{ .board = board, .skin = Skin.of(dir, p), .c = c, .now = tickets.epochOf(now_at).? };
     c.fill(0, 0, c.w, c.h, sc.skin.ground);
-    if (screen != .alone) titleBar(&sc, screen);
+    if (screen != .alone) titleBar(&sc);
     rail(&sc, screen);
     switch (screen) {
         .home => {
@@ -1542,17 +1448,13 @@ pub fn draw(c: *Canvas, board: *const tickets.Board, p: Palette, dir: Direction,
             home(&sc, false);
             column(&sc, true, 0);
         },
-        .board => {
-            boardView(&sc, true);
-            column(&sc, false, 0);
-        },
         .alone => {
             aloneHome(&sc);
             aloneTitle(&sc);
             peekColumn(&sc);
         },
         .popup => {
-            boardView(&sc, true);
+            home(&sc, true);
             column(&sc, false, 0);
             footBar(&sc, screen);
             c.shade(sc.skin.ground, 0.55);
