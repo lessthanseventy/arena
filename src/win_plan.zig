@@ -3,6 +3,22 @@ const app_mod = @import("app.zig");
 const sheets = @import("plan.zig");
 const keys = @import("keys.zig");
 const draw = @import("draw.zig");
+const color = @import("color.zig");
+const theme = @import("theme.zig");
+const bench = @import("parts.zig");
+const tickets = @import("board.zig");
+const grab_mod = @import("grab.zig");
+const win_landed = @import("win_landed.zig");
+const win_driving = @import("win_driving.zig");
+const win_now = @import("win_now.zig");
+const win_move = @import("win_move.zig");
+const win_next = @import("win_next.zig");
+const win_goals = @import("win_goals.zig");
+const win_unplanned = @import("win_unplanned.zig");
+const Writer = std.Io.Writer;
+const clip = draw.clip;
+const repoHue = draw.repoHue;
+const repeat = draw.repeat;
 const App = app_mod.App;
 const CardAction = App.CardAction;
 const cellCount = draw.cellCount;
@@ -91,5 +107,107 @@ pub fn planButtonClick(app: *App, sheet: *const sheets.Sheet, at: usize, m: keys
         const owner = sheet.rows[at - 1 - @as(usize, @intFromBool(sheet.rows[at - 1].kind == .why or sheet.rows[at - 1].kind == .held))];
         app.home.?.plan_pick = owner.pick orelse return;
         return app.act(button.action);
+    }
+}
+
+pub fn windowCount(b: *const tickets.Board, given: *const tickets.Plan, win: sheets.Window) ?usize {
+    return switch (win) {
+        .driving => null,
+        .move => b.needsYou().len,
+        .now => given.now.len,
+        .next => given.next.len,
+        .goals => given.goals.len - @intFromBool(for (given.goals) |goal| {
+            if (given.driving == goal.epic) break true;
+        } else false),
+        .unplanned => given.not_planned.count,
+        .landed => given.landed_today.count,
+    };
+}
+
+/// `win` in its slot (or the modal, when it is the one shown whole): its frame, fold mark and
+/// the rows from the one that keeps the pick in view. `lit` is whether the pick is drawn.
+pub fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, view: app_mod.HomeView, win: sheets.Window, lit: bool) !void {
+    const rect = app.planRect(win);
+    const whole = lit and view.whole == win;
+    if (rect.h <= sheets.window_chrome or rect.w < 16) return;
+    const given = app.board.?.plan().?;
+    const ww: usize = rect.w - 1;
+    const body: usize = rect.h - sheets.window_chrome;
+    const mine = sheet.span(win);
+    const picked_at = if (lit) sheet.rowOf(view.plan_pick) else null;
+    const focused = !app.columnFocused() and (if (picked_at) |at| sheet.rows[at].win == win else false);
+    try bench.window(w, r, rect.x, rect.y, ww, rect.h - 1, if (win == .driving) sheets.drivingTitle(given, &app.board.?) else win.title(), windowCount(&app.board.?, given, win), focused);
+    const bar = if (focused) r.raised else r.tile;
+    if (whole) {
+        try bench.say(w, rect.x + ww - 10, rect.y, "q close", r.dim, bar, false);
+    } else try bench.say(w, rect.x + ww - 3, rect.y, if (app.plan_shut.contains(win)) "▸" else "▾", r.dim, bar, false);
+    if (win == .unplanned and !whole) try win_unplanned.frame(app, w, r);
+    if (win == .goals and !whole) try win_goals.frame(app, w, r);
+    if (win == .driving) try win_driving.frame(app, w, r, rect, ww, bar);
+    if (lit) {
+        const text_area: grab_mod.Area = .{ .x = rect.x, .y = rect.y + 1, .w = @intCast(ww), .h = @intCast(body) };
+        if (whole) app.grab.window(text_area) else app.grab.pane(text_area);
+        bench.tap = .{ .grab = &app.grab, .gpa = app.gpa };
+    }
+    defer bench.tap = null;
+    for (0..body) |line| {
+        const at = if (lit) planRowOnLine(app, sheet, win, body, line) else line;
+        if (at >= mine.len) break;
+        try benchPlanRow(app, w, r, sheet, mine.start + at, rect.y + 1 + @as(u16, @intCast(line)), rect.x, ww, lit);
+    }
+}
+
+/// The row at `at` of the plan, drawn on row `y`, in a window one cell in from the board's left
+/// edge and short of its right by the shadow.
+pub fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, at: usize, y: u16, x0: usize, ww: usize, lit: bool) !void {
+    const b = &app.board.?;
+    const given = b.plan().?;
+    const row = sheet.rows[at];
+    const picked = lit and app.planRowLit(row);
+    const mark = if (app.columnFocused()) r.dim else r.accent;
+    const bg = if (picked) r.raised else r.panel;
+    const room = ww - 4;
+    switch (row.kind) {
+        .blank => {},
+        .buttons => {
+            try bench.fill(w, x0, y, ww, r.panel);
+            var buttons: [12]PlanButton = undefined;
+            for (planButtons(app, sheet, at, &buttons), 0..) |button, i| {
+                _ = try bench.button(w, r, button.x, button.y, button.key, button.word, i == 0, null);
+            }
+        },
+        .held => {
+            const item = given.now[row.item];
+            try bench.fill(w, x0, y, ww, bg);
+            try bench.say(w, x0 + 1, y, "▌", repoHue(r, item.repo).hue, bg, false);
+            const pane = item.holder() orelse return;
+            const there = app.workspace(pane) orelse return;
+            var buf: [96]u8 = undefined;
+            const label = std.fmt.bufPrint(&buf, "{s}:{d} · %{d}", .{ there.session, there.window, pane }) catch return;
+            _ = try bench.chipOn(w, x0 + 4, y, clip(label, ww -| 8), repoHue(r, there.repo).hue, r.text, false, r.well);
+        },
+        .head => {
+            try bench.fill(w, x0, y, ww, r.panel);
+            var buf: [48]u8 = undefined;
+            const label = std.fmt.bufPrint(&buf, "── {s} {d} ", .{ row.text, row.count }) catch "";
+            try bench.say(w, x0 + 1, y, label, r.dim, r.panel, false);
+            try repeat(w, x0 + 1 + cellCount(label), y, "─", ww -| 2 -| cellCount(label), r.dim, r.panel);
+        },
+        .summary, .note => {
+            try bench.fill(w, x0, y, ww, bg);
+            if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
+            try bench.say(w, x0 + 2, y, clip(row.text, room), r.dim, bg, false);
+        },
+        .need, .need_card => try win_move.paint(app, w, r, sheet, at, y, x0, ww, lit),
+        .focal, .drove => try win_driving.paint(app, w, r, sheet, at, y, x0, ww, lit),
+        .now, .other => try win_now.paint(app, w, r, sheet, at, y, x0, ww, lit),
+        .next => try win_next.paint(app, w, r, sheet, at, y, x0, ww, lit),
+        .idea, .ideas_more, .card_top, .goal, .goal_bar, .goal_next, .goal_block => try win_goals.paint(app, w, r, sheet, at, y, x0, ww, lit),
+        .why, .more, .goals_more => {
+            try bench.fill(w, x0, y, ww, r.panel);
+            try bench.say(w, x0 + 7, y, clip(std.mem.trim(u8, row.text, " "), room -| 5), r.dim, r.panel, false);
+        },
+        .unplanned, .chips, .todo, .backlog => try win_unplanned.paint(app, w, r, sheet, at, y, x0, ww, lit),
+        .landed => try win_landed.paint(app, w, r, sheet, at, y, x0, ww, lit),
     }
 }

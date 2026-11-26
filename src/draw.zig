@@ -1789,7 +1789,7 @@ fn goalBox(app: *const App, w: *Writer) !void {
 
 var goal_buf: [64]u8 = undefined;
 
-fn repeat(w: *Writer, x: usize, y: usize, cell_glyph: []const u8, n: usize, fg: color.RGB, bg: color.RGB) !void {
+pub fn repeat(w: *Writer, x: usize, y: usize, cell_glyph: []const u8, n: usize, fg: color.RGB, bg: color.RGB) !void {
     var buf: [1024]u8 = undefined;
     var out: Writer = .fixed(&buf);
     for (0..n) |_| out.writeAll(cell_glyph) catch break;
@@ -1803,7 +1803,7 @@ fn benchPlan(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
     var y: u16 = 2;
     while (y < rows_end) : (y += 1) try bench.fill(w, 0, y, app.boardW(), r.ground);
     if (view.whole == null) {
-        for (std.enums.values(sheets.Window)) |win| try benchWindow(app, w, r, sheet, view, win, true);
+        for (std.enums.values(sheets.Window)) |win| try win_plan.benchWindow(app, w, r, sheet, view, win, true);
         return;
     }
     var behind: sheets.Sheet = undefined;
@@ -1811,55 +1811,8 @@ fn benchPlan(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
     const b = &app.board.?;
     behind.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.halfHome(), true, app.plan_shut, app.planSee(&repos));
     app.narrowPlan(&behind);
-    for (std.enums.values(sheets.Window)) |win| try benchWindow(app, w, r, &behind, view, win, false);
-    try benchWindow(app, w, r, sheet, view, view.whole.?, true);
-}
-
-fn windowCount(b: *const tickets.Board, given: *const tickets.Plan, win: sheets.Window) ?usize {
-    return switch (win) {
-        .driving => null,
-        .move => b.needsYou().len,
-        .now => given.now.len,
-        .next => given.next.len,
-        .goals => given.goals.len - @intFromBool(for (given.goals) |goal| {
-            if (given.driving == goal.epic) break true;
-        } else false),
-        .unplanned => given.not_planned.count,
-        .landed => given.landed_today.count,
-    };
-}
-
-/// `win` in its slot (or the modal, when it is the one shown whole): its frame, fold mark and
-/// the rows from the one that keeps the pick in view. `lit` is whether the pick is drawn.
-fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, view: app_mod.HomeView, win: sheets.Window, lit: bool) !void {
-    const rect = app.planRect(win);
-    const whole = lit and view.whole == win;
-    if (rect.h <= sheets.window_chrome or rect.w < 16) return;
-    const given = app.board.?.plan().?;
-    const ww: usize = rect.w - 1;
-    const body: usize = rect.h - sheets.window_chrome;
-    const mine = sheet.span(win);
-    const picked_at = if (lit) sheet.rowOf(view.plan_pick) else null;
-    const focused = !app.columnFocused() and (if (picked_at) |at| sheet.rows[at].win == win else false);
-    try bench.window(w, r, rect.x, rect.y, ww, rect.h - 1, if (win == .driving) sheets.drivingTitle(given, &app.board.?) else win.title(), windowCount(&app.board.?, given, win), focused);
-    const bar = if (focused) r.raised else r.tile;
-    if (whole) {
-        try bench.say(w, rect.x + ww - 10, rect.y, "q close", r.dim, bar, false);
-    } else try bench.say(w, rect.x + ww - 3, rect.y, if (app.plan_shut.contains(win)) "▸" else "▾", r.dim, bar, false);
-    if (win == .unplanned and !whole) try win_unplanned.frame(app, w, r);
-    if (win == .goals and !whole) try win_goals.frame(app, w, r);
-    if (win == .driving) try win_driving.frame(app, w, r, rect, ww, bar);
-    if (lit) {
-        const text_area: grab_mod.Area = .{ .x = rect.x, .y = rect.y + 1, .w = @intCast(ww), .h = @intCast(body) };
-        if (whole) app.grab.window(text_area) else app.grab.pane(text_area);
-        bench.tap = .{ .grab = &app.grab, .gpa = app.gpa };
-    }
-    defer bench.tap = null;
-    for (0..body) |line| {
-        const at = if (lit) win_plan.planRowOnLine(app, sheet, win, body, line) else line;
-        if (at >= mine.len) break;
-        try benchPlanRow(app, w, r, sheet, mine.start + at, rect.y + 1 + @as(u16, @intCast(line)), rect.x, ww, lit);
-    }
+    for (std.enums.values(sheets.Window)) |win| try win_plan.benchWindow(app, w, r, &behind, view, win, false);
+    try win_plan.benchWindow(app, w, r, sheet, view, view.whole.?, true);
 }
 
 pub fn stepHue(r: theme.Roles, state: []const u8) struct { word: []const u8, lead: color.RGB, filled: bool } {
@@ -1885,61 +1838,6 @@ pub fn stepChip(w: *Writer, r: theme.Roles, x: usize, y: usize, step: tickets.St
     var buf: [48]u8 = undefined;
     const label = std.fmt.bufPrint(&buf, "#{d} {s}", .{ step.ticket, look.word }) catch "";
     return bench.chipInk(w, r, x, y, label, look.lead, if (look.filled) r.on_accent else r.text, look.filled);
-}
-
-/// The row at `at` of the plan, drawn on row `y`, in a window one cell in from the board's left
-/// edge and short of its right by the shadow.
-fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, at: usize, y: u16, x0: usize, ww: usize, lit: bool) !void {
-    const b = &app.board.?;
-    const given = b.plan().?;
-    const row = sheet.rows[at];
-    const picked = lit and app.planRowLit(row);
-    const mark = if (app.columnFocused()) r.dim else r.accent;
-    const bg = if (picked) r.raised else r.panel;
-    const room = ww - 4;
-    switch (row.kind) {
-        .blank => {},
-        .buttons => {
-            try bench.fill(w, x0, y, ww, r.panel);
-            var buttons: [12]win_plan.PlanButton = undefined;
-            for (win_plan.planButtons(app, sheet, at, &buttons), 0..) |button, i| {
-                _ = try bench.button(w, r, button.x, button.y, button.key, button.word, i == 0, null);
-            }
-        },
-        .held => {
-            const item = given.now[row.item];
-            try bench.fill(w, x0, y, ww, bg);
-            try bench.say(w, x0 + 1, y, "▌", repoHue(r, item.repo).hue, bg, false);
-            const pane = item.holder() orelse return;
-            const there = app.workspace(pane) orelse return;
-            var buf: [96]u8 = undefined;
-            const label = std.fmt.bufPrint(&buf, "{s}:{d} · %{d}", .{ there.session, there.window, pane }) catch return;
-            _ = try bench.chipOn(w, x0 + 4, y, clip(label, ww -| 8), repoHue(r, there.repo).hue, r.text, false, r.well);
-        },
-        .head => {
-            try bench.fill(w, x0, y, ww, r.panel);
-            var buf: [48]u8 = undefined;
-            const label = std.fmt.bufPrint(&buf, "── {s} {d} ", .{ row.text, row.count }) catch "";
-            try bench.say(w, x0 + 1, y, label, r.dim, r.panel, false);
-            try repeat(w, x0 + 1 + cellCount(label), y, "─", ww -| 2 -| cellCount(label), r.dim, r.panel);
-        },
-        .summary, .note => {
-            try bench.fill(w, x0, y, ww, bg);
-            if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
-            try bench.say(w, x0 + 2, y, clip(row.text, room), r.dim, bg, false);
-        },
-        .need, .need_card => try win_move.paint(app, w, r, sheet, at, y, x0, ww, lit),
-        .focal, .drove => try win_driving.paint(app, w, r, sheet, at, y, x0, ww, lit),
-        .now, .other => try win_now.paint(app, w, r, sheet, at, y, x0, ww, lit),
-        .next => try win_next.paint(app, w, r, sheet, at, y, x0, ww, lit),
-        .idea, .ideas_more, .card_top, .goal, .goal_bar, .goal_next, .goal_block => try win_goals.paint(app, w, r, sheet, at, y, x0, ww, lit),
-        .why, .more, .goals_more => {
-            try bench.fill(w, x0, y, ww, r.panel);
-            try bench.say(w, x0 + 7, y, clip(std.mem.trim(u8, row.text, " "), room -| 5), r.dim, r.panel, false);
-        },
-        .unplanned, .chips, .todo, .backlog => try win_unplanned.paint(app, w, r, sheet, at, y, x0, ww, lit),
-        .landed => try win_landed.paint(app, w, r, sheet, at, y, x0, ww, lit),
-    }
 }
 
 /// A goal whose steps are in more than one repo: a chip for each, right-aligned to `right`, with
@@ -3549,16 +3447,16 @@ test "a Your move item ends its row in its first action's key, ticket or none, p
     try std.testing.expect(app.planSheet(&sheet));
     var buf: [65536]u8 = undefined;
     var out: Writer = .fixed(&buf);
-    try benchPlanRow(&app, &out, bench.roles(), &sheet, 0, 0, rect.x, rect.w - 1, false);
+    try win_plan.benchPlanRow(&app, &out, bench.roles(), &sheet, 0, 0, rect.x, rect.w - 1, false);
     try std.testing.expect(std.mem.indexOf(u8, out.buffered(), "⏎ push") != null);
     var picked_out: Writer = .fixed(&buf);
-    try benchPlanRow(&app, &picked_out, bench.roles(), &sheet, 1, 0, rect.x, rect.w - 1, true);
+    try win_plan.benchPlanRow(&app, &picked_out, bench.roles(), &sheet, 1, 0, rect.x, rect.w - 1, true);
     try std.testing.expect(std.mem.indexOf(u8, picked_out.buffered(), "⏎ push") != null);
 
     app.plan_open.set(.move, 7);
     try std.testing.expect(app.planSheet(&sheet));
     var open_out: Writer = .fixed(&buf);
-    try benchPlanRow(&app, &open_out, bench.roles(), &sheet, 1, 0, rect.x, rect.w - 1, true);
+    try win_plan.benchPlanRow(&app, &open_out, bench.roles(), &sheet, 1, 0, rect.x, rect.w - 1, true);
     try std.testing.expect(std.mem.indexOf(u8, open_out.buffered(), "⏎") == null);
 }
 
@@ -3593,7 +3491,7 @@ test "Your move's open check wraps over as many rows as it needs, its buttons on
         if (row.kind != .need_card or row.part < 3) continue;
         first = first orelse y;
         last = y;
-        try benchPlanRow(&app, &out, bench.roles(), &sheet, at, y, rect.x, rect.w - 1, false);
+        try win_plan.benchPlanRow(&app, &out, bench.roles(), &sheet, at, y, rect.x, rect.w - 1, false);
         y += 1;
     }
     const drawn = out.buffered();
@@ -3698,7 +3596,7 @@ test "every Plan window has its ◆ title, its count and its ▾ in the same pla
         try eq(@as(u21, '◆'), g.cps[slot.y][slot.x + 1]);
         try eq(slot.x + 3, g.find(slot.y, slot.x, slot.x + ww, named).?);
         try eq(@as(u21, '▾'), g.cps[slot.y][slot.x + ww - 3]);
-        if (windowCount(&shot.app.board.?, shot.app.board.?.plan().?, win) != null) {
+        if (win_plan.windowCount(&shot.app.board.?, shot.app.board.?.plan().?, win) != null) {
             try eq(slot.x + 4 + cellCount(named), g.find(slot.y, slot.x, slot.x + ww, "▎").?);
         }
     }
