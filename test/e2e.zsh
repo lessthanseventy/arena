@@ -1435,24 +1435,33 @@ check "+ in not planned opens the new ticket window" await last 'new'
 normal
 key b
 cp $tmp/run/babylon/board.json $tmp/board.foot
-print -r -- "${$(<$tmp/board.foot)%\}}"',"needs_you":[{"id":"try:934","kind":"try","ticket":934,"repo":"arena","text":"#934 arena  Foot","since":"2026-11-24T10:00:00Z","machine":"gate ✓","steps":['\
-'{"n":1,"text":"In a live arena with a menard Claude and your own Claude on no ticket, look at in flight foot: the row says which of the two is which, and nothing else wanders","result":null,"actions":[{"key":"y","label":"✓","argv":["babylon","tried","934","1","ok"]},{"key":"n","label":"✗","argv":["babylon","tried","934","1","no"],"needs":"words"}]}],'\
-'"actions":[]}]}' >$tmp/run/babylon/board.json
+foot_json=$(<$tmp/board.foot)
+foot_json=${foot_json/'{"tickets":['/'{"tickets":[{"id":934,"repo":"arena","title":"Foot","kind":"ticket","status":"try","stage":"landed","priority":"med","blocked_by":[],"checks":[{"n":1,"text":"the row says which of the two is which","result":null}]},'}
+print -r -- "${foot_json%\}}"',"needs_you":[{"id":"try:934","kind":"try","ticket":934,"repo":"arena","text":"#934 arena  Foot","since":"2026-11-24T10:00:00Z","machine":"gate ✓","steps":['\
+'{"n":1,"text":"the row says which of the two is which","result":null,"actions":[{"key":"y","label":"✓","argv":["babylon","tried","934","1","ok"]},{"key":"n","label":"✗","argv":["babylon","tried","934","1","no"],"needs":"words"}]}],'\
+'"actions":[{"key":"x","label":"close untried","argv":["babylon","tried","934","skip"]}]},'\
+'{"id":"push:arena:abc:0","kind":"push","ticket":null,"repo":"arena","text":"▲ arena: 2 unpushed","actions":[{"key":"⏎","label":"push","argv":["babylon","push","arena"]}]}]}' >$tmp/run/babylon/board.json
 outer resize-window -t o -x 121 -y 40
 click ${(z)$(spot '#934 arena')}
-check "a check opened in Your move is wrapped whole, its buttons on the row under it" await shows 'nothing else wanders'
+check "a click on a Your move item opens its card in the middle column" await shows 'q close'
+check "with its check and its y" shows 'y ✓ it works'
+check "while every Your move row stays, the open one marked" shows '▸▲ #934 arena'
+see '▲ arena: 2 unpushed'
+check "and no close untried anywhere" gone 'close untried'
 : >$tmp/babylon
-click ${(z)$(spot 'y ✓')}
-check "a click on its y answers it, through babylon" await last 'tried 934 1 ok'
-: >$tmp/babylon
-click ${(z)$(spot 'n ✗')}
-check "and a click on its n asks for the words" see 'What went wrong\?'
+key y
+check "y in the card answers its check, through babylon" await last 'tried 934 1 ok'
+key n
+check "and n asks for the words" see 'What went wrong\?'
 key Escape
 check "and Escape puts the words away" gone 'What went wrong\?'
 key -l ' '
-see 'q close'
-key Escape
-check "space on the open row gives its card up for the modal" gone 'nothing else wanders'
+check "space closes the card" gone 'q close'
+check "the item's row still there" shows '#934 arena'
+click ${(z)$(spot '#934 arena')}
+check "and a click opens it again" await shows 'q close'
+click ${(z)$(spot '#934 arena')}
+check "and the same click closes it" gone 'q close'
 cp $tmp/board.foot $tmp/run/babylon/board.json
 gone '#934'
 outer resize-window -t o -x 121 -y 24

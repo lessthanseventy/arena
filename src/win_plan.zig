@@ -197,7 +197,7 @@ pub fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.
             if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
             try bench.say(w, x0 + 2, y, clip(row.text, room), r.dim, bg, false);
         },
-        .need, .need_card => try win_move.paint(app, w, r, sheet, at, y, x0, ww, lit),
+        .need => try win_move.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .focal, .drove => try win_driving.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .now, .other => try win_now.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .next => try win_next.paint(app, w, r, sheet, at, y, x0, ww, lit),

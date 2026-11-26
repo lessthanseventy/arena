@@ -1676,7 +1676,7 @@ pub const App = struct {
         const view = app.home orelse return false;
         if (!app.columnFocused()) return if (row.pick) |p| p == view.plan_pick else false;
         const id = app.lit_ticket orelse return false;
-        return row.ticket == id and (row.kind == .now or row.kind == .next);
+        return row.ticket == id and (row.kind == .now or row.kind == .next or row.kind == .need);
     }
 
     /// The plan's pick put on the row of ticket `id` in now or next, when the plan is shown.
@@ -3341,7 +3341,6 @@ pub const App = struct {
         sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.halfHome(), app.workbench(), app.planSee(&repos));
         app.narrowPlan(sheet);
         if (app.workbench()) {
-            sheet.withNeedCards(app.plan_open, b, app.planRect(.move).w -| 1);
             sheet.withWhyOnPick(app);
             sheet.withButtons(app.plan_open);
             sheet.withHeld(b.plan().?, KnownPanes{ .app = app });
@@ -3485,14 +3484,7 @@ pub const App = struct {
         if (sheet.rows[at].win != win) return pin;
         const span = sheet.span(win);
         if (at - span.start < pin) return pin;
-        var below = at + 1;
-        while (below < sheet.n and sheet.rows[below].kind == .need_card) below += 1;
-        const card = below - at - 1;
-        const room = body -| pin;
-        const place = at - span.start - pin;
-        // a card longer than the body shows its foot, the buttons, over its head
-        if (card > 2 and card + 1 > room) return pin + sheets.windowTop(place + card, span.len -| pin, room, 0);
-        return pin + sheets.windowTop(place, span.len -| pin, room, @max(2, card));
+        return pin + sheets.windowTop(at - span.start - pin, span.len -| pin, body -| pin, 2);
     }
 
     /// The rows a window keeps on its first lines whatever it scrolls to: not planned's chips.
@@ -3614,6 +3606,7 @@ pub const App = struct {
         for (keyed) |pair| if (std.mem.eql(u8, key, pair[0])) return app.act(pair[1]);
         if (is(key, &.{ "\r", " " })) {
             const row = sheet.picked(view.plan_pick) orelse return;
+            if (row.kind == .need) return win_move.open(app, row);
             if (is(key, &.{" "}) and opensInPlace(row)) {
                 const open = app.plan_open.get(row.win) == row.ticket;
                 try app.togglePlanOpen(row);
@@ -3674,7 +3667,6 @@ pub const App = struct {
             .chips, .todo, .unplanned => try win_unplanned.act(app, row),
             .goals_more => app.openWhole(.goals),
             .landed => try win_landed.act(app, row),
-            .need => try win_move.act(app, row),
             else => {},
         }
     }
@@ -3718,7 +3710,6 @@ pub const App = struct {
         const at = app.planRowAt(&sheet, m.x, m.y) orelse return;
         const row = sheet.rows[at];
         if (row.kind == .drove and row.part == 3) return win_driving.click(app, m);
-        if (row.kind == .need_card) return win_move.click(app, &sheet, at, m);
         if (row.kind == .buttons) return win_plan.planButtonClick(app, &sheet, at, m);
         if (row.kind == .held) return win_now.heldClick(app, row);
         const pick = row.pick orelse return;
@@ -3729,6 +3720,8 @@ pub const App = struct {
             win_unplanned.todoPress(app, row);
         } else if (row.kind == .next) {
             win_next.nextPress(app, &sheet, at);
+        } else if (row.kind == .need) {
+            try win_move.open(app, &row);
         } else if (opensInPlace(&row)) {
             try app.togglePlanOpen(&row);
         } else if (picked) try app.planAct(&row, "\r");
@@ -4499,7 +4492,7 @@ pub const App = struct {
     }
 
     /// What a modal button does when pressed.
-    pub const ModalAction = union(enum) { close, card: CardAction, option: u8, sub: u8, words, claude, whole_log, ticket, bump, withdraw, tried_ok, tried_no, copy_check, run_check };
+    pub const ModalAction = union(enum) { close, need: u8, card: CardAction, option: u8, sub: u8, words, claude, whole_log, ticket, bump, withdraw, tried_ok, tried_no, copy_check, run_check };
 
     /// A button of the modal frame, where it is drawn and clicked: 0-based. It reads ` key label `.
     pub const ModalButton = struct {
@@ -4533,12 +4526,23 @@ pub const App = struct {
     /// The frame of the modal open over the board, centred over it, when there is room for one.
     pub fn modalRect(app: *const App) ?ModalRect {
         const view = app.home orelse return null;
-        if (view.detail == null) return null;
+        const id = view.detail orelse return null;
         const width = detailWidth(app.boardW());
-        const top: u16 = first_line;
+        const top: u16 = if (app.needsYouOn(id)) below: {
+            const move = app.planSlot(.move);
+            break :below move.y + move.h;
+        } else first_line;
         const bottom = app.view_h -| 2;
         if (bottom < top + 3 or width.inner == 0) return null;
         return .{ .x = (app.boardW() -| width.box) / 2, .y = top, .w = width.box, .h = bottom - top + 1 };
+    }
+
+    /// Whether Plan's Your move is shown with an item of ticket `id`: its card opens under it, so
+    /// every item stays in sight.
+    fn needsYouOn(app: *const App, id: u32) bool {
+        if (!app.workbench() or !app.planShown()) return false;
+        for (app.board.?.needsYou()) |need| if (need.ticket == id) return true;
+        return false;
     }
 
     /// What a card's modal says of it above its body, a line each.
@@ -4760,6 +4764,17 @@ pub const App = struct {
                     x += button.width() + 1;
                 }
             }
+            if (win_move.needOf(app, card.id)) |at| for (app.board.?.needsYou()[at].actions, 0..) |action, i| {
+                const taken = for (out[0..n]) |had| {
+                    if (std.mem.eql(u8, had.key, action.key)) break true;
+                } else false;
+                if (taken) continue;
+                const button: ModalButton = .{ .action = .{ .need = @intCast(i) }, .key = action.key, .label = action.label, .x = x, .y = foot };
+                if (x + button.width() > right or n == out.len) break;
+                out[n] = button;
+                n += 1;
+                x += button.width() + 1;
+            };
         }
         const close: ModalButton = .{ .action = .close, .key = "q", .label = "close", .x = x, .y = foot };
         if (n < out.len and x + close.width() <= right) {
@@ -4825,6 +4840,7 @@ pub const App = struct {
                 view.detail = null;
                 app.checkCancel();
             },
+            .need => |i| try win_move.press(app, i),
             .run_check => {
                 const card = app.modalCard() orelse return;
                 const check = pickedCheck(card, view.check_pick) orelse return;
@@ -4943,8 +4959,10 @@ pub const App = struct {
         };
         if (app.askWords(card)) |w| if (is(key, &.{w.action.key})) return app.pressModal(.words);
         const claude_key = app.claudeKey(card);
-        const action: ModalAction = if (is(key, &.{"\r"})) .{ .card = .go } else if (is(key, &.{"G"})) .{ .card = .give } else if (is(key, &.{"H"})) .{ .card = .handoff } else if (is(key, &.{"e"})) .{ .card = .edit } else if (is(key, &.{"p"})) .{ .card = .priority } else if (is(key, &.{">"})) .{ .card = .close } else if (is(key, &.{"<"})) .{ .card = .reopen } else if (is(key, &.{claude_key}) and app.claudeOf(card) != null) .claude else return;
-        try app.pressModal(action);
+        const action: ?ModalAction = if (is(key, &.{"\r"})) .{ .card = .go } else if (is(key, &.{"G"})) .{ .card = .give } else if (is(key, &.{"H"})) .{ .card = .handoff } else if (is(key, &.{"e"})) .{ .card = .edit } else if (is(key, &.{"p"})) .{ .card = .priority } else if (is(key, &.{">"})) .{ .card = .close } else if (is(key, &.{"<"})) .{ .card = .reopen } else if (is(key, &.{claude_key}) and app.claudeOf(card) != null) .claude else null;
+        if (action) |pressed| return app.pressModal(pressed);
+        var buttons: [16]ModalButton = undefined;
+        for (app.modalButtons(&buttons)) |button| if (button.action == .need and is(key, &.{button.key})) return app.pressModal(button.action);
     }
 
     /// Rows the board's head takes: its title bar, then its tabs. The columns' top edge is the next, and their lines start under it.
@@ -5048,9 +5066,17 @@ pub const App = struct {
                 try app.planClick(m);
                 return true;
             }
+            const closed = open.detail;
             open.help = false;
             open.detail = null;
             open.giving = null;
+            // a click on another Your move item opens it in the closed one's place
+            if (closed) |id| {
+                var sheet: sheets.Sheet = undefined;
+                if (m.y >= 2 and app.planSheet(&sheet)) if (app.planRowAt(&sheet, m.x, m.y)) |at| {
+                    if (sheet.rows[at].kind == .need and sheet.rows[at].ticket != id) try app.planClick(m);
+                };
+            }
             return true;
         }
         try app.planClick(m);
@@ -7646,7 +7672,7 @@ test "⏎ on the picked Your move item runs its first action without opening it"
     defer app.board.?.deinit();
     app.home = .{ .focus = .plan };
     try app.planKey("\r");
-    try std.testing.expectEqual(@as(u32, 0), app.plan_open.get(.move));
+    try std.testing.expectEqual(@as(?u32, null), app.home.?.detail);
     var got: [1024]u8 = undefined;
     const len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'push' 'arena'") != null);
@@ -8572,7 +8598,7 @@ fn needsBoard(buf: []u8, n: usize) ![]const u8 {
     return w.buffered();
 }
 
-test "Your move is a fixed slot whatever it holds, the picked item opens to its card and closes the last, and ] goes to its first item" {
+test "Your move is a fixed slot whatever it holds, a row to each item, and ] goes to its first item" {
     const eq = std.testing.expectEqual;
     var height: ?u16 = null;
     for ([_]usize{ 0, 3, 8 }) |n| {
@@ -8593,18 +8619,94 @@ test "Your move is a fixed slot whatever it holds, the picked item opens to its 
         app.home.?.plan_pick = 5 % n;
         try app.planKey("]");
         try eq(@as(usize, 0), app.home.?.plan_pick);
-        try app.planKey(" ");
-        try eq(@as(u32, 100), app.plan_open.get(.move));
-        try app.planKey("j");
-        try app.planKey(" ");
-        try eq(@as(u32, 101), app.plan_open.get(.move));
         var sheet: sheets.Sheet = undefined;
         try std.testing.expect(app.planSheet(&sheet));
-        var cards: usize = 0;
-        for (sheet.rows[0..sheet.n]) |row| cards += @intFromBool(row.kind == .need_card);
-        try eq(@as(usize, 1), cards);
+        try eq(@as(usize, n), sheet.span(.move).len);
         try eq(@as(usize, n), sheet.pickRange(.move).?.n);
     }
+}
+
+const try_move_board =
+    \\{"tickets":[{"id":1105,"repo":"arena","title":"Your move: a picked item says its first key","status":"try","stage":"landed",
+    \\"checks":[{"n":1,"text":"it folds back","result":null},{"n":2,"text":"the pick stays","result":null}]}],
+    \\"needs_you":[
+    \\{"id":"try:1105","kind":"try","ticket":1105,"repo":"arena","text":"#1105 arena  to try","since":"2026-11-26T10:00:00Z","machine":"gate ✓",
+    \\ "steps":[{"n":1,"text":"it folds back","result":null,"actions":[{"key":"y","label":"✓","argv":["babylon","tried","1105","1","ok"]},
+    \\  {"key":"n","label":"✗","argv":["babylon","tried","1105","1","no"],"needs":"words"}]},
+    \\  {"n":2,"text":"the pick stays","result":null,"actions":[{"key":"y","label":"✓","argv":["babylon","tried","1105","2","ok"]},
+    \\  {"key":"n","label":"✗","argv":["babylon","tried","1105","2","no"],"needs":"words"}]}],
+    \\ "actions":[{"key":"x","label":"close untried","argv":["babylon","tried","1105","skip"]}]},
+    \\{"id":"push:arena:abc:0","kind":"push","ticket":null,"repo":"arena","text":"▲ arena: 2 unpushed",
+    \\ "actions":[{"key":"⏎","label":"push","argv":["babylon","push","arena"]}]}],
+    \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+;
+
+test "a to-try item in Your move opens in the middle column by click and by space, and closes and opens again, every row kept; y there answers check 1, and nothing closes it untried" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try tryApp(sent, try_move_board);
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.detail_asked.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    app.roles = @import("parts.zig").roles();
+    app.home.?.focus = .plan;
+    const view = &app.home.?;
+    const eq = std.testing.expectEqual;
+    var got: [4096]u8 = undefined;
+    var sheet: sheets.Sheet = undefined;
+    const rect = app.planSlot(.move);
+    const item: keys.Mouse = .{ .code = 0, .x = rect.x + 8, .y = rect.y + 1, .release = false };
+
+    // space on the item opens its card; the item's row and the one under it stay, the item marked open
+    try app.planKey(" ");
+    try eq(@as(?u32, 1105), view.detail);
+    try std.testing.expect(app.planSheet(&sheet));
+    try eq(@as(usize, 2), sheet.span(.move).len);
+    try std.testing.expect(win_move.isOpen(&app, sheet.rows[sheet.span(.move).start]));
+    try std.testing.expect(!win_move.isOpen(&app, sheet.rows[sheet.span(.move).start + 1]));
+
+    // the card has the checks and their y and n, and no close untried
+    var buttons: [16]App.ModalButton = undefined;
+    var keyed: usize = 0;
+    for (app.modalButtons(&buttons)) |button| {
+        try std.testing.expect(!std.mem.eql(u8, button.label, "close untried"));
+        keyed += @intFromBool(button.action == .tried_ok or button.action == .tried_no);
+    }
+    try eq(@as(usize, 2), keyed);
+    try app.modalKey("x");
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'skip'") == null);
+
+    // y in the card answers check 1
+    try app.modalKey("y");
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'tried' '1105' '1' 'ok'") != null);
+
+    // space again closes it, the pick still on the item's row; space opens it again
+    try app.modalKey(" ");
+    try eq(@as(?u32, null), view.detail);
+    try std.testing.expect(app.planSheet(&sheet));
+    try eq(@as(?u32, 1105), sheet.picked(view.plan_pick).?.ticket);
+    try app.planKey(" ");
+    try eq(@as(?u32, 1105), view.detail);
+    try app.modalKey("\x1b");
+    try eq(@as(?u32, null), view.detail);
+
+    // a click opens it, the same click closes it, and another opens it again
+    try std.testing.expect(try app.homeMouse(item));
+    try eq(@as(?u32, 1105), view.detail);
+    try std.testing.expect(try app.homeMouse(item));
+    try eq(@as(?u32, null), view.detail);
+    try std.testing.expect(try app.homeMouse(item));
+    try eq(@as(?u32, 1105), view.detail);
+    try std.testing.expect(app.planSheet(&sheet));
+    try eq(@as(usize, 2), sheet.span(.move).len);
+    try eq(@as(?u32, 1105), sheet.picked(view.plan_pick).?.ticket);
+
+    // x on the item's own row closes nothing untried
+    try app.modalKey("\x1b");
+    try app.planKey("x");
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'skip'") == null);
 }
 
 test "⏎ on a Claude with no ticket in in flight's foot shows its window, space opens its popup, and its peek is its window" {

@@ -3422,7 +3422,7 @@ test "on the e2e's 24-row screen every Plan window keeps its title and a body ro
     }
 }
 
-test "a Your move item ends its row in its first action's key, ticket or none, picked or not, and an open one does not" {
+test "a Your move item ends its row in its first action's key, ticket or none, picked or not, and an open one does not and wears ▸" {
     var board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[],"needs_you":[
         \\{"id":"push:arena:abc:0","kind":"push","ticket":null,"repo":"arena","text":"▲ arena: 3 unpushed",
@@ -3450,57 +3450,51 @@ test "a Your move item ends its row in its first action's key, ticket or none, p
     try win_plan.benchPlanRow(&app, &picked_out, bench.roles(), &sheet, 1, 0, rect.x, rect.w - 1, true);
     try std.testing.expect(std.mem.indexOf(u8, picked_out.buffered(), "⏎ push") != null);
 
-    app.plan_open.set(.move, 7);
+    app.home.?.detail = 7;
     try std.testing.expect(app.planSheet(&sheet));
     var open_out: Writer = .fixed(&buf);
     try win_plan.benchPlanRow(&app, &open_out, bench.roles(), &sheet, 1, 0, rect.x, rect.w - 1, true);
     try std.testing.expect(std.mem.indexOf(u8, open_out.buffered(), "⏎") == null);
+    try std.testing.expect(std.mem.indexOf(u8, open_out.buffered(), "▸") != null);
 }
 
-test "Your move's open check wraps over as many rows as it needs, its buttons on the row under, y then n, at the text's indent" {
-    const text = "In a live arena with a menard Claude and your own Claude on no ticket, look at in flight's foot: the row says which is which";
+test "with a Your move item's card open, every Your move row is drawn above it, the open one marked ▸, and the card has its check's y and no close untried" {
     var board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[],"needs_you":[
-        \\{"id":"try-52","kind":"try","ticket":52,"repo":"arena","text":"try it","machine":"gate ✓",
-        \\ "steps":[{"n":1,"text":"In a live arena with a menard Claude and your own Claude on no ticket, look at in flight's foot: the row says which is which",
-        \\ "actions":[{"key":"y","label":"✓"},{"key":"n","label":"✗"}]}]}],
+        \\{"tickets":[{"id":1105,"repo":"arena","title":"Your move says its key","status":"try","stage":"landed",
+        \\"checks":[{"n":1,"text":"it folds back","result":null},{"n":2,"text":"the pick stays","result":null}]}],
+        \\"needs_you":[
+        \\{"id":"try:1105","kind":"try","ticket":1105,"repo":"arena","text":"#1105 arena  to try","machine":"gate ✓",
+        \\ "steps":[{"n":1,"text":"it folds back","result":null,"actions":[{"key":"y","label":"✓"},{"key":"n","label":"✗"}]},
+        \\  {"n":2,"text":"the pick stays","result":null,"actions":[{"key":"y","label":"✓"},{"key":"n","label":"✗"}]}],
+        \\ "actions":[{"key":"x","label":"close untried","argv":["babylon","tried","1105","skip"]}]},
+        \\{"id":"push:arena:abc:0","kind":"push","ticket":null,"repo":"arena","text":"▲ arena: 2 unpushed",
+        \\ "actions":[{"key":"⏎","label":"push","argv":["babylon","push","arena"]}]}],
         \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
     );
     defer board.deinit();
     var app = homeApp(&board);
     defer app.grab.deinit(std.testing.allocator);
-    app.term_w = 80;
-    app.view_w = 80;
-    app.view_h = 40;
+    app.view_h = 30;
     app.roles = bench.roles();
-    app.home = .{ .focus = .plan };
-    app.plan_open.set(.move, 52);
-    var sheet: sheets.Sheet = undefined;
-    try std.testing.expect(app.planSheet(&sheet));
-    const rect = app.planRect(.move);
-
-    var buf: [65536]u8 = undefined;
+    app.home = .{ .focus = .plan, .detail = 1105 };
+    var buf: [1 << 18]u8 = undefined;
     var out: Writer = .fixed(&buf);
-    var first: ?usize = null;
-    var last: usize = 0;
-    var y: u16 = 0;
-    for (sheet.rows[0..sheet.n], 0..) |row, at| {
-        if (row.kind != .need_card or row.part < 3) continue;
-        first = first orelse y;
-        last = y;
-        try win_plan.benchPlanRow(&app, &out, bench.roles(), &sheet, at, y, rect.x, rect.w - 1, false);
-        y += 1;
-    }
-    const drawn = out.buffered();
-    try std.testing.expect(last - first.? >= 2);
-    var words = std.mem.tokenizeScalar(u8, text, ' ');
-    while (words.next()) |word| try std.testing.expect(std.mem.indexOf(u8, drawn, word) != null);
+    try planView(&app, &out, app.home.?);
+    const slot = app.planSlot(.move);
+    var line: [1024]u8 = undefined;
 
-    const indent = rect.x + 2 + 2;
-    try std.testing.expectEqual(@as(u21, 'y'), (try bench.probe(drawn, indent + 1, last)).cp);
-    try std.testing.expectEqual(@as(u21, '✓'), (try bench.probe(drawn, indent + 3, last)).cp);
-    try std.testing.expectEqual(@as(u21, 'n'), (try bench.probe(drawn, indent + 7, last)).cp);
-    try std.testing.expect((try bench.probe(drawn, indent, last - 1)).cp != ' ');
+    const first = try screenRow(out.buffered(), app.term_w, slot.y + 1, &line);
+    try std.testing.expect(std.mem.indexOf(u8, first, "▸▲ #1105 arena") != null);
+    const second = try screenRow(out.buffered(), app.term_w, slot.y + 2, &line);
+    try std.testing.expect(std.mem.indexOf(u8, second, "arena: 2 unpushed") != null);
+    try std.testing.expect(app.modalRect().?.y >= slot.y + slot.h);
+    var y_seen = false;
+    for (slot.y + slot.h..app.view_h) |y| {
+        const row = try screenRow(out.buffered(), app.term_w, y, &line);
+        try std.testing.expect(std.mem.indexOf(u8, row, "close untried") == null);
+        y_seen = y_seen or std.mem.indexOf(u8, row, "y ✓ it works") != null;
+    }
+    try std.testing.expect(y_seen);
 }
 
 const grid_board =
