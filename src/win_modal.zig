@@ -117,7 +117,7 @@ pub fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
     if (app.home.?.gate) return gateBox(app, w, id, scroll);
     const rect = app.modalRect() orelse return;
     if (app.roles) |r| return benchDetail(app, w, r, id, rect, scroll);
-    const inner = app_mod.detailWidth(app.boardW()).inner;
+    const inner = app_mod.detailWidth(app.columnRoom()).inner;
     app.grab.window(.{ .x = rect.x + 2, .y = rect.y + 1, .w = inner, .h = rect.h -| 2 });
     const x = rect.x;
     const top = rect.y + 1;
@@ -294,7 +294,7 @@ const spaces: [64]u8 = @splat(' ');
 /// title whole, the facts as chips, the open ask as a violet band with its options as buttons,
 /// the body, and the card's actions as buttons along the foot. Its rows are `modalButtons`'.
 fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRect, scroll: usize) !void {
-    const inner = app_mod.detailWidth(app.boardW()).inner;
+    const inner = app_mod.detailWidth(app.columnRoom()).inner;
     const x0 = rect.x + 2;
     const foot = rect.y + rect.h - 1;
     app.grab.window(.{ .x = x0, .y = rect.y + 1, .w = inner, .h = rect.h -| 2 });
@@ -462,7 +462,7 @@ fn took(buf: []u8, secs: i64) []const u8 {
 /// and last what is queued behind it. `scroll` rows down the output.
 fn gateBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
     const rect = app.modalRect() orelse return;
-    const inner = app_mod.detailWidth(app.boardW()).inner;
+    const inner = app_mod.detailWidth(app.columnRoom()).inner;
     app.grab.window(.{ .x = rect.x + 2, .y = rect.y + 1, .w = inner, .h = rect.h -| 2 });
     const bottom = rect.y + rect.h;
     var title_buf: [32]u8 = undefined;
@@ -585,13 +585,14 @@ fn doneNote(app: *const App, id: u32) []const u8 {
 /// The Claudes the picked card can be given to, boxed over the middle of the board, each by its
 /// number: its session and what its window is called, dim with why where babylon would refuse it.
 pub fn giveBox(app: *App, w: *Writer, id: u32, picked: usize) !void {
-    const bw: u16 = @min(app.boardW() -| 4, 64);
+    const col = app.columnRect() orelse return;
+    const bw = col.w;
     const inner = bw -| 4;
-    const x = (app.boardW() -| bw) / 2;
+    const x = col.x;
     const edge = ink(app, "amber", 4);
     var pen: Pen = .{};
     var buf: [48]u8 = undefined;
-    var y: u16 = 4;
+    var y: u16 = col.y + 1;
 
     const title = std.fmt.bufPrint(&buf, " give #{d} to ", .{id}) catch " give to ";
     try pen.set(w, edge, null);

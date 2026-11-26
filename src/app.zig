@@ -1706,12 +1706,28 @@ pub const App = struct {
     /// The frame of the modal the human's words are written in: over the orchestrator's column, a
     /// fixed size, whatever is typed.
     pub fn wordsRect(app: *const App) ModalRect {
-        const wide: u16 = if (app.view_w >= 30) app.view_w - 2 else app.view_w;
-        const h = @min(app.view_h, words_rows);
-        return .{ .x = app.term_w - app.view_w + (app.view_w - wide) / 2, .y = (app.view_h - h) / 2, .w = wide, .h = h };
+        return app.columnRect() orelse .{ .x = 0, .y = 0, .w = app.term_w, .h = app.view_h };
     }
 
-    pub const words_rows: u16 = 16;
+    /// The cells left of the orchestrator's column, where every box that opens from Plan is drawn.
+    pub fn columnRoom(app: *const App) u16 {
+        return if (app.sided() and app.view_w < app.term_w) app.term_w - app.view_w else app.term_w;
+    }
+
+    /// The middle column: what every box opened from Plan is drawn in, beside the orchestrator
+    /// and never over it, under Your move while the open ticket is one of its items.
+    pub fn columnRect(app: *const App) ?ModalRect {
+        const view = app.home orelse return null;
+        const room = app.columnRoom();
+        const width = detailWidth(room);
+        const top: u16 = if (view.detail) |id| if (app.needsYouOn(id)) below: {
+            const move = app.planSlot(.move);
+            break :below move.y + move.h;
+        } else first_line else first_line;
+        const bottom = app.view_h -| 2;
+        if (bottom < top + 3 or width.inner == 0) return null;
+        return .{ .x = (room -| width.box) / 2, .y = top, .w = width.box, .h = bottom - top + 1 };
+    }
     /// Rows of what is being answered, quoted above the box, at most.
     pub const words_quote_rows = 5;
 
@@ -3168,7 +3184,7 @@ pub const App = struct {
 
     /// The rows the card's detail takes in its box.
     pub fn detailRows(app: *const App) usize {
-        const inner = detailWidth(app.boardW()).inner;
+        const inner = detailWidth(app.columnRoom()).inner;
         if (app.home) |view| if (view.gate) return gateOutputRows(gateOutput(gateLastRun(app.detail.items)), inner);
         var n: usize = 0;
         var lines = DetailLines.init(if (app.detail.items.len > 0) app.detail.items else "…", inner);
@@ -3986,11 +4002,11 @@ pub const App = struct {
     pub fn autoRect(app: *const App) ?ModalRect {
         const view = app.home orelse return null;
         if (view.auto_pick == null) return null;
-        const width: u16 = @min(app.boardW() -| 4, 48);
+        const col = app.columnRect() orelse return null;
         const bottom = app.view_h -| 2;
-        if (width < 30 or bottom < first_line + 7) return null;
+        if (col.w < 30 or bottom < first_line + 7) return null;
         const h: u16 = @intCast(@min(7 + app.autoRepos(), bottom - first_line + 1));
-        return .{ .x = (app.boardW() -| width) / 2, .y = first_line, .w = width, .h = h };
+        return .{ .x = col.x, .y = first_line, .w = col.w, .h = h };
     }
 
     /// How many repo rows auto's modal has room for.
@@ -4062,11 +4078,11 @@ pub const App = struct {
         const epic = view.draft orelse return null;
         var steps: [draft_max]*const tickets.Card = undefined;
         const n = app.draftSteps(epic, &steps).len;
-        const width: u16 = @min(app.boardW() -| 4, 84);
+        const col = app.columnRect() orelse return null;
         const bottom = app.view_h -| 2;
-        if (width < 40 or bottom < first_line + 7) return null;
+        if (col.w < 40 or bottom < first_line + 7) return null;
         const h: u16 = @intCast(@min(6 + n + app.draftAsks(epic).len, bottom - first_line + 1));
-        return .{ .x = (app.boardW() -| width) / 2, .y = first_line, .w = width, .h = h };
+        return .{ .x = col.x, .y = first_line, .w = col.w, .h = h };
     }
 
     pub fn openDraft(app: *App, epic: u32) void {
@@ -4174,10 +4190,10 @@ pub const App = struct {
     /// The `+ goal` modal over Plan's middle: a title bar, a prompt, a field of four lines, the
     /// buttons with a line under them, and the foot. None where the screen is too small for it.
     pub fn goalRect(app: *const App) ?ModalRect {
-        const width: u16 = @min(app.boardW() -| 4, 64);
+        const col = app.columnRect() orelse return null;
         const h: u16 = 12;
-        if (width < 30 or app.view_h < first_line + h + 2) return null;
-        return .{ .x = (app.boardW() -| width) / 2, .y = first_line + (app.view_h - first_line - h) / 2, .w = width, .h = h };
+        if (col.w < 30 or app.view_h < first_line + h + 2) return null;
+        return .{ .x = col.x, .y = first_line, .w = col.w, .h = h };
     }
 
     pub const GoalButton = struct { key: []const u8, label: []const u8, x: u16, w: u16 };
@@ -4525,16 +4541,8 @@ pub const App = struct {
 
     /// The frame of the modal open over the board, centred over it, when there is room for one.
     pub fn modalRect(app: *const App) ?ModalRect {
-        const view = app.home orelse return null;
-        const id = view.detail orelse return null;
-        const width = detailWidth(app.boardW());
-        const top: u16 = if (app.needsYouOn(id)) below: {
-            const move = app.planSlot(.move);
-            break :below move.y + move.h;
-        } else first_line;
-        const bottom = app.view_h -| 2;
-        if (bottom < top + 3 or width.inner == 0) return null;
-        return .{ .x = (app.boardW() -| width.box) / 2, .y = top, .w = width.box, .h = bottom - top + 1 };
+        if ((app.home orelse return null).detail == null) return null;
+        return app.columnRect();
     }
 
     /// Whether Plan's Your move is shown with an item of ticket `id`: its card opens under it, so
@@ -4687,7 +4695,7 @@ pub const App = struct {
         if (app.modalCard()) |card| {
             var head: CardHead = undefined;
             const words = app.askWords(card);
-            app.modalHead(card, detailWidth(app.boardW()).inner, words != null, &head);
+            app.modalHead(card, detailWidth(app.columnRoom()).inner, words != null, &head);
             if (app.claudeOf(card)) |win| {
                 claudeHead(win, &head);
                 if (head.subs_n > 0) subs = .{ .win = win, .line = head.subs.?, .n = head.subs_n };
@@ -7023,7 +7031,7 @@ test "two reports in one second keep two captures" {
 test "auto's modal shows a step at once, and a cap babylon refused is back at its own" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     app.term_w = 140;
-    app.view_w = 120;
+    app.view_w = 56;
     app.view_h = 24;
     app.board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[],"auto":{"on":true,"cap":4,"working":1,"repo_caps":{"arena":2,"tlon":0}}}
@@ -7934,7 +7942,7 @@ test "a drag over a wrapped line of the modal copies it as one line, inside the 
     defer app.board.?.deinit();
     const eql = std.testing.expectEqualStrings;
     app.home = .{ .detail = 7 };
-    const inner = detailWidth(app.boardW()).inner;
+    const inner = detailWidth(app.columnRoom()).inner;
     var body: std.ArrayList(u8) = .empty;
     defer body.deinit(std.testing.allocator);
     for (0..60) |n| try body.print(std.testing.allocator, "word{d} ", .{n});
@@ -8833,4 +8841,20 @@ test "arena plan N opens the shut repo chip that holds N" {
     try std.testing.expect(!app.folded("tlon"));
     try std.testing.expect(app.planSheet(&sheet));
     try std.testing.expectEqual(@as(u32, 5), sheet.picked(app.home.?.plan_pick).?.ticket.?);
+}
+
+test "every box opened from Plan is the one column left of the orchestrator, and a ticket's gate takes its place" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 140;
+    app.view_w = 56;
+    app.view_h = 30;
+    app.home = .{ .detail = 7 };
+    const card = app.modalRect().?;
+    try std.testing.expect(card.x + card.w <= app.term_w - app.view_w);
+    try std.testing.expectEqual(card, app.wordsRect());
+    app.home.?.gate = true;
+    try std.testing.expectEqual(card, app.modalRect().?);
+    app.home = .{ .goal_open = true };
+    try std.testing.expect(app.goalRect().?.x + app.goalRect().?.w <= app.term_w - app.view_w);
+    try std.testing.expectEqual(card.x, app.goalRect().?.x);
 }
