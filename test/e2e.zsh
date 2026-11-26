@@ -1425,7 +1425,8 @@ key M-h
 key Escape
 check "closing Plan goes back to the session the human was in" await in_session alpha
 plan_at 8
-see '` fold'
+key '`'
+see '╭─ ○ orchestrator · idle '
 key Escape
 check "Escape closes a Plan with the column beside it, going back to the session the human was in" await in_session alpha
 server=$(inner display -p '#{pid}')
