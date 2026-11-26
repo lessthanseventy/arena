@@ -1979,7 +1979,6 @@ plan_up='in flight [0-9]'
 plan_at() { $bin -L $in plan $1; see "$plan_up" }
 rowof() { screen | grep -n -m1 -F -- "$1" | cut -d: -f1 }
 colof() { local l=$(screen | sed -n $1p); [[ $l == *"$2"* ]] || return 1; local p=${l%%"$2"*}; print $(( ${#p} + 1 )) }
-spot() { local l=$(screen | grep -m1 -- "$1"); local p=${l%%"$1"*}; print $(( ${#p} + 2 )) $(screen | grep -n -m1 -- "$1" | cut -d: -f1) }
 last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
 print -r -- '' >$tmp/.config/ficciones/theme/palette.sh
 outer resize-window -t o -x 121 -y 24
