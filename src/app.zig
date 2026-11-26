@@ -4944,7 +4944,7 @@ pub const App = struct {
                     x += button.width() + 1;
                 }
             }
-            if (app.claudeOf(card) != null and n < out.len) {
+            if (card.status != .@"try" and app.claudeOf(card) != null and n < out.len) {
                 const button: ModalButton = .{ .action = .claude, .key = app.claudeKey(card), .label = "its Claude", .x = x, .y = foot };
                 if (x + button.width() <= right) {
                     out[n] = button;
@@ -5182,7 +5182,7 @@ pub const App = struct {
         };
         if (app.askWords(card)) |w| if (is(key, &.{w.action.key})) return app.pressModal(.words);
         const claude_key = app.claudeKey(card);
-        const action: ?ModalAction = if (is(key, &.{"\r"})) .{ .card = .go } else if (is(key, &.{"G"})) .{ .card = .give } else if (is(key, &.{"H"})) .{ .card = .handoff } else if (is(key, &.{"e"})) .{ .card = .edit } else if (is(key, &.{"p"})) .{ .card = .priority } else if (is(key, &.{">"})) .{ .card = .close } else if (is(key, &.{"<"})) .{ .card = .reopen } else if (is(key, &.{claude_key}) and app.claudeOf(card) != null) .claude else null;
+        const action: ?ModalAction = if (is(key, &.{"\r"})) .{ .card = .go } else if (is(key, &.{"G"})) .{ .card = .give } else if (is(key, &.{"H"})) .{ .card = .handoff } else if (is(key, &.{"e"})) .{ .card = .edit } else if (is(key, &.{"p"})) .{ .card = .priority } else if (is(key, &.{">"})) .{ .card = .close } else if (is(key, &.{"<"})) .{ .card = .reopen } else if (is(key, &.{claude_key}) and card.status != .@"try" and app.claudeOf(card) != null) .claude else null;
         if (action) |pressed| return app.pressModal(pressed);
         var buttons: [16]ModalButton = undefined;
         for (app.modalButtons(&buttons)) |button| if (button.action == .need and is(key, &.{button.key})) return app.pressModal(button.action);
@@ -9021,6 +9021,50 @@ test "⏎ on a subagent row in a card's modal shows that subagent, as a click on
     try std.testing.expect(app.home == null);
     try std.testing.expectEqual(@as(u32, 12), app.pick.?.pane);
     try std.testing.expectEqualStrings("check deps", app.pick.?.name[0..app.pick.?.len]);
+}
+
+test "a try card's foot has no its Claude, though its Claude is still there, and c does nothing" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 140;
+    app.view_w = 140;
+    app.view_h = 24;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":4,"repo":"tlon","title":"d","status":"try","claimed_by":"%12","checks":[{"n":1,"text":"press","result":null}]},
+        \\{"id":5,"repo":"tlon","title":"e","status":"doing","claimed_by":"%12"}]}
+    );
+    defer app.board.?.deinit();
+    const pane = try Pane.create(&app, 12, 80, 24);
+    defer pane.destroy(std.testing.allocator);
+    var win: Window = .{ .id = 7, .name = @constCast("w"), .claude = .working, .agent_pane = 12 };
+    defer win.panes.deinit(std.testing.allocator);
+    try win.panes.append(std.testing.allocator, pane);
+    var s: Session = .{ .id = 1, .name = @constCast("s") };
+    var wins = [_]*Window{&win};
+    s.wins = .fromOwnedSlice(&wins);
+    var sessions = [_]*Session{&s};
+    app.sessions = .fromOwnedSlice(&sessions);
+    app.current = 1;
+
+    var buttons: [16]App.ModalButton = undefined;
+    app.home = .{ .detail = 5 };
+    try std.testing.expect(app.claudeOf(app.modalCard().?) != null);
+    var claude = false;
+    for (app.modalButtons(&buttons)) |b| claude = claude or b.action == .claude;
+    try std.testing.expect(claude);
+
+    app.home = .{ .detail = 4 };
+    try std.testing.expect(app.claudeOf(app.modalCard().?) != null);
+    claude = false;
+    for (app.modalButtons(&buttons)) |b| claude = claude or b.action == .claude;
+    try std.testing.expect(!claude);
+    try app.modalKey("c");
+    try std.testing.expect(app.home != null);
 }
 
 fn needsBoard(buf: []u8, n: usize) ![]const u8 {
