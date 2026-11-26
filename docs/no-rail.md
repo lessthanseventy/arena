@@ -1,5 +1,11 @@
 # No rail
 
+> Partly superseded by [What arena is](what-arena-is.md). These parts are replaced: `⏎` on an in
+> flight row, an other Claudes row or a `waits in its pane` item now opens that Claude's pane in
+> the middle column, not its window on the strip. The pane view is the human's own terminal,
+> reached only from the switcher. The drawer has no next buttons: the orchestrator's suggestions
+> are Your move rows. The 1920 px home is Doing's. The rest stands.
+
 This design is for #1029, a step of #896. It follows [the principles](principles.md) and
 [Plan replaces the board](plan-replaces-board.md) with #905's amended rules (one place per ticket,
 in flight as one window, width goes to rows with titles). Nothing in it is built yet.

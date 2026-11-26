@@ -1,5 +1,10 @@
 # Doing and Planning
 
+> Partly superseded by [What arena is](what-arena-is.md). These parts are replaced: `⏎` on a
+> Claude's row opens its pane in the middle column, and Your move also holds the orchestrator's
+> suggestions. The mocks' window folds (`▾` on window titles, `z`) are gone (#1108). The rest
+> stands: both screens' windows, their keys and every move on Planning.
+
 This design is for #1111, step 1 of #1110. It follows [the principles](principles.md) and
 [No rail](no-rail.md), and it builds on #1109, which opens everything from Plan in one middle
 column. Nothing in it is built yet.
