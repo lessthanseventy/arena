@@ -210,7 +210,7 @@ const Column = struct {
     }
 };
 
-/// Under the strip, the foot row: `◆ home ▲ N`, the session with a dot per window (the filled one
+/// Under the strip, the foot row: `◆ home b ▲ N`, the session with a dot per window (the filled one
 /// is the window in view, any other with something to say shows its mark), `s go to` and `≡`,
 /// the mode at its right end. Every part keeps its cells.
 fn dots(app: *const App, w: *Writer, s: *const Session) !void {
@@ -227,7 +227,7 @@ fn dots(app: *const App, w: *Writer, s: *const Session) !void {
     if (app.board != null) {
         try footAt(app, w, layout.Foot.home);
         try pen.set(w, ink(app, "amber", 4), null);
-        try w.writeAll("◆ home");
+        try w.writeAll("◆ home b");
         if (app.needsCount() > 0) {
             try footAt(app, w, layout.Foot.needs);
             try pen.set(w, heading(app), null);
@@ -3522,7 +3522,7 @@ test "the foot row has home, the session with a dot and number per window, go to
     var out: Writer = .fixed(&buf);
     try dots(&wide, &out, &s);
     const long = try screenRow(out.buffered(), 220, 24, &row);
-    try std.testing.expect(std.mem.indexOf(u8, long, " ◆ home") != null);
+    try std.testing.expect(std.mem.startsWith(u8, long, " ◆ home b"));
     try std.testing.expect(std.mem.indexOf(u8, long, "arena         ● 1 ◉ 2 ○ 3") != null);
     try std.testing.expect(std.mem.indexOf(u8, long, "│  s go to  ≡") != null);
     try std.testing.expect(std.mem.endsWith(u8, long, "INSERT ^space"));
@@ -3532,7 +3532,7 @@ test "the foot row has home, the session with a dot and number per window, go to
     out = .fixed(&buf);
     try dots(&half, &out, &s);
     const short = try screenRow(out.buffered(), 110, 24, &row);
-    try std.testing.expect(std.mem.indexOf(u8, short, " ◆ home") != null);
+    try std.testing.expect(std.mem.startsWith(u8, short, " ◆ home b"));
     try std.testing.expect(std.mem.indexOf(u8, short, "arena    ●◉○ │ s go to  ≡") != null);
     try std.testing.expect(std.mem.indexOf(u8, short, "INSERT") == null);
 }

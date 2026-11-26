@@ -34,6 +34,37 @@ pub fn appendClean(out: *std.ArrayList(u8), gpa: Allocator, text: []const u8) !v
     }
 }
 
+/// A markdown doc made safe to draw and plain: a heading loses its `#`s and a list item's `-` or
+/// `*` becomes a `•`.
+pub fn appendDoc(out: *std.ArrayList(u8), gpa: Allocator, markdown: []const u8) !void {
+    var clean: std.ArrayList(u8) = .empty;
+    defer clean.deinit(gpa);
+    try appendClean(&clean, gpa, markdown);
+    var lines = std.mem.splitScalar(u8, clean.items, '\n');
+    var first = true;
+    while (lines.next()) |line| {
+        if (!first) try out.append(gpa, '\n');
+        first = false;
+        const body = std.mem.trimStart(u8, line, " ");
+        const indent = line[0 .. line.len - body.len];
+        const hashes = std.mem.indexOfNone(u8, body, "#") orelse body.len;
+        if (hashes > 0 and hashes <= 6 and hashes < body.len and body[hashes] == ' ') {
+            try out.appendSlice(gpa, std.mem.trimStart(u8, body[hashes..], " "));
+        } else if (body.len > 1 and (body[0] == '-' or body[0] == '*') and body[1] == ' ') {
+            try out.appendSlice(gpa, indent);
+            try out.appendSlice(gpa, "\u{2022}");
+            try out.appendSlice(gpa, body[1..]);
+        } else try out.appendSlice(gpa, line);
+    }
+}
+
+test "a doc's headings lose their hashes and its list items get bullets" {
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(std.testing.allocator);
+    try appendDoc(&out, std.testing.allocator, "# Title\n\n## Part two\n- one\n  * two\n#tag\n");
+    try std.testing.expectEqualStrings("Title\n\nPart two\n\u{2022} one\n  \u{2022} two\n#tag\n", out.items);
+}
+
 /// How many cells `text` takes, a cell to a character.
 pub fn cells(text: []const u8) usize {
     return std.unicode.utf8CountCodepoints(text) catch text.len;

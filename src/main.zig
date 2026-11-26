@@ -516,6 +516,9 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
     };
     defer board_file.deinit(&app);
     app.board_dir = if (board_file.path) |path| std.fs.path.dirname(path) else null;
+    const projects_dir = if (init.environ_map.get("HOME")) |home| try std.fs.path.join(gpa, &.{ home, "projects" }) else null;
+    defer if (projects_dir) |dir| gpa.free(dir);
+    app.projects_dir = projects_dir;
     const reports_dir = try reportsPath(gpa, init.environ_map);
     defer if (reports_dir) |dir| gpa.free(dir);
     app.reports_dir = reports_dir;

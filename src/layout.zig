@@ -71,8 +71,8 @@ pub const Foot = struct {
     end: usize,
 
     pub const home = 1;
-    pub const home_w = 6;
-    pub const needs = 8;
+    pub const home_w = 8;
+    pub const needs = 10;
     pub const needs_w = 4;
     pub const go_w = 7;
     pub const wide_from = 140;
@@ -86,7 +86,7 @@ pub fn foot(view_w: u16, count: usize) ?Foot {
     const digits: usize = if (count >= 100) 3 else if (count >= 10) 2 else 1;
     const stride: usize = if (wide) 3 + digits else 1;
     const dots_w = if (count == 0) 0 else (count - 1) * stride + (if (wide) 2 + digits else 1);
-    const session = 12 + sep;
+    const session = 14 + sep;
     const dots = session + 4 + name_w + (if (wide) @as(usize, 2) else 1);
     const go = dots + dots_w + sep;
     const menu = go + Foot.go_w + 2;
@@ -114,7 +114,7 @@ test "the foot row's parts keep their cells: wide, a window is its dot and numbe
     try std.testing.expect(wide.wide);
     try std.testing.expectEqual(@as(usize, 4), wide.step);
     try std.testing.expectEqual(FootHit.home, footAt(220, 3, 1).?);
-    try std.testing.expectEqual(@as(?FootHit, null), footAt(220, 3, 7));
+    try std.testing.expectEqual(@as(?FootHit, null), footAt(220, 3, 9));
     try std.testing.expectEqual(FootHit{ .window = 1 }, footAt(220, 3, wide.dots + 4).?);
     try std.testing.expectEqual(@as(?FootHit, null), footAt(220, 3, wide.dots + 3));
     try std.testing.expectEqual(FootHit.go, footAt(220, 3, wide.go).?);

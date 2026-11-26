@@ -536,6 +536,8 @@ pub const App = struct {
     detail: std.ArrayList(u8) = .empty,
     /// Where babylon keeps its board file, and where a card's detail is written to be read.
     board_dir: ?[]const u8 = null,
+    /// The directory that holds each repo's checkout, where a doc named by a repo is read from.
+    projects_dir: ?[]const u8 = null,
     /// The tickets whose detail babylon was asked to write and arena has yet to take in.
     detail_asked: std.ArrayList(u32) = .empty,
     item_id: [96]u8 = undefined,
@@ -2006,39 +2008,47 @@ pub const App = struct {
         };
     }
 
-    /// Reads `$f` with each empty cell of a table row padded to 30 no-break spaces: glow sizes a
-    /// column by its cells' median width, so a column that is mostly empty is drawn a cell wide.
-    const pad_empty_cells =
-        "{ pad=$(printf '\\302\\240%.0s' $(seq 30)); " ++
-        "sed -E ':a; /^\\|/ s/\\| +\\|/|'\"$pad\"'|/; ta' \"$f\"; }";
-
     /// The doc of a row, opened: a link by `xdg-open`, a file of the ticket's worktree (its repo's
-    /// checkout when it has none) in a window of its own, in `glow` else `less`.
+    /// checkout when it has none) in the middle column, as text.
     pub fn openDoc(app: *App, need: tickets.Need) !bool {
         const doc = need.doc orelse return true;
         if (std.mem.startsWith(u8, doc, "http://") or std.mem.startsWith(u8, doc, "https://")) {
             return app.runNeed(need.id, &.{ "xdg-open", doc });
         }
-        if (!plainName(need.repo)) return true;
-        const script =
-            "f=\"$HOME/projects/$1/$2\"; " ++
-            "if [ -n \"$3\" ]; then for d in \"$HOME/projects/$1/.worktrees/t$3-\"*/; do [ -f \"$d$2\" ] && f=\"$d$2\" && break; done; fi; " ++
-            "if [ ! -f \"$f\" ]; then echo \"no such file: $f\"; read _; exit; fi; " ++
-            "if command -v glow >/dev/null 2>&1; then " ++ pad_empty_cells ++ " | glow -p -; else less \"$f\"; fi";
-        var cmd: Writer.Allocating = .init(app.gpa);
-        defer cmd.deinit();
-        var ticket_buf: [16]u8 = undefined;
-        const ticket = if (need.ticket) |t| std.fmt.bufPrint(&ticket_buf, "{d}", .{t}) catch "" else "";
-        try cmd.writer.writeAll("new-window -a -n ");
-        try writeDocWindow(&cmd.writer, need.id);
-        try cmd.writer.writeAll(" sh -c ");
-        for ([_][]const u8{ script, "_", need.repo, doc, ticket }, 0..) |arg, i| {
-            if (i > 0) try cmd.writer.writeAll(" ");
-            try tmuxQuote(&cmd.writer, arg);
-        }
-        try app.closeBoard();
-        try app.send(.ignore, "{s}", .{cmd.written()});
+        const b = if (app.board) |*b| b else return true;
+        const at = for (b.needsYou(), 0..) |n, i| {
+            if (std.mem.eql(u8, n.id, need.id)) break i;
+        } else return true;
+        if (app.home == null) try app.goHome();
+        try app.showItem(at, doc);
         return true;
+    }
+
+    /// The text of `doc` as the row `need` names it: a path of the working directory when the row
+    /// has no repo, else a file of the ticket's worktree, else of its repo's checkout.
+    fn readDoc(app: *App, need: tickets.Need, doc: []const u8) ?[]u8 {
+        const limit: std.Io.Limit = .limited(1 << 20);
+        const cwd = std.Io.Dir.cwd();
+        if (need.repo.len == 0) return cwd.readFileAlloc(app.io, doc, app.gpa, limit) catch null;
+        const projects = app.projects_dir orelse return null;
+        if (!plainName(need.repo)) return null;
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        if (need.ticket) |ticket| found: {
+            const trees = std.fmt.bufPrint(&buf, "{s}/{s}/.worktrees", .{ projects, need.repo }) catch break :found;
+            var dir = cwd.openDir(app.io, trees, .{ .iterate = true }) catch break :found;
+            defer dir.close(app.io);
+            var prefix_buf: [16]u8 = undefined;
+            const prefix = std.fmt.bufPrint(&prefix_buf, "t{d}-", .{ticket}) catch break :found;
+            var it = dir.iterate();
+            while (it.next(app.io) catch null) |entry| {
+                if (!std.mem.startsWith(u8, entry.name, prefix)) continue;
+                var path: [std.fs.max_path_bytes]u8 = undefined;
+                const file = std.fmt.bufPrint(&path, "{s}/{s}/{s}", .{ trees, entry.name, doc }) catch continue;
+                if (cwd.readFileAlloc(app.io, file, app.gpa, limit)) |body| return body else |_| {}
+            }
+        }
+        const file = std.fmt.bufPrint(&buf, "{s}/{s}/{s}", .{ projects, need.repo, doc }) catch return null;
+        return cwd.readFileAlloc(app.io, file, app.gpa, limit) catch null;
     }
 
     /// meatcheck prints TOON: `comments[N]{cols}:` then a row per comment, a text with a comma,
@@ -2484,10 +2494,7 @@ pub const App = struct {
                 app.dirty = true;
             },
             .changed => app.want_list = true,
-            .window_selected => |session| {
-                if (session == app.current) app.follow_active = true;
-                app.want_list = true;
-            },
+            .window_selected => app.want_list = true,
             .session_changed => |id| app.onSessionChanged(id),
             .card => |id| try app.showPlan(id),
             .pane => |id| try app.showPane(id),
@@ -3028,10 +3035,7 @@ pub const App = struct {
             app.board_error = err;
             break :no null;
         } else null;
-        if (old) |*b| {
-            try app.closeGoneDocs(b);
-            b.deinit();
-        }
+        if (old) |*b| b.deinit();
         // home stays, to say why there is no board, with nothing open over the one that was
         if (app.board == null) if (app.home) |view| {
             app.home = .{ .back = view.back };
@@ -3093,31 +3097,6 @@ pub const App = struct {
             from = end;
         }
         try b.setOwn(app.gpa, items.items);
-    }
-
-    /// The doc window of each ask in `old` that the board now shown no longer holds, answered or
-    /// withdrawn, closed.
-    fn closeGoneDocs(app: *App, old: *const tickets.Board) !void {
-        const now = if (app.board) |*b| b.needsYou() else &.{};
-        for (old.needsYou()) |need| {
-            if (need.doc == null) continue;
-            const still = for (now) |n| {
-                if (std.mem.eql(u8, n.id, need.id)) break true;
-            } else false;
-            if (still) continue;
-            var cmd: Writer.Allocating = .init(app.gpa);
-            defer cmd.deinit();
-            try cmd.writer.writeAll("kill-window -t =");
-            try writeDocWindow(&cmd.writer, need.id);
-            try app.send(.ignore, "{s}", .{cmd.written()});
-        }
-    }
-
-    /// The name of the window that shows the doc of the ask `id`; tmux reads a `:` in a target as
-    /// a session's end, so it is a `-`.
-    fn writeDocWindow(w: *Writer, id: []const u8) !void {
-        try w.writeAll("doc-");
-        for (id) |c| try w.writeByte(if (c == ':') '-' else c);
     }
 
     fn toggleHome(app: *App) !void {
@@ -3283,6 +3262,21 @@ pub const App = struct {
         return n;
     }
 
+    /// The rows of text the middle column shows at once, which `space` and `b` move by.
+    fn pageRows(app: *const App) usize {
+        const rect = app.columnRect() orelse return 1;
+        return @max(1, rect.h -| 4);
+    }
+
+    /// The column's text scrolled a page down; false when its last rows are already in view.
+    fn pageDown(app: *App) bool {
+        const view = &app.home.?;
+        const page = app.pageRows();
+        if (view.detail_scroll + page >= app.detailRows()) return false;
+        view.detail_scroll += page;
+        return true;
+    }
+
     /// The place in Your move of the item with no ticket whose card is open.
     pub fn itemNeed(app: *const App) ?usize {
         const view = app.home orelse return null;
@@ -3296,6 +3290,11 @@ pub const App = struct {
     /// doc, a push with the commits not yet pushed, any other with its text. A push's commits
     /// are written beside the board, as a ticket's detail is, under the id 0.
     pub fn openItem(app: *App, at: usize) !void {
+        try app.showItem(at, null);
+    }
+
+    /// Item `at` opened with `doc`, a file its row names, as its text.
+    fn showItem(app: *App, at: usize, doc: ?[]const u8) !void {
         const view = &app.home.?;
         const need = app.board.?.needsYou()[at];
         if (need.id.len > app.item_id.len) return;
@@ -3306,14 +3305,18 @@ pub const App = struct {
         view.detail_scroll = 0;
         app.detail.clearRetainingCapacity();
         const text = @import("text.zig");
-        if (std.mem.eql(u8, need.kind, "digest")) if (need.doc) |doc| {
-            const body = std.Io.Dir.cwd().readFileAlloc(app.io, doc, app.gpa, .limited(1 << 20)) catch null;
-            if (body) |read| {
+        const shown = doc orelse if (std.mem.eql(u8, need.kind, "digest")) need.doc else null;
+        if (shown) |name| {
+            if (app.readDoc(need, name)) |read| {
                 defer app.gpa.free(read);
-                try text.appendClean(&app.detail, app.gpa, read);
+                try text.appendDoc(&app.detail, app.gpa, read);
                 return;
             }
-        };
+            if (doc != null) {
+                try app.detail.print(app.gpa, "no such file: {s}", .{name});
+                return;
+            }
+        }
         if (std.mem.eql(u8, need.kind, "push")) {
             var buf: [std.fs.max_path_bytes]u8 = undefined;
             const path = app.detailPath(0, &buf) orelse return;
@@ -3374,6 +3377,8 @@ pub const App = struct {
             view.item_open = false;
             return;
         };
+        if (anyKey(key, &.{"b"})) view.detail_scroll -|= app.pageRows();
+        if (anyKey(key, &.{" "}) and app.pageDown()) return;
         if (anyKey(key, &.{ "\x1b", "q", " " })) {
             view.item_open = false;
             return;
@@ -5455,6 +5460,8 @@ pub const App = struct {
             view.detail_scroll = 0;
             return;
         };
+        if (is(key, &.{"b"})) view.detail_scroll -|= app.pageRows();
+        if (is(key, &.{" "}) and app.pageDown()) return;
         if (is(key, &.{ "\x1b", "q", " " })) return app.pressModal(.close);
         if (!view.gate and is(key, &.{"Y"})) if (app.modalCard()) |card| if (card.status == .done) return app.pressModal(.copy_check);
         if (!view.gate) if (app.modalCard()) |card| if (card.status == .@"try" and card.checks.len > 0) {
@@ -7574,20 +7581,52 @@ test "a refused report says babylon's reason, a filed one its number, and both g
     try std.testing.expect(!app.report_failed);
 }
 
-test "a doc's table has its empty cells padded, so glow gives their column room" {
+test "a window babylon starts leaves home open on Plan and the strip where it was" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "d.md", .data = "| a | b | |\n| --- | --- | --- |\n| x | y | |\n\nno | | cell\n" });
-    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const dir = dir_buf[0..try tmp.dir.realPath(std.testing.io, &dir_buf)];
-    const script = try std.fmt.allocPrint(std.testing.allocator, "f={s}/d.md; {s}", .{ dir, App.pad_empty_cells });
-    defer std.testing.allocator.free(script);
-    const ran = try std.process.run(std.testing.allocator, std.testing.io, .{ .argv = &.{ "sh", "-c", script } });
-    defer std.testing.allocator.free(ran.stdout);
-    defer std.testing.allocator.free(ran.stderr);
-    const pad = "\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}" ++ "\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}" ++ "\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}\u{a0}";
-    const want = "| a | b |" ++ pad ++ "|\n| --- | --- | --- |\n| x | y |" ++ pad ++ "|\n\nno | | cell\n";
-    try std.testing.expectEqualStrings(want, ran.stdout);
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try tryApp(sent, "{\"tickets\":[]}");
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    app.home.?.focus = .plan;
+    app.current = 1;
+    var line = "%window-add @9".*;
+    try app.onLine(&line);
+    var selected = "%session-window-changed $1 @9".*;
+    try app.onLine(&selected);
+    try std.testing.expect(app.home != null);
+    try std.testing.expect(app.home.?.focus == .plan);
+    try std.testing.expect(!app.follow_active);
+    try std.testing.expect(app.want_list);
+}
+
+test "a card longer than the column scrolls with j and the wheel, and a page at a time with space and b" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try tryApp(sent, "{\"tickets\":[{\"id\":7,\"repo\":\"arena\",\"title\":\"Long\",\"status\":\"doing\",\"checks\":[]}]," ++ plan_tail);
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.detail_asked.deinit(std.testing.allocator);
+    defer app.detail.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    app.roles = @import("parts.zig").roles();
+    app.now = 10_000;
+    app.home.?.focus = .plan;
+    app.home.?.detail = 7;
+    for (0..200) |n| try app.detail.print(std.testing.allocator, "line {d}\n", .{n});
+    const view = &app.home.?;
+
+    try app.homeKey("j");
+    try std.testing.expectEqual(@as(usize, 1), view.detail_scroll);
+    try std.testing.expect(try app.homeMouse(.{ .code = 65, .x = 80, .y = 10, .release = false }));
+    try std.testing.expectEqual(@as(usize, 2), view.detail_scroll);
+    try app.homeKey(" ");
+    try std.testing.expectEqual(2 + app.pageRows(), view.detail_scroll);
+    try app.homeKey("b");
+    try std.testing.expectEqual(@as(usize, 2), view.detail_scroll);
+    try std.testing.expect(view.detail != null);
 }
 
 test "two reports in one second keep two captures" {
@@ -8117,29 +8156,6 @@ test "home with a board that did not parse says why, closes on q, and draws the 
         \\{"tickets":[],"plan":{"now":[{"ticket":1,"repo":null}]}}
     );
     try expect(app.planShown());
-}
-
-test "a look's doc window is closed when its ask is answered or withdrawn, and one still asked is left" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
-    defer sent.close(std.testing.io);
-    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
-    defer app.pending.deinit(std.testing.allocator);
-    defer if (app.board) |*b| b.deinit();
-    try app.setBoard(
-        \\{"tickets":[],"needs_you":[
-        \\{"id":"ask:6","kind":"look","ticket":307,"repo":"tlon","text":"look","doc":"a.md","actions":[]},
-        \\{"id":"ask:7","kind":"look","ticket":308,"repo":"tlon","text":"look","doc":"b.md","actions":[]},
-        \\{"id":"ask:8","kind":"ask","ticket":309,"repo":"tlon","text":"which?","doc":null,"actions":[]}]}
-    );
-    try app.setBoard(
-        \\{"tickets":[],"needs_you":[
-        \\{"id":"ask:7","kind":"look","ticket":308,"repo":"tlon","text":"look","doc":"b.md","actions":[]}]}
-    );
-    var got: [512]u8 = undefined;
-    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
-    try std.testing.expectEqualStrings("kill-window -t =doc-ask-6\n", got[0..len]);
 }
 
 test "the plan's pick lights its ticket's Your move item dim in the feed, and the feed's pick moves the plan's" {
@@ -9180,16 +9196,27 @@ test "a check with a doc draws o open and o opens the doc; a check with neither 
         \\{"n":2,"text":"press it","result":null,"actions":[{"key":"y","label":"✓","argv":["babylon","tried","933","2","ok"]}]}],"actions":[]}]}
     );
     defer app.pending.deinit(std.testing.allocator);
+    defer app.detail.deinit(std.testing.allocator);
     defer app.board.?.deinit();
+    var projects: [std.fs.max_path_bytes]u8 = undefined;
+    app.projects_dir = try docProjects(tmp, &projects);
     app.home.?.pick = 0;
     var f: feed.Feed = undefined;
     try std.testing.expect(app.feedOf(&f));
     try std.testing.expectEqualStrings("o open   y ✓", f.line(rowOf(&f, .try_buttons, 0)).text);
 
     try std.testing.expect(try win_feed.press(&app, "o"));
+    try std.testing.expect(app.home.?.item_open);
     var got: [4096]u8 = undefined;
-    const said = try sentText(sent, &got);
-    try std.testing.expect(std.mem.indexOf(u8, said, "docs/doing-planning.md") != null);
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "new-window") == null);
+    try std.testing.expectEqualStrings("Doing and Planning\n\u{2022} first thing\n\u{2022} second thing\n", app.detail.items);
+}
+
+/// A checkout `arena` under `tmp` with `docs/doing-planning.md` in it: what `projects_dir` names.
+fn docProjects(tmp: anytype, buf: []u8) ![]const u8 {
+    try tmp.dir.createDirPath(std.testing.io, "arena/docs");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "arena/docs/doing-planning.md", .data = "# Doing and Planning\n- first thing\n- second thing\n" });
+    return buf[0..try tmp.dir.realPath(std.testing.io, buf)];
 }
 
 test "a check with no doc and no range draws no o open, and o does nothing" {
@@ -9285,7 +9312,10 @@ test "a check with a doc and a range shows o open and d diff; o opens the doc an
         \\"steps":[{"n":1,"text":"read it","kind":"look","range":"abc123^..abc123","doc":"docs/doing-planning.md","result":null,"actions":[{"key":"y","label":"✓","argv":["babylon","tried","935","1","ok"]}]}],"actions":[]}]}
     );
     defer app.pending.deinit(std.testing.allocator);
+    defer app.detail.deinit(std.testing.allocator);
     defer app.board.?.deinit();
+    var projects: [std.fs.max_path_bytes]u8 = undefined;
+    app.projects_dir = try docProjects(tmp, &projects);
     app.home.?.pick = 0;
     var f: feed.Feed = undefined;
     try std.testing.expect(app.feedOf(&f));
@@ -9298,7 +9328,9 @@ test "a check with a doc and a range shows o open and d diff; o opens the doc an
     try std.testing.expect(std.mem.indexOf(u8, said, "docs/doing-planning.md") == null);
     try std.testing.expect(try win_feed.press(&app, "o"));
     said = try sentText(sent, &got);
-    try std.testing.expect(std.mem.indexOf(u8, said, "docs/doing-planning.md") != null);
+    try std.testing.expect(std.mem.indexOf(u8, said, "doc-") == null);
+    try std.testing.expect(app.home.?.item_open);
+    try std.testing.expect(std.mem.indexOf(u8, app.detail.items, "first thing") != null);
 
     app.home = .{ .detail = 935 };
     var buttons: [16]App.ModalButton = undefined;
@@ -9308,6 +9340,11 @@ test "a check with a doc and a range shows o open and d diff; o opens the doc an
         if (button.action == .diff_check) keys_seen[1] = true;
     }
     try std.testing.expect(keys_seen[0] and keys_seen[1]);
+
+    try app.pressModal(.open_check);
+    try std.testing.expect(app.home.?.item_open);
+    try std.testing.expectEqual(@as(?u32, null), app.home.?.detail);
+    try std.testing.expect(std.mem.indexOf(u8, app.detail.items, "second thing") != null);
 }
 
 test "Plan's windows never fold: z, Z and a click on a title leave every window open; f shows one whole and q closes it; plan: lines in the folds file fold nothing" {
