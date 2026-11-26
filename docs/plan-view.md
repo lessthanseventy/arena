@@ -35,6 +35,8 @@ as [the orchestrator](orchestrator.md#the-orchestrators-column) has it.
 
 ## Home, at the whole screen (210 cells)
 
+*Superseded by [no-rail.md](no-rail.md) wherever this page mentions the rail or the pinned column: arena has no rail, and the orchestrator is a drawer.*
+
 The plan takes the board's place. The rail is narrow on the left, and the column is pinned on the
 right at 60 cells, as today. The data is the live board of 2026-11-23 07:05Z; next is drawn as the
 orchestrator would set it.

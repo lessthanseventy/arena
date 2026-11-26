@@ -231,6 +231,8 @@ building are one row each. Under about 60 cells the rail folds away as well, and
 
 ## The rail, narrow
 
+*Superseded by [no-rail.md](no-rail.md): arena has no rail, and the orchestrator is a drawer.*
+
 At home the rail is narrow, as the board design has it, and it holds less. It shows each tmux
 session, and under it only the Claudes that are **working** (`◐`) or **wait on the human** (`▲`),
 each one by its ticket number (#358). The rest of the session's Claudes fold into one `· 4`
