@@ -1697,6 +1697,7 @@ check "and a second press on a word copies the word" await clipped 'has'
 key j
 key y
 check "j picks a check and y says it works, through babylon" await last 'tried 930 2 ok'
+key j
 key n
 check "n opens a modal asking what went wrong, the check quoted in it" see 'What went wrong\?'
 check "with send and cancel in its foot" see '⏎ send it back .*esc cancel'

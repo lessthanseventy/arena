@@ -5162,7 +5162,7 @@ pub const App = struct {
                 const key = std.fmt.bufPrint(&refusal, "try:{d}", .{card.id}) catch return;
                 _ = try app.runNeed(key, &.{ "babylon", "tried", id, n, "ok" });
                 const at = (@intFromPtr(check) - @intFromPtr(card.checks.ptr)) / @sizeOf(tickets.Check) + 1;
-                view.check_pick = openFrom(card, at + 1, true) orelse view.check_pick;
+                view.check_pick = openFrom(card, at + 1, true) orelse openFrom(card, 1, true) orelse view.check_pick;
             },
             .pick => |at| view.check_pick = at,
             .row_ok => |at| {
@@ -8303,6 +8303,29 @@ test "a to-try card's modal lists its checks, j and k pick one, y says it works 
     try std.testing.expect(app.prompt == null);
     len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'tried' '7' '3' 'no' 'late'") != null);
+}
+
+test "after y on a check, the pick goes on to the next untried one, and round to an earlier one when none is after it" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 140;
+    app.view_w = 140;
+    app.view_h = 30;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":7,"repo":"arena","title":"Lights","status":"try","stage":"landed",
+        \\"checks":[{"n":1,"text":"a","result":null},{"n":2,"text":"b","result":null},{"n":3,"text":"c","result":null}]}]}
+    );
+    defer app.board.?.deinit();
+
+    app.home = .{ .detail = 7, .check_pick = 2 };
+    try app.modalKey("y");
+    try std.testing.expectEqual(@as(u8, 3), app.home.?.check_pick);
+    try app.modalKey("y");
+    try std.testing.expectEqual(@as(u8, 1), app.home.?.check_pick);
 }
 
 test "a to-try card's y answers the first untried check when the pick is on a tried one, and with all tried draws no y or n; a refusal is said in the card" {
