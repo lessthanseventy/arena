@@ -4675,7 +4675,7 @@ pub const App = struct {
                 const wanted = full or action == .go or action == .open or action == .give or action == .edit;
                 const on_plan = !plan or (action != .no and action != .answer and action != .up and action != .down);
                 if (there and wanted and on_plan) {
-                    items[m] = .{ .what = .{ .card = action }, .key = if (plan) planKeyOf(action) else action.key(), .word = cardWord(card, action), .group = 0 };
+                    items[m] = .{ .what = .{ .card = action }, .key = action.key(), .word = cardWord(card, action), .group = 0 };
                     m += 1;
                 }
             }
@@ -5083,7 +5083,7 @@ pub const App = struct {
         var n: usize = 0;
         for (order) |action| {
             if (action != .open and std.mem.indexOfScalar(CardAction, actions, action) == null) continue;
-            const key = planKeyOf(action);
+            const key = action.key();
             const word = cardWord(card, action);
             const w: u16 = @intCast(cellCount(key) + cellCount(word) + 3);
             if (x + w > right or n == out.len) break;
@@ -5092,11 +5092,6 @@ pub const App = struct {
             x += w + 1;
         }
         return out[0..n];
-    }
-
-    /// The key of `action` on the plan: space folds a row there, so the modal is `o`.
-    fn planKeyOf(action: CardAction) []const u8 {
-        return action.key();
     }
 
     /// Ticket row `row` opened, or closed when it is the open one of its window; opening one
@@ -5747,7 +5742,7 @@ pub const App = struct {
         if (anyKey(key, &.{"\r"}) and app.orchestratorState() == .off) {
             return app.send(.ignore, captured("babylon orchestrator"), .{});
         }
-        if (anyKey(key, &.{"\x1b"}) and app.drawerOpen()) return app.closeDrawer();
+        if (anyKey(key, &.{"\x1b"})) return if (app.drawerOpen()) app.closeDrawer() else app.closeBoard();
         if (try app.feedKey(key)) return;
         if (anyKey(key, &.{"o"}) and app.drawerOpen()) return app.closeDrawer();
     }
@@ -11655,6 +11650,15 @@ test "space opens a Plan ticket row in place, one to a window, with the card's o
 
     app.loadFolds("open:now:7\nopen:nowhere:3\n");
     try eq(@as(u32, 7), app.plan_open.get(.now));
+}
+
+test "esc with the column focused beside a board that is not home closes the board" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.board = try tickets.Board.parse(std.testing.allocator, "{\"tickets\":[]}");
+    defer app.board.?.deinit();
+    app.board_view = .{ .home = false, .focus = .orchestrator };
+    try app.columnKey("\x1b");
+    try std.testing.expect(app.board_view == null);
 }
 
 test "a session's repo is where its Claudes' panes are, a worktree's included, never its name" {

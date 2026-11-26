@@ -1424,6 +1424,10 @@ check "o opens the drawer again, with the keys" await orch_lit
 key M-h
 key Escape
 check "closing Plan goes back to the session the human was in" await in_session alpha
+plan_at 8
+see '` fold'
+key Escape
+check "Escape closes a Plan with the column beside it, going back to the session the human was in" await in_session alpha
 server=$(inner display -p '#{pid}')
 inner kill-session -t '=orchestrator'
 await in_session alpha
