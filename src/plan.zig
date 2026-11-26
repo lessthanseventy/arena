@@ -475,8 +475,8 @@ pub const Sheet = struct {
     fn verdictOf(s: *const Sheet, given: *const tickets.Plan, b: *const tickets.Board, row: Row, repo: []const u8, find: []const u8) Verdict {
         _ = s;
         const id, const title, const repo_of, const in_repo = switch (row.kind) {
-            .now => .{ given.now[row.item].ticket, given.now[row.item].title, given.now[row.item].repo, std.mem.eql(u8, given.now[row.item].repo, repo) },
-            .next => .{ given.next[row.item].ticket, given.next[row.item].title, given.next[row.item].repo, std.mem.eql(u8, given.next[row.item].repo, repo) },
+            .now => .{ given.now[row.item].ticket, given.now[row.item].title, given.now[row.item].repo orelse "", std.mem.eql(u8, given.now[row.item].repo orelse "", repo) },
+            .next => .{ given.next[row.item].ticket, given.next[row.item].title, given.next[row.item].repo orelse "", std.mem.eql(u8, given.next[row.item].repo orelse "", repo) },
             .goal, .card_top, .goal_bar, .goal_next, .goal_block => .{ given.goals[row.item].epic, given.goals[row.item].title, "", goalIn(b, given.goals[row.item], repo) },
             .idea => .{ given.ideas[row.item].epic, given.ideas[row.item].title, "", true },
             else => return .keep,
@@ -685,7 +685,7 @@ pub const Sheet = struct {
         else if (item.waiting_on) |wait|
             s.print("{s}", .{wait.say(&said)})
         else if (how.len > 0) s.print("{s} · {s}", .{ state, how }) else s.print("{s}", .{state});
-        const left = s.print(" {s} #{d} {s: <8} {s}", .{ mark, item.ticket, text_mod.clip(item.repo, 8), item.title });
+        const left = s.print(" {s} #{d} {s: <8} {s}", .{ mark, item.ticket, text_mod.clip(item.repo orelse "", 8), item.title });
         const both = s.spread(width, left, right);
         s.add(.{
             .kind = .now,
@@ -711,7 +711,7 @@ pub const Sheet = struct {
                 continue;
             }
             const right = s.waits(item.waits_on);
-            const left = s.print(" {d} #{d} {s: <8} {s}", .{ place_n, item.ticket, text_mod.clip(item.repo, 8), item.title });
+            const left = s.print(" {d} #{d} {s: <8} {s}", .{ place_n, item.ticket, text_mod.clip(item.repo orelse "", 8), item.title });
             const both = s.spread(width, left, right);
             s.add(.{ .kind = .next, .pick = 0, .ticket = item.ticket, .text = both.text, .tail_at = both.tail_at });
             if (item.why.len > 0 and !s.narrow) s.add(.{ .kind = .why, .style = .dim, .text = s.clipped(width, s.print("      {s}", .{item.why})) });

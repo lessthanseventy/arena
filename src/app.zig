@@ -551,6 +551,8 @@ pub const App = struct {
     check_ask: ?CheckAsk = null,
     /// The checks run in a window of their own, the newest of a check last.
     check_runs: std.ArrayList(CheckRun) = .empty,
+    /// Why the board file last read gave no board.
+    board_error: ?anyerror = null,
     /// babylon's refusal of the board's start, drawn on the card's action row until the next key.
     start_refused: ?[]u8 = null,
     /// What babylon said of the last report filed, drawn on the bottom row until the next key.
@@ -2987,12 +2989,19 @@ pub const App = struct {
     /// there is none when there is no file or it does not parse.
     pub fn setBoard(app: *App, text: ?[]const u8) !void {
         var old = app.board;
-        app.board = if (text) |t| tickets.Board.parse(app.gpa, t) catch null else null;
+        app.board_error = null;
+        app.board = if (text) |t| tickets.Board.parse(app.gpa, t) catch |err| no: {
+            app.board_error = err;
+            break :no null;
+        } else null;
         if (old) |*b| {
             try app.closeGoneDocs(b);
             b.deinit();
         }
-        if (!app.hasPlan()) try app.closeBoard();
+        // home stays, to say why there is no board, with nothing open over the one that was
+        if (app.board == null) if (app.home) |view| {
+            app.home = .{ .back = view.back };
+        };
         try app.syncWaiting();
         try app.frameSync();
         app.settleAuto();
@@ -3347,9 +3356,8 @@ pub const App = struct {
     }
 
     /// Home: the board with the orchestrator's column beside it, which has the keys, in insert.
-    /// With no board there is none.
+    /// With no plan it says why; with no board, it only closes.
     pub fn goHome(app: *App) !void {
-        if (!app.hasPlan()) return;
         app.menu = null;
         app.prompt = null;
         app.overview = null;
@@ -3365,6 +3373,14 @@ pub const App = struct {
         view.alone = false;
         view.focus = .plan;
         app.reflow();
+    }
+
+    /// Why home has no plan to draw, in `buf`: babylon's file is not there or did not parse, or
+    /// carries no plan.
+    pub fn boardWhy(app: *const App, buf: []u8) []const u8 {
+        if (app.board_error) |err| return std.fmt.bufPrint(buf, "babylon's board didn't parse: {s}", .{@errorName(err)}) catch "babylon's board didn't parse";
+        if (app.board == null) return "waiting for babylon's board";
+        return "babylon's board has no plan yet";
     }
 
     /// Whether babylon's file carries a plan.
@@ -3944,6 +3960,10 @@ pub const App = struct {
     fn homeKey(app: *App, key: []const u8) !void {
         app.clearStartRefusal();
         app.dirty = true;
+        if (app.board == null) {
+            if (anyKey(key, &.{ "q", "\x1b", "b" })) try app.closeBoard();
+            return;
+        }
         const view = &app.home.?;
         if (view.goal_open) return app.goalKey(key);
         if (view.draft != null) return app.draftKey(key);
@@ -5061,6 +5081,7 @@ pub const App = struct {
         // a drag's let go that never came: a new press ends that drag unseen
         if ((app.drag == .next_row or app.drag == .todo_row) and m.leftPress()) app.drag = .none;
         if (app.drag != .none) return false;
+        if (app.board == null) return true;
 
         const view = &app.home.?;
         if (m.x >= app.term_w - app.view_w and app.sided() and !view.boxed()) {
@@ -6951,7 +6972,8 @@ test "home: the board with the orchestrator's column focused, its own keys while
     defer app.deinit();
     const expect = std.testing.expect;
     try app.goHome();
-    try expect(app.home == null);
+    try expect(app.home != null and !app.planShown());
+    app.home = null;
 
     app.board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[{"id":1,"repo":"arena","title":"a","status":"todo"}],"plan":{"next":[]}}
@@ -7539,6 +7561,36 @@ test "in Workbench's look a click on a popup's option answers the ask and one on
     app.home.?.detail = 4;
     try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = rect.x + rect.w - 4, .y = rect.y, .release = false }));
     try eq(@as(?u32, null), app.home.?.detail);
+}
+
+test "home with a board that did not parse says why, closes on q, and draws the plan once one parses" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    defer if (app.board) |*b| b.deinit();
+    const expect = std.testing.expect;
+    var buf: [128]u8 = undefined;
+
+    try app.goHome();
+    try std.testing.expectEqualStrings("waiting for babylon's board", app.boardWhy(&buf));
+    try app.setBoard(
+        \\{"tickets":[],"plan":{"now":[{"ticket":1,"repo":7}]}}
+    );
+    try expect(app.home != null and !app.planShown());
+    try std.testing.expectEqualStrings("babylon's board didn't parse: UnexpectedToken", app.boardWhy(&buf));
+    try app.homeKey("j");
+    try expect(app.home != null);
+    try app.homeKey("q");
+    try expect(app.home == null);
+
+    try app.goHome();
+    try app.setBoard(
+        \\{"tickets":[],"plan":{"now":[{"ticket":1,"repo":null}]}}
+    );
+    try expect(app.planShown());
 }
 
 test "a look's doc window is closed when its ask is answered or withdrawn, and one still asked is left" {

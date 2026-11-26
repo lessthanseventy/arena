@@ -174,7 +174,8 @@ pub const Auto = struct {
 /// `human` is a pin, which the orchestrator moves only with a proposal.
 pub const Next = struct {
     ticket: u32,
-    repo: []const u8 = "",
+    /// None for a ticket of no repo, as a planning ticket is.
+    repo: ?[]const u8 = null,
     title: []const u8 = "",
     why: []const u8 = "",
     set_by: []const u8 = "",
@@ -266,7 +267,8 @@ pub const WaitingOn = struct {
 /// One ticket in `plan.now`: building under a Claude's pane, or in the pipeline at a stage.
 pub const NowItem = struct {
     ticket: u32,
-    repo: []const u8 = "",
+    /// None for a ticket of no repo, as a planning ticket is.
+    repo: ?[]const u8 = null,
     title: []const u8 = "",
     state: []const u8 = "",
     stage: ?[]const u8 = null,
@@ -410,14 +412,14 @@ pub const Board = struct {
         if (parsed.value.plan) |*given| {
             for (given.now) |*item| {
                 item.title = try cleanLine(arena, item.title);
-                item.repo = try cleanLine(arena, item.repo);
+                if (item.repo) |repo| item.repo = try cleanLine(arena, repo);
                 if (item.stalled) |why| item.stalled = try cleanLine(arena, why);
                 if (item.waiting_on) |*wait| if (wait.@"for") |words| {
                     wait.@"for" = try cleanLine(arena, words);
                 };
             }
             for (given.next) |*item| {
-                item.repo = try cleanLine(arena, item.repo);
+                if (item.repo) |repo| item.repo = try cleanLine(arena, repo);
                 item.title = try cleanLine(arena, item.title);
                 item.why = try cleanLine(arena, item.why);
             }
@@ -955,4 +957,13 @@ test "waiting_on says whom a card or a now row waits on, ticket or words" {
     try std.testing.expectEqualStrings("◷ waiting for the human", b.cards()[1].waiting_on.?.say(&buf));
     try std.testing.expectEqual(@as(?WaitingOn, null), b.cards()[2].waiting_on);
     try std.testing.expectEqualStrings("◷ waiting on #829", b.plan().?.now[0].waiting_on.?.say(&buf));
+}
+
+test "babylon's own board parses with its plan, a planning ticket of no repo in now too" {
+    var b = try Board.parse(std.testing.allocator, @embedFile("fixtures/board.json"));
+    defer b.deinit();
+    const given = b.plan().?;
+    try std.testing.expectEqual(@as(u32, 1136), given.now[0].ticket);
+    try std.testing.expectEqual(@as(?[]const u8, null), given.now[0].repo);
+    try std.testing.expect(given.next.len > 0 and given.goals.len > 0);
 }

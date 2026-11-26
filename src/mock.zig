@@ -936,7 +936,7 @@ fn column(sc: *Scene, focused: bool, pick: usize) void {
     for (plan.now) |item| {
         if (!std.mem.eql(u8, item.state, "building")) continue;
         const stalled = item.stalled != null;
-        cx += sc.chip(cx, y, sc.fmt("#{d} {s}", .{ item.ticket, if (stalled) item.stalled.? else sc.ago(item.since) }), if (stalled) s.failed else s.repoInk(item.repo), false) + 1;
+        cx += sc.chip(cx, y, sc.fmt("#{d} {s}", .{ item.ticket, if (stalled) item.stalled.? else sc.ago(item.since) }), if (stalled) s.failed else s.repoInk(item.repo orelse ""), false) + 1;
     }
     y += 1;
     _ = c.print(ix, y, sc.fmt("✓ landed today {d}", .{plan.landed_today.count}), .{ .fg = s.landed, .bold = true }, 30);
@@ -1027,13 +1027,14 @@ fn home(sc: *Scene, focused: bool) void {
     var ly = sc.panel(x0, ly0, lw, plan.now.len + 3, "now", plan.now.len, false);
     for (plan.now) |item| {
         const stalled = item.stalled != null;
+        const repo = item.repo orelse "";
         const state = item.stage orelse item.state;
         var at = x0 + 2;
         _ = c.print(at, ly, stateGlyph(state), .{ .fg = if (stalled) s.failed else s.stateInk(state) }, 1);
         at += 2;
-        _ = c.print(at, ly, sc.fmt("#{d}", .{item.ticket}), .{ .fg = s.repoInk(item.repo), .bold = true }, 5);
+        _ = c.print(at, ly, sc.fmt("#{d}", .{item.ticket}), .{ .fg = s.repoInk(repo), .bold = true }, 5);
         at += 5;
-        _ = c.print(at, ly, repo_glyphs[repoIndex(item.repo)], .{ .fg = s.repoInk(item.repo) }, 1);
+        _ = c.print(at, ly, repo_glyphs[repoIndex(repo)], .{ .fg = s.repoInk(repo) }, 1);
         at += 2;
         const tail_w: usize = 20;
         _ = c.print(at, ly, item.title, .{ .fg = s.text }, lw - (at - x0) - tail_w - 2);
@@ -1053,7 +1054,8 @@ fn home(sc: *Scene, focused: bool) void {
         var at = x0 + 2;
         _ = c.print(at, ly, sc.fmt("{d}", .{i + 1}), .{ .fg = s.accent, .bold = true }, 2);
         at += 3;
-        at += sc.chip(at, ly, sc.fmt("{s} {s}", .{ repo_glyphs[repoIndex(item.repo)], item.repo }), s.repoInk(item.repo), false) + 1;
+        const repo = item.repo orelse "";
+        at += sc.chip(at, ly, sc.fmt("{s} {s}", .{ repo_glyphs[repoIndex(repo)], repo }), s.repoInk(repo), false) + 1;
         const tw = c.print(at, ly, sc.fmt("#{d} {s}", .{ item.ticket, item.title }), .{ .fg = s.text, .bold = true }, lw - (at - x0) - 18);
         _ = tw;
         if (item.waits_on.len > 0) {

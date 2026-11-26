@@ -1448,10 +1448,10 @@ fn planFoot(app: *App, w: *Writer, sheet: *const sheets.Sheet, pick: usize) !voi
     var text: []const u8 = "";
     if (row) |r| if (r.ticket) |id| {
         for (given.now) |item| if (item.ticket == id) {
-            text = std.fmt.bufPrint(&buf, " #{d} {s}  {s}", .{ id, item.repo, item.title }) catch "";
+            text = std.fmt.bufPrint(&buf, " #{d} {s}  {s}", .{ id, item.repo orelse "", item.title }) catch "";
         };
         for (given.next) |item| if (item.ticket == id) {
-            text = std.fmt.bufPrint(&buf, " #{d} {s}  {s}{s}{s}", .{ id, item.repo, item.title, if (item.why.len > 0) " — " else "", item.why }) catch "";
+            text = std.fmt.bufPrint(&buf, " #{d} {s}  {s}{s}{s}", .{ id, item.repo orelse "", item.title, if (item.why.len > 0) " — " else "", item.why }) catch "";
         };
         if (text.len == 0) for (given.goals) |goal| if (goal.epic == id) {
             text = std.fmt.bufPrint(&buf, " #{d}  {s}", .{ id, goal.title }) catch "";
@@ -1612,9 +1612,22 @@ fn repoTabs(app: *App, w: *Writer, view: app_mod.HomeView) !void {
 
 /// Home's plan in the board's place: its head, a rule, then its rows from the one the pick keeps
 /// in view, the pick a bar at the left edge. What lies over the board lies over it.
+/// Home with no plan: why there is none, and the way back.
+fn planWhy(app: *App, w: *Writer) !void {
+    var pen: Pen = .{};
+    var buf: [128]u8 = undefined;
+    try w.print("\x1b[2;3H", .{});
+    try pen.set(w, heading(app), null);
+    try fitted(w, app.boardWhy(&buf), app.view_w -| 4);
+    try w.print("\x1b[4;3H", .{});
+    try pen.set(w, ink(app, "dim", 8), null);
+    try fitted(w, "q to go back", app.view_w -| 4);
+    try pen.set(w, .{}, null);
+}
+
 fn planView(app: *App, w: *Writer, view: app_mod.HomeView) !void {
     var sheet: sheets.Sheet = undefined;
-    if (!app.planSheet(&sheet)) return;
+    if (!app.planSheet(&sheet)) return planWhy(app, w);
     const ox: u16 = 0;
     const width = app.boardW();
     const dim = ink(app, "dim", 8);
@@ -3767,6 +3780,21 @@ test "a repo mark, a text line and a bar start on one column inside a window" {
     try eq(@as(u21, '✓'), g.cps[row][landed.x + 2]);
     const unplanned = shot.app.planSlot(.unplanned);
     try eq(unplanned.x + 2, g.find(rowWith(g, unplanned, "nothing to do").?, unplanned.x, unplanned.x + unplanned.w, "nothing to do").?);
+}
+
+test "home with no plan draws why, and the way back" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.view_w = 80;
+    app.view_h = 24;
+    app.roles = bench.roles();
+    app.board_error = error.UnexpectedToken;
+    app.home = .{};
+    var buf: [8192]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try planView(&app, &out, app.home.?);
+    const drawn = out.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "babylon's board didn't parse: UnexpectedToken") != null);
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "q to go back") != null);
 }
 
 test "every title cut to fit ends in …" {
