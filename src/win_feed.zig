@@ -8,6 +8,12 @@ const win_driving = @import("win_driving.zig");
 const App = app_mod.App;
 const anyKey = app_mod.anyKey;
 const cellCount = draw.cellCount;
+const clip = draw.clip;
+const repoHue = draw.repoHue;
+const vt = @import("ghostty-vt");
+const color = @import("color.zig");
+const theme = @import("theme.zig");
+const Writer = std.Io.Writer;
 
 /// A key on the feed, while the orchestrator's column has the keys in normal mode: `j` `k`
 /// move the pick through Your move's items and `]` `[` from need to need, the picked card lit
@@ -235,4 +241,237 @@ fn tryClick(app: *App, f: *const feed.Feed, row: usize, col: usize) !bool {
         else => {},
     }
     return true;
+}
+
+/// Cells written one after another on a feed row, `room` of them left.
+const RowOut = struct {
+    w: *Writer,
+    pen: *draw.Pen,
+    room: usize,
+    bg: color.RGB,
+
+    fn say(o: *RowOut, fg: color.RGB, bold: bool, text: []const u8) !void {
+        const t = clip(text, o.room);
+        if (t.len == 0) return;
+        try o.pen.set(o.w, draw.paintStyle(fg, o.bg, bold), null);
+        try o.w.writeAll(t);
+        o.room -= cellCount(t);
+    }
+
+    /// `▎label `: a lead bar and the words on raised, or, `filled`, `lead` the face and ink the words.
+    fn chip(o: *RowOut, r: theme.Roles, lead: color.RGB, label: []const u8, filled: bool) !void {
+        if (o.room < cellCount(label) + 2) return;
+        try o.pen.set(o.w, draw.paintStyle(lead, if (filled) lead else r.raised, false), null);
+        try o.w.writeAll("▎");
+        try o.pen.set(o.w, draw.paintStyle(if (filled) r.on_accent else r.text, if (filled) lead else r.raised, filled), null);
+        try o.w.writeAll(label);
+        try o.w.writeAll(" ");
+        o.room -= cellCount(label) + 2;
+    }
+
+    /// ` key label ` raised with its shadow's `▌` after it, or filled amber when `primary`.
+    fn button(o: *RowOut, r: theme.Roles, key: []const u8, label: []const u8, primary: bool) !void {
+        if (o.room < cellCount(key) + cellCount(label) + 5) return;
+        const face = if (primary) r.accent else r.raised;
+        try o.pen.set(o.w, draw.paintStyle(if (primary) r.on_accent else r.accent, face, primary), null);
+        try o.w.writeAll(" ");
+        try o.w.writeAll(key);
+        try o.pen.set(o.w, draw.paintStyle(if (primary) r.on_accent else r.text, face, primary), null);
+        try o.w.writeAll(" ");
+        try o.w.writeAll(label);
+        try o.w.writeAll(" ");
+        try o.pen.set(o.w, draw.paintStyle(r.well, o.bg, false), null);
+        try o.w.writeAll("▌ ");
+        o.room -= cellCount(key) + cellCount(label) + 5;
+    }
+
+    fn finish(o: *RowOut) !void {
+        try o.say(o.bg, false, spaceRun(o.room));
+    }
+};
+
+const space_run: [512]u8 = @splat(' ');
+
+fn spaceRun(n: usize) []const u8 {
+    return space_run[0..@min(n, space_run.len)];
+}
+
+/// Workbench's row of the feed for the lines that are tiles or buttons: a Your move item a tile
+/// led by its kind's chip, its buttons raised, the pick lit raised.
+fn benchFeedRow(app: *const App, w: *Writer, pen: *draw.Pen, r: theme.Roles, f: *const feed.Feed, row: usize, inner: u16) !void {
+    const line = f.line(row);
+    const on = app.feedLitItem(f);
+    const strong = app.feedLit() == .focused;
+    var head = row;
+    if (line.kind == .buttons or line.kind == .refused) {
+        while (head > 0 and f.line(head).kind != .item) head -= 1;
+    }
+    const tiled = line.kind == .item or line.kind == .buttons or line.kind == .refused;
+    const lit = if (on) |o| tiled and o.line == head else false;
+    var o: RowOut = .{ .w = w, .pen = pen, .room = inner, .bg = if (!tiled) r.panel else if (lit) r.raised else r.tile };
+    try o.say(r.text, false, " ");
+    switch (line.kind) {
+        .item => {
+            try o.say(if (strong) r.accent else r.dim, true, if (lit) "▌ " else "  ");
+            const need = if (line.need) |at| app.board.?.needsYou()[at] else null;
+            const kind = if (need) |n| n.kind else "";
+            const eql = std.mem.eql;
+            if (eql(u8, kind, "ask")) try o.chip(r, r.you, "asks", true) else if (eql(u8, kind, "sent_back") or eql(u8, kind, "sendback")) try o.chip(r, r.failed, "sent back", true) else if (eql(u8, kind, "proposal")) try o.chip(r, r.accent, "proposal", true) else if (kind.len > 0) try o.chip(r, r.dim, kind, false);
+            if (need) |n| if (n.ticket) |id| if (std.mem.indexOfScalar(u8, line.text, '#') == null) {
+                var buf: [64]u8 = undefined;
+                try o.say(repoHue(r, n.repo).hue, true, std.fmt.bufPrint(&buf, "#{d} {s} ", .{ id, n.repo }) catch "");
+            };
+            try o.say(r.text, false, line.text);
+        },
+        .buttons => {
+            try o.say(if (strong) r.accent else r.dim, true, if (lit) "▌ " else "  ");
+            var primary = true;
+            var pieces = std.mem.splitSequence(u8, line.text, "   ");
+            while (pieces.next()) |piece| {
+                const space = std.mem.indexOfScalar(u8, piece, ' ') orelse piece.len;
+                const key = piece[0..space];
+                const mine = primary and std.mem.eql(u8, key, "⏎");
+                if (mine) primary = false;
+                try o.button(r, key, std.mem.trimStart(u8, piece[space..], " "), mine);
+            }
+        },
+        .refused => {
+            try o.say(if (strong) r.accent else r.dim, true, if (lit) "▌ " else "  ");
+            try o.say(r.failed, false, line.text);
+        },
+        .move_head => {
+            const cut = std.mem.lastIndexOfScalar(u8, line.text, ' ') orelse 0;
+            try o.say(r.you, true, line.text[0..cut]);
+            try o.say(r.text, false, " ");
+            try o.chip(r, r.dim, line.text[@min(cut + 1, line.text.len)..], false);
+        },
+        else => {},
+    }
+    try o.finish();
+}
+
+/// Workbench's rows of a to-try tile: the rule over the section, the title with its chip and age,
+/// the machine's line, a row for each wrapped line of a check, and the buttons under the picked
+/// one. The picked check lit raised.
+fn benchTryRow(app: *const App, w: *Writer, pen: *draw.Pen, r: theme.Roles, f: *const feed.Feed, row: usize, inner: u16) !void {
+    const line = f.line(row);
+    const on = app.feedLitItem(f);
+    const strong = app.feedLit() == .focused;
+    const lit = if (on) |o| line.need != null and o.need == line.need and line.step != null and o.step == line.step else false;
+    var o: RowOut = .{ .w = w, .pen = pen, .room = inner, .bg = if (line.kind == .try_head) r.panel else if (lit) r.raised else r.tile };
+    try o.say(r.text, false, " ");
+    switch (line.kind) {
+        .try_head => {
+            try o.say(r.dim, false, line.text);
+            while (o.room > 0) try o.say(r.dim, false, "─");
+        },
+        .try_title => {
+            try o.say(r.text, false, "  ");
+            try o.chip(r, r.you, "try", true);
+            const age = line.alt;
+            const room = o.room -| (cellCount(age) + 2);
+            const text = clip(line.text, room);
+            try o.say(r.text, false, text);
+            try o.say(r.text, false, spaceRun(o.room -| (cellCount(age) + 1)));
+            try o.say(if (line.old) r.you else r.dim, line.old, age);
+        },
+        .try_machine => {
+            try o.say(r.text, false, "  ");
+            const button = line.alt;
+            const space = std.mem.indexOfScalar(u8, button, ' ') orelse button.len;
+            const room = o.room -| (if (button.len > 0) cellCount(button) + 5 else @as(usize, 0));
+            const text = clip(line.text, room);
+            try o.say(r.dim, false, text);
+            if (button.len > 0) {
+                try o.say(r.text, false, spaceRun(o.room -| (cellCount(button) + 5)));
+                try o.button(r, button[0..space], std.mem.trimStart(u8, button[space..], " "), false);
+            }
+        },
+        .try_step => {
+            try o.say(if (strong) r.accent else r.dim, true, if (lit) "▌ " else "  ");
+            const room = o.room -| (if (line.settled) @as(usize, 2) else 0);
+            const text = clip(line.text, room);
+            try o.say(if (line.settled) r.dim else r.text, false, text);
+            if (line.settled) {
+                try o.say(r.text, false, spaceRun(o.room -| 1));
+                try o.say(r.dim, false, "✓");
+            }
+        },
+        .try_buttons => {
+            if (line.failed) {
+                try o.say(r.failed, false, "    ");
+                try o.say(r.failed, false, line.text);
+            } else {
+                try o.say(r.text, false, "  ");
+                var primary = true;
+                var pieces = std.mem.splitSequence(u8, line.text, "   ");
+                while (pieces.next()) |piece| {
+                    const space = std.mem.indexOfScalar(u8, piece, ' ') orelse piece.len;
+                    try o.button(r, piece[0..space], std.mem.trimStart(u8, piece[space..], " "), primary and strong);
+                    primary = false;
+                }
+            }
+        },
+        else => {},
+    }
+    try o.finish();
+}
+
+/// Row `row` of the feed atop the orchestrator's column, `inner` cells wide: its line, or past
+/// them, the rule under it.
+pub fn feedRow(app: *const App, w: *Writer, pen: *draw.Pen, f: *const feed.Feed, row: usize, inner: u16) !void {
+    const dim = draw.ink(app, "dim", 8);
+    if (row < f.count()) if (app.roles) |r| switch (f.line(row).kind) {
+        .item, .buttons, .refused, .move_head => return benchFeedRow(app, w, pen, r, f, row, inner),
+        .try_head, .try_title, .try_machine, .try_step, .try_buttons => return benchTryRow(app, w, pen, r, f, row, inner),
+        else => {},
+    };
+    if (row >= f.count()) {
+        try pen.set(w, draw.onPanel(app, dim), null);
+        for (0..inner) |_| try w.writeAll("─");
+        return;
+    }
+    const line = f.line(row);
+    try pen.set(w, draw.onPanel(app, .{}), null);
+    try w.writeAll(" ");
+    var room: usize = inner -| 1;
+    const bar = if (line.failed) draw.ink(app, "emberdim", 1) else draw.ink(app, "amber", 4);
+    const lead: []const u8 = switch (line.kind) {
+        .item => "▌ ",
+        .buttons, .refused => "▌     ",
+        .try_step => "  ",
+        .try_buttons => "      ",
+        else => "",
+    };
+    if (lead.len > 0 and room > cellCount(lead)) {
+        try pen.set(w, draw.onPanel(app, bar), null);
+        try w.writeAll(lead);
+        room -= cellCount(lead);
+    }
+    var bold = draw.heading(app);
+    bold.flags.bold = true;
+    const style: vt.Style = switch (line.kind) {
+        .move_head => bold,
+        .quiet, .more, .buttons, .try_head, .try_machine => dim,
+        .refused => draw.ink(app, "emberdim", 1),
+        .try_buttons => if (line.failed) draw.ink(app, "emberdim", 1) else dim,
+        .item, .try_title, .try_step => .{},
+    };
+    if (room == 0) return;
+    var lit = false;
+    var shown = line.text;
+    var marked: [256]u8 = undefined;
+    // without Workbench's raised cells, a settled check ends on its mark and a picked tile's machine line on its button
+    if (line.kind == .try_step and line.settled) shown = std.fmt.bufPrint(&marked, "{s}  ✓", .{line.text}) catch shown;
+    if (line.kind == .try_machine and line.alt.len > 0) shown = std.fmt.bufPrint(&marked, "{s}   {s}", .{ line.text, line.alt }) catch shown;
+    if (app.feedLitItem(f)) |on| lit = on.line == row;
+    const cut = cellCount(shown) > room;
+    const avail = if (cut) room - 1 else room;
+    const text = clip(shown, avail);
+    const used = cellCount(text);
+    try pen.set(w, draw.onPanel(app, if (lit) (if (app.feedLit() == .focused) draw.chip(app) else draw.dimLit(app)) else style), null);
+    try w.writeAll(text);
+    try pen.set(w, draw.onPanel(app, style), null);
+    if (cut) try w.writeAll("…");
+    for (used + @intFromBool(cut)..room) |_| try w.writeAll(" ");
 }
