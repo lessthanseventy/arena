@@ -1709,6 +1709,15 @@ fn autoPiece(buf: []u8, plain: []const u8, armed: bool) []const u8 {
     return buf[0 .. text.len + pad];
 }
 
+test "auto's piece keeps one width asking and not" {
+    var a: [64]u8 = undefined;
+    var b: [64]u8 = undefined;
+    for ([_][]const u8{ "◐ auto", "◐ auto 2/4", "◐ auto 4/4 · tools 1/1" }) |plain| {
+        try std.testing.expectEqual(cellCount(autoPiece(&a, plain, false)), cellCount(autoPiece(&b, plain, true)));
+    }
+    try std.testing.expect(std.mem.startsWith(u8, autoPiece(&a, "◐ auto", true), auto_ask));
+}
+
 /// Plan's head against its right edge: auto's switch, today's landings and what
 /// needs the human, three cells apart, from cell `start` of the board's width, the head's own
 /// words taking `left_w`; with less room it keeps auto and what needs the human, then auto alone.
