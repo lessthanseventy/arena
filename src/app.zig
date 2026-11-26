@@ -8361,6 +8361,69 @@ test "a drag over a wrapped line of the modal copies it as one line, inside the 
     app.clearReportSaid();
 }
 
+/// Draws the open modal and drags a selection across two of its wrapped body rows.
+fn pickModalText(app: *App) !void {
+    var shot: Writer.Allocating = .init(std.testing.allocator);
+    defer shot.deinit();
+    try draw.frame(app, &shot.writer, .all);
+    var wrapped: ?usize = null;
+    for (app.grab.rows.items, 0..) |r, at| if (r.dropped != null and wrapped == null) {
+        wrapped = at;
+    };
+    const second = app.grab.rows.items[wrapped.?];
+    const first = app.grab.rows.items[wrapped.? - 1];
+    _ = try app.grabMouse(.{ .code = 0, .x = first.x, .y = first.y, .release = false });
+    _ = try app.grabMouse(.{ .code = 32, .x = second.x + 3, .y = second.y, .release = false });
+    _ = try app.grabMouse(.{ .code = 0, .x = second.x + 3, .y = second.y, .release = true });
+    try std.testing.expect(app.grab.sel != null);
+}
+
+test "a selection in the modal drops on the j key, and when j scrolls the text under it" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.out.deinit(std.testing.allocator);
+    defer app.grab.deinit(std.testing.allocator);
+    defer app.detail.deinit(std.testing.allocator);
+    defer app.clearReportSaid();
+    app.term_w = 140;
+    app.view_w = 140;
+    app.view_h = 30;
+    const json =
+        \\{"tickets":[{"id":7,"repo":"arena","title":"Lights","status":"doing","stage":"landed","checks":[]}],
+        \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    ;
+    app.board = try tickets.Board.parse(std.testing.allocator, json);
+    defer app.board.?.deinit();
+    app.home = .{ .detail = 7 };
+    var body: std.ArrayList(u8) = .empty;
+    defer body.deinit(std.testing.allocator);
+    for (0..200) |n| try body.print(std.testing.allocator, "word{d} ", .{n});
+    try app.detail.appendSlice(std.testing.allocator, body.items);
+
+    // the key itself drops it, with no frame drawn in between
+    try pickModalText(&app);
+    _ = try app.onInput("j");
+    try std.testing.expect(app.grab.sel == null);
+
+    // the scroll alone: the next frame finds other text under the pick and drops it
+    app.now += 1000;
+    try pickModalText(&app);
+    var shot: Writer.Allocating = .init(std.testing.allocator);
+    defer shot.deinit();
+    try draw.frame(&app, &shot.writer, .all);
+    try std.testing.expect(app.grab.sel != null);
+    const scrolled = app.home.?.detail_scroll;
+    try app.modalKey("j");
+    try std.testing.expectEqual(scrolled + 1, app.home.?.detail_scroll);
+    try std.testing.expect(app.grab.sel != null);
+    try draw.frame(&app, &shot.writer, .all);
+    try std.testing.expect(app.grab.sel == null);
+}
+
 fn tryApp(sent: std.Io.File, tmp_board: []const u8) !App {
     var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
     app.term_w = 200;
