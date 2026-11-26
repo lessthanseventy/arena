@@ -4550,3 +4550,26 @@ test "every title cut to fit ends in …" {
         try std.testing.expect(std.mem.indexOf(u8, text, "…") != null);
     }
 }
+
+test "driving and goals draw progress in one shape, N/M then a percent, ending the same distance from their window's edge" {
+    const eq = std.testing.expectEqual;
+    var board = try tickets.Board.parse(std.testing.allocator, grid_board);
+    defer board.deinit();
+    var shot = try planGrid(&board, 100);
+    defer shot.app.grab.deinit(std.testing.allocator);
+    const g = &shot.grid;
+    const driving = shot.app.planSlot(.driving);
+    const goals = shot.app.planSlot(.goals);
+    const cases = [_]struct { slot: sheets.Rect, label: []const u8, tail: []const u8 }{
+        .{ .slot = driving, .label = "5/12  41%", .tail = "" },
+        .{ .slot = goals, .label = "14/15  93%", .tail = "  ▲ 1 to try" },
+    };
+    var from_edge: ?usize = null;
+    for (cases) |c| {
+        const y = rowWith(g, c.slot, c.label).?;
+        const at = g.find(y, c.slot.x, c.slot.x + c.slot.w, c.label).?;
+        const gap = c.slot.x + c.slot.w - (at + cellCount(c.label) + cellCount(c.tail));
+        try eq(from_edge orelse gap, gap);
+        from_edge = gap;
+    }
+}
