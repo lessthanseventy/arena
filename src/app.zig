@@ -364,6 +364,9 @@ pub const HomeView = struct {
     /// The ticket whose whole detail is shown over the board, and how far down it is scrolled.
     detail: ?u32 = null,
     detail_scroll: usize = 0,
+    /// The card of the Your move item `App.item_id` names, an item with no ticket, is shown over
+    /// the board; its text is scrolled with `detail_scroll`.
+    item_open: bool = false,
     /// A landed ticket's body is unfolded: it is one `space` away behind its checks.
     body_open: bool = false,
 
@@ -414,12 +417,12 @@ pub const HomeView = struct {
 
     /// Whether a box sits in the middle column, beside Plan rather than over it.
     pub fn columnOpen(view: HomeView) bool {
-        return view.detail != null or view.giving != null or view.auto_pick != null or view.goal_open or view.draft != null;
+        return view.detail != null or view.item_open or view.giving != null or view.auto_pick != null or view.goal_open or view.draft != null;
     }
 
     /// Whether a box lies over the board, the keys its own.
     pub fn boxed(view: HomeView) bool {
-        return view.help or view.detail != null or view.giving != null or view.auto_pick != null or view.goal_open or view.draft != null or view.whole != null;
+        return view.help or view.detail != null or view.item_open or view.giving != null or view.auto_pick != null or view.goal_open or view.draft != null or view.whole != null;
     }
 };
 
@@ -529,6 +532,8 @@ pub const App = struct {
     board_dir: ?[]const u8 = null,
     /// The tickets whose detail babylon was asked to write and arena has yet to take in.
     detail_asked: std.ArrayList(u32) = .empty,
+    item_id: [96]u8 = undefined,
+    item_id_len: usize = 0,
     /// The subagent a click on its row asked its Claude to show.
     pick: ?Pick = null,
     want_list: bool = true,
@@ -3185,6 +3190,7 @@ pub const App = struct {
         if (app.detail_asked.items.len == 16) _ = app.detail_asked.orderedRemove(0);
         try app.detail_asked.append(app.gpa, id);
         view.detail = id;
+        view.item_open = false;
         view.detail_scroll = 0;
         view.body_open = false;
         view.ask_pick = 1;
@@ -3247,6 +3253,109 @@ pub const App = struct {
             while (note.next()) |_| n += 1;
         };
         return n;
+    }
+
+    /// The place in Your move of the item with no ticket whose card is open.
+    pub fn itemNeed(app: *const App) ?usize {
+        const view = app.home orelse return null;
+        if (!view.item_open) return null;
+        const b = if (app.board) |*b| b else return null;
+        for (b.needsYou(), 0..) |need, at| if (std.mem.eql(u8, need.id, app.item_id[0..app.item_id_len])) return at;
+        return null;
+    }
+
+    /// Your move item `at`, which has no ticket, opened in the middle column: a digest with its
+    /// doc, a push with the commits not yet pushed, any other with its text. A push's commits
+    /// are written beside the board, as a ticket's detail is, under the id 0.
+    pub fn openItem(app: *App, at: usize) !void {
+        const view = &app.home.?;
+        const need = app.board.?.needsYou()[at];
+        if (need.id.len > app.item_id.len) return;
+        @memcpy(app.item_id[0..need.id.len], need.id);
+        app.item_id_len = need.id.len;
+        view.item_open = true;
+        view.detail = null;
+        view.detail_scroll = 0;
+        app.detail.clearRetainingCapacity();
+        const text = @import("text.zig");
+        if (std.mem.eql(u8, need.kind, "digest")) if (need.doc) |doc| {
+            const body = std.Io.Dir.cwd().readFileAlloc(app.io, doc, app.gpa, .limited(1 << 20)) catch null;
+            if (body) |read| {
+                defer app.gpa.free(read);
+                try text.appendClean(&app.detail, app.gpa, read);
+                return;
+            }
+        };
+        if (std.mem.eql(u8, need.kind, "push")) {
+            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            const path = app.detailPath(0, &buf) orelse return;
+            std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
+            if (app.detail_asked.items.len == 16) _ = app.detail_asked.orderedRemove(0);
+            try app.detail_asked.append(app.gpa, 0);
+            try app.send(.ignore, "run-shell -b \"git -C \\\"\\$HOME/projects/{s}\\\" log --oneline origin/main..main >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ need.repo, path, path, path });
+            return;
+        }
+        try text.appendClean(&app.detail, app.gpa, need.text);
+    }
+
+    /// The buttons of the open item's card: its actions, then close.
+    pub fn itemButtons(app: *const App, out: []ModalButton) []ModalButton {
+        const rect = app.columnRect() orelse return out[0..0];
+        const at = app.itemNeed() orelse return out[0..0];
+        const foot = rect.y + rect.h - 1;
+        const right = rect.x + rect.w -| 2;
+        var n: usize = 0;
+        var x = rect.x + 2;
+        for (app.board.?.needsYou()[at].actions, 0..) |action, i| {
+            const button: ModalButton = .{ .action = .{ .need = @intCast(i) }, .key = action.key, .label = action.label, .x = x, .y = foot };
+            if (x + button.width() > right or n == out.len) break;
+            out[n] = button;
+            n += 1;
+            x += button.width() + 1;
+        }
+        const close: ModalButton = .{ .action = .close, .key = "q", .label = "close", .x = x, .y = foot };
+        if (n < out.len and x + close.width() <= right) {
+            out[n] = close;
+            n += 1;
+        }
+        return out[0..n];
+    }
+
+    /// A press on a button of the open item's card: close, or one of the item's actions, run as
+    /// on its row, which leaves the card.
+    fn pressItem(app: *App, action: ModalAction) !void {
+        const view = &app.home.?;
+        const at = app.itemNeed() orelse {
+            view.item_open = false;
+            return;
+        };
+        view.item_open = false;
+        const i = switch (action) {
+            .need => |i| i,
+            else => return,
+        };
+        const need = app.board.?.needsYou()[at];
+        if (i >= need.actions.len) return;
+        _ = try win_feed.act(app, win_move.itemOf(need, at, null), need.actions[i].key);
+    }
+
+    /// A key in the open item's card: `j` `k` scroll, `q` closes, and an action's own key runs it.
+    fn itemKey(app: *App, key: []const u8) !void {
+        const view = &app.home.?;
+        const at = app.itemNeed() orelse {
+            view.item_open = false;
+            return;
+        };
+        if (anyKey(key, &.{ "\x1b", "q", " " })) {
+            view.item_open = false;
+            return;
+        }
+        if (anyKey(key, &.{ "j", "\x1b[B", "\x1bOB" }) and view.detail_scroll + 1 < app.detailRows()) view.detail_scroll += 1;
+        if (anyKey(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.detail_scroll -|= 1;
+        const named: []const u8 = if (std.mem.eql(u8, key, "\r")) "⏎" else key;
+        for (app.board.?.needsYou()[at].actions, 0..) |action, i| {
+            if (std.mem.eql(u8, action.key, named)) return app.pressItem(.{ .need = @intCast(i) });
+        }
     }
 
     /// Where babylon writes ticket `id`'s detail for the board to read.
@@ -4038,6 +4147,7 @@ pub const App = struct {
             view.help = false;
             return;
         }
+        if (view.item_open) return app.itemKey(key);
         if (view.detail != null) return app.modalKey(key);
         if (anyKey(key, &.{"s"})) return app.openSwitcher();
         if (app.columnFocused()) return app.columnKey(key);
@@ -5386,6 +5496,14 @@ pub const App = struct {
                 try app.autoClick(m);
                 return true;
             }
+            if (open.item_open) if (app.columnRect()) |rect| {
+                var items: [16]ModalButton = undefined;
+                for (app.itemButtons(&items)) |button| if (button.hit(m.x, m.y)) {
+                    try app.pressItem(button.action);
+                    return true;
+                };
+                if (rect.contains(m.x, m.y)) return true;
+            };
             if (app.modalRect()) |rect| {
                 var modal: [48]ModalButton = undefined;
                 for (app.modalButtons(&modal)) |button| if (button.hit(m.x, m.y)) {
@@ -5403,14 +5521,22 @@ pub const App = struct {
                 return true;
             }
             const closed = open.detail;
+            const closed_item = open.item_open;
             open.help = false;
             open.detail = null;
+            open.item_open = false;
             open.giving = null;
             // a click on another Your move item opens it in the closed one's place
             if (closed) |id| {
                 var sheet: sheets.Sheet = undefined;
                 if (m.y >= 2 and app.planSheet(&sheet)) if (app.planRowAt(&sheet, m.x, m.y)) |at| {
                     if (sheet.rows[at].kind == .need and sheet.rows[at].ticket != id) try app.planClick(m);
+                };
+            }
+            if (closed_item) {
+                var sheet: sheets.Sheet = undefined;
+                if (m.y >= 2 and app.planSheet(&sheet)) if (app.planRowAt(&sheet, m.x, m.y)) |at| {
+                    if (sheet.rows[at].kind == .need and sheet.rows[at].ticket == null) try app.planClick(m);
                 };
             }
             return true;

@@ -68,8 +68,8 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
 
 /// Whether `row`'s item is the one open: its ticket's card is shown in the middle column.
 pub fn isOpen(app: *const App, row: sheets.Row) bool {
-    const id = row.ticket orelse return false;
     const view = app.home orelse return false;
+    const id = row.ticket orelse return row.kind == .need and app.itemNeed() == row.item;
     return view.detail == id and !view.gate;
 }
 
@@ -124,7 +124,7 @@ pub fn open(app: *App, row: *const sheets.Row) !void {
         _ = try win_feed.act(app, itemOf(need, row.item, null), " ");
         return;
     }
-    _ = try app.openDetail(row.ticket orelse return);
+    if (row.ticket) |id| _ = try app.openDetail(id) else try app.openItem(row.item);
 }
 
 /// The Your move item of ticket `id` whose buttons its card carries: the first that is not an

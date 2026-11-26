@@ -1725,7 +1725,7 @@ fn planView(app: *App, w: *Writer, view: app_mod.HomeView) !void {
 /// Whether a box is open that is drawn in the middle column.
 fn columnOpen(app: *const App, view: app_mod.HomeView) bool {
     const words = if (app.prompt) |prompt| prompt.multiline() else false;
-    return words or view.detail != null or view.giving != null or view.goal_open or
+    return words or view.detail != null or view.item_open or view.giving != null or view.goal_open or
         app.autoRect() != null or app.draftRect() != null;
 }
 
@@ -1736,6 +1736,7 @@ fn planBoxes(app: *App, w: *Writer, view: app_mod.HomeView) !void {
         try win_modal.giveBox(app, w, card.id, picked);
     };
     if (view.detail) |id| try win_modal.detailBox(app, w, id, view.detail_scroll);
+    if (view.item_open) try win_modal.itemBox(app, w, view.detail_scroll);
     if (app.autoRect() != null) app.grab.cover();
     try win_modal.autoBox(app, w);
     if (view.goal_open) {

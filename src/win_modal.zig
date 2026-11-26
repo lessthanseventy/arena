@@ -192,6 +192,42 @@ pub fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
     try modalFrame(app, w, rect, title, " j k scroll ");
 }
 
+/// The open Your move item with no ticket, in the middle column: its text (a digest's doc, a
+/// push's commits) scrolled `scroll` rows down, its actions as buttons and `q close` at the foot.
+pub fn itemBox(app: *App, w: *Writer, scroll: usize) !void {
+    const r = app.roles orelse return;
+    const at = app.itemNeed() orelse return;
+    const rect = app.columnRect() orelse return;
+    const need = app.board.?.needsYou()[at];
+    const inner = app_mod.detailWidth(app.columnRoom()).inner;
+    const x0 = rect.x + 2;
+    const foot = rect.y + rect.h - 1;
+    app.grab.window(.{ .x = x0, .y = rect.y + 1, .w = inner, .h = rect.h -| 2 });
+    var tbuf: [96]u8 = undefined;
+    const title = std.fmt.bufPrint(&tbuf, "{s}{s}{s}", .{ need.kind, if (need.repo.len > 0) " \u{b7} " else "", need.repo }) catch need.kind;
+    try bench.window(w, r, rect.x, rect.y, rect.w - 1, rect.h + 1, title, null, true);
+    var y = rect.y + 1;
+    var row: usize = 0;
+    var lines = app_mod.DetailLines.init(if (app.detail.items.len > 0) app.detail.items else "…", inner);
+    while (lines.next()) |line| : (row += 1) {
+        if (row < scroll) continue;
+        if (y >= foot - 1) break;
+        try bench.say(w, x0, y, clip(line, inner), r.text, r.panel, false);
+        try app.grab.row(app.gpa, x0, y, clip(line, inner), lines.dropped);
+        y += 1;
+    }
+    var buttons: [16]App.ModalButton = undefined;
+    var end = x0;
+    var primary = true;
+    for (app.itemButtons(&buttons)) |button| {
+        _ = try bench.button(w, r, button.x, button.y, button.key, button.label, primary and button.action != .close, r.ground);
+        if (button.action != .close) primary = false;
+        end = button.x + button.width() + 1;
+    }
+    const hint = " j k scroll ";
+    if (end + cellCount(hint) < rect.x + rect.w - 2) try bench.say(w, end, foot, hint, r.dim, r.panel, false);
+}
+
 /// A switch as text: the knob right when on.
 fn knobText(on: bool) []const u8 {
     return if (on) "▐ ●▌" else "▐● ▌";
