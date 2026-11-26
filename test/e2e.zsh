@@ -1174,6 +1174,10 @@ key Enter
 check "Enter keeps the find and gives Plan its keys" see '/ TLON'
 key Escape
 check "Escape clears it" gone '/ TLON'
+key -l 'qecho kept-after-q'
+kept_after_plan() { inner capture-pane -p -t alpha | grep -qF 'echo kept-after-q' }
+check "what is typed in one read after the q closing Plan is the pane's" await kept_after_plan
+key C-u
 $bin -L $in plan 7
 zselect -t 100
 key p
