@@ -8,7 +8,7 @@ const sheets = @import("plan.zig");
 const draw = @import("draw.zig");
 const App = app_mod.App;
 const Writer = std.Io.Writer;
-const clip = draw.clip;
+const sayCut = draw.sayCut;
 const cellCount = draw.cellCount;
 const repoHue = draw.repoHue;
 const stepHue = draw.stepHue;
@@ -46,8 +46,8 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             const title_x = x0 + 5 + cellCount(id);
             if (chip_x > title_x + 4) {
                 _ = try bench.chipInk(w, r, chip_x, y, label, lead, if (item.stalled != null) r.on_accent else r.text, item.stalled != null);
-                try bench.say(w, title_x, y, clip(item.title, chip_x - title_x - 1), if (row.dim) r.dim else r.text, bg, false);
-            } else try bench.say(w, title_x, y, clip(item.title, x0 + ww -| title_x -| 1), if (row.dim) r.dim else r.text, bg, false);
+                try sayCut(w, title_x, y, item.title, chip_x - title_x - 1, if (row.dim) r.dim else r.text, bg, false);
+            } else try sayCut(w, title_x, y, item.title, x0 + ww -| title_x -| 1, if (row.dim) r.dim else r.text, bg, false);
         },
         .other => {
             const claude = app.otherAt(row.item) orelse return;
@@ -75,7 +75,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             const place_x = age_x -| (cellCount(place) + 2);
             try bench.say(w, age_x, y, age, r.dim, bg, false);
             try bench.say(w, place_x, y, place, r.dim, bg, false);
-            try bench.say(w, x0 + 7, y, clip(win.label(), place_x -| (x0 + 8)), r.text, bg, false);
+            try sayCut(w, x0 + 7, y, win.label(), place_x -| (x0 + 8), r.text, bg, false);
             try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
         },
         else => {},

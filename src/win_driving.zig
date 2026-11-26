@@ -33,14 +33,10 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
                 switch (row.part) {
                     1 => {
                         const shares = try goalChips(w, r, b, goal, x0 + ww, y);
-                        try bench.say(w, x0 + 2, y, clip(goal.title, room -| shares), r.text, bg, true);
+                        try draw.sayCut(w, x0 + 2, y, goal.title, room -| shares, r.text, bg, true);
                     },
                     2 => {
-                        var buf: [32]u8 = undefined;
-                        const label = std.fmt.bufPrint(&buf, "{d}/{d} landed", .{ goal.landed, goal.total }) catch "";
-                        const bar_w = ww -| 5 -| cellCount(label);
-                        try bench.bar(w, r, x0 + 2, y, bar_w, goal.landed, goal.total, hue);
-                        try bench.say(w, x0 + 3 + bar_w, y, label, r.text, bg, false);
+                        try draw.goalBar(w, r, x0 + 2, y, ww -| 4, goal, hue, bg, r.dim, "", r.dim);
                     },
                     else => {
                         try bench.say(w, x0 + 2, y, "now", r.dim, bg, false);

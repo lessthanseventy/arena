@@ -3611,6 +3611,7 @@ pub const App = struct {
         app.narrowPlan(sheet);
         if (app.workbench()) {
             sheet.withNeedCards(app.plan_open, b, app.planRect(.move).w -| 1);
+            sheet.withWhyOnPick(app);
             sheet.withButtons(app.plan_open);
             sheet.withHeld(b.plan().?, KnownPanes{ .app = app });
             var others: [max_others]Agent = undefined;

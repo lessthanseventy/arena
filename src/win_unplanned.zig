@@ -85,7 +85,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             const title_x = x0 + 5 + cellCount(id);
             const dim = card.blocked_by.len > 0;
             try bench.say(w, label_x, y, label, if (dim) r.dim else if (std.mem.eql(u8, card.priority, "high")) r.you else r.dim, bg, false);
-            try bench.say(w, title_x, y, clip(card.title, label_x -| title_x -| 1), if (dim) r.dim else r.text, bg, false);
+            try draw.sayCut(w, title_x, y, card.title, label_x -| title_x -| 1, if (dim) r.dim else r.text, bg, false);
             try bench.say(w, x0 + ww, y, "▌", r.well, r.ground, false);
         },
         else => {},

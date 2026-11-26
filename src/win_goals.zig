@@ -9,6 +9,7 @@ const draw = @import("draw.zig");
 const App = app_mod.App;
 const Writer = std.Io.Writer;
 const clip = draw.clip;
+const sayCut = draw.sayCut;
 const cellCount = draw.cellCount;
 const goalHue = draw.goalHue;
 const goalChips = draw.goalChips;
@@ -47,8 +48,8 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             if (asks) try bench.say(w, right -| cellCount(ask_text), y, ask_text, r.you, bg, true);
             if (chip_x > title_x + 4) {
                 _ = try bench.chipInk(w, r, chip_x, y, label, lead, r.text, false);
-                try bench.say(w, title_x, y, clip(idea.title, chip_x - title_x - 1), if (row.dim) r.dim else r.text, bg, false);
-            } else try bench.say(w, title_x, y, clip(idea.title, right -| title_x), if (row.dim) r.dim else r.text, bg, false);
+                try sayCut(w, title_x, y, idea.title, chip_x - title_x - 1, if (row.dim) r.dim else r.text, bg, false);
+            } else try sayCut(w, title_x, y, idea.title, right -| title_x, if (row.dim) r.dim else r.text, bg, false);
         },
         .ideas_more => {
             try bench.fill(w, x0, y, ww, bg);
@@ -80,25 +81,19 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
                     const hue = goalHue(b, r, goal);
                     const shares = try goalChips(w, r, b, goal, cx + cw, y);
                     try bench.say(w, cx + 2, y, id, hue, face, true);
-                    try bench.say(w, cx + 2 + cellCount(id), y, clip(goal.title, cw -| 4 -| cellCount(id) -| shares), if (row.dim) r.dim else r.text, face, true);
+                    try sayCut(w, cx + 2 + cellCount(id), y, goal.title, cw -| 4 -| cellCount(id) -| shares, if (row.dim) r.dim else r.text, face, true);
                 },
                 .goal_bar => {
                     try bench.fill(w, cx, y, cw, face);
-                    var buf: [32]u8 = undefined;
-                    const pct: u32 = if (goal.total == 0) 0 else goal.landed * 100 / goal.total;
-                    const label = std.fmt.bufPrint(&buf, "{d}/{d}  {d}%", .{ goal.landed, goal.total, pct }) catch "";
                     const trying = sheets.goalTrying(goal);
                     var tb: [24]u8 = undefined;
                     const words = if (trying > 0) std.fmt.bufPrint(&tb, "▲ {d} to try", .{trying}) catch "" else "";
-                    const bar_w = cw -| 4 -| cellCount(label) -| (if (words.len > 0) cellCount(words) + 2 else 0);
-                    try bench.bar(w, r, cx + 2, y, bar_w, goal.landed, goal.total, goalHue(b, r, goal));
-                    try bench.say(w, cx + 3 + bar_w, y, label, r.dim, face, false);
-                    if (words.len > 0) try bench.say(w, cx + 3 + bar_w + cellCount(label) + 2, y, words, r.you, face, false);
+                    try draw.goalBar(w, r, cx + 2, y, cw -| 3, goal, goalHue(b, r, goal), face, r.dim, words, r.you);
                 },
                 .goal_next => {
                     try bench.fill(w, cx, y, cw, face);
                     try bench.say(w, cx + 2, y, "next", r.dim, face, false);
-                    if (sheets.goalNext(goal)) |step| _ = try stepChip(w, r, cx + 10, y, step) else try bench.say(w, cx + 10, y, "nothing", r.dim, face, false);
+                    if (sheets.goalNext(goal)) |step| _ = try stepChip(w, r, cx + 10, y, step) else try bench.say(w, cx + 11, y, "nothing", r.dim, face, false);
                 },
                 else => {
                     try bench.fill(w, cx, y, cw, face);
@@ -106,7 +101,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
                     if (sheets.goalBlock(goal)) |block| {
                         var buf: [40]u8 = undefined;
                         _ = try bench.chipInk(w, r, cx + 10, y, std.fmt.bufPrint(&buf, "\u{f0c1} #{d} waits on #{d}", .{ block.step, block.on }) catch "", r.dim, r.dim, false);
-                    } else try bench.say(w, cx + 10, y, "nothing", r.dim, face, false);
+                    } else try bench.say(w, cx + 11, y, "nothing", r.dim, face, false);
                 },
             }
             if (row.kind != .card_top) try bench.say(w, cx, y, "▌", goalHue(b, r, goal), face, false);

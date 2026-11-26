@@ -331,6 +331,18 @@ pub const Sheet = struct {
         return .{ .start = start, .len = len };
     }
 
+    /// Next's one line a row: a why stays only under the next row `lit` says is picked.
+    pub fn withWhyOnPick(s: *Sheet, lit: anytype) void {
+        var out: usize = 0;
+        for (0..s.n) |i| {
+            const row = s.rows[i];
+            if (row.kind == .why and out > 0 and s.rows[out - 1].kind == .next and !lit.planRowLit(s.rows[out - 1])) continue;
+            s.rows[out] = row;
+            out += 1;
+        }
+        s.n = out;
+    }
+
     /// A row of the card's buttons under each ticket row that is open in its window, after the
     /// why a next row has; it is no pick, so the picks stay where they were.
     pub fn withButtons(s: *Sheet, open: Open) void {

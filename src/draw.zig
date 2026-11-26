@@ -498,6 +498,39 @@ pub fn clip(text: []const u8, max: usize) []const u8 {
     return text[0..it.i];
 }
 
+/// `text` in `max` cells: whole when it fits, else cut at a word boundary within six cells of the
+/// end when there is one, and ended with `…`. `buf` holds the result.
+pub fn clipMark(buf: []u8, text: []const u8, max: usize) []const u8 {
+    if (cellCount(text) <= max) return text;
+    if (max == 0) return "";
+    var head = clip(text, max - 1);
+    const tail = lastCells(head, 6);
+    if (std.mem.lastIndexOfScalar(u8, tail, ' ')) |sp| {
+        const at = head.len - tail.len + sp;
+        if (at > 0) head = head[0..at];
+    }
+    head = std.mem.trimEnd(u8, head, " ");
+    return std.fmt.bufPrint(buf, "{s}…", .{head}) catch head;
+}
+
+/// `clipMark` of `text` said at (`x`, `y`) in `max` cells.
+pub fn sayCut(w: *Writer, x: usize, y: usize, text: []const u8, max: usize, fg: color.RGB, bg: color.RGB, bold: bool) !void {
+    var buf: [256]u8 = undefined;
+    try bench.say(w, x, y, clipMark(&buf, text, max), fg, bg, bold);
+}
+
+/// A goal's bar from `x` across `room` cells: the bar, then `N/M  P%` ending at the room's right
+/// edge, then `tail` (what to try) after it when there is one. One shape in every window.
+pub fn goalBar(w: *Writer, r: theme.Roles, x: usize, y: usize, room: usize, goal: tickets.Goal, hue: color.RGB, face: color.RGB, count_ink: color.RGB, tail: []const u8, tail_ink: color.RGB) !void {
+    var buf: [32]u8 = undefined;
+    const pct: u32 = if (goal.total == 0) 0 else goal.landed * 100 / goal.total;
+    const label = std.fmt.bufPrint(&buf, "{d}/{d}  {d}%", .{ goal.landed, goal.total, pct }) catch "";
+    const bar_w = room -| 1 -| cellCount(label) -| (if (tail.len > 0) cellCount(tail) + 2 else 0);
+    try bench.bar(w, r, x, y, bar_w, goal.landed, goal.total, hue);
+    try bench.say(w, x + 1 + bar_w, y, label, count_ink, face, false);
+    if (tail.len > 0) try bench.say(w, x + 1 + bar_w + cellCount(label) + 2, y, tail, tail_ink, face, false);
+}
+
 /// The last `max` characters of `text`.
 fn lastCells(text: []const u8, max: usize) []const u8 {
     var n = cellCount(text);
@@ -3625,6 +3658,57 @@ fn peekBox(app: *App, w: *Writer, p: *const PeekRows) !void {
     try w.print("\x1b[{d};{d}H╰", .{ y + 2 + n, x + 1 });
     for (0..bw - 2) |_| try w.writeAll("─");
     try w.writeAll("╯");
+}
+
+test "a title too long for its slot is cut at a word boundary and ends in …, and one that fits is whole" {
+    var buf: [64]u8 = undefined;
+    try std.testing.expectEqualStrings("only your move", clipMark(&buf, "only your move", 14));
+    try std.testing.expectEqualStrings("only your…", clipMark(&buf, "only your move is shown", 13));
+    try std.testing.expectEqualStrings("Portable: transpor…", clipMark(&buf, "Portable: transportation", 19));
+    try std.testing.expectEqualStrings("é…", clipMark(&buf, "éééé", 2));
+}
+
+test "next is one line a row, and only the picked row shows its why" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],
+        \\"plan":{"now":[],"next":[
+        \\{"ticket":1,"repo":"arena","title":"one","why":"why one"},
+        \\{"ticket":2,"repo":"arena","title":"two","why":"why two"},
+        \\{"ticket":3,"repo":"arena","title":"three","why":"why three"},
+        \\{"ticket":4,"repo":"arena","title":"four","why":"why four"},
+        \\{"ticket":5,"repo":"arena","title":"five","why":"why five"}],
+        \\"goals":[],"landed_today":{"count":0,"newest":[]},
+        \\"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer board.deinit();
+    var app = homeApp(&board);
+    app.view_w = 80;
+    app.view_h = 31;
+    app.roles = bench.roles();
+    app.home = .{ .alone = false, .focus = .plan };
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    var nexts: usize = 0;
+    var whys: usize = 0;
+    for (sheet.rows[0..sheet.n]) |row| {
+        nexts += @intFromBool(row.kind == .next);
+        whys += @intFromBool(row.kind == .why);
+    }
+    try std.testing.expectEqual(@as(usize, 5), nexts);
+    try std.testing.expect(whys <= 1);
+    var third: usize = 0;
+    for (sheet.rows[0..sheet.n]) |row| {
+        if (row.kind == .next and row.ticket.? == 3) third = row.pick.?;
+    }
+    app.home.?.plan_pick = third;
+    try std.testing.expect(app.planSheet(&sheet));
+    whys = 0;
+    for (sheet.rows[0..sheet.n], 0..) |row, i| {
+        if (row.kind != .why) continue;
+        whys += 1;
+        try std.testing.expectEqual(@as(u32, 3), sheet.rows[i - 1].ticket.?);
+    }
+    try std.testing.expectEqual(@as(usize, 1), whys);
 }
 
 test "a peek row too long for its slot is cut at a whole character and ends in …" {

@@ -53,3 +53,13 @@ A review of a design or a UI change checks it against them.
     height and then scrolls, with `⏎` send, `shift+⏎` a new line and `esc` cancel, each also a
     button. A short, single-purpose field can stay inline where a modal would be heavier than the
     thing (a find line, a filter, the chat input itself).
+12. **One grid.** Inside a window, every row starts on the same left margin, labels share one
+    width and their values start in one column, and counts and ages are right-aligned in a column
+    (`N/M` and a trailing `P%` everywhere a count of landed is shown). A bar starts at the text
+    column and ends where its count begins. A title that does not fit is cut at a word boundary
+    and ends in `…`, never mid-word with no mark. No state is said by colour alone: each has its
+    word or glyph too, and dim text keeps 4.5:1 against its ground (WCAG AA).
+13. **Short first, the whole thing one step away.** Every row, card and line shows its short form.
+    The full text (title, why, checks, body) is one step away: the pick, a hover, `space` for the
+    modal, or the peek. Never the long form on every row at once: Next is one line per row, with
+    the why on the picked row only.

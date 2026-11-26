@@ -38,7 +38,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             const how_x = x0 + ww -| (cellCount(how) + 1);
             if (how.len > 0 and how_x > title_x + 4) try bench.say(w, how_x, y, how, r.dim, bg, false);
             const title_room = (if (how.len > 0) how_x else x0 + ww) -| title_x -| 1;
-            if (card) |c| try bench.say(w, title_x, y, clip(c.title, title_room), r.text, bg, false);
+            if (card) |c| try draw.sayCut(w, title_x, y, c.title, title_room, r.text, bg, false);
         },
         else => {},
     }
