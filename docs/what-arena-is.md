@@ -239,10 +239,11 @@ Tickets to file once the human has read this page, each held to it:
 4. **arena:** the mock's rail goes.
 5. **ficciones:** the next-step mod is removed.
 
-## Open for the human
+## Decided by the human
 
-1. **The strip.** This page keeps it as your own terminal, reached only from the switcher. The
-   other way is to remove it and have arena show only Doing, Planning, the column and the drawer.
-   Your shells would then open in the column like a Claude's pane.
-2. **The next-step mod outside the orchestrator.** This page removes it from every session. In a
-   session you talk to directly, its buttons are the only suggestions you get.
+The human, 2026-11-26, to the orchestrator's picks on this page's two open questions: "that all
+sounds great".
+
+1. **The strip stays only as the human's own terminal.** It is reached from the switcher and is
+   never a place arena lands them.
+2. **The next-step mod goes from every session,** not only the orchestrator's.
