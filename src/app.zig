@@ -371,6 +371,8 @@ pub const HomeView = struct {
     ask_pick: u8 = 1,
     /// The check of the modal's to-try ticket that `y` and `n` act on, from 1.
     check_pick: u8 = 1,
+    /// The modal's to-try ticket has its `details ▸` row open: its body, stage and facts shown.
+    details: bool = false,
     /// The subagent of the modal's Claude that ⏎ shows, from 1; 0 while none is picked and ⏎ goes there.
     sub_pick: u8 = 0,
     /// The open modal is that ticket's gate run, not its detail; and `W` has asked whether to
@@ -3178,6 +3180,7 @@ pub const App = struct {
         view.body_open = false;
         view.ask_pick = 1;
         view.check_pick = 1;
+        view.details = false;
         view.sub_pick = 0;
         view.gate = gate;
         view.withdrawing = false;
@@ -3225,6 +3228,7 @@ pub const App = struct {
     pub fn detailRows(app: *const App) usize {
         const inner = detailWidth(app.columnRoom()).inner;
         if (app.home) |view| if (view.gate) return gateOutputRows(gateOutput(gateLastRun(app.detail.items)), inner);
+        if (app.modalCard()) |card| if (app.bodyHidden(card)) return 0;
         var n: usize = 0;
         const body_folded = if (app.modalCard()) |card| card.status == .done and !app.home.?.body_open else false;
         var lines = DetailLines.init(if (body_folded) "space more" else if (app.detail.items.len > 0) app.detail.items else "…", inner);
@@ -4580,7 +4584,7 @@ pub const App = struct {
     }
 
     /// What a modal button does when pressed.
-    pub const ModalAction = union(enum) { close, need: u8, card: CardAction, option: u8, sub: u8, words, claude, whole_log, ticket, bump, withdraw, tried_ok, tried_no, copy_check, run_check };
+    pub const ModalAction = union(enum) { close, need: u8, card: CardAction, option: u8, sub: u8, words, claude, whole_log, ticket, bump, withdraw, tried_ok, tried_no, copy_check, run_check, details, open_check, diff_check };
 
     /// A button of the modal frame, where it is drawn and clicked: 0-based. It reads ` key label `.
     pub const ModalButton = struct {
@@ -4619,14 +4623,17 @@ pub const App = struct {
 
     /// What a card's modal says of it above its body, a line each.
     pub const CardHead = struct {
-        pub const Kind = enum { plain, dim, warn, options, check, sub, shell };
-        buf: [1024]u8 = undefined,
+        pub const Kind = enum { plain, dim, warn, options, check, sub, shell, sheet, fold };
+        buf: [4096]u8 = undefined,
         used: usize = 0,
-        lines: [64][]const u8 = undefined,
-        kinds: [64]Kind = undefined,
+        lines: [96][]const u8 = undefined,
+        kinds: [96]Kind = undefined,
         /// Of a line arena wrapped from the one before it: the spaces the wrap took out.
-        joins: [64]?usize = @splat(null),
+        joins: [96]?usize = @splat(null),
         n: usize = 0,
+        /// Of a to-try card with a sheet: the line of its `details` button, the facts and body
+        /// folded under it.
+        fold: ?usize = null,
         /// The first of the lines of the open ask's options, a button each, and its words after.
         options: ?usize = null,
         /// The first of a to-try ticket's check lines, one each.
@@ -4642,6 +4649,13 @@ pub const App = struct {
             head.lines[head.n] = text;
             head.kinds[head.n] = kind;
             head.n += 1;
+        }
+
+        /// `fmt` run on over lines of `inner` cells, up to `rows` of them.
+        fn wrapped(head: *CardHead, kind: Kind, inner: usize, rows: usize, comptime fmt: []const u8, args: anytype) void {
+            const text = std.fmt.bufPrint(head.buf[head.used..], fmt, args) catch return;
+            head.used += text.len;
+            head.wrap(kind, text, inner, rows);
         }
 
         /// `text` run on over lines of `inner` cells, up to `rows` of them.
@@ -4667,7 +4681,37 @@ pub const App = struct {
     /// Fills `head` with the card's title whole, its stage, holder, model and branch, what blocks
     /// it, the question it asks with its options, and what it was sent back for.
     pub fn cardHead(card: *const tickets.Card, inner: usize, epoch: i64, words: bool, head: *CardHead) void {
+        cardHeadOpen(card, inner, epoch, words, true, head);
+    }
+
+    /// `cardHead`; a to-try card with a try sheet leads with it and its checks, and `details` says
+    /// whether the facts it folds under its `details` row are in.
+    fn cardHeadOpen(card: *const tickets.Card, inner: usize, epoch: i64, words: bool, details: bool, head: *CardHead) void {
         head.* = .{};
+        if (card.status == .@"try" and card.checks.len > 0) if (card.@"try") |sheet| {
+            sheetHead(card, sheet, inner, head);
+            checkHead(card, head);
+            head.fold = head.n;
+            head.add(.fold, "", .{});
+            if (details) factsHead(card, inner, epoch, words, head);
+            return;
+        };
+        factsHead(card, inner, epoch, words, head);
+        checkHead(card, head);
+    }
+
+    fn sheetHead(card: *const tickets.Card, sheet: tickets.TrySheet, inner: usize, head: *CardHead) void {
+        head.wrapped(.sheet, inner, 2, "TRY IT \u{b7} #{d} {s}", .{ card.id, card.title });
+        if (sheet.changed.len > 0) {
+            head.add(.sheet, "What changed for you:", .{});
+            head.wrapped(.sheet, inner, 4, "{s}", .{sheet.changed});
+        }
+        for (sheet.steps, 1..) |step, n| head.wrapped(.sheet, inner, 3, "{d}. {s}", .{ n, step });
+        if (sheet.right.len > 0) head.wrapped(.sheet, inner, 3, "\u{2713} right: {s}", .{sheet.right});
+        if (sheet.wrong.len > 0) head.wrapped(.sheet, inner, 3, "\u{2717} wrong: {s}", .{sheet.wrong});
+    }
+
+    fn factsHead(card: *const tickets.Card, inner: usize, epoch: i64, words: bool, head: *CardHead) void {
         head.wrap(.plain, card.title, inner, head.lines.len);
         var meta: [256]u8 = undefined;
         var wr: Writer = .fixed(&meta);
@@ -4707,6 +4751,9 @@ pub const App = struct {
             const sign: []const u8 = if (check.result) |result| (if (std.mem.eql(u8, result, "ok")) "✓" else "✗") else "·";
             head.add(.dim, "{s} {d} {s}", .{ sign, check.n, check.text });
         };
+    }
+
+    fn checkHead(card: *const tickets.Card, head: *CardHead) void {
         if (card.status == .@"try" and card.checks.len > 0) {
             var tried: usize = 0;
             for (card.checks) |check| tried += @intFromBool(check.result != null);
@@ -4722,12 +4769,35 @@ pub const App = struct {
     /// `cardHead` for the open modal: a to-try card's rows end with what arena says of the check
     /// it ran, or asks to run.
     pub fn modalHead(app: *const App, card: *const tickets.Card, inner: usize, words: bool, head: *CardHead) void {
-        cardHead(card, inner, app.epoch, words, head);
+        cardHeadOpen(card, inner, app.epoch, words, if (app.home) |view| view.details else false, head);
         if (card.status != .@"try") return;
         var id: [24]u8 = undefined;
         const note = app.refusalOf(std.fmt.bufPrint(&id, "try:{d}", .{card.id}) catch return) orelse return;
         var rows = std.mem.splitScalar(u8, note, '\n');
-        while (rows.next()) |row| head.add(.dim, "{s}", .{row});
+        // under a sheet the first dim row is not the facts' chips, so these say themselves as a shell's do
+        const kind: CardHead.Kind = if (head.fold != null) .shell else .dim;
+        while (rows.next()) |row| head.add(kind, "{s}", .{row});
+    }
+
+    /// Whether the pick of a to-try card with a sheet is on its `details` row, past its checks.
+    pub fn onFold(app: *const App, card: *const tickets.Card) bool {
+        const view = app.home orelse return false;
+        return card.status == .@"try" and card.@"try" != null and card.checks.len > 0 and view.check_pick > card.checks.len;
+    }
+
+    /// Whether the card's body is folded away under its `details` row.
+    pub fn bodyHidden(app: *const App, card: *const tickets.Card) bool {
+        const view = app.home orelse return false;
+        return card.status == .@"try" and card.@"try" != null and card.checks.len > 0 and !view.details;
+    }
+
+    /// Check `n` of ticket `id` as its Your move item gives it, with the doc or range it opens.
+    fn stepOf(app: *const App, id: u32, n: u32) ?struct { need: tickets.Need, step: tickets.TryStep } {
+        const b = if (app.board) |*b| b else return null;
+        for (b.needsYou()) |need| if (need.ticket == id and std.mem.eql(u8, need.kind, "try")) {
+            for (need.steps) |step| if (step.n == n) return .{ .need = need, .step = step };
+        };
+        return null;
     }
 
     /// The most subagents a Claude's rows list, in its card and its modal.
@@ -4794,6 +4864,13 @@ pub const App = struct {
                     }
                 }
             };
+            if (head.fold) |line| if (n < out.len) {
+                const y = rect.y + 1 + @as(u16, @intCast(line));
+                if (y < foot) {
+                    out[n] = .{ .action = .details, .key = "\u{23ce}", .label = if (app.home.?.details) "details \u{25be}" else "details \u{25b8}", .x = rect.x + 2, .y = y };
+                    n += 1;
+                }
+            };
             x = rect.x + 2;
             if (shown > 0 and n < out.len) {
                 const pick = @min(@max(app.home.?.ask_pick, 1), shown);
@@ -4802,7 +4879,24 @@ pub const App = struct {
                 n += 1;
                 x += button.width() + 1;
             }
-            if (card.status == .@"try" and card.checks.len > 0) {
+            if (card.status == .@"try" and card.checks.len > 0 and !app.onFold(card)) {
+                if (pickedCheck(card, app.home.?.check_pick)) |check| if (app.stepOf(card.id, check.n)) |found| {
+                    // a look with no doc opens its diff on `o`; with both, the diff is on `d`
+                    const both = found.step.doc != null and feed.isLook(found.step);
+                    const opens = [_]ModalButton{
+                        .{ .action = .open_check, .key = "o", .label = "open", .x = x, .y = foot },
+                        .{ .action = .diff_check, .key = "d", .label = "diff", .x = x, .y = foot },
+                    };
+                    for (opens, 0..) |item, i| {
+                        if (!feed.opens(found.step) or (i == 1 and !both)) continue;
+                        var button = item;
+                        button.x = x;
+                        if (x + button.width() > right or n == out.len) break;
+                        out[n] = button;
+                        n += 1;
+                        x += button.width() + 1;
+                    }
+                };
                 const tries = [_]ModalButton{
                     .{ .action = .tried_ok, .key = "y", .label = "✓ it works", .x = x, .y = foot },
                     .{ .action = .tried_no, .key = "n", .label = "✗ it failed", .x = x, .y = foot },
@@ -4952,6 +5046,23 @@ pub const App = struct {
                 view.detail = null;
                 _ = app.openWords(w.need);
             },
+            .details => view.details = !view.details,
+            .open_check => {
+                const card = app.modalCard() orelse return;
+                const check = pickedCheck(card, view.check_pick) orelse return;
+                const found = app.stepOf(card.id, check.n) orelse return;
+                if (found.step.doc) |doc| {
+                    var of_step = found.need;
+                    of_step.doc = doc;
+                    _ = try app.openDoc(of_step);
+                } else if (feed.isLook(found.step)) _ = try app.lookAtDiff(found.need, found.step);
+            },
+            .diff_check => {
+                const card = app.modalCard() orelse return;
+                const check = pickedCheck(card, view.check_pick) orelse return;
+                const found = app.stepOf(card.id, check.n) orelse return;
+                if (feed.isLook(found.step)) _ = try app.lookAtDiff(found.need, found.step);
+            },
             .tried_ok => {
                 const card = app.modalCard() orelse return;
                 const check = pickedCheck(card, view.check_pick) orelse return;
@@ -5014,13 +5125,24 @@ pub const App = struct {
         if (is(key, &.{ "\x1b", "q", " " })) return app.pressModal(.close);
         if (!view.gate and is(key, &.{"Y"})) if (app.modalCard()) |card| if (card.status == .done) return app.pressModal(.copy_check);
         if (!view.gate) if (app.modalCard()) |card| if (card.status == .@"try" and card.checks.len > 0) {
+            const top = card.checks.len + @intFromBool(card.@"try" != null);
+            const on_fold = app.onFold(card);
             if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) {
-                view.check_pick = @intCast(@min(view.check_pick + 1, card.checks.len));
+                if (on_fold and view.details) {
+                    if (view.detail_scroll + 1 < app.detailRows()) view.detail_scroll += 1;
+                } else view.check_pick = @intCast(@min(view.check_pick + 1, top));
                 return;
             }
             if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) {
-                view.check_pick = @max(view.check_pick -| 1, 1);
+                if (on_fold and view.detail_scroll > 0) view.detail_scroll -= 1 else view.check_pick = @max(view.check_pick -| 1, 1);
                 return;
+            }
+            if (on_fold) {
+                if (is(key, &.{"\r"})) return app.pressModal(.details);
+                if (is(key, &.{ "y", "n", "Y", "r", "o" })) return;
+            } else {
+                if (is(key, &.{"o"})) return app.pressModal(.open_check);
+                if (is(key, &.{"d"})) if (pickedCheck(card, view.check_pick)) |check| if (app.stepOf(card.id, check.n)) |found| if (feed.isLook(found.step)) return app.pressModal(.diff_check);
             }
             if (is(key, &.{"y"})) return app.pressModal(.tried_ok);
             if (is(key, &.{"n"})) return app.pressModal(.tried_no);
@@ -8441,6 +8563,104 @@ test "a check with no doc and no range draws no o open, and o does nothing" {
     _ = try win_feed.press(&app, "o");
     var got: [4096]u8 = undefined;
     try std.testing.expectEqualStrings("", try sentText(sent, &got));
+}
+
+test "a to-try card with a sheet draws it first and the facts only under details; one without is as before" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try tryApp(sent,
+        \\{"tickets":[{"id":7,"repo":"arena","title":"Lights","status":"try","stage":"landed","stage_note":"gate ok abc123",
+        \\"checks":[{"n":1,"text":"it is told","result":null},{"n":2,"text":"it has buttons","result":null}],
+        \\"try":{"changed":"The lights come on.","steps":["Press it","Look at it"],"right":"they glow","wrong":"dark","extra":1}},
+        \\{"id":8,"repo":"arena","title":"Plain","status":"try","checks":[{"n":1,"text":"press","result":null}]}]}
+    );
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    const eql = std.testing.expectEqualStrings;
+    const eq = std.testing.expectEqual;
+
+    app.home = .{ .detail = 7 };
+    var head: App.CardHead = undefined;
+    app.modalHead(app.modalCard().?, 60, false, &head);
+    try eql("TRY IT \u{b7} #7 Lights", head.lines[0]);
+    try eql("What changed for you:", head.lines[1]);
+    try eql("The lights come on.", head.lines[2]);
+    try eql("1. Press it", head.lines[3]);
+    try eql("\u{2713} right: they glow", head.lines[5]);
+    try eql("\u{2717} wrong: dark", head.lines[6]);
+    try eq(@as(usize, 7), head.checks.? - 1);
+    try eq(head.n - 1, head.fold.?);
+    try eq(@as(usize, 0), App.detailRows(&app) -| 0);
+
+    // ⏎ on the details row opens it: the facts come in under it and the body is shown
+    try app.modalKey("j");
+    try app.modalKey("j");
+    try eq(@as(u8, 3), app.home.?.check_pick);
+    try app.modalKey("\r");
+    try std.testing.expect(app.home.?.details);
+    app.modalHead(app.modalCard().?, 60, false, &head);
+    try eql("Lights", head.lines[head.fold.? + 1]);
+    try std.testing.expect(app.detailRows() > 0);
+
+    app.home = .{ .detail = 8 };
+    app.modalHead(app.modalCard().?, 60, false, &head);
+    try eql("Plain", head.lines[0]);
+    try eq(@as(?usize, null), head.fold);
+}
+
+test "a to-try ticket's Your move row shows what changed, not its title" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try tryApp(sent,
+        \\{"tickets":[{"id":7,"repo":"arena","title":"Lights","status":"try","checks":[{"n":1,"text":"press","result":null}],"try":{"changed":"The lights come on."}}],
+        \\"needs_you":[{"id":"try:7","kind":"try","ticket":7,"repo":"arena","text":"#7 arena  Lights","since":"2026-11-21T10:00:00Z","machine":"gate ✓",
+        \\"steps":[{"n":1,"text":"press","result":null,"actions":[]}],"actions":[]}]}
+    );
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    var f: feed.Feed = undefined;
+    try std.testing.expect(app.feedOf(&f));
+    try std.testing.expectEqualStrings("The lights come on.", f.line(rowOf(&f, .try_title, null)).text);
+}
+
+test "a check with a doc and a range shows o open and d diff; o opens the doc and d the diff, in Your move and in the card" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try tryApp(sent,
+        \\{"tickets":[{"id":935,"repo":"arena","title":"Both","status":"try","checks":[{"n":1,"text":"read it","result":null}]}],
+        \\"needs_you":[{"id":"try:935","kind":"try","ticket":935,"repo":"arena","text":"#935 arena  Both","since":"2026-11-21T10:00:00Z","machine":"gate ✓",
+        \\"steps":[{"n":1,"text":"read it","kind":"look","range":"abc123^..abc123","doc":"docs/doing-planning.md","result":null,"actions":[{"key":"y","label":"✓","argv":["babylon","tried","935","1","ok"]}]}],"actions":[]}]}
+    );
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    app.home.?.pick = 0;
+    var f: feed.Feed = undefined;
+    try std.testing.expect(app.feedOf(&f));
+    try std.testing.expectEqualStrings("o open   d diff   y ✓", f.line(rowOf(&f, .try_buttons, 0)).text);
+
+    var got: [8192]u8 = undefined;
+    try std.testing.expect(try win_feed.press(&app, "d"));
+    var said = try sentText(sent, &got);
+    try std.testing.expect(std.mem.indexOf(u8, said, "abc123^..abc123") != null);
+    try std.testing.expect(std.mem.indexOf(u8, said, "docs/doing-planning.md") == null);
+    try std.testing.expect(try win_feed.press(&app, "o"));
+    said = try sentText(sent, &got);
+    try std.testing.expect(std.mem.indexOf(u8, said, "docs/doing-planning.md") != null);
+
+    app.home = .{ .detail = 935 };
+    var buttons: [16]App.ModalButton = undefined;
+    var keys_seen: [2]bool = .{ false, false };
+    for (app.modalButtons(&buttons)) |button| {
+        if (button.action == .open_check) keys_seen[0] = true;
+        if (button.action == .diff_check) keys_seen[1] = true;
+    }
+    try std.testing.expect(keys_seen[0] and keys_seen[1]);
 }
 
 test "Plan's windows never fold: z, Z and a click on a title leave every window open; f shows one whole and q closes it; plan: lines in the folds file fold nothing" {

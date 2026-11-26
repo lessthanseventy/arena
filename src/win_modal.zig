@@ -148,19 +148,21 @@ pub fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
         if (y >= text_end) break;
         const style: vt.Style = switch (kind) {
             .plain, .options => .{},
+            .sheet, .fold => .{},
             .dim, .check, .shell => dim,
             .warn => ink(app, "amber", 4),
             .sub => if (at - head.subs.? + 1 == app.home.?.sub_pick) ink(app, "amber", 4) else .{},
         };
         try boxLine(w, &pen, edge, style, x, y, line, inner);
-        if (kind != .options) try app.grab.row(app.gpa, x + 2, y - 1, clip(line, inner), head.joins[at]);
+        if (kind != .options and kind != .fold) try app.grab.row(app.gpa, x + 2, y - 1, clip(line, inner), head.joins[at]);
         y += 1;
     }
+    const hidden = if (card) |it| app.bodyHidden(it) else false;
     const text = if (app.detail.items.len > 0) app.detail.items else "…";
     var row: usize = 0;
     const parts = [2]struct { text: []const u8, style: vt.Style }{
-        .{ .text = if (card) |it| it.stage_note else "", .style = dim },
-        .{ .text = text, .style = .{} },
+        .{ .text = if (card != null and !hidden) card.?.stage_note else "", .style = dim },
+        .{ .text = if (hidden) "" else text, .style = .{} },
     };
     for (parts) |part| {
         if (part.text.len == 0) continue;
@@ -346,7 +348,7 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
             .check => {
                 try app.grab.row(app.gpa, x0, y, clip(line, inner), null);
                 const settled = card.?.checks[at - head.checks.?].result != null;
-                const lit = at - head.checks.? + 1 == @min(@max(app.home.?.check_pick, 1), card.?.checks.len);
+                const lit = !app.onFold(card.?) and at - head.checks.? + 1 == @min(@max(app.home.?.check_pick, 1), card.?.checks.len);
                 try bench.say(w, x0, y, clip(line, inner), if (lit) r.accent else if (settled) r.dim else r.text, bg, lit);
             },
             .sub => {
@@ -357,6 +359,13 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
             .shell => {
                 try app.grab.row(app.gpa, x0, y, clip(line, inner), null);
                 try bench.say(w, x0, y, clip(line, inner), r.dim, bg, false);
+            },
+            .sheet => {
+                try app.grab.row(app.gpa, x0, y, clip(line, inner), head.joins[at]);
+                try bench.say(w, x0, y, clip(line, inner), r.text, bg, false);
+            },
+            .fold => for (modal) |button| if (button.action == .details) {
+                _ = try bench.button(w, r, button.x, y, button.key, button.label, app.onFold(card.?), r.tile);
             },
             .options => for (modal) |button| if ((button.action == .option or button.action == .words) and button.y == y) {
                 const lit = button.action == .option and button.action.option == app.home.?.ask_pick;
@@ -370,12 +379,13 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
         y += 1;
     }
 
+    const hidden = if (card) |it| app.bodyHidden(it) else false;
     const folded = if (card) |it| it.status == .done and !app.home.?.body_open else false;
     const text = if (folded) "space more" else if (app.detail.items.len > 0) app.detail.items else "…";
     var row: usize = 0;
     const parts = [2]struct { text: []const u8, fg: color.RGB }{
-        .{ .text = if (card) |it| it.stage_note else "", .fg = r.dim },
-        .{ .text = text, .fg = if (folded) r.dim else r.text },
+        .{ .text = if (card != null and !hidden) card.?.stage_note else "", .fg = r.dim },
+        .{ .text = if (hidden) "" else text, .fg = if (folded) r.dim else r.text },
     };
     for (parts) |part| {
         if (part.text.len == 0) continue;
@@ -407,7 +417,7 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
     var end = x0;
     var primary = true;
     for (modal) |button| {
-        if ((button.action == .option or button.action == .words or button.action == .sub) and button.y != foot) continue;
+        if ((button.action == .option or button.action == .words or button.action == .sub or button.action == .details) and button.y != foot) continue;
         _ = try bench.button(w, r, button.x, button.y, button.key, button.label, primary and button.action != .close, r.ground);
         if (button.action != .close) primary = false;
         end = button.x + button.width() + 1;

@@ -37,6 +37,15 @@ pub const Check = struct {
     result: ?[]const u8 = null,
 };
 
+/// What the builder wrote for the human to try a landed ticket: what changed, the steps, and what
+/// right and wrong look like.
+pub const TrySheet = struct {
+    changed: []const u8 = "",
+    steps: []const []const u8 = &.{},
+    right: []const u8 = "",
+    wrong: []const u8 = "",
+};
+
 /// Whether a ticket's number, title or repo holds `query`, letter case aside; a leading `#` is
 /// the number's. Everything holds an empty query.
 pub fn holds(query: []const u8, id: u32, title: []const u8, repo: []const u8) bool {
@@ -93,6 +102,7 @@ pub const Card = struct {
     proposal: ?Proposal = null,
     /// The steps a to-try ticket waits on the human for, and when it landed.
     checks: []Check = &.{},
+    @"try": ?TrySheet = null,
     landed_at: ?[]const u8 = null,
     waiting_on: ?WaitingOn = null,
     overlaps: []Overlap = &.{},
@@ -120,6 +130,12 @@ pub const Card = struct {
     /// number's. Everything holds an empty query.
     pub fn finds(card: *const Card, query: []const u8) bool {
         return holds(query, card.id, card.title, card.repo orelse "");
+    }
+
+    /// What changed for the human, when the builder wrote a try sheet with one.
+    pub fn changed(card: *const Card) ?[]const u8 {
+        const sheet = card.@"try" orelse return null;
+        return if (sheet.changed.len > 0) sheet.changed else null;
     }
 
     /// The id of the pane holding it, if one does.
@@ -390,6 +406,14 @@ pub const Board = struct {
                 wait.@"for" = try cleanLine(arena, words);
             };
             for (card.checks) |*check| check.text = try cleanLine(arena, check.text);
+            if (card.@"try") |*sheet| {
+                sheet.changed = try cleanLine(arena, sheet.changed);
+                sheet.right = try cleanLine(arena, sheet.right);
+                sheet.wrong = try cleanLine(arena, sheet.wrong);
+                const steps = try arena.alloc([]const u8, sheet.steps.len);
+                for (sheet.steps, steps) |step, *slot| slot.* = try cleanLine(arena, step);
+                sheet.steps = steps;
+            }
             if (card.clash) |words| card.clash = try cleanLine(arena, words);
             for (card.overlaps) |*overlap| {
                 const files = try arena.alloc([]const u8, overlap.files.len);

@@ -128,6 +128,7 @@ pub fn act(app: *App, item: feed.Item, key: []const u8) !bool {
             }
             if (feed.isLook(step)) return app.lookAtDiff(need, step);
         }
+        if (anyKey(key, &.{"d"}) and feed.isLook(need.steps[s])) return app.lookAtDiff(need, need.steps[s]);
         if (need.ticket) |ticket| {
             const step = need.steps[s];
             if (anyKey(key, &.{"r"}) and try app.checkOffer(ticket, step.n, step.text)) return true;

@@ -184,7 +184,11 @@ pub fn buildPicked(f: *Feed, board: *const tickets.Board, refused: []const Refus
             if (f.move.items + @max(1, openSteps(need)) > f.move.starts.len or f.move.n + room > f.move.lines.len) break :groups;
             if (!rule) f.move.add(.try_head, false, "── to try {d} ", .{tries});
             rule = true;
-            tile(&f.move, need, need_at, refused, width, epoch, pick);
+            var title = need.text;
+            if (need.ticket) |id| for (board.cards()) |*card| if (card.id == id) {
+                title = card.changed() orelse need.text;
+            };
+            tile(&f.move, need, title, need_at, refused, width, epoch, pick);
             continue;
         }
         // an item is held whole or not at all: its row, a refusal or up to four rows of buttons
@@ -296,12 +300,12 @@ fn wrapRow(text: []const u8, cells: usize, last: bool) struct { row: []const u8,
 
 /// A to-try need as a tile: its title and age, the machine's line, and a row for each check,
 /// the open ones items; the picked check has its buttons under it.
-fn tile(p: *Part, need: tickets.Need, need_at: usize, refused: []const Refusal, width: usize, epoch: i64, pick: usize) void {
+fn tile(p: *Part, need: tickets.Need, title: []const u8, need_at: usize, refused: []const Refusal, width: usize, epoch: i64, pick: usize) void {
     const first = p.items;
     const count = @max(1, openSteps(need));
     const picked = pick >= first and pick < first + count;
     const since = tickets.epochOf(need.since);
-    p.add(.try_title, false, "{s}", .{need.text});
+    p.add(.try_title, false, "{s}", .{title});
     var age_buf: [8]u8 = undefined;
     p.alt("{s}", .{age(&age_buf, epoch, since)});
     p.lines[p.n - 1].old = if (since) |at| epoch - at >= stale_days * 86400 else false;
@@ -366,6 +370,8 @@ fn buttons(p: *Part, need: tickets.Need, at: usize) void {
     const runs = runcheck.find(step.text, &found).len > 0;
     const looks = opens(step);
     if (looks) w.writeAll("o open") catch {};
+    // a look with a doc has its diff on `d`; one with no doc opens its diff on `o`
+    if (step.doc != null and isLook(step)) w.writeAll("   d diff") catch {};
     if (runs) w.print("{s}r run", .{if (looks) "   " else ""}) catch {};
     for (step.actions, 0..) |action, k| {
         w.print("{s}{s} {s}", .{ if (k == 0 and !looks and !runs) "" else "   ", action.key, action.label }) catch break;
