@@ -39,10 +39,11 @@ cleanup() {
   # a group kill that repeats its TERM would end this, or its kill-server client, half done
   trap '' HUP INT TERM
   [[ -n $server ]] && kill -CONT $server 2>/dev/null
-  [[ -n $inner_pid ]] && kill $inner_pid 2>/dev/null
+  # the outer server first: arena in its pane attaches again to a server it finds gone
   [[ -n $outer_pid ]] && kill $outer_pid 2>/dev/null
-  inner kill-server 2>/dev/null
   outer kill-server 2>/dev/null
+  [[ -n $inner_pid ]] && kill $inner_pid 2>/dev/null
+  inner kill-server 2>/dev/null
   rm -f ${TMUX_TMPDIR:-/tmp}/tmux-$UID/{$in,$out}
   rm -rf $tmp
 }
