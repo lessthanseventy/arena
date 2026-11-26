@@ -1068,7 +1068,6 @@ key '>'
 check "> on a not planned row closes a ticket still to do" await last 'update 7 --status done'
 key e
 check "e on a not planned row edits it in a window of its own" await last 'edit 7'
-key Escape
 plan_at 8
 key ' '
 key ' '
@@ -1281,8 +1280,14 @@ key o
 key -l -- '-typed'
 key Enter
 check "o typed in the drawer reaches its pane" await eval 'inner capture-pane -p -t orchestrator:orch | grep -qx o-typed'
+# cat, not the shell: readline would hold the esc as a meta prefix and take the next key typed with it
+inner send-keys -t orchestrator:orch 'stty -echo -icanon; cat -v; stty sane' Enter
+await eval '[[ $(inner display -p -t orchestrator:orch "#{pane_current_command}") == cat ]]'
 key Escape
-check "esc typed in it reaches the chat: the drawer stays open, in insert" see 'INSERT'
+check "esc typed in it reaches the chat" await eval 'inner capture-pane -p -t orchestrator:orch | grep -qxF "^["'
+check "and the drawer stays open, in insert" see 'INSERT'
+inner send-keys -t orchestrator:orch C-c
+await eval '[[ $(inner display -p -t orchestrator:orch "#{pane_current_command}") == sh ]]'
 
 key C-Space
 check "Ctrl+Space leaves insert, the foot saying how to close it" see 'NORMAL · o close · i type'
@@ -1476,10 +1481,15 @@ check "esc ends typing, and the keys written are its buttons" see '⏎ plan  k k
 key k
 check "k keeps it: babylon idea is run with the text" await last 'idea money on the bar'
 check "and the modal closes on babylon's answer" gone "what should be true when it's done"
+key o
+await orch_lit
+key -l 'echo drawer-jkdufltb'
+key Enter
+check "o on Plan then, and what is typed straight after reaches the chat whole" await said orchestrator:orch drawer-jkdufltb
+key M-h
+gone '╭─ ○ orchestrator'
 key M-b
 gone 'in flight [0-9]'
-# an esc the shell's readline still holds would take the next key as its meta
-inner send-keys -t alpha:one C-c
 key -l 'echo worker-jkdufltb'
 key Enter
 check "and the board closed, a worker's pane gets it whole too" await said alpha: worker-jkdufltb
