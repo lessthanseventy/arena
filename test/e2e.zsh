@@ -1130,7 +1130,8 @@ shown_cursor() { [[ $(outer display -p -t o '#{cursor_flag}') == $1 ]] }
 said() { inner capture-pane -p -t $1 | grep -qx $2 }
 rowof() { screen | grep -n -m1 -F -- "$1" | cut -d: -f1 }
 colof() { local l=$(screen | sed -n $1p); [[ $l == *"$2"* ]] || return 1; local p=${l%%"$2"*}; print $(( ${#p} + 1 )) }
-spot() { local l=$(screen | grep -m1 -- "$1"); local p=${l%%"$1"*}; print $(( ${#p} + 2 )) $(screen | grep -n -m1 -- "$1" | cut -d: -f1) }
+# column and row from one picture, taken again while it shows nothing (mid-frame): from two, a click goes out with no row
+spot() { local at l p i; for i in {1..30}; do at=$(settled | grep -n -m1 -- "$1") && break; zselect -t 100; done; [[ -n $at ]] || return 1; l=${at#*:} p=${l%%"$1"*}; print $(( ${#p} + 2 )) ${at%%:*} }
 print -r -- '' >$tmp/.config/ficciones/theme/palette.sh
 outer resize-window -t o -x 121 -y 24
 inner new-session -d -s orchestrator -n orch sh
@@ -1209,8 +1210,6 @@ mkdir -p $tmp/run/babylon
 print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[]}],'\
 '"plan":{"now":[],"next":[{"ticket":7,"repo":"tlon","title":"Lights","why":"the light switch","set_by":"orchestrator","waits_on":[]}],'\
 '"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}' >$tmp/run/babylon/board.json
-# column and row from one picture, taken again while it shows nothing (mid-frame): from two, a click goes out with no row
-spot() { local at l p i; for i in {1..30}; do at=$(settled | grep -n -m1 -- "$1") && break; zselect -t 100; done; [[ -n $at ]] || return 1; l=${at#*:} p=${l%%"$1"*}; print $(( ${#p} + 2 )) ${at%%:*} }
 shows '^NORMAL' && key -l i
 see 'INSERT|◆ home'
 x=$(col '◆ home')
