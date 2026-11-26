@@ -384,3 +384,55 @@ test "a bar fills its cells left to right in eighths on a track in the well" {
     try expectCell(f, 11, 1, ' ', r.repo[2], r.well);
     try expectCell(f, 13, 1, ' ', r.repo[2], r.well);
 }
+
+/// A frame drawn on a 120 by 40 terminal, one codepoint a cell, for tests that read where text sits.
+pub const Grid = struct {
+    cps: [40][120]u21,
+    bgs: [40][120]RGB,
+
+    pub fn init(frame: []const u8) !Grid {
+        const gpa = std.testing.allocator;
+        var term: vt.Terminal = try .init(std.testing.io, gpa, .{ .cols = 120, .rows = 40, .max_scrollback_bytes = 0 });
+        defer term.deinit(gpa);
+        var stream = term.vtStream();
+        defer stream.deinit();
+        stream.nextSlice(frame);
+        var state: vt.RenderState = .empty;
+        defer state.deinit(gpa);
+        try state.update(gpa, &term);
+        var g: Grid = .{ .cps = undefined, .bgs = undefined };
+        for (0..40) |y| {
+            const row = state.row_data.items(.cells)[state.viewportStart() + y];
+            const cells = row.items(.raw);
+            for (0..120) |x| {
+                g.cps[y][x] = if (cells[x].hasText()) cells[x].content.codepoint.data else ' ';
+                g.bgs[y][x] = switch (report.cellStyle(row, x).bg_color.value()) {
+                    .rgb => |v| .{ .r = v.r, .g = v.g, .b = v.b },
+                    else => unset,
+                };
+            }
+        }
+        return g;
+    }
+
+    /// The column of the first `needle` on row `y` in [`from`, `to`), or null.
+    pub fn find(g: *const Grid, y: usize, from: usize, to: usize, needle: []const u8) ?usize {
+        var at = from;
+        while (at < to) : (at += 1) {
+            var it = std.unicode.Utf8View.initUnchecked(needle).iterator();
+            var x = at;
+            const hit = while (it.nextCodepoint()) |cp| : (x += 1) {
+                if (x >= to or g.cps[y][x] != cp) break false;
+            } else true;
+            if (hit) return at;
+        }
+        return null;
+    }
+
+    /// Row `y`, columns [`from`, `to`), as text.
+    pub fn line(g: *const Grid, buf: []u8, y: usize, from: usize, to: usize) []const u8 {
+        var n: usize = 0;
+        for (from..@min(to, 120)) |x| n += std.unicode.utf8Encode(g.cps[y][x], buf[n..]) catch break;
+        return buf[0..n];
+    }
+};

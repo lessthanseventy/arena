@@ -4390,3 +4390,163 @@ test "Your move's open check wraps over as many rows as it needs, its buttons on
     try std.testing.expectEqual(@as(u21, 'n'), (try bench.probe(drawn, indent + 7, last)).cp);
     try std.testing.expect((try bench.probe(drawn, indent, last - 1)).cp != ' ');
 }
+
+const grid_board =
+    \\{"tickets":[
+    \\{"id":701,"repo":"arena","status":"doing","title":"A step that is building right now and long, with more words to push it past the edge of any window"},
+    \\{"id":702,"repo":"babylon","status":"doing","title":"B"},
+    \\{"id":703,"repo":"menard","status":"todo","title":"C"},
+    \\{"id":410,"repo":"arena","kind":"epic","status":"doing","title":"menard goal"}],
+    \\"plan":{"driving":410,"now":[
+    \\{"ticket":701,"repo":"arena","title":"A step that is building right now and long, with more words to push it past the edge of any window","state":"building","since":"2026-11-23T07:04:00Z"},
+    \\{"ticket":702,"repo":"babylon","title":"B","state":"landing","stage":"verifying","since":"2026-11-22T04:04:00Z"}],
+    \\"next":[{"ticket":703,"repo":"menard","title":"C","why":"","waits_on":[]}],
+    \\"goals":[
+    \\{"epic":410,"title":"menard goal","total":12,"landed":5,"steps":[{"ticket":701,"state":"building"},{"ticket":702,"state":"building"},{"ticket":703,"state":"building"}]},
+    \\{"epic":9,"title":"A second goal with a very long title that must be cut","total":15,"landed":14,"steps":[{"ticket":703,"state":"next"},{"ticket":702,"state":"to_try"}]}],
+    \\"landed_today":{"count":1,"newest":[701]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+;
+
+/// Plan drawn on a `width` by 38 screen from `grid_board`, read back as a grid of cells.
+fn planGrid(board: *tickets.Board, width: u16) !struct { app: App, grid: bench.Grid } {
+    var app = homeApp(board);
+    app.term_w = 120;
+    app.view_w = width;
+    app.view_h = 38;
+    app.epoch = tickets.epochOf("2026-11-23T07:10:00Z").?;
+    app.roles = bench.roles();
+    app.home = .{ .alone = false, .focus = .plan };
+    var buf: [262144]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try planView(&app, &out, app.home.?);
+    return .{ .app = app, .grid = try bench.Grid.init(out.buffered()) };
+}
+
+/// The row of `win` (a slot) whose cells in the window hold `needle`.
+fn rowWith(g: *const bench.Grid, slot: sheets.Rect, needle: []const u8) ?usize {
+    for (slot.y..slot.y + slot.h) |y| {
+        if (g.find(y, slot.x, slot.x + slot.w, needle) != null) return y;
+    }
+    return null;
+}
+
+test "in a goals window every value starts at one x, and a bar's ends sit on the text column and the count's left edge" {
+    const eq = std.testing.expectEqual;
+    var board = try tickets.Board.parse(std.testing.allocator, grid_board);
+    defer board.deinit();
+    var shot = try planGrid(&board, 100);
+    defer shot.app.grab.deinit(std.testing.allocator);
+    const g = &shot.grid;
+    const r = bench.roles();
+    const slot = shot.app.planSlot(.goals);
+    const x0: usize = slot.x;
+    const to = x0 + slot.w;
+
+    const blocked = rowWith(g, slot, "blocked").?;
+    const next = blocked - 1;
+    const bar = blocked - 2;
+    const title = blocked - 3;
+    try eq(x0 + 2, g.find(title, x0, to, "#9").?);
+    try eq(x0 + 2, g.find(next, x0, to, "next").?);
+    try eq(x0 + 2, g.find(blocked, x0, to, "blocked").?);
+    try eq(g.find(next, x0, to, "#703").?, g.find(blocked, x0, to, "nothing").?);
+
+    const count = g.find(bar, x0, to, "14/15").?;
+    try eq(r.well, g.bgs[bar][x0 + 2]);
+    try std.testing.expect(!std.meta.eql(r.well, g.bgs[bar][x0 + 1]));
+    try eq(r.well, g.bgs[bar][count - 2]);
+    try std.testing.expect(!std.meta.eql(r.well, g.bgs[bar][count - 1]));
+
+    const driving = shot.app.planSlot(.driving);
+    const dbar = rowWith(g, driving, "5/12").?;
+    const dtitle = rowWith(g, driving, "menard goal").?;
+    try eq(driving.x + 2, g.find(dtitle, driving.x, driving.x + driving.w, "menard goal").?);
+    try eq(r.well, g.bgs[dbar][driving.x + 2]);
+    const dcount = g.find(dbar, driving.x, driving.x + driving.w, "5/12").?;
+    try eq(r.well, g.bgs[dbar][dcount - 2]);
+    try std.testing.expect(!std.meta.eql(r.well, g.bgs[dbar][dcount - 1]));
+}
+
+test "every Plan window has its ◆ title, its count and its ▾ in the same places, and driving's epic sits two cells after its title" {
+    const eq = std.testing.expectEqual;
+    var board = try tickets.Board.parse(std.testing.allocator, grid_board);
+    defer board.deinit();
+    var shot = try planGrid(&board, 100);
+    defer shot.app.grab.deinit(std.testing.allocator);
+    const g = &shot.grid;
+    for (std.enums.values(sheets.Window)) |win| {
+        const slot = shot.app.planSlot(win);
+        const ww = slot.w - 1;
+        const named = if (win == .driving) sheets.drivingTitle(shot.app.board.?.plan().?, &shot.app.board.?) else win.title();
+        try eq(@as(u21, '◆'), g.cps[slot.y][slot.x + 1]);
+        try eq(slot.x + 3, g.find(slot.y, slot.x, slot.x + ww, named).?);
+        try eq(@as(u21, '▾'), g.cps[slot.y][slot.x + ww - 3]);
+        if (windowCount(&shot.app.board.?, shot.app.board.?.plan().?, win) != null) {
+            try eq(slot.x + 4 + cellCount(named), g.find(slot.y, slot.x, slot.x + ww, "▎").?);
+        }
+    }
+    const driving = shot.app.planSlot(.driving);
+    const pick = g.find(driving.y, driving.x, driving.x + driving.w, "your pick").?;
+    try eq(pick + 9 + 2, g.find(driving.y, driving.x, driving.x + driving.w, "epic #410").?);
+}
+
+test "the step chain's arrows each have one cell before and after them, and a chip right after" {
+    const eq = std.testing.expectEqual;
+    var board = try tickets.Board.parse(std.testing.allocator, grid_board);
+    defer board.deinit();
+    var shot = try planGrid(&board, 100);
+    defer shot.app.grab.deinit(std.testing.allocator);
+    const g = &shot.grid;
+    const slot = shot.app.planSlot(.driving);
+    const y = rowWith(g, slot, "#701").?;
+    var arrows: usize = 0;
+    for (slot.x..slot.x + slot.w) |x| {
+        if (g.cps[y][x] != '▶') continue;
+        arrows += 1;
+        try eq(@as(u21, '─'), g.cps[y][x - 1]);
+        try eq(@as(u21, ' '), g.cps[y][x - 2]);
+        try eq(@as(u21, ' '), g.cps[y][x + 1]);
+        try eq(@as(u21, '▎'), g.cps[y][x + 2]);
+    }
+    try eq(@as(usize, 2), arrows);
+}
+
+test "a repo mark, a text line and a bar start on one column inside a window" {
+    const eq = std.testing.expectEqual;
+    var board = try tickets.Board.parse(std.testing.allocator, grid_board);
+    defer board.deinit();
+    var shot = try planGrid(&board, 100);
+    defer shot.app.grab.deinit(std.testing.allocator);
+    const g = &shot.grid;
+    const now = shot.app.planSlot(.now);
+    const flying = rowWith(g, now, "#701").?;
+    try std.testing.expect(g.cps[flying][now.x + 2] != ' ');
+    try eq(@as(u21, '▌'), g.cps[flying][now.x + 1]);
+    const landed = shot.app.planSlot(.landed);
+    const row = rowWith(g, landed, "#701").?;
+    try eq(@as(u21, '✓'), g.cps[row][landed.x + 2]);
+    const unplanned = shot.app.planSlot(.unplanned);
+    try eq(unplanned.x + 2, g.find(rowWith(g, unplanned, "nothing to do").?, unplanned.x, unplanned.x + unplanned.w, "nothing to do").?);
+}
+
+test "every title cut to fit ends in …" {
+    var board = try tickets.Board.parse(std.testing.allocator, grid_board);
+    defer board.deinit();
+    var shot = try planGrid(&board, 100);
+    defer shot.app.grab.deinit(std.testing.allocator);
+    const g = &shot.grid;
+
+    const cut = [_]struct { win: sheets.Window, id: []const u8, whole: []const u8 }{
+        .{ .win = .now, .id = "#701", .whole = "A step that is building right now and long, with more words to push it past the edge of any window" },
+        .{ .win = .goals, .id = "#9", .whole = "A second goal with a very long title that must be cut" },
+        .{ .win = .landed, .id = "#701", .whole = "A step that is building right now and long, with more words to push it past the edge of any window" },
+    };
+    for (cut) |c| {
+        const slot = shot.app.planSlot(c.win);
+        const y = rowWith(g, slot, c.id).?;
+        var buf: [512]u8 = undefined;
+        const text = g.line(&buf, y, slot.x, slot.x + slot.w - 1);
+        try std.testing.expect(std.mem.indexOf(u8, text, c.whole) == null);
+        try std.testing.expect(std.mem.indexOf(u8, text, "…") != null);
+    }
+}

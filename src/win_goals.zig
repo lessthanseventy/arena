@@ -75,33 +75,33 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
                 .card_top => try bench.bevel(w, cx, y, cw, if (card_picked) r.text.mix(face, 0.5) else r.raised, face),
                 .goal => {
                     try bench.fill(w, cx, y, cw, face);
-                    if (card_picked) try bench.say(w, cx + 1, y, "▌", mark, face, true);
+                    if (card_picked) try bench.say(w, x0, y, "▌", mark, face, true);
                     var idb: [16]u8 = undefined;
                     const id = std.fmt.bufPrint(&idb, "#{d} ", .{goal.epic}) catch "";
                     const hue = goalHue(b, r, goal);
                     const shares = try goalChips(w, r, b, goal, cx + cw, y);
-                    try bench.say(w, cx + 2, y, id, hue, face, true);
-                    try sayCut(w, cx + 2 + cellCount(id), y, goal.title, cw -| 4 -| cellCount(id) -| shares, if (row.dim) r.dim else r.text, face, true);
+                    try bench.say(w, cx + 1, y, id, hue, face, true);
+                    try sayCut(w, cx + 1 + cellCount(id), y, goal.title, cw -| 3 -| cellCount(id) -| shares, if (row.dim) r.dim else r.text, face, true);
                 },
                 .goal_bar => {
                     try bench.fill(w, cx, y, cw, face);
                     const trying = sheets.goalTrying(goal);
                     var tb: [24]u8 = undefined;
                     const words = if (trying > 0) std.fmt.bufPrint(&tb, "▲ {d} to try", .{trying}) catch "" else "";
-                    try draw.goalBar(w, r, cx + 2, y, cw -| 3, goal, goalHue(b, r, goal), face, r.dim, words, r.you);
+                    try draw.goalBar(w, r, cx + 1, y, cw -| 2, goal, goalHue(b, r, goal), face, r.dim, words, r.you);
                 },
                 .goal_next => {
                     try bench.fill(w, cx, y, cw, face);
-                    try bench.say(w, cx + 2, y, "next", r.dim, face, false);
-                    if (sheets.goalNext(goal)) |step| _ = try stepChip(w, r, cx + 10, y, step) else try bench.say(w, cx + 11, y, "nothing", r.dim, face, false);
+                    try bench.say(w, cx + 1, y, "next", r.dim, face, false);
+                    if (sheets.goalNext(goal)) |step| _ = try stepChip(w, r, cx + 9, y, step) else try bench.say(w, cx + 10, y, "nothing", r.dim, face, false);
                 },
                 else => {
                     try bench.fill(w, cx, y, cw, face);
-                    try bench.say(w, cx + 2, y, "blocked", r.dim, face, false);
+                    try bench.say(w, cx + 1, y, "blocked", r.dim, face, false);
                     if (sheets.goalBlock(goal)) |block| {
                         var buf: [40]u8 = undefined;
-                        _ = try bench.chipInk(w, r, cx + 10, y, std.fmt.bufPrint(&buf, "\u{f0c1} #{d} waits on #{d}", .{ block.step, block.on }) catch "", r.dim, r.dim, false);
-                    } else try bench.say(w, cx + 11, y, "nothing", r.dim, face, false);
+                        _ = try bench.chipInk(w, r, cx + 9, y, std.fmt.bufPrint(&buf, "\u{f0c1} #{d} waits on #{d}", .{ block.step, block.on }) catch "", r.dim, r.dim, false);
+                    } else try bench.say(w, cx + 10, y, "nothing", r.dim, face, false);
                 },
             }
             if (row.kind != .card_top) try bench.say(w, cx, y, "▌", goalHue(b, r, goal), face, false);
