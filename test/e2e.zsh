@@ -207,7 +207,6 @@ see '^NORMAL'
 mouse 0 60 10 M
 mouse 0 60 10 m
 check "a click on a pane is insert" gone '^NORMAL'
-key -l i
 
 # j and k in normal mode step to the session below and above, and stay in normal
 key C-Space
@@ -366,10 +365,10 @@ see '^╭─ 1 one '
 wide() { [[ $(inner display -p -t alpha:one '#{window_width} #{@arena_width}') == $1 ]] }
 # a ; that ends an argument ends the command for tmux, unless escaped
 key -l $'\e\\;'
-check "Alt+; makes the window narrower" see '╭─ 1 one ─{75}╮'
-check "and tmux has it that wide, and keeps the width" await wide '83 70'
+check "Alt+; makes the window narrower" see '╭─ 1 one ─{73}╮'
+check "and tmux has it that wide, and keeps the width" await wide '81 69'
 key "M-'"
-check "Alt+' makes it wider" see '╭─ 1 one ─{87}╮'
+check "Alt+' makes it wider" see '╭─ 1 one ─{86}╮'
 
 windows() { [[ $(inner list-windows -t $1 -F '#{window_name}' | tr '\n' ' ') == "$2 " ]] }
 mouse 0 4 1 M
@@ -379,7 +378,7 @@ mouse 32 116 1 M
 mouse 0 116 1 m
 check "a title dropped on another column takes its place, and goes no further" await windows alpha 'two one three'
 see '─╮ ╭─ 2 one '
-mouse 0 12 1 M
+mouse 0 22 1 M
 mouse 32 2 1 M
 mouse 0 2 1 m
 check "and back" await windows alpha 'one two three'
@@ -463,12 +462,12 @@ check "the menu splits the pane" await panes 2
 check "and the split is drawn" see 'echo e2e.* │sh-[0-9.]+\$ +│'
 wrote() { grep -q -- "$1" $tmp/raw }
 first() { [[ $(inner list-panes -t alpha:two -F '#{pane_width}' | head -1) -eq $1 ]] }
-mouse 35 79 5 M
+mouse 35 61 5 M
 check "over the line between panes the pointer is the one for resizing" await wrote $'\e]22;ew-resize'
-mouse 0 79 5 M
-mouse 32 72 5 M
-mouse 0 72 5 m
-check "dragging the line resizes the panes" await first 25
+mouse 0 61 5 M
+mouse 32 54 5 M
+mouse 0 54 5 m
+check "dragging the line resizes the panes" await first 40
 
 normal; key m
 key r
@@ -489,24 +488,24 @@ check "normal / jumps to a window of another session" see '╭─ 1 solo '
 
 normal; key O
 check "normal O shows every session's windows" see '╭─ 1 one ─+╮ ╭─ 2 renamed '
-mouse 0 101 4 M
-mouse 32 41 4 M
-mouse 0 41 4 m
+mouse 0 64 4 M
+mouse 32 4 4 M
+mouse 0 4 4 m
 check "a picture dropped on another takes its place" await windows alpha 'three one renamed'
 see '╭─ 1 three ─+╮ ╭─ 2 one '
-mouse 0 41 4 M
-mouse 32 101 4 M
-mouse 0 101 4 m
+mouse 0 4 4 M
+mouse 32 64 4 M
+mouse 0 64 4 m
 check "and back" await windows alpha 'one renamed three'
 see '╭─ 1 one ─+╮ ╭─ 2 renamed '
-mouse 0 101 4 M
-mouse 32 41 12 M
-mouse 0 41 12 m
+mouse 0 64 4 M
+mouse 32 4 12 M
+mouse 0 4 12 m
 check "on one of another session, it goes there in front of it" await windows beta 'three solo'
 see '╭─ 1 three ─+╮ ╭─ 2 solo '
-mouse 0 41 12 M
-mouse 32 111 4 M
-mouse 0 111 4 m
+mouse 0 4 12 M
+mouse 32 74 4 M
+mouse 0 74 4 m
 check "and on the rest of a session's row, to that session's end" await windows alpha 'one renamed three'
 see '╭─ 3 three '
 key Escape
@@ -515,6 +514,8 @@ check "Escape leaves the overview" see '╭─ 1 solo ─{40}'
 zselect -t 400
 key 'printf "\033[%dGX\bY\n" $(tput cols)' Enter
 check "a step back from the last column lands where tmux puts it" see ' Y│$'
+normal; key k
+key -l i
 
 # arena's Claude Code hook, as Claude Code runs it in a pane of the session: event, then its JSON
 claude() { print -r -- ${3:-'{}'} | TMUX="$(inner display -p '#{socket_path}'),0,0" TMUX_PANE=$1 sh $root/hooks/claude-state.sh $2 }
@@ -1021,8 +1022,8 @@ check "off, the state is gone" gone 'auto [0-9]'
 check "with nothing of the orchestrator in babylon's file, Plan's head has no button for it" hides ' ● orch '
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":4,"working":4,"tools":{"working":1,"cap":1}}}' >$tmp/run/babylon/board.json
 check "with room, Plan's head says the tools slots when babylon's file gives them" see ' ◐ auto 4/4 · tools 1/1( |$)'
-outer resize-window -t o -x 75
-check "and with less room, without the tools slots" see ' ◐ auto 4/4 +✓ 0 today'
+outer resize-window -t o -x 68
+check "and with less room, without the tools slots" see ' ◐ auto 4/4 +▲ 0'
 outer resize-window -t o -x 200
 cp $tmp/board.noauto $tmp/run/babylon/board.json
 outer resize-window -t o -x 200 -y 40
@@ -1146,13 +1147,16 @@ check "what is typed then reaches its pane" see '│side +│'
 in_mode() { [[ -n $(inner display -p -t orchestrator:orch '#{pane_mode}') ]] }
 cp $tmp/run/babylon/board.json $tmp/board.chatty
 print -r -- "${$(<$tmp/board.chatty)%\}}"',"auto":{"on":true,"cap":2,"working":1}}' >$tmp/run/babylon/board.json
-see '◐ (auto )?1/2'
 touch $tmp/chatty
 offs=$(grep -cx 'auto off' $tmp/babylon)
+click 10 20
+key '`'
+see '◐ (auto )?1/2'
 r=$(rowof '◐ auto'); c=$(colof $r '◐ auto')
 mouse 0 $((c + 1)) $r M
 mouse 0 $((c + 1)) $r M
 await eval '(( $(grep -cx "auto off" $tmp/babylon) > offs ))'
+key '`'
 zselect -t 50
 check "a babylon command that prints leaves the orchestrator's pane out of any mode" eval '! in_mode'
 key M-l
@@ -1203,7 +1207,7 @@ mkdir -p $tmp/run/babylon
 print -r -- '{"tickets":[{"id":7,"repo":"tlon","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[],"stage":"failed",'\
 '"stage_note":"the review sent it back: the first reason runs long enough to need a second row in the box, and\nthe last words of it are never cut off",'\
 '"ask":{"id":5,"question":"Which colour?","options":["red","blue"]}},'\
-'{"id":8,"repo":"arena","title":"Board of the lanes","kind":"ticket","status":"doing","priority":"high","claimed_by":"'$one'",'\
+'{"id":8,"repo":"arena","title":"Board of the lanes in rows by repo","kind":"ticket","status":"doing","priority":"high","claimed_by":"'$one'",'\
 '"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[7]},'\
 '{"id":11,"repo":"arena","title":"Handed in","kind":"ticket","status":"review","priority":"med","claimed_by":"'$one'",'\
 '"claimed_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","blocked_by":[],"stage":"queued"}],'\
@@ -1249,8 +1253,8 @@ check "in each column, a heading for each repo with cards there, with its count"
 check "an empty column says none" see '│ none +│'
 check "and is no wider than its heading" see '╭─ recent 0 ╮'
 colw() { local l=$(screen | grep -m1 -- "╭─ $1 "); l=${l#*"╭─ $1 "}; print $(( ${#${l%%╮*}} )) }
-check "a card not picked unboxed, a bar down its left, its number and title beside it" see '▌ #8 Board of the +│'
-check "a long title running on to a second line" see '▌ lanes +│'
+check "a card not picked unboxed, a bar down its left, its number and title beside it" see '▌ #8 Board of the lanes in rows( by)? +│'
+check "a long title running on to a second line" see '▌ (by )?repo +│'
 check "and a doing one its holder's window under them, and how long it has held it" see '▌ one · [0-9]+[sm] · '
 check "one in review its stage in the holder's place, and its place in line" see '▌ » queued · 1st +│'
 check "the picked card's priority on a row of its own" see '│ med +│'
@@ -1289,7 +1293,7 @@ key r
 tablit() { [[ $(outer capture-pane -ep -t o) =~ $'((\e\\[[0-9;]*m)+) '$1' ' && $match[1] =~ '[[;]7[;m]' ]] }
 check "r narrows it to one repo, its tab lit" await tablit arena
 check "and to its cards" gone '#7 Lights'
-check "which are whole there: number and title" see '▌ #8 Board of the lanes +│'
+check "which are whole there: number and title" see '▌ #8 Board of the lanes in rows by repo +│'
 check "a high card's bar amber" high_edge
 check "under them the window of the Claude holding it, then what it waits on" see '▌ one · [0-9]+[sm] · waits #7 +│'
 check "its priority said by its bar, not in words" gone '· high'
@@ -1371,7 +1375,7 @@ check "and its whole ticket says all of why" see '│ left running: it holds #9 
 key Escape
 check "put away again" gone '│ left running: it holds #9 '
 key j j j
-check "where the pick goes no further than the last shown" see '│ e edit +│'
+check "where the pick goes no further than the last shown" see '│ e edit +(p priority +)?│'
 $bin -L $in plan 21
 check "arena plan and the id of a done card older than those shown has its whole ticket over the board" see '│ #21 Lights '
 key Escape
@@ -1937,8 +1941,8 @@ zselect -t 300
 inner new-session -d -s gamma -n g1 sh
 for n in 2 3 4 5 6 7; inner new-window -t gamma -n g$n sh
 claude gamma:g6 prompt
-$bin -L $in show $(inner display -p -t gamma:g7 '#{pane_id}')
-await at gamma:g7
+$bin -L $in show $(inner display -p -t gamma:g6 '#{pane_id}')
+await shows ' 6 g6 '
 
 # resting on a card shows a peek of its ticket and its Claude, over the board; leaving takes it
 # away and the board is as it was. Claimed days ago: an age chip that ticks over from 9s to 10s
@@ -2086,7 +2090,7 @@ outer kill-session -t o
 outer new-session -d -s o -x 121 -y 24 \
   "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 $tmp/arena-copy -L $in alpha 2>$tmp/update-err; echo EXIT \$?; cat"
 check "the terminal's server outlives the session restarted in it" eval '[[ $(outer display -p "#{pid}") == $outer_pid ]]'
-see '^╭─ 1 one '
+see ' alpha  '
 key M-b
 see ' every [0-9]+ +arena [0-9]+ '
 click ${(z)$(spot '#9')}
