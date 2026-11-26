@@ -3783,22 +3783,15 @@ pub const App = struct {
         if (row.kind == .drove and row.part == 3) return win_driving.click(app, m);
         if (row.kind == .need_card) return win_move.click(app, &sheet, at, m);
         if (row.kind == .buttons) return win_plan.planButtonClick(app, &sheet, at, m);
-        if (row.kind == .held) {
-            const pane = app.board.?.plan().?.now[row.item].holder() orelse return;
-            return app.showPane(pane);
-        }
+        if (row.kind == .held) return win_now.heldClick(app, row);
         const pick = row.pick orelse return;
         const picked = view.plan_pick == pick;
         view.plan_pick = pick;
-        if (row.kind == .chips) {
-            var chips: [sheets.max_chips]sheets.Chip = undefined;
-            for (app.chipsOf(&chips), 0..) |c, i| if (m.x >= c.x and m.x < c.x + c.w) return win_unplanned.toggleChip(app, i);
-            return;
-        }
+        if (row.kind == .chips) return win_unplanned.chipClick(app, m);
         if (row.kind == .todo) {
-            app.drag = .{ .todo_row = .{ .id = row.ticket orelse return } };
+            win_unplanned.todoPress(app, row);
         } else if (row.kind == .next) {
-            app.drag = .{ .next_row = .{ .from = nextPlace(&sheet, at), .opens = true } };
+            win_next.nextPress(app, &sheet, at);
         } else if (opensInPlace(&row)) {
             try app.togglePlanOpen(&row);
         } else if (picked) try app.planAct(&row, "\r");
@@ -3817,7 +3810,7 @@ pub const App = struct {
     }
 
     /// The place (from 0) in next of the next row at `at` of the sheet.
-    fn nextPlace(sheet: *const sheets.Sheet, at: usize) usize {
+    pub fn nextPlace(sheet: *const sheets.Sheet, at: usize) usize {
         var place: usize = 0;
         for (sheet.rows[0..at]) |row| place += @intFromBool(row.kind == .next);
         return place;

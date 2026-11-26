@@ -95,3 +95,9 @@ pub fn act(app: *App, row: *const sheets.Row) !void {
     if (item.stalled != null) return app.send(.ignore, app_mod.captured("babylon start {d}"), .{id});
     if (!std.mem.eql(u8, item.state, "building")) try app.openGate(id);
 }
+
+/// A click on a held row: the pane holding the ticket, shown.
+pub fn heldClick(app: *App, row: sheets.Row) !void {
+    const pane = app.board.?.plan().?.now[row.item].holder() orelse return;
+    return app.showPane(pane);
+}

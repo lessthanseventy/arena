@@ -7,6 +7,7 @@ const tickets = @import("board.zig");
 const sheets = @import("plan.zig");
 const menu = @import("menu.zig");
 const draw = @import("draw.zig");
+const keys = @import("keys.zig");
 const anyKey = app_mod.anyKey;
 const App = app_mod.App;
 const Writer = std.Io.Writer;
@@ -179,4 +180,15 @@ pub fn toggleChip(app: *App, at: usize) !void {
     if (all[at].repo) |repo| return app.toggleRepoFold(repo);
     view.plan_backlog = !view.plan_backlog;
     app.dirty = true;
+}
+
+/// A click on the chip row: the chip under it folded or opened.
+pub fn chipClick(app: *App, m: keys.Mouse) !void {
+    var chips: [sheets.max_chips]sheets.Chip = undefined;
+    for (app.chipsOf(&chips), 0..) |c, i| if (m.x >= c.x and m.x < c.x + c.w) return toggleChip(app, i);
+}
+
+/// A press on a todo row: it is held, to be dragged to next or opened where it was pressed.
+pub fn todoPress(app: *App, row: sheets.Row) void {
+    app.drag = .{ .todo_row = .{ .id = row.ticket orelse return } };
 }

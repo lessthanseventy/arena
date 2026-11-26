@@ -79,3 +79,8 @@ pub fn nextKey(app: *App, at: usize, pick: *usize, key: []const u8) !bool {
     pick.* = if (down) pick.* + 1 else pick.* - 1;
     return app.runNeed(refusal, &.{ "babylon", "next", ticket, "--at", to });
 }
+
+/// A press on the next row at `at`: it is held, to be dragged to another place or opened where it was pressed.
+pub fn nextPress(app: *App, sheet: *const sheets.Sheet, at: usize) void {
+    app.drag = .{ .next_row = .{ .from = App.nextPlace(sheet, at), .opens = true } };
+}
