@@ -2113,11 +2113,9 @@ cp $tmp/board.plan $tmp/run/babylon/board.json
 key -l ' '
 check "space opens the row in place, with the card's buttons under it" await shows 'space open +e edit'
 key -l ' '
-check "and space on the open row opens its modal" see 'q close'
+check "and space on the open row closes it for its modal" see 'q close'
 key Escape
-check "which Escape puts away, the row still open" see 'space open +e edit'
-click $(settled | awk '/#701 First building/ { print index($0, "#701") + 1; exit }') $(settled | grep -n -m1 '#701 First building' | cut -d: -f1)
-check "and a click on the open row closes it" gone 'space open +e edit'
+check "which Escape puts away, the row closed" gone 'space open +e edit'
 check "the pick starts on the first window's row" see '▌▌. #701 First building'
 key /
 key -l Light

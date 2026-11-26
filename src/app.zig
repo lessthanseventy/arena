@@ -5366,7 +5366,11 @@ pub const App = struct {
         for (keyed) |pair| if (std.mem.eql(u8, key, pair[0])) return app.act(pair[1]);
         if (is(key, &.{ "\r", " " })) {
             const row = sheet.picked(view.plan_pick) orelse return;
-            if (is(key, &.{" "}) and opensInPlace(row) and app.plan_open.get(row.win) != row.ticket) return app.togglePlanOpen(row);
+            if (is(key, &.{" "}) and opensInPlace(row)) {
+                const open = app.plan_open.get(row.win) == row.ticket;
+                try app.togglePlanOpen(row);
+                if (!open) return;
+            }
             return app.planAct(row, key);
         }
         if (is(key, &.{ "\x1b", "q" })) return app.closeBoard();
