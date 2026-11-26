@@ -504,8 +504,8 @@ check "and finds a Claude's window by its name" see '› solo'
 key 'o' Enter
 check "normal / jumps to a window of another session" see '╭─ 1 solo '
 
-normal; key o
-check "normal o shows every session's windows" see '╭─ 1 one ─+╮ ╭─ 2 renamed '
+normal; key O
+check "normal O shows every session's windows" see '╭─ 1 one ─+╮ ╭─ 2 renamed '
 mouse 0 101 4 M
 mouse 32 41 4 M
 mouse 0 41 4 m
@@ -1995,29 +1995,48 @@ check "and arena inbox does too" none inbox
 check "arena --help lists the doors" test -n "$($bin --help | grep -F 'arena [-L socket] show')"
 outer new-window -t o \
   "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 $bin -L $in; echo EXIT \$?; cat"
-check "arena with no session named opens home: the plan, the orchestrator's column pinned beside it" see '╭─ ○ orchestrator · idle '
-check "the plan, with its head" see 'b plan · B board'
+check "arena with no session named opens home: the plan alone, its head saying the orchestrator's state" see 'b plan · B board'
+check "and no column beside it" gone '╭─ ○ orchestrator'
+check "the orchestrator in the plan's head" see '◆ orch idle'
 check "next as babylon gives it" see '1 #7 +tlon +Lights +free now'
 check "and its why under it" see 'the light switch'
-check "the column with the keys" await orch_lit
+key o
+check "o opens the orchestrator's drawer over the plan" see '╭─ ○ orchestrator · idle '
+check "with the keys, in insert" await orch_lit
+check "and its foot says INSERT" see 'INSERT'
+key -l 'echo '
+key o
+key -l -- '-typed'
+key Enter
+check "o typed in the drawer reaches its pane" await eval 'inner capture-pane -p -t orchestrator:orch | grep -qx o-typed'
+key Escape
+check "esc typed in it reaches the chat: the drawer stays open, in insert" see 'INSERT'
+
 key C-Space
+check "Ctrl+Space leaves insert, the foot saying how to close it" see 'NORMAL · o close · i type'
+key o
+check "o closes it in normal mode" gone '╭─ ○ orchestrator'
+key o
+check "o opens it again" await orch_lit
+key M-h
+check "Alt+h closes it from insert" gone '╭─ ○ orchestrator'
+key O
+check "O opens the overview" see '╭─ 1 one '
+key Escape
 key B
 check "B shows the board" see ' every [0-9]+ +[a-z]'
 check "in the plan's place" gone '1 #7 +tlon'
 key b
 check "and b comes home to the plan" see 'b plan · B board'
 outer resize-window -t o -x 105
-check "at half the screen home is the orchestrator's column alone, saying where else it goes" see '╭─ ○ orchestrator .* p plan  B board'
-check "with no plan beside it" gone 'b plan · B board'
-key C-Space
-key p
-check "p swaps to the plan, which has the width" see 'b plan · B board  o orchestrator'
-check "and the column is gone" gone '╭─ ○ orchestrator'
+check "at half the screen the plan keeps the screen, with a link to the orchestrator in its head" see 'b plan · B board  o orchestrator'
 check "its next without a row for its why, the picked row's whole title and why at the foot" see '#7 tlon +Lights — the light switch'
 key o
-check "o swaps back to the column" see '╭─ ○ orchestrator .* p plan  B board'
+check "o opens the drawer over the whole width" see '╭─ ○ orchestrator .* o close'
+key M-h
+check "and Alt+h closes it" gone '╭─ ○ orchestrator'
 outer resize-window -t o -x 121
-check "at more width the plan and the column are side by side again" see 'b plan · B board'
+check "at more width the plan is as it was" see 'b plan · B board'
 tab_col() { local l=$(settled | grep -F 'b plan · B board' | head -1); local p=${l%%"$1"*}; print $(( ${#p} + 2 )) }
 click $(tab_col 'B board') 1
 check "a click on the board tab goes to the board" await shows ' every [0-9]+ +[a-z]'
@@ -2026,8 +2045,6 @@ click $(tab_col 'B board') 1
 check "a click on the tab it is on does nothing" see ' every [0-9]+ +[a-z]'
 click $(tab_col 'b plan') 1
 check "a click on the plan tab goes back to the plan" await shows '1 #7 +tlon +Lights +free now'
-mouse 0 60 1 M
-mouse 0 60 1 m
 key e
 check "e on a next row opens its why, to edit" see '❯ the light switch'
 key -l ' now'
@@ -2089,6 +2106,7 @@ r=$(rowof '◐ auto'); c=$(colof $r '◐ auto')
 mouse 0 $((c + 1)) $r M
 mouse 0 $((c + 1)) $r m
 check "one click on it only asks to turn it off" see '◐ turn off\?'
+c=$(colof $r '◐ turn')
 mouse 0 $((c + 1)) $r M
 mouse 0 $((c + 1)) $r m
 check "a second click does" await eval '(( $(auto_offs) > offs ))'
@@ -2155,8 +2173,6 @@ key +
 check "+ in not planned opens the new ticket window" await last 'new'
 normal
 key b
-key Escape
-key h
 print -r -- '' >$tmp/.config/ficciones/theme/palette.sh
 cp $tmp/board.slots $tmp/run/babylon/board.json
 check "without a palette the plan is the plain one again" see '1 #7 +tlon +Lights +free now'
@@ -2169,17 +2185,6 @@ check "esc ends typing, and the keys written are its buttons" see '⏎ plan  k k
 key k
 check "k keeps it: babylon idea is run with the text" await last 'idea money on the bar'
 check "and the modal closes on babylon's answer" gone "what should be true when it's done"
-see 'default model'
-key Escape
-gone 'default model'
-key l
-key i
-# the click that focuses a new terminal window lands anywhere in it
-mouse 0 100 24 M
-mouse 0 100 24 m
-key -l 'echo restarted-jkdufltb'
-key Enter
-check "a click on the row under the column leaves it the keys, in insert: a sentence reaches its pane whole" await said orchestrator:orch restarted-jkdufltb
 key M-b
 gone ' every [0-9]+ +[a-z]'
 key -l 'echo worker-jkdufltb'
@@ -2189,12 +2194,13 @@ key M-b
 see ' every [0-9]+ +[a-z]'
 cp $tmp/run/babylon/board.json $tmp/board.nolook
 print -r -- '{"tickets":[],"needs_you":[{"id":"ask:6","kind":"ask","ticket":307,"repo":"tlon","text":"#307 tlon  asks: Which?","doc":null,"actions":[{"key":"1","label":"One","argv":["babylon","answer","6","1"]}]}]}' >$tmp/run/babylon/board.json
-see '#307 tlon  asks: Which\?'
 key ']'
+see '#307 tlon  asks: Which\?'
 key o
 zselect -t 100
 doc_window() { [[ $(inner list-windows -a -F '#{window_name}') == *doc* ]] }
 check "o on a row that names no doc opens nothing" await eval '! doc_window'
+key ']'
 print -r -- '{"tickets":[],"needs_you":[{"id":"ask:6","kind":"ask","ticket":307,"repo":"tlon","text":"#307 tlon  asks: Which?","doc":"docs/none-jkdufltb.md","actions":[{"key":"1","label":"One","argv":["babylon","answer","6","1"]}]}]}' >$tmp/run/babylon/board.json
 check "a decision that names a doc keeps its place and wears a doc mark, with o to open it" see '#307 tlon  asks: Which\? ¶'
 print -r -- '{"tickets":[],"needs_you":[{"id":"ask:6","kind":"look","ticket":307,"repo":"tlon","text":"#307 tlon  look at: docs/none-jkdufltb.md","doc":"docs/none-jkdufltb.md","actions":[{"key":"y","label":"looks good","argv":["babylon","call","answer_ask","{\"id\":6}"]},{"key":"c","label":"change","argv":null,"needs":"words"}]}]}' >$tmp/run/babylon/board.json
@@ -2209,8 +2215,8 @@ print -r -- 'only-on-the-branch' >$tmp/projects/tlon/.worktrees/t307-design/docs
 inner set-option -g remain-on-exit on
 gone 'o open   y looks good'
 key M-b
-see '▌ #307 tlon  look at'
 key ']'
+see '▌ #307 tlon  look at'
 key o
 doc_windows_show() { local w; for w in $(inner list-windows -a -F '#{window_id} #{window_name}' | awk '$2 ~ /^doc/{print $1}'); do inner capture-pane -p -t $w | grep -q "$1" && return 0; done; return 1 }
 check "a doc only in the ticket's worktree opens from there" await doc_windows_show only-on-the-branch
@@ -2221,9 +2227,9 @@ inner set-option -g remain-on-exit off
 # an item of any kind runs its action: a digest has no ticket and no repo, and ⏎ is its seen
 print -r -- '{"tickets":[],"needs_you":[{"id":"digest:1795536000","kind":"digest","ticket":null,"repo":"","text":"digest: 3 landed","doc":"/tmp/none-jkdufltb.md","actions":[{"key":"⏎","label":"seen","argv":["babylon","digest","ok"]}]}]}' >$tmp/run/babylon/board.json
 key M-b
+key ']'
 see 'o open   ⏎ seen'
 : >$tmp/babylon
-key ']'
 key Enter
 check "⏎ on a digest runs its seen through babylon, though it names a doc" await last 'digest ok'
 : >$tmp/babylon

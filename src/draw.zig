@@ -320,8 +320,11 @@ fn modeRow(app: *const App, w: *Writer) !void {
     try pen.set(w, .{}, null);
     for (0..app.view_w) |_| try w.writeAll(" ");
     try modeCorner(app, w, &pen);
+    if (app.overview == null and app.drawerOpen()) return keysLine(app, w, &pen, if (app.columnFocused() and !app.normal) "INSERT" else drawer_hint);
     if (app.normal) try keysLine(app, w, &pen, type_hint);
 }
+
+const drawer_hint = "NORMAL · o close · i type";
 
 /// With the pointer on the row of dots, each window's number and name in their place, the one in
 /// view a chip and any other with something to say its mark. False when they do not fit.
@@ -1475,11 +1478,10 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
 }
 
 const fold_hint = " ` fold ";
+const close_hint = " o close ";
 
-/// What the column's top edge says at its right: how to fold it, or at half a screen, where else
-/// home goes.
 fn sideHint(app: *const App) []const u8 {
-    return if (app.columnAlone()) App.half_hint else fold_hint;
+    return if (app.drawerOpen()) close_hint else fold_hint;
 }
 
 /// The feed's pick while the plan has the keys: dim ink, inverted.
@@ -2083,15 +2085,15 @@ fn planFoot(app: *App, w: *Writer, sheet: *const sheets.Sheet, pick: usize) !voi
     try fitted(w, text, app.boardW());
 }
 
-const PlanHeadBufs = struct { auto: [48]u8, today: [32]u8, needs: [16]u8 };
+const PlanHeadBufs = struct { auto: [48]u8, today: [32]u8, needs: [16]u8, orch: [40]u8 };
 
 /// Plan's head against its right edge: auto's switch, today's landings and what
 /// needs the human, three cells apart, from cell `start` of the board's width, the head's own
 /// words taking `left_w`; with less room it keeps auto and what needs the human, then auto alone.
 /// Auto says its tools slots when babylon gives them and the room is there.
 const PlanHead = struct {
-    pieces: [3]struct { text: []const u8, style: vt.Style },
-    keep: u3,
+    pieces: [5]struct { text: []const u8, style: vt.Style },
+    keep: u5,
     start: usize,
     left_w: usize,
 
@@ -2106,12 +2108,12 @@ fn planHead(app: *const App, bufs: *PlanHeadBufs) PlanHead {
     const needs_n = b.needsYou().len;
     const dim = ink(app, "dim", 8);
     const left_w = cellCount(App.plan_title) + if (app.halfHome()) cellCount(App.orch_link) + 2 else 0;
-    var head: PlanHead = .{ .pieces = undefined, .keep = 0b111, .start = 0, .left_w = left_w };
-    const tries = [_]struct { tools: bool, keep: u3 }{
-        .{ .tools = true, .keep = if (app.halfHome()) 0b101 else 0b111 },
-        .{ .tools = false, .keep = if (app.halfHome()) 0b101 else 0b111 },
-        .{ .tools = false, .keep = 0b101 },
-        .{ .tools = false, .keep = 0b001 },
+    var head: PlanHead = .{ .pieces = undefined, .keep = 0b11111, .start = 0, .left_w = left_w };
+    const tries = [_]struct { tools: bool, keep: u5 }{
+        .{ .tools = true, .keep = if (app.halfHome()) 0b10101 else 0b11111 },
+        .{ .tools = false, .keep = if (app.halfHome()) 0b10101 else 0b11111 },
+        .{ .tools = false, .keep = 0b10101 },
+        .{ .tools = false, .keep = 0b10001 },
     };
     for (tries) |try_| {
         const tools = try_.tools;
@@ -2126,6 +2128,8 @@ fn planHead(app: *const App, bufs: *PlanHeadBufs) PlanHead {
             .{ .text = auto, .style = if (app.auto() != null) autoOn(app) else dim },
             .{ .text = std.fmt.bufPrint(&bufs.today, "✓ {d} today", .{given.landed_today.count}) catch "", .style = dim },
             .{ .text = std.fmt.bufPrint(&bufs.needs, "▲ {d}", .{needs_n}) catch "", .style = if (needs_n > 0) heading(app) else dim },
+            .{ .text = orchPiece(app, &bufs.orch), .style = dim },
+            .{ .text = "≡", .style = dim },
         };
         var right_w: usize = 0;
         for (head.pieces, 0..) |piece, i| {
@@ -2135,6 +2139,39 @@ fn planHead(app: *const App, bufs: *PlanHeadBufs) PlanHead {
         if (head.start > left_w) break;
     }
     return head;
+}
+
+/// The orchestrator's state in Plan's head, a click on it opening the drawer.
+fn orchPiece(app: *const App, buf: []u8) []const u8 {
+    const win = app.orchestratorWindow();
+    var when: [16]u8 = undefined;
+    return (switch (app.orchestratorState()) {
+        .working => std.fmt.bufPrint(buf, "◆ orch working {s}", .{ago(&when, app.epoch, win.?.since)}),
+        .waiting => std.fmt.bufPrint(buf, "◆ orch waits on you", .{}),
+        .stalled => std.fmt.bufPrint(buf, "◆ orch stalled", .{}),
+        .idle => std.fmt.bufPrint(buf, "◆ orch idle", .{}),
+        .restarting => std.fmt.bufPrint(buf, "◆ orch restarting", .{}),
+        .off => std.fmt.bufPrint(buf, "◆ orch off", .{}),
+    }) catch "◆ orch";
+}
+
+/// What Plan's head holds at column `x`: its orchestrator state or its `≡`.
+pub fn planHeadHit(app: *const App, x: u16) ?enum { orch, menu } {
+    var bufs: PlanHeadBufs = undefined;
+    const head = planHead(app, &bufs);
+    if (head.start <= head.left_w) return null;
+    var at: usize = app.boardX() + head.start;
+    for (head.pieces, 0..) |piece, i| {
+        if (!head.shows(i)) continue;
+        const end = at + cellCount(piece.text);
+        if (x >= at and x < end) return switch (i) {
+            3 => .orch,
+            4 => .menu,
+            else => null,
+        };
+        at = end + 3;
+    }
+    return null;
 }
 
 /// The first cell of Plan's right group in the head, from the board's left edge: what lies
@@ -5325,6 +5362,34 @@ test "the plan's head and the board's head show the same pair of tabs, the curre
         try eq(@as(u21, 'B'), link.cp);
         try eq(i == 0, plan.bold);
         try eq(i == 1, link.bold);
+    }
+}
+
+test "Plan draws the same cells with the drawer open and closed, outside the drawer's box" {
+    var board = try tickets.Board.parse(std.testing.allocator, epic_board);
+    defer board.deinit();
+    var app = homeApp(&board);
+    app.term_w = 140;
+    app.view_w = 60;
+    app.view_h = 24;
+    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    var shut_buf: [1 << 17]u8 = undefined;
+    var open_buf: [1 << 17]u8 = undefined;
+    app.side_folded = true;
+    var shut: Writer = .fixed(&shut_buf);
+    try boardView(&app, &shut, app.board_view.?);
+    app.side_folded = false;
+    var open: Writer = .fixed(&open_buf);
+    try boardView(&app, &open, app.board_view.?);
+    const left = app.term_w - app.view_w;
+    for (0..app.view_h) |y| {
+        var a: [512]u8 = undefined;
+        var b: [512]u8 = undefined;
+        const row_a = try screenRow(shut.buffered(), app.term_w, y, &a);
+        const row_b = try screenRow(open.buffered(), app.term_w, y, &b);
+        const cut_a = row_a[0..@min(row_a.len, left)];
+        const cut_b = row_b[0..@min(row_b.len, left)];
+        try std.testing.expectEqualStrings(cut_a, cut_b);
     }
 }
 

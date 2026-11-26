@@ -2121,7 +2121,6 @@ pub const App = struct {
     /// The terminal width under which home cannot hold the column and the plan side by
     /// side, and shows one at a time.
     pub const half_below = 110;
-    pub const half_hint = " p plan  B board ";
 
     /// Whether home has the room of half a screen.
     pub fn halfHome(app: *const App) bool {
@@ -2143,27 +2142,39 @@ pub const App = struct {
         return !app.side_folded and (view.home or app.orchestratorSession() != null);
     }
 
-    /// At half a screen, home swaps to the column (`o`) or the plan (`p`), each having the whole
-    /// width, its keys its own.
-    fn swapHome(app: *App, column: bool) !void {
+    /// The orchestrator's drawer opened over home, from the right edge: the whole width at half a
+    /// screen. It has the keys, in insert, so typing goes straight to the chat.
+    pub fn openDrawer(app: *App) !void {
+        if (app.board_view == null or !app.board_view.?.home) try app.goHome();
         const view = &app.board_view.?;
-        view.alone = column;
-        view.plan = true;
-        view.focus = if (column) .orchestrator else .board;
+        view.alone = true;
+        view.focus = .orchestrator;
         view.help = false;
         view.detail = null;
+        app.side_folded = false;
         app.normal = false;
         app.dirty = true;
         app.reflow();
-        if (column) try app.toSide();
+        try app.toSide();
     }
 
-    /// `p` on the column alone swaps to the plan, which keeps next's own `p` (pin) off a ticket
-    /// of next here; `J` `K` and `x` on the plan's next do the rest.
-    fn halfKey(app: *App, key: []const u8) !bool {
-        if (!app.columnAlone() or !anyKey(key, &.{"p"})) return false;
-        try app.swapHome(false);
-        return true;
+    /// The drawer closed: Plan has the keys, in the session arena was in before it opened.
+    pub fn closeDrawer(app: *App) !void {
+        const view = &app.board_view.?;
+        view.alone = false;
+        view.focus = .board;
+        app.normal = false;
+        app.side_folded = true;
+        app.dirty = true;
+        app.reflow();
+        if (view.back) |id| try app.switchTo(id);
+        view.back = null;
+    }
+
+    /// Whether the drawer is open over home.
+    pub fn drawerOpen(app: *const App) bool {
+        const view = app.board_view orelse return false;
+        return view.home and !app.side_folded;
     }
 
     /// Whether the column has the keys: its window's once arena is in its session, else its own.
@@ -3213,6 +3224,7 @@ pub const App = struct {
     }
 
     pub fn boardW(app: *const App) u16 {
+        if (app.planShown()) return app.fullW();
         return if (app.sided()) app.fullW() -| app.view_w -| 1 else app.view_w;
     }
 
@@ -4919,13 +4931,12 @@ pub const App = struct {
         view.detail = null;
         view.giving = null;
         view.answering = false;
-        app.side_folded = false;
+        app.side_folded = true;
         view.home = true;
         view.plan = app.hasPlan();
-        view.alone = true;
-        view.focus = .orchestrator;
+        view.alone = false;
+        view.focus = .board;
         app.reflow();
-        try app.toSide();
     }
 
     /// The board, from anywhere in normal mode: where home's plan goes to find, read or move a
@@ -5299,7 +5310,7 @@ pub const App = struct {
         if (view.whole != null and is(key, &.{ "\x1b", "q" })) return app.closeWhole();
         if (view.whole != null and !is(key, &.{ "J", "K", "x", "e", "\r", " ", "t", "o", "p", ">", "<", "G", "w", "W", "H" })) return;
         if (app.workbench()) if (sheet.picked(view.plan_pick)) |row| {
-            if (row.kind == .need and !is(key, &.{ "j", "k", "h", "l", "z", "Z", "f", "/", "r", "?", "B", "q", "\x1b", "`", "g", "A", "P", "]", "[", " ", "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D" }) and try win_move.answer(app, row, key)) return;
+            if (row.kind == .need and !is(key, &.{ "j", "k", "h", "l", "z", "Z", "f", "/", "r", "?", "B", "q", "\x1b", "`", "g", "A", "P", "]", "[", " ", "o", "O", "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D" }) and try win_move.answer(app, row, key)) return;
             if (row.kind == .chips and try app.chipKey(key)) return;
             if (is(key, &.{"z"})) return app.togglePlanFold(row.win);
             if (is(key, &.{"Z"})) return app.foldPlanAll(row.win);
@@ -5327,7 +5338,7 @@ pub const App = struct {
         };
         if (key.len == 1 and key[0] >= '1' and key[0] <= '9') return app.driveAnswer(key[0] - '1');
         if (is(key, &.{"B"})) return app.toBoard();
-        if (is(key, &.{"o"}) and !app.halfHome() and app.pickedCard() != null) return app.act(.open);
+
         if (is(key, &.{ "J", "K", "x", "e" })) {
             const row = sheet.picked(view.plan_pick) orelse return;
             if (row.kind == .idea) return app.ideaKey(row, key);
@@ -5361,7 +5372,8 @@ pub const App = struct {
         if (is(key, &.{ "\x1b", "q" })) return app.closeBoard();
         if (is(key, &.{"`"})) return app.foldSide();
         if (is(key, &.{"g"})) return app.gateModal();
-        if (is(key, &.{"o"})) return if (app.halfHome()) app.swapHome(true) else app.toOrchestrator();
+        if (is(key, &.{"o"})) return app.openDrawer();
+        if (is(key, &.{"O"})) return app.openOverview();
         if (is(key, &.{"A"})) return app.openAuto();
         if (is(key, &.{"P"})) return app.jumpProposed();
         if (is(key, &.{ "]", "[" })) return app.toFeed(key, null);
@@ -5539,7 +5551,11 @@ pub const App = struct {
             const link = app.planLink();
             if (m.x >= link.x and m.x < link.x + link.w) try app.toBoard();
             const orch = app.orchLink();
-            if (app.halfHome() and m.x >= orch.x and m.x < orch.x + orch.w) try app.swapHome(true);
+            if (app.halfHome() and m.x >= orch.x and m.x < orch.x + orch.w) return app.openDrawer();
+            if (draw.planHeadHit(app, m.x)) |hit| switch (hit) {
+                .orch => try app.openDrawer(),
+                .menu => app.openMenu(&menu.main),
+            };
             return;
         }
         var sheet: sheets.Sheet = undefined;
@@ -5720,15 +5736,16 @@ pub const App = struct {
     /// starts it when it is off, h gives the board the keys, and Escape and q close the board.
     fn columnKey(app: *App, key: []const u8) !void {
         const view = &app.board_view.?;
-        if (anyKey(key, &.{ "\x1b", "q" })) return app.closeBoard();
         if (anyKey(key, &.{ "h", "\x1b[D", "\x1bOD" })) view.focus = .board;
+        if (anyKey(key, &.{"q"})) return app.closeBoard();
         if (anyKey(key, &.{"B"})) return app.toBoard();
         if (anyKey(key, &.{"A"})) return app.openAuto();
         if (anyKey(key, &.{"\r"}) and app.orchestratorState() == .off) {
             return app.send(.ignore, captured("babylon orchestrator"), .{});
         }
-        if (try app.halfKey(key)) return;
-        _ = try app.feedKey(key);
+        if (anyKey(key, &.{"\x1b"}) and app.drawerOpen()) return app.closeDrawer();
+        if (try app.feedKey(key)) return;
+        if (anyKey(key, &.{"o"}) and app.drawerOpen()) return app.closeDrawer();
     }
 
     /// `]` or `[` from the board: the column's feed takes the keys, in normal mode, with the pick
@@ -5736,6 +5753,7 @@ pub const App = struct {
     fn toFeed(app: *App, key: []const u8, ticket: ?u32) !void {
         const view = &app.board_view.?;
         if (app.planShown() and app.workbench()) return app.toMove(key, ticket);
+        if (ticket == null and !app.sided()) try app.openDrawer();
         if (!app.sided()) return;
         view.focus = .orchestrator;
         if (app.sideDue()) app.normal = true;
@@ -5858,7 +5876,8 @@ pub const App = struct {
         if (is(key, &.{ "\x1b", "q" })) return app.closeBoard();
         if (is(key, &.{"`"})) return app.foldSide();
         if (is(key, &.{"g"})) return app.gateModal();
-        if (is(key, &.{"o"})) return app.toOrchestrator();
+        if (is(key, &.{"o"})) return if (app.board_view.?.home) app.openDrawer() else app.toOrchestrator();
+        if (is(key, &.{"O"})) return app.openOverview();
         if (is(key, &.{"A"})) return app.openAuto();
         if (is(key, &.{"P"})) return app.jumpProposed();
         if (is(key, &.{ "]", "[" })) return app.toFeed(key, null);
@@ -7270,21 +7289,8 @@ pub const App = struct {
             return false;
         }
         const view = &app.board_view.?;
-        if (m.x >= app.boardX() + app.boardW() and app.sided() and !view.boxed()) {
+        if (m.x >= app.term_w - app.view_w and app.sided() and !view.boxed()) {
             if (m.y >= app.view_h) return true;
-            if (app.columnAlone() and m.y == 0 and m.leftPress()) {
-                const hint = App.half_hint.len;
-                const at = app.term_w -| 2 -| hint;
-                if (m.x >= at and m.x < at + 8) {
-                    try app.swapHome(false);
-                    return true;
-                }
-                if (m.x >= at + 8 and m.x < at + hint) {
-                    try app.toBoard();
-                    return true;
-                }
-            }
-
             if (m.leftPress() and try app.feedClick(m)) return true;
 
             if (app.sideShown() and (app.sideFocused() or m.wheel())) return false;
@@ -8426,7 +8432,7 @@ pub const App = struct {
     /// Whether a left click at `m` is on the strip or the board's side column, which it makes
     /// insert; the rail and the board are chrome.
     fn paneClick(app: *const App, m: keys.Mouse) bool {
-        if (app.board_view) |view| return app.sideShown() and !view.boxed() and m.y < app.view_h and m.x > app.boardX() + app.boardW();
+        if (app.board_view) |view| return app.sideShown() and !view.boxed() and m.y < app.view_h and m.x >= app.term_w - app.view_w;
         return m.y < app.view_h and m.x >= @max(app.term_w - app.view_w, app.railDrawnW());
     }
 
@@ -8468,7 +8474,8 @@ pub const App = struct {
         switch (key[0]) {
             'h', 'l', 'H', 'L', 'J', 'K', ';', '\'', 'x', 'z', '1'...'9' => try app.onChord(key[0]),
             'c' => try app.onChord('\r'),
-            'o' => app.openOverview(),
+            'o' => try app.openDrawer(),
+            'O' => app.openOverview(),
             'w' => app.toggleRail(),
             'm' => app.openMenu(&menu.main),
             '/', 's' => app.openSwitcher(),
@@ -8527,8 +8534,15 @@ pub const App = struct {
                     app.dirty = true;
                     continue;
                 }
-                if (app.sideFocused() and try app.halfKey(key)) continue;
+                if (app.sideFocused() and app.drawerOpen() and anyKey(key, &.{"\x1b"})) {
+                    try app.closeDrawer();
+                    continue;
+                }
                 if (app.sideFocused() and try app.feedKey(key)) continue;
+                if (app.sideFocused() and app.drawerOpen() and anyKey(key, &.{"o"})) {
+                    try app.closeDrawer();
+                    continue;
+                }
                 if (try app.railKey(key)) continue;
                 if (std.mem.eql(u8, key, "i") or std.mem.eql(u8, key, "\x1b")) {
                     app.normal = false;
@@ -8845,6 +8859,7 @@ pub const App = struct {
             const s = app.sessionById(app.bound()).?;
             const at_board = view.focus == .board;
             // the board is the column before the orchestrator's first
+            if (letter == 'h' and !at_board and s.focus == 0 and app.drawerOpen()) return app.closeDrawer();
             if (!view.boxed() and ((at_board and letter == 'l') or (!at_board and letter == 'h' and s.focus == 0))) {
                 view.focus = if (at_board) .orchestrator else .board;
                 app.dirty = true;
@@ -9429,13 +9444,17 @@ test "home: the board with the orchestrator's column focused, its own keys while
     );
     app.normal = true;
     try app.goHome();
-    try expect(app.board_view.?.home and app.board_view.?.focus == .orchestrator);
-    try expect(app.sided() and app.columnFocused() and !app.normal);
-    try expect(!app.typing());
+    try expect(app.board_view.?.home and app.board_view.?.focus == .board);
+    try expect(!app.drawerOpen() and !app.sided() and !app.columnFocused());
     try expect(app.orchestratorState() == .off);
-    _ = try app.onInput("h");
-    try expect(app.board_view.?.focus == .board and !app.columnFocused());
 
+    try app.openDrawer();
+    try expect(app.drawerOpen() and app.sided() and app.columnFocused() and !app.normal);
+    try expect(!app.typing());
+    try app.closeDrawer();
+    try expect(!app.drawerOpen() and app.board_view.?.focus == .board and !app.columnFocused());
+
+    try app.openDrawer();
     app.board_view.?.focus = .orchestrator;
     app.board_view.?.help = true;
     const was = app.kept().?;
@@ -11784,13 +11803,14 @@ test "a click on not planned's + new button opens the new ticket window, and a w
     app.board = try tickets.Board.parse(std.testing.allocator, not_planned_plan);
     defer app.board.?.deinit();
     app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    app.side_folded = true;
     const head = app.newHead().?;
     try std.testing.expect(try app.boardMouse(.{ .code = 0, .x = head.x + 1, .y = head.y, .release = false }));
     var got: [1024]u8 = undefined;
     const len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon new") != null);
 
-    app.term_w = 200;
+    app.term_w = 60;
     app.view_w = 60;
     try std.testing.expect(app.newHead() == null);
 }
