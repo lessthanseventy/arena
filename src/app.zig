@@ -9346,3 +9346,45 @@ test "with the drawer and a middle column open, Plan, the column and the drawer 
     app.side_folded = true;
     try std.testing.expectEqual(app.term_w, app.boardW());
 }
+
+test "⏎ on a text suggestion types it into the orchestrator's pane with no Enter and opens the drawer; with the orchestrator off it types nothing" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    const gpa = std.testing.allocator;
+    var app: App = .{ .gpa = gpa, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(gpa);
+    app.term_w = 120;
+    app.view_w = 120;
+    app.view_h = 40;
+    app.board = try tickets.Board.parse(gpa,
+        \\{"tickets":[],"orchestrator":{"on":true,"running":true},"needs_you":[],
+        \\"suggestions":[{"id":"suggestion:1","kind":"text","text":"rebase #7 onto main","ticket":null}],
+        \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer app.board.?.deinit();
+    const row: sheets.Row = .{ .kind = .need, .pick = 0, .item = 0 };
+
+    try win_move.open(&app, &row);
+    var got: [512]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), try sent.readPositionalAll(std.testing.io, &got, 0));
+    try std.testing.expect(!app.drawerOpen());
+
+    var win: Window = .{ .id = 3, .name = @constCast("w"), .info = @constCast("") };
+    const pane = try Pane.create(&app, 5, 10, 5);
+    defer pane.destroy(gpa);
+    try win.panes.append(gpa, pane);
+    defer win.panes.deinit(gpa);
+    var slots = [_]*Window{&win};
+    var s: Session = .{ .id = 1, .name = @constCast("orchestrator"), .wins = .fromOwnedSlice(&slots) };
+    var list = [_]*Session{&s};
+    app.sessions = .fromOwnedSlice(&list);
+    app.current = 1;
+
+    try win_move.open(&app, &row);
+    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "send-keys -t %5 -l 'rebase #7 onto main'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "Enter") == null);
+    try std.testing.expect(app.drawerOpen() and !app.normal);
+}

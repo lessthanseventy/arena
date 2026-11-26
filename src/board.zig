@@ -242,6 +242,17 @@ pub const Need = struct {
     since: ?[]const u8 = null,
     steps: []TryStep = &.{},
     actions: []Action = &.{},
+    /// The orchestrator points at it (an `item` suggestion).
+    orch: bool = false,
+};
+
+/// One line of the orchestrator's: `text` for a line to say to it, `item` for a `needs_you` item it
+/// points at, which carries that item's own `ticket` and `text`.
+pub const Suggestion = struct {
+    id: []const u8 = "",
+    kind: []const u8 = "",
+    text: []const u8 = "",
+    ticket: ?u32 = null,
 };
 
 /// A move the orchestrator proposes, waiting on the human's go or no.
@@ -381,6 +392,7 @@ const File = struct {
     orchestrator: ?Orchestrator = null,
     proposals: []Proposal = &.{},
     needs_you: []Need = &.{},
+    suggestions: []Suggestion = &.{},
     plan: ?Plan = null,
 };
 
@@ -433,6 +445,7 @@ pub const Board = struct {
                 for (step.actions) |*action| action.label = try cleanLine(arena, action.label);
             }
         }
+        try suggest(arena, &parsed.value);
         if (parsed.value.plan) |*given| {
             for (given.now) |*item| {
                 item.title = try cleanLine(arena, item.title);
@@ -517,6 +530,39 @@ pub const Board = struct {
         try @import("text.zig").appendClean(&clean, arena, text);
         std.mem.replaceScalar(u8, clean.items, '\n', ' ');
         return clean.items;
+    }
+
+    /// Lifts the `needs_you` items the suggestions point at to the top, in the suggestions' order,
+    /// marked, and puts each text suggestion after them as a row of its own, kind `suggest`. A
+    /// suggestion of another kind, or pointing at an item that is gone, is dropped.
+    fn suggest(arena: std.mem.Allocator, file: *File) !void {
+        if (file.suggestions.len == 0) return;
+        const out = try arena.alloc(Need, file.needs_you.len + file.suggestions.len);
+        const taken = try arena.alloc(bool, file.needs_you.len);
+        @memset(taken, false);
+        var n: usize = 0;
+        for (file.suggestions) |s| {
+            if (!std.mem.eql(u8, s.kind, "item")) continue;
+            const text = try cleanLine(arena, s.text);
+            for (file.needs_you, taken, 0..) |need, *gone, at| {
+                if (gone.* or need.ticket != s.ticket or !std.mem.eql(u8, need.text, text)) continue;
+                gone.* = true;
+                out[n] = file.needs_you[at];
+                out[n].orch = true;
+                n += 1;
+                break;
+            }
+        }
+        for (file.suggestions) |s| {
+            if (!std.mem.eql(u8, s.kind, "text")) continue;
+            out[n] = .{ .id = s.id, .kind = "suggest", .ticket = s.ticket, .text = try cleanLine(arena, s.text) };
+            n += 1;
+        }
+        for (file.needs_you, taken) |need, gone| if (!gone) {
+            out[n] = need;
+            n += 1;
+        };
+        file.needs_you = out[0..n];
     }
 
     pub fn deinit(b: *Board) void {
@@ -990,4 +1036,28 @@ test "babylon's own board parses with its plan, a planning ticket of no repo in 
     try std.testing.expectEqual(@as(u32, 1136), given.now[0].ticket);
     try std.testing.expectEqual(@as(?[]const u8, null), given.now[0].repo);
     try std.testing.expect(given.next.len > 0 and given.goals.len > 0);
+}
+
+test "an item suggestion lifts and marks the needs_you item it copies, a text one is a row of its own, and others are dropped" {
+    var b = try Board.parse(std.testing.allocator,
+        \\{"tickets":[],"needs_you":[
+        \\{"id":"a","kind":"push","ticket":1,"repo":"arena","text":"push one"},
+        \\{"id":"b","kind":"proposal","ticket":2,"repo":"arena","text":"go two"}],
+        \\"suggestions":[
+        \\{"id":"suggestion:1","kind":"item","text":"go two","ticket":2,"actions":[]},
+        \\{"id":"suggestion:2","kind":"text","text":"rebase #7","ticket":null,"actions":[]},
+        \\{"id":"suggestion:3","kind":"item","text":"gone","ticket":9,"actions":[]},
+        \\{"id":"suggestion:4","kind":"new-kind","text":"x"}]}
+    );
+    defer b.deinit();
+    const needs = b.needsYou();
+    try std.testing.expectEqual(@as(usize, 3), needs.len);
+    try std.testing.expectEqualStrings("b", needs[0].id);
+    try std.testing.expect(needs[0].orch and !needs[2].orch);
+    try std.testing.expectEqualStrings("suggest", needs[1].kind);
+    try std.testing.expectEqualStrings("rebase #7", needs[1].text);
+    try std.testing.expectEqualStrings("a", needs[2].id);
+    var old = try Board.parse(std.testing.allocator, sample);
+    defer old.deinit();
+    try std.testing.expectEqual(@as(usize, 0), old.needsYou().len);
 }

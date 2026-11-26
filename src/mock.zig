@@ -901,11 +901,19 @@ fn column(sc: *Scene, focused: bool, pick: usize) void {
         const picked = i == pick;
         const top = y;
         const tile = if (picked) s.raised else s.tile;
+        if (std.mem.eql(u8, need.kind, "suggest")) {
+            c.fill(ix, y, iw, 1, tile);
+            _ = c.print(ix + 2, y, sc.fmt("◆ tell the orchestrator: {s}", .{need.text}), .{ .fg = s.accent, .bold = picked }, iw -| 12);
+            _ = c.print(ix + iw -| 8, y, "⏎ type", .{ .fg = s.dim }, 6);
+            y += if (s.dir == .workbench) 2 else 1;
+            continue;
+        }
         const tall: usize = if (std.mem.eql(u8, need.kind, "ask")) 4 else 3;
         c.fill(ix, y, iw, tall, tile);
         const kind_ink = if (std.mem.eql(u8, need.kind, "ask")) s.you else if (std.mem.eql(u8, need.kind, "sent_back")) s.failed else s.accent;
         const kind_word = if (std.mem.eql(u8, need.kind, "ask")) "asks" else if (std.mem.eql(u8, need.kind, "sent_back")) "sent back" else "proposal";
         var at = ix + 2;
+        if (need.orch) at += sc.chip(at, y, "◆ orch", s.accent, true) + 1;
         at += sc.chip(at, y, kind_word, kind_ink, true) + 1;
         at += c.print(at, y, sc.fmt("#{d} ", .{need.ticket.?}), .{ .fg = s.repoInk(need.repo), .bold = true }, 6);
         _ = c.print(at, y, need.repo, .{ .fg = s.dim }, 12);

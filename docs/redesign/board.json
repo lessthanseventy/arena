@@ -13,6 +13,11 @@
     {"id": "prop-41", "kind": "proposal", "ticket": 612, "repo": "tlon", "text": "start #612 next: high, two days old, nothing blocks it",
      "actions": [{"key": "⏎", "label": "go"}, {"key": "x", "label": "no"}]}
   ],
+  "suggestions": [
+    {"id": "suggestion:3", "kind": "item", "text": "start #612 next: high, two days old, nothing blocks it", "ticket": 612, "actions": [{"key": "⏎", "label": "go"}, {"key": "x", "label": "no"}]},
+    {"id": "suggestion:4", "kind": "text", "text": "rebase #757 onto main", "ticket": 757, "actions": []},
+    {"id": "suggestion:5", "kind": "text", "text": "what is stalled on babylon's lane?", "ticket": null, "actions": []}
+  ],
   "plan": {
     "now": [
       {"ticket": 760, "repo": "arena", "title": "Visual redesign: a GUI in the TUI, retro", "state": "building", "since": "2026-11-24T04:38:21Z", "pane": "%1280"},

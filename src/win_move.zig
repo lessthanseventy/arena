@@ -25,8 +25,17 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
     if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
     if (opened) try bench.say(w, x0 + 1, y, "▸", r.accent, bg, true);
     const failed = isSendBack(need);
-    try bench.say(w, x0 + 2, y, if (failed) "✗" else "▲", if (failed) r.failed else r.you, bg, true);
+    const text_row = isSuggestion(need);
+    try bench.say(w, x0 + 2, y, if (text_row) "◆" else if (failed) "✗" else "▲", if (text_row) r.accent else if (failed) r.failed else r.you, bg, true);
     var x = x0 + 4;
+    if (need.orch) {
+        try bench.say(w, x, y, "◆ orch", r.accent, bg, true);
+        x += cellCount("◆ orch") + 1;
+    }
+    if (text_row) {
+        try bench.say(w, x, y, tell, r.accent, bg, false);
+        x += cellCount(tell);
+    }
     if (need.ticket) |id| if (std.mem.indexOfScalar(u8, need.text, '#') == null) {
         var buf: [64]u8 = undefined;
         const label = std.fmt.bufPrint(&buf, "#{d} {s}", .{ id, need.repo }) catch "";
@@ -38,7 +47,14 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
     const right = x0 + ww -| (cellCount(age) + 1);
     try bench.say(w, right, y, age, r.dim, bg, false);
     var end = right;
-    if (need.actions.len > 0 and !opened) {
+    if (text_row) {
+        const hint = if (app.orchestratorWindow() == null) "orchestrator off" else "⏎ type";
+        const at_x = right -| (cellCount(hint) + 2);
+        if (at_x > x + 8) {
+            try bench.say(w, at_x, y, hint, if (picked) r.text else r.dim, bg, false);
+            end = at_x;
+        }
+    } else if (need.actions.len > 0 and !opened) {
         var hint_buf: [96]u8 = undefined;
         const hint = std.fmt.bufPrint(&hint_buf, "{s} {s}", .{ need.actions[0].key, need.actions[0].label }) catch "";
         const at_x = right -| (cellCount(hint) + 2);
@@ -55,6 +71,27 @@ pub fn isOpen(app: *const App, row: sheets.Row) bool {
     const id = row.ticket orelse return false;
     const view = app.home orelse return false;
     return view.detail == id and !view.gate;
+}
+
+const tell = "tell the orchestrator: ";
+
+/// Whether `need` is a line the orchestrator suggests saying to it, not one of babylon's items.
+pub fn isSuggestion(need: tickets.Need) bool {
+    return std.mem.eql(u8, need.kind, "suggest");
+}
+
+/// A text suggestion's line typed into the orchestrator's prompt, unsent, and the drawer opened
+/// in insert for the human to edit it. With the orchestrator off, nothing is typed.
+fn typeIn(app: *App, need: tickets.Need) !void {
+    const win = app.orchestratorWindow() orelse return;
+    if (win.panes.items.len == 0) return;
+    var buf: [512]u8 = undefined;
+    var w: Writer = .fixed(&buf);
+    for (need.text) |c| {
+        if (c == '\'') try w.writeAll("'\\''") else try w.writeByte(c);
+    }
+    try app.send(.ignore, "send-keys -t %{d} -l '{s}'", .{ win.panes.items[0].id, w.buffered() });
+    try app.openDrawer();
 }
 
 fn isSendBack(need: tickets.Need) bool {
@@ -82,6 +119,7 @@ pub fn answer(app: *App, row: *const sheets.Row, pressed: []const u8) !bool {
 /// its checks and the item's buttons; a draft opens its own modal.
 pub fn open(app: *App, row: *const sheets.Row) !void {
     const need = app.board.?.needsYou()[row.item];
+    if (isSuggestion(need)) return typeIn(app, need);
     if (std.mem.eql(u8, need.kind, "draft")) {
         _ = try win_feed.act(app, itemOf(need, row.item, null), " ");
         return;

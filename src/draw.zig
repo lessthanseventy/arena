@@ -3940,3 +3940,41 @@ test "a one-column Plan draws in flight with one row three rows tall" {
     try std.testing.expect(app.oneColumn());
     try std.testing.expectEqual(@as(u16, 3), app.planSlot(.now).h);
 }
+
+test "Your move marks the item the orchestrator points at ◆ orch once, and a text suggestion is its own row that says the orchestrator is off while it is" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"needs_you":[
+        \\{"id":"push:1","kind":"push","ticket":7,"repo":"arena","text":"3 commits to push","actions":[{"key":"⏎","label":"push"}]},
+        \\{"id":"prop:2","kind":"proposal","ticket":8,"repo":"arena","text":"go eight","actions":[{"key":"⏎","label":"go"}]}],
+        \\"suggestions":[{"id":"suggestion:1","kind":"item","text":"go eight","ticket":8},
+        \\{"id":"suggestion:2","kind":"text","text":"rebase #7 onto main","ticket":null}],
+        \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer board.deinit();
+    var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
+    app.term_w = 100;
+    app.view_w = 100;
+    app.view_h = 40;
+    app.roles = bench.roles();
+    app.home = .{ .focus = .plan };
+    const rect = app.planRect(.move);
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    var seen: [3][]const u8 = undefined;
+    var bufs: [3][8192]u8 = undefined;
+    var outs: [3]Writer = undefined;
+    for (0..3) |i| {
+        outs[i] = .fixed(&bufs[i]);
+        try win_plan.benchPlanRow(&app, &outs[i], bench.roles(), &sheet, i, 0, rect.x, rect.w - 1, false);
+        seen[i] = outs[i].buffered();
+    }
+    try std.testing.expect(std.mem.indexOf(u8, seen[0], "◆ orch") != null and std.mem.indexOf(u8, seen[0], "go eight") != null);
+    try std.testing.expect(std.mem.indexOf(u8, seen[1], "tell the orchestrator: ") != null and std.mem.indexOf(u8, seen[1], "orchestrator off") != null);
+    try std.testing.expect(std.mem.indexOf(u8, seen[2], "3 commits") != null);
+    var eights: usize = 0;
+    for (seen) |row| {
+        if (std.mem.indexOf(u8, row, "go eight") != null) eights += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), eights);
+}
