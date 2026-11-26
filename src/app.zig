@@ -4374,7 +4374,7 @@ pub const App = struct {
         sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.halfHome(), app.workbench(), shut, app.planSee(&repos));
         app.narrowPlan(sheet);
         if (app.workbench()) {
-            sheet.withNeedCards(app.plan_open, b);
+            sheet.withNeedCards(app.plan_open, b, app.planRect(.move).w -| 1);
             sheet.withButtons(app.plan_open);
             sheet.withHeld(b.plan().?, KnownPanes{ .app = app });
             var others: [max_others]Agent = undefined;
@@ -4544,7 +4544,14 @@ pub const App = struct {
         if (sheet.rows[at].win != win) return pin;
         const span = sheet.span(win);
         if (at - span.start < pin) return pin;
-        return pin + sheets.windowTop(at - span.start - pin, span.len -| pin, body -| pin);
+        var below = at + 1;
+        while (below < sheet.n and sheet.rows[below].kind == .need_card) below += 1;
+        const card = below - at - 1;
+        const room = body -| pin;
+        const place = at - span.start - pin;
+        // a card longer than the body shows its foot, the buttons, over its head
+        if (card > 2 and card + 1 > room) return pin + sheets.windowTop(place + card, span.len -| pin, room, 0);
+        return pin + sheets.windowTop(place, span.len -| pin, room, @max(2, card));
     }
 
     /// The rows a window keeps on its first lines whatever it scrolls to: not planned's chips.

@@ -3,6 +3,7 @@
 const std = @import("std");
 const tickets = @import("board.zig");
 const text_mod = @import("text.zig");
+const goal_mod = @import("goal.zig");
 
 pub const max_rows = 160;
 
@@ -147,17 +148,18 @@ test "at half the screen the slots stack in the doc's order with its fixed heigh
 }
 
 /// The first of `len` rows a window of `body` rows shows, the row at `at` kept in view with the
-/// rest of its card (two rows) below it; a body too short for both keeps the row itself.
-pub fn windowTop(at: usize, len: usize, body: usize) usize {
-    return @min((at + 3) -| body, at, len -| body);
+/// `card` rows of its card below it; a body too short for both keeps the row itself.
+pub fn windowTop(at: usize, len: usize, body: usize, card: usize) usize {
+    return @min((at + 1 + card) -| body, at, len -| body);
 }
 
 test "windowTop keeps the picked row in view, with its card below it when the body has room" {
-    try std.testing.expectEqual(@as(usize, 0), windowTop(0, 10, 5));
-    try std.testing.expectEqual(@as(usize, 3), windowTop(5, 10, 5));
-    try std.testing.expectEqual(@as(usize, 5), windowTop(5, 10, 1));
-    try std.testing.expectEqual(@as(usize, 5), windowTop(5, 10, 2));
-    try std.testing.expectEqual(@as(usize, 4), windowTop(9, 10, 6));
+    try std.testing.expectEqual(@as(usize, 0), windowTop(0, 10, 5, 2));
+    try std.testing.expectEqual(@as(usize, 3), windowTop(5, 10, 5, 2));
+    try std.testing.expectEqual(@as(usize, 5), windowTop(5, 10, 1, 2));
+    try std.testing.expectEqual(@as(usize, 5), windowTop(5, 10, 2, 2));
+    try std.testing.expectEqual(@as(usize, 4), windowTop(9, 10, 6, 2));
+    try std.testing.expectEqual(@as(usize, 2), windowTop(2, 10, 5, 4));
 }
 
 pub const Row = struct {
@@ -360,8 +362,9 @@ pub const Sheet = struct {
     }
 
     /// Rows of the whole card under the Your move row that is open: its question, its buttons and,
-    /// for a to-try item, a row for each check. They are no picks.
-    pub fn withNeedCards(s: *Sheet, open: Open, b: *const tickets.Board) void {
+    /// for a to-try item, each check's text wrapped over as many rows as it needs and, unless it
+    /// is settled, a row of its buttons under them. They are no picks. `ww` is the slot's width.
+    pub fn withNeedCards(s: *Sheet, open: Open, b: *const tickets.Board, ww: usize) void {
         const ticket = open.get(.move);
         if (ticket == 0) return;
         var from: ?usize = null;
@@ -371,13 +374,43 @@ pub const Sheet = struct {
         };
         const at = from orelse return;
         const need = b.needsYou()[s.rows[at].item];
-        const extra = 2 + need.steps.len;
+        var extra: usize = 2;
+        for (need.steps) |step| extra += checkRows(step, ww);
         if (s.n + extra > max_rows) return;
         std.mem.copyBackwards(Row, s.rows[at + 1 + extra .. s.n + extra], s.rows[at + 1 .. s.n]);
-        for (0..extra) |part| {
-            s.rows[at + 1 + part] = .{ .kind = .need_card, .ticket = ticket, .item = s.rows[at].item, .part = @intCast(part + 1), .win = .move };
+        const item = s.rows[at].item;
+        for (0..2) |part| {
+            s.rows[at + 1 + part] = .{ .kind = .need_card, .ticket = ticket, .item = item, .part = @intCast(part + 1), .win = .move };
         }
+        var to = at + 3;
+        for (need.steps, 0..) |step, i| for (0..checkRows(step, ww)) |line| {
+            s.rows[to] = .{ .kind = .need_card, .ticket = ticket, .item = item, .part = @intCast(3 + i), .count = line, .win = .move };
+            to += 1;
+        };
         s.n += extra;
+    }
+
+    /// The most lines a check's text is wrapped to.
+    pub const check_lines_max = 12;
+
+    /// The cells a check's text has in a slot `ww` wide: after its indent and number, short of
+    /// the cells a settled check's ✓ takes.
+    pub fn checkWidth(step: tickets.TryStep, ww: usize) usize {
+        var buf: [16]u8 = undefined;
+        const n = std.fmt.bufPrint(&buf, "{d} ", .{step.n}) catch "";
+        return @max(8, ww -| 2 -| text_mod.cells(n) -| 3);
+    }
+
+    /// A check's text in the lines it wraps to; the count.
+    pub fn checkText(step: tickets.TryStep, ww: usize, out: *[check_lines_max][]const u8) usize {
+        return @max(1, goal_mod.wrap(step.text, checkWidth(step, ww), out));
+    }
+
+    /// The rows a check takes: its text's lines and, unless it is settled, its buttons' row.
+    pub fn checkRows(step: tickets.TryStep, ww: usize) usize {
+        var lines: [check_lines_max][]const u8 = undefined;
+        const buttons = step.result == null and step.actions.len > 0;
+        return checkText(step, ww, &lines) + @intFromBool(buttons);
     }
 
     /// A second line under each in-flight row whose Claude's pane `known` has, for its workspace

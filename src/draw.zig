@@ -5399,3 +5399,48 @@ test "on the e2e's 24-row screen every Plan window keeps its title and a body ro
         try std.testing.expect(std.mem.indexOf(u8, out.buffered(), shown) != null);
     }
 }
+
+test "Your move's open check wraps over as many rows as it needs, its buttons on the row under, y then n, at the text's indent" {
+    const text = "In a live arena with a menard Claude and your own Claude on no ticket, look at in flight's foot: the row says which is which";
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"needs_you":[
+        \\{"id":"try-52","kind":"try","ticket":52,"repo":"arena","text":"try it","machine":"gate ✓",
+        \\ "steps":[{"n":1,"text":"In a live arena with a menard Claude and your own Claude on no ticket, look at in flight's foot: the row says which is which",
+        \\ "actions":[{"key":"y","label":"✓"},{"key":"n","label":"✗"}]}]}],
+        \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer board.deinit();
+    var app = homeApp(&board);
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 40;
+    app.roles = bench.roles();
+    app.board_view = .{ .home = true, .plan = true, .focus = .board };
+    app.plan_open.set(.move, 52);
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    const rect = app.planRect(.move);
+
+    var buf: [65536]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    var first: ?usize = null;
+    var last: usize = 0;
+    var y: u16 = 0;
+    for (sheet.rows[0..sheet.n], 0..) |row, at| {
+        if (row.kind != .need_card or row.part < 3) continue;
+        first = first orelse y;
+        last = y;
+        try benchPlanRow(&app, &out, bench.roles(), &sheet, at, y, rect.x, rect.w - 1, false);
+        y += 1;
+    }
+    const drawn = out.buffered();
+    try std.testing.expect(last - first.? >= 2);
+    var words = std.mem.tokenizeScalar(u8, text, ' ');
+    while (words.next()) |word| try std.testing.expect(std.mem.indexOf(u8, drawn, word) != null);
+
+    const indent = rect.x + 2 + 2;
+    try std.testing.expectEqual(@as(u21, 'y'), (try bench.probe(drawn, indent + 1, last)).cp);
+    try std.testing.expectEqual(@as(u21, '✓'), (try bench.probe(drawn, indent + 3, last)).cp);
+    try std.testing.expectEqual(@as(u21, 'n'), (try bench.probe(drawn, indent + 7, last)).cp);
+    try std.testing.expect((try bench.probe(drawn, indent, last - 1)).cp != ' ');
+}

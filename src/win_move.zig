@@ -63,21 +63,18 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
                     const step = need.steps[row.part - 3];
                     var buf: [16]u8 = undefined;
                     const n = std.fmt.bufPrint(&buf, "{d} ", .{step.n}) catch "";
-                    var x = x0 + 2;
-                    const settled = step.result != null;
-                    var right = x0 + ww;
-                    if (settled) {
-                        right -= 2;
-                        try bench.say(w, right, y, "✓", r.dim, bg, false);
-                    } else for (step.actions) |action| {
-                        const used = cellCount(action.key) + cellCount(action.label) + 4;
-                        if (right < x + used + 12) break;
-                        right -= used;
-                        _ = try bench.button(w, r, right, y, action.key, action.label, false, null);
+                    const indent = x0 + 2 + cellCount(n);
+                    var lines: [sheets.Sheet.check_lines_max][]const u8 = undefined;
+                    const count = sheets.Sheet.checkText(step, ww, &lines);
+                    if (row.count >= count) {
+                        var x = indent;
+                        for (step.actions) |action| x += try bench.button(w, r, x, y, action.key, action.label, false, null);
+                        return;
                     }
-                    try bench.say(w, x, y, n, r.dim, bg, false);
-                    x += cellCount(n);
-                    try bench.say(w, x, y, clip(step.text, right -| x -| 1), if (settled) r.dim else r.text, bg, false);
+                    const settled = step.result != null;
+                    if (row.count == 0) try bench.say(w, x0 + 2, y, n, r.dim, bg, false);
+                    if (row.count == 0 and settled) try bench.say(w, x0 + ww -| 2, y, "✓", r.dim, bg, false);
+                    try bench.say(w, indent, y, lines[row.count], if (settled) r.dim else r.text, bg, false);
                 },
             }
         },
@@ -165,15 +162,17 @@ pub fn click(app: *App, sheet: *const sheets.Sheet, at: usize, m: anytype) !void
     }
     if (row.part < 3 or row.part - 3 >= need.steps.len) return;
     const step = row.part - 3;
-    const right = rect.x + rect.w - 1;
-    var at_x: usize = right;
+    var lines: [sheets.Sheet.check_lines_max][]const u8 = undefined;
+    if (row.count != sheets.Sheet.checkText(need.steps[step], rect.w -| 1, &lines)) return;
+    var buf: [16]u8 = undefined;
+    var at_x = rect.x + 2 + cellCount(std.fmt.bufPrint(&buf, "{d} ", .{need.steps[step].n}) catch "");
     for (need.steps[step].actions) |action| {
-        const used = cellCount(action.key) + cellCount(action.label) + 4;
-        at_x -= used;
-        if (m.x >= at_x and m.x < at_x + used - 1) {
+        const used = cellCount(action.key) + cellCount(action.label) + 3;
+        if (m.x >= at_x and m.x < at_x + used) {
             _ = try app.feedAct(itemOf(need, row.item, step), action.key);
             return;
         }
+        at_x += used + 1;
     }
 }
 

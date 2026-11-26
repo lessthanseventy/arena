@@ -1811,6 +1811,28 @@ key +
 check "+ in not planned opens the new ticket window" await last 'new'
 normal
 key b
+cp $tmp/run/babylon/board.json $tmp/board.foot
+print -r -- "${$(<$tmp/board.foot)%\}}"',"needs_you":[{"id":"try:934","kind":"try","ticket":934,"repo":"arena","text":"#934 arena  Foot","since":"2026-11-24T10:00:00Z","machine":"gate ✓","steps":['\
+'{"n":1,"text":"In a live arena with a menard Claude and your own Claude on no ticket, look at in flight foot: the row says which of the two is which, and nothing else wanders","result":null,"actions":[{"key":"y","label":"✓","argv":["babylon","tried","934","1","ok"]},{"key":"n","label":"✗","argv":["babylon","tried","934","1","no"],"needs":"words"}]}],'\
+'"actions":[]}]}' >$tmp/run/babylon/board.json
+outer resize-window -t o -x 121 -y 40
+click ${(z)$(spot '#934 arena')}
+check "a check opened in Your move is wrapped whole, its buttons on the row under it" await shows 'nothing else wanders'
+: >$tmp/babylon
+click ${(z)$(spot 'y ✓')}
+check "a click on its y answers it, through babylon" await last 'tried 934 1 ok'
+: >$tmp/babylon
+click ${(z)$(spot 'n ✗')}
+check "and a click on its n asks for the words" see 'What went wrong\?'
+key Escape
+check "and Escape puts the words away" gone 'What went wrong\?'
+key -l ' '
+see 'q close'
+key Escape
+check "space on the open row gives its card up for the modal" gone 'nothing else wanders'
+cp $tmp/board.foot $tmp/run/babylon/board.json
+gone '#934'
+outer resize-window -t o -x 121 -y 24
 print -r -- '' >$tmp/.config/ficciones/theme/palette.sh
 cp $tmp/board.slots $tmp/run/babylon/board.json
 check "without a palette the plan is the plain one again" see '1 #7 +tlon +Lights +free now'
@@ -2149,6 +2171,7 @@ outer new-session -d -s o -x 121 -y 24 \
   "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 $bin -L $in 2>$tmp/err; echo EXIT \$?; cat"
 check "a held row's chip reads its session, window and pane" see "alpha:$held_index · $held_pane"
 inner select-window -t alpha:one
+see "alpha:$held_index · $held_pane"
 chip=$(spot "alpha:$held_index · $held_pane")
 mouse 0 ${(z)chip} M
 mouse 0 ${(z)chip} m
