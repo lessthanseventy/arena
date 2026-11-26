@@ -319,7 +319,7 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
     const claude_rows: u16 = if (win != null and foot - rect.y - 3 > note_rows + head.n + 1) 1 else 0;
     const text_end = foot - 1 - note_rows - claude_rows;
 
-    var buttons: [16]App.ModalButton = undefined;
+    var buttons: [48]App.ModalButton = undefined;
     const modal = app.modalButtons(&buttons);
     var y = rect.y + 1;
     var band = false;
@@ -349,7 +349,18 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
                 try app.grab.row(app.gpa, x0, y, clip(line, inner), null);
                 const settled = card.?.checks[at - head.checks.?].result != null;
                 const lit = !app.onFold(card.?) and at - head.checks.? + 1 == @min(@max(app.home.?.check_pick, 1), card.?.checks.len);
-                try bench.say(w, x0, y, clip(line, inner), if (lit) r.accent else if (settled) r.dim else r.text, bg, lit);
+                var room = inner;
+                for (modal) |button| if (button.action == .pick and button.y == y) {
+                    room = button.width() -| 3;
+                };
+                const ground = if (lit) r.raised else bg;
+                if (lit) try bench.fill(w, rect.x + 1, y, rect.w - 3, ground);
+                var said: [512]u8 = undefined;
+                const shown = if (lit) std.fmt.bufPrint(&said, "\u{25b8}{s}", .{line}) catch line else line;
+                try bench.say(w, x0, y, clip(shown, room), if (lit) r.accent else if (settled) r.dim else r.text, ground, lit);
+                for (modal) |button| if ((button.action == .row_ok or button.action == .row_no) and button.y == y) {
+                    _ = try bench.button(w, r, button.x, y, button.key, button.label, false, null);
+                };
             },
             .sub => {
                 const lit = at - head.subs.? + 1 == app.home.?.sub_pick;
@@ -418,6 +429,7 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
     var primary = true;
     for (modal) |button| {
         if ((button.action == .option or button.action == .words or button.action == .sub or button.action == .details) and button.y != foot) continue;
+        if (button.action == .pick or button.action == .row_ok or button.action == .row_no) continue;
         _ = try bench.button(w, r, button.x, button.y, button.key, button.label, primary and button.action != .close, r.ground);
         if (button.action != .close) primary = false;
         end = button.x + button.width() + 1;
@@ -566,7 +578,7 @@ fn modalFrame(app: *const App, w: *Writer, rect: App.ModalRect, head: []const u8
     for (3..rect.w) |_| try w.writeAll("─");
     try w.writeAll("╯");
 
-    var buttons: [16]App.ModalButton = undefined;
+    var buttons: [48]App.ModalButton = undefined;
     var end = rect.x + 2;
     for (app.modalButtons(&buttons)) |button| {
         var style = ink(app, "amber", 4);

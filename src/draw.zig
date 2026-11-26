@@ -2716,7 +2716,7 @@ test "a card's popup in Workbench's look: a window with its ✕, the title whole
     try eq(r.repo[4], repo.fg);
 
     // the ask in violet, its options buttons: the first filled amber, the next raised
-    var buttons: [16]App.ModalButton = undefined;
+    var buttons: [48]App.ModalButton = undefined;
     var options: [2]App.ModalButton = undefined;
     var n: usize = 0;
     for (app.modalButtons(&buttons)) |b| if (b.action == .option and b.y < rect.y + rect.h - 1) {
@@ -3942,7 +3942,7 @@ const empty_plan =
 fn cardFoot(app: *App, id: u32, out: [][]const u8, store: *[8][32]u8) ![][]const u8 {
     app.home = .{ .focus = .plan, .detail = id };
     const rect = app.modalRect().?;
-    var buttons: [16]App.ModalButton = undefined;
+    var buttons: [48]App.ModalButton = undefined;
     var n: usize = 0;
     for (app.modalButtons(&buttons)) |b| {
         if (b.y != rect.y + rect.h - 1) continue;

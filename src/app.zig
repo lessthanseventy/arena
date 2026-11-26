@@ -3179,7 +3179,7 @@ pub const App = struct {
         view.detail_scroll = 0;
         view.body_open = false;
         view.ask_pick = 1;
-        view.check_pick = 1;
+        view.check_pick = if (app.ticketCard(id)) |card| openFrom(card, 1, true) orelse 1 else 1;
         view.details = false;
         view.sub_pick = 0;
         view.gate = gate;
@@ -4621,9 +4621,11 @@ pub const App = struct {
     }
 
     /// What a modal button does when pressed.
-    pub const ModalAction = union(enum) { close, need: u8, card: CardAction, option: u8, sub: u8, words, claude, whole_log, ticket, bump, withdraw, tried_ok, tried_no, copy_check, run_check, details, open_check, diff_check };
+    pub const ModalAction = union(enum) { close, need: u8, card: CardAction, option: u8, sub: u8, words, claude, whole_log, ticket, bump, withdraw, tried_ok, tried_no, copy_check, run_check, details, open_check, diff_check, pick: u8, row_ok: u8, row_no: u8 };
 
     /// A button of the modal frame, where it is drawn and clicked: 0-based. It reads ` key label `.
+    const blank: [200]u8 = @splat(' ');
+
     pub const ModalButton = struct {
         action: ModalAction,
         key: []const u8,
@@ -4942,8 +4944,10 @@ pub const App = struct {
                 };
                 var found: [512]u8 = undefined;
                 const runs = if (pickedCheck(card, app.home.?.check_pick)) |check| runcheck.find(check.text, &found).len > 0 else false;
+                const can_answer = triedCheck(card, app.home.?.check_pick) != null;
                 for (tries) |item| {
                     if (item.action == .run_check and !runs) continue;
+                    if ((item.action == .tried_ok or item.action == .tried_no) and !can_answer) continue;
                     var button = item;
                     button.x = x;
                     if (x + button.width() > right or n == out.len) break;
@@ -5006,6 +5010,26 @@ pub const App = struct {
             out[n] = close;
             n += 1;
         }
+        if (app.modalCard()) |card| if (card.status == .@"try" and card.checks.len > 0) if (app.checkRows(card)) |at| {
+            const room = rect.w -| 4;
+            for (card.checks, 1..) |check, pos| {
+                if (check.result != null) continue;
+                const y = rect.y + 1 + @as(u16, @intCast(at + pos - 1));
+                if (y >= foot or n + 3 > out.len) break;
+                const pos8: u8 = @intCast(pos);
+                const ok: ModalButton = .{ .action = .{ .row_ok = pos8 }, .key = "y", .label = "", .x = 0, .y = y };
+                const no: ModalButton = .{ .action = .{ .row_no = pos8 }, .key = "n", .label = "", .x = 0, .y = y };
+                const pair = ok.width() + 1 + no.width();
+                if (room < pair + 8) break;
+                const left = rect.x + 2 + @as(u16, @intCast(room)) - pair;
+                out[n] = .{ .action = .{ .pick = pos8 }, .key = "", .label = blank[0 .. left - 1 - (rect.x + 2) - 3], .x = rect.x + 2, .y = y };
+                out[n + 1] = ok;
+                out[n + 1].x = left;
+                out[n + 2] = no;
+                out[n + 2].x = left + ok.width() + 1;
+                n += 3;
+            }
+        };
         if (subs) |s| for (0..s.n) |i| {
             const y = rect.y + 1 + @as(u16, @intCast(s.line + i));
             if (y >= foot or n == out.len) break;
@@ -5021,6 +5045,31 @@ pub const App = struct {
         return &card.checks[@min(@max(pick, 1), card.checks.len) - 1];
     }
 
+    /// The line of the open modal's head its first check is on.
+    fn checkRows(app: *const App, card: *const tickets.Card) ?usize {
+        var head: CardHead = undefined;
+        app.modalHead(card, detailWidth(app.columnRoom()).inner, app.askWords(card) != null, &head);
+        return head.checks;
+    }
+
+    /// The position (from 1) of the first untried check of `card` from `from` on, going forward or back.
+    pub fn openFrom(card: *const tickets.Card, from: usize, ahead: bool) ?u8 {
+        var i = from;
+        while (i >= 1 and i <= card.checks.len) : (i = if (ahead) i + 1 else i - 1) {
+            if (card.checks[i - 1].result == null) return @intCast(i);
+        }
+        return null;
+    }
+
+    /// The check `y` and `n` answer: the picked one while it is untried, else the first untried
+    /// one; none once every check is tried.
+    pub fn triedCheck(card: *const tickets.Card, pick: u8) ?*const tickets.Check {
+        const picked = pickedCheck(card, pick) orelse return null;
+        if (picked.result == null) return picked;
+        const at = openFrom(card, 1, true) orelse return null;
+        return &card.checks[at - 1];
+    }
+
     /// Enter on a tried prompt: `babylon tried N n no WORDS`, the check failed and the ticket sent
     /// back. Nothing typed runs nothing.
     fn sendTried(app: *App, prompt: menu.Prompt) !void {
@@ -5028,7 +5077,9 @@ pub const App = struct {
         if (prompt.len == 0) return;
         const item = prompt.item();
         const colon = std.mem.indexOfScalar(u8, item, ':') orelse return;
-        _ = try app.runNeed("tried", &.{ "babylon", "tried", item[0..colon], item[colon + 1 ..], "no", prompt.text() });
+        var refusal: [24]u8 = undefined;
+        const key = std.fmt.bufPrint(&refusal, "try:{s}", .{item[0..colon]}) catch return;
+        _ = try app.runNeed(key, &.{ "babylon", "tried", item[0..colon], item[colon + 1 ..], "no", prompt.text() });
     }
 
     /// The words action of `card`'s open ask, as babylon's Your move item gives it.
@@ -5102,12 +5153,25 @@ pub const App = struct {
             },
             .tried_ok => {
                 const card = app.modalCard() orelse return;
-                const check = pickedCheck(card, view.check_pick) orelse return;
+                const check = triedCheck(card, view.check_pick) orelse return;
                 var ticket: [12]u8 = undefined;
                 var step: [12]u8 = undefined;
+                var refusal: [24]u8 = undefined;
                 const id = std.fmt.bufPrint(&ticket, "{d}", .{card.id}) catch return;
                 const n = std.fmt.bufPrint(&step, "{d}", .{check.n}) catch return;
-                _ = try app.runNeed("tried", &.{ "babylon", "tried", id, n, "ok" });
+                const key = std.fmt.bufPrint(&refusal, "try:{d}", .{card.id}) catch return;
+                _ = try app.runNeed(key, &.{ "babylon", "tried", id, n, "ok" });
+                const at = (@intFromPtr(check) - @intFromPtr(card.checks.ptr)) / @sizeOf(tickets.Check) + 1;
+                view.check_pick = openFrom(card, at + 1, true) orelse view.check_pick;
+            },
+            .pick => |at| view.check_pick = at,
+            .row_ok => |at| {
+                view.check_pick = at;
+                try app.pressModal(.tried_ok);
+            },
+            .row_no => |at| {
+                view.check_pick = at;
+                try app.pressModal(.tried_no);
             },
             .copy_check => {
                 const card = app.modalCard() orelse return;
@@ -5116,7 +5180,7 @@ pub const App = struct {
             },
             .tried_no => {
                 const card = app.modalCard() orelse return;
-                const check = pickedCheck(card, view.check_pick) orelse return;
+                const check = triedCheck(card, view.check_pick) orelse return;
                 var prompt: menu.Prompt = .{ .what = .tried };
                 const item = std.fmt.bufPrint(&prompt.target, "{d}:{d}", .{ card.id, check.n }) catch return;
                 prompt.target_len = item.len;
@@ -5167,11 +5231,13 @@ pub const App = struct {
             if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) {
                 if (on_fold and view.details) {
                     if (view.detail_scroll + 1 < app.detailRows()) view.detail_scroll += 1;
-                } else view.check_pick = @intCast(@min(view.check_pick + 1, top));
+                } else if (!on_fold) view.check_pick = openFrom(card, view.check_pick + 1, true) orelse if (card.@"try" != null) @intCast(top) else view.check_pick;
                 return;
             }
             if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) {
-                if (on_fold and view.detail_scroll > 0) view.detail_scroll -= 1 else view.check_pick = @max(view.check_pick -| 1, 1);
+                if (on_fold and view.detail_scroll > 0) view.detail_scroll -= 1 else if (on_fold) {
+                    view.check_pick = openFrom(card, card.checks.len, false) orelse view.check_pick;
+                } else view.check_pick = openFrom(card, view.check_pick -| 1, false) orelse view.check_pick;
                 return;
             }
             if (on_fold) {
@@ -5221,7 +5287,7 @@ pub const App = struct {
         const claude_key = app.claudeKey(card);
         const action: ?ModalAction = if (is(key, &.{"\r"})) .{ .card = .go } else if (is(key, &.{"G"})) .{ .card = .give } else if (is(key, &.{"H"})) .{ .card = .handoff } else if (is(key, &.{"e"})) .{ .card = .edit } else if (is(key, &.{"p"})) .{ .card = .priority } else if (is(key, &.{">"})) .{ .card = .close } else if (is(key, &.{"<"})) .{ .card = .reopen } else if (is(key, &.{claude_key}) and card.status != .@"try" and app.claudeOf(card) != null) .claude else null;
         if (action) |pressed| return app.pressModal(pressed);
-        var buttons: [16]ModalButton = undefined;
+        var buttons: [48]ModalButton = undefined;
         for (app.modalButtons(&buttons)) |button| if (button.action == .need and is(key, &.{button.key})) return app.pressModal(button.action);
     }
 
@@ -5312,7 +5378,7 @@ pub const App = struct {
                 return true;
             }
             if (app.modalRect()) |rect| {
-                var modal: [16]ModalButton = undefined;
+                var modal: [48]ModalButton = undefined;
                 for (app.modalButtons(&modal)) |button| if (button.hit(m.x, m.y)) {
                     try app.pressModal(button.action);
                     return true;
@@ -8231,12 +8297,61 @@ test "a to-try card's modal lists its checks, j and k pick one, y says it works 
 
     try app.modalKey("n");
     try eq(menu.Prompt.What.tried, app.prompt.?.what);
-    try eql("7:2", app.prompt.?.item());
+    try eql("7:3", app.prompt.?.item());
     for ("late") |byte| _ = app.prompt.?.press(&.{byte});
     try app.commit();
     try std.testing.expect(app.prompt == null);
     len = try sent.readPositionalAll(std.testing.io, &got, 0);
-    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'tried' '7' '2' 'no' 'late'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'tried' '7' '3' 'no' 'late'") != null);
+}
+
+test "a to-try card's y answers the first untried check when the pick is on a tried one, and with all tried draws no y or n; a refusal is said in the card" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.refusals.deinit(std.testing.allocator);
+    app.term_w = 140;
+    app.view_w = 140;
+    app.view_h = 30;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":7,"repo":"arena","title":"Lights","status":"try","stage":"landed",
+        \\"checks":[{"n":1,"text":"it is told","result":"ok"},{"n":2,"text":"it has buttons","result":null}]}]}
+    );
+    defer app.board.?.deinit();
+    const eq = std.testing.expectEqual;
+    const eql = std.testing.expectEqualStrings;
+
+    app.home = .{ .detail = 7 };
+    try app.modalKey("y");
+    var got: [1024]u8 = undefined;
+    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'tried' '7' '2' 'ok'") != null);
+
+    var buttons: [48]App.ModalButton = undefined;
+    var rows: usize = 0;
+    for (app.modalButtons(&buttons)) |button| rows += @intFromBool(button.action == .row_ok or button.action == .pick);
+    try eq(@as(usize, 2), rows);
+
+    app.board.?.deinit();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":7,"repo":"arena","title":"Lights","status":"try","stage":"landed",
+        \\"checks":[{"n":1,"text":"it is told","result":"ok"},{"n":2,"text":"it has buttons","result":"ok"}]}]}
+    );
+    var drawn: usize = 0;
+    for (app.modalButtons(&buttons)) |button| drawn += @intFromBool(button.action == .tried_ok or button.action == .tried_no or button.action == .row_ok);
+    try eq(@as(usize, 0), drawn);
+
+    try app.refusals.append(app.gpa, .{ .id = try app.gpa.dupe(u8, "try:7"), .text = try app.gpa.dupe(u8, "babylon: step 1 is settled already") });
+    defer {
+        app.gpa.free(app.refusals.items[0].id);
+        app.gpa.free(app.refusals.items[0].text);
+    }
+    var head: App.CardHead = undefined;
+    app.modalHead(app.modalCard().?, 60, false, &head);
+    try eql("babylon: step 1 is settled already", head.lines[head.n - 1]);
 }
 
 test "a drag over a wrapped line of the modal copies it as one line, inside the window, and Y copies a whole check" {
