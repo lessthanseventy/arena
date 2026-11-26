@@ -4623,9 +4623,9 @@ pub const App = struct {
     /// What a modal button does when pressed.
     pub const ModalAction = union(enum) { close, need: u8, card: CardAction, option: u8, sub: u8, words, claude, whole_log, ticket, bump, withdraw, tried_ok, tried_no, copy_check, run_check, details, open_check, diff_check, pick: u8, row_ok: u8, row_no: u8 };
 
-    /// A button of the modal frame, where it is drawn and clicked: 0-based. It reads ` key label `.
     const blank: [200]u8 = @splat(' ');
 
+    /// A button of the modal frame, where it is drawn and clicked: 0-based. It reads ` key label `.
     pub const ModalButton = struct {
         action: ModalAction,
         key: []const u8,
