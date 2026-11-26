@@ -1620,6 +1620,16 @@ fn planView(app: *App, w: *Writer, view: app_mod.HomeView) !void {
     const dim = ink(app, "dim", 8);
     var pen: Pen = .{};
 
+    if (app.columnTakesPlan() and columnOpen(app, view)) {
+        const room = app.columnRoom();
+        for (0..app.view_h) |y| {
+            try w.print("\x1b[{d};1H", .{y + 1});
+            try pen.set(w, .{}, null);
+            try fitted(w, "", room);
+        }
+        return planBoxes(app, w, view);
+    }
+
     // the head: the title and the way to the board, then babylon's state against the right edge
     try w.print("\x1b[1;{d}H", .{ox + 1});
     try pen.set(w, .{}, null);
@@ -1681,6 +1691,18 @@ fn planView(app: *App, w: *Writer, view: app_mod.HomeView) !void {
         try pen.set(w, .{}, null);
         for (cellCount(row.text) + 1..width) |_| try w.writeAll(" ");
     }
+    try planBoxes(app, w, view);
+}
+
+/// Whether a box is open that is drawn in the middle column.
+fn columnOpen(app: *const App, view: app_mod.HomeView) bool {
+    const words = if (app.prompt) |prompt| prompt.multiline() else false;
+    return words or view.detail != null or view.giving != null or view.goal_open or
+        app.autoRect() != null or app.draftRect() != null;
+}
+
+/// The boxes opened from Plan, over it or, where it has no room beside them, in its place.
+fn planBoxes(app: *App, w: *Writer, view: app_mod.HomeView) !void {
     if (view.giving) |picked| if (app.pickedCard()) |card| {
         app.grab.cover();
         try win_modal.giveBox(app, w, card.id, picked);
@@ -2381,6 +2403,96 @@ test "an ask's own words are a modal with the question and its options quoted; t
     // a box of a fixed height scrolls: the last lines are shown, the first are not
     try std.testing.expect(has(u8, many.written(), "line 29") != null);
     try std.testing.expect(has(u8, many.written(), "line 0 ") == null);
+}
+
+/// Row `y` of `frame_bytes` on a terminal `cols` wide, from cell `from` on.
+fn rowFrom(frame_bytes: []const u8, cols: u16, y: usize, from: usize, buf: []u8) ![]const u8 {
+    const row = try screenRow(frame_bytes, cols, y, buf);
+    var it = std.unicode.Utf8View.initUnchecked(row).iterator();
+    for (0..from) |_| _ = it.nextCodepointSlice() orelse return "";
+    return row[it.i..];
+}
+
+/// Fails when any cell from `from` on differs between two frames of `rows` rows.
+fn expectSameFrom(a: []const u8, b: []const u8, cols: u16, rows: usize, from: usize) !void {
+    for (0..rows) |y| {
+        var buf_a: [1024]u8 = undefined;
+        var buf_b: [1024]u8 = undefined;
+        try std.testing.expectEqualStrings(try rowFrom(a, cols, y, from, &buf_a), try rowFrom(b, cols, y, from, &buf_b));
+    }
+}
+
+test "a check's words prompt leaves the orchestrator's cells as they were, and the gate box stays left of them" {
+    const gpa = std.testing.allocator;
+    var prompt: menu.Prompt = .{ .what = .words };
+    const item = "try:825#3";
+    @memcpy(prompt.target[0..item.len], item);
+    prompt.target_len = item.len;
+    for ("it never answers") |byte| _ = prompt.press(&.{byte});
+    var shut: std.Io.Writer.Allocating = .init(gpa);
+    defer shut.deinit();
+    var app = try wordsFrame(gpa, feed.try_sample, prompt, &shut);
+    defer app.board.?.deinit();
+    app.view_h = 28;
+    app.prompt = null;
+    shut.clearRetainingCapacity();
+    try frame(&app, &shut.writer, .all);
+    var open: std.Io.Writer.Allocating = .init(gpa);
+    defer open.deinit();
+    app.prompt = prompt;
+    try frame(&app, &open.writer, .all);
+    try std.testing.expect(std.mem.indexOf(u8, open.written(), "✗ What went wrong?") != null);
+    const left = app.term_w - app.view_w;
+    try expectSameFrom(shut.written(), open.written(), app.term_w, app.view_h, left);
+    try std.testing.expect(app.wordsRect().x + app.wordsRect().w <= left);
+
+    app.prompt = null;
+    app.home.?.detail = 825;
+    app.home.?.gate = true;
+    var gate: std.Io.Writer.Allocating = .init(gpa);
+    defer gate.deinit();
+    try frame(&app, &gate.writer, .all);
+    try expectSameFrom(shut.written(), gate.written(), app.term_w, app.view_h, left);
+    const rect = app.modalRect().?;
+    try std.testing.expect(rect.x + rect.w <= left);
+}
+
+test "too narrow for Plan, the orchestrator and a column, the words prompt takes Plan's place and leaves the orchestrator's cells" {
+    const gpa = std.testing.allocator;
+    var board = try tickets.Board.parse(gpa, grid_board);
+    defer board.deinit();
+    var app = homeApp(&board);
+    defer app.grab.deinit(gpa);
+    app.term_w = 112;
+    app.view_w = 60;
+    app.view_h = 28;
+    app.home = .{ .focus = .plan };
+    app.side_folded = false;
+    try std.testing.expect(app.sided() and app.columnTakesPlan());
+    var shut: std.Io.Writer.Allocating = .init(gpa);
+    defer shut.deinit();
+    try frame(&app, &shut.writer, .all);
+    var first: [1024]u8 = undefined;
+    var plan_rows: usize = 0;
+    for (0..app.view_h) |y| plan_rows += @intFromBool(std.mem.indexOf(u8, try screenRow(shut.written(), app.term_w, y, &first), "goals") != null);
+    try std.testing.expect(plan_rows > 0);
+
+    var prompt: menu.Prompt = .{ .what = .words };
+    const item = "try:825#3";
+    @memcpy(prompt.target[0..item.len], item);
+    prompt.target_len = item.len;
+    app.prompt = prompt;
+    var open: std.Io.Writer.Allocating = .init(gpa);
+    defer open.deinit();
+    try frame(&app, &open.writer, .all);
+    try std.testing.expect(std.mem.indexOf(u8, open.written(), " esc cancel ") != null);
+    const left = app.term_w - app.view_w;
+    try expectSameFrom(shut.written(), open.written(), app.term_w, app.view_h, left);
+    for (0..app.view_h) |y| {
+        var buf: [1024]u8 = undefined;
+        const row = try screenRow(open.written(), app.term_w, y, &buf);
+        try std.testing.expect(std.mem.indexOf(u8, row, "goals") == null);
+    }
 }
 
 /// An epic with seven children, three done, one doing and three todo, its goal's own count wrong
@@ -3480,6 +3592,7 @@ test "with a Your move item's card open, every Your move row is drawn above it, 
     defer board.deinit();
     var app = homeApp(&board);
     defer app.grab.deinit(std.testing.allocator);
+    app.view_w = 48;
     app.view_h = 30;
     app.roles = bench.roles();
     app.home = .{ .focus = .plan, .detail = 1105 };

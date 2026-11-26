@@ -1706,7 +1706,16 @@ pub const App = struct {
     /// The frame of the modal the human's words are written in: over the orchestrator's column, a
     /// fixed size, whatever is typed.
     pub fn wordsRect(app: *const App) ModalRect {
-        return app.columnRect() orelse .{ .x = 0, .y = 0, .w = app.term_w, .h = app.view_h };
+        return app.columnRect() orelse .{ .x = 0, .y = 0, .w = app.columnRoom(), .h = app.view_h };
+    }
+
+    /// The cells left of the orchestrator under which Plan has no room for a column beside it.
+    pub const column_beside_plan = 72;
+
+    /// Whether the middle column takes Plan's whole place, for want of room beside it: the
+    /// orchestrator is never covered.
+    pub fn columnTakesPlan(app: *const App) bool {
+        return app.home != null and app.columnRoom() < column_beside_plan;
     }
 
     /// The cells left of the orchestrator's column, where every box that opens from Plan is drawn.
@@ -1720,11 +1729,12 @@ pub const App = struct {
         const view = app.home orelse return null;
         const room = app.columnRoom();
         const width = detailWidth(room);
-        const top: u16 = if (view.detail) |id| if (app.needsYouOn(id)) below: {
+        const takes = app.columnTakesPlan();
+        const top: u16 = if (takes) 0 else if (view.detail) |id| if (app.needsYouOn(id)) below: {
             const move = app.planSlot(.move);
             break :below move.y + move.h;
         } else first_line else first_line;
-        const bottom = app.view_h -| 2;
+        const bottom = if (takes) app.view_h -| 1 else app.view_h -| 2;
         if (bottom < top + 3 or width.inner == 0) return null;
         return .{ .x = (room -| width.box) / 2, .y = top, .w = width.box, .h = bottom - top + 1 };
     }
