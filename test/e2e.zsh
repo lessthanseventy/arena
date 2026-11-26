@@ -1523,6 +1523,7 @@ key Escape
 gone 'no such file'
 mkdir -p $tmp/projects/tlon/.worktrees/t307-design/docs
 print -r -- 'only-on-the-branch' >$tmp/projects/tlon/.worktrees/t307-design/docs/none-jkdufltb.md
+key C-Space
 key ']'
 see '▌ #307 tlon  look at'
 key o
