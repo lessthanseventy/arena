@@ -102,10 +102,6 @@ fn isSendBack(need: tickets.Need) bool {
     return std.mem.eql(u8, need.kind, "sendback") or std.mem.eql(u8, need.kind, "sent_back");
 }
 
-fn isTry(need: tickets.Need) bool {
-    return std.mem.eql(u8, need.kind, "try");
-}
-
 /// The buttons of an open item as `key label` joined by three spaces: opening its doc, what
 /// babylon answers with, the options of a question box on its holder's pane and reading a draft.
 pub fn chips(app: *const App, need: tickets.Need, buf: []u8) []const u8 {
@@ -126,7 +122,6 @@ pub fn chips(app: *const App, need: tickets.Need, buf: []u8) []const u8 {
     if (need.ticket) |id| for (boxes[0..n]) |box| if (box.ticket == id) {
         for (box.options, 1..) |option, number| add(&out, &first, "{d} {s}", .{ number, option });
     };
-
     if (std.mem.eql(u8, need.kind, "draft")) add(&out, &first, "space read it", .{});
     return out.buffered();
 }
