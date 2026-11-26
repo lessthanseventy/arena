@@ -4368,9 +4368,11 @@ test "on the e2e's 24-row screen every Plan window keeps its title and a body ro
     }
 }
 
-test "a picked Your move item ends its row in its first action's key, dim, left of its age, and an open one does not" {
+test "a Your move item ends its row in its first action's key, ticket or none, picked or not, and an open one does not" {
     var board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[],"needs_you":[
+        \\{"id":"push:arena:abc:0","kind":"push","ticket":null,"repo":"arena","text":"▲ arena: 3 unpushed",
+        \\ "actions":[{"key":"⏎","label":"push","argv":["babylon","push","arena"]},{"key":"l","label":"look"}]},
         \\{"id":"push:1","kind":"push","ticket":7,"repo":"arena","text":"3 commits to push","since":"2026-11-21T10:00:00Z",
         \\ "actions":[{"key":"⏎","label":"push","argv":["babylon","push","arena"]},{"key":"l","label":"look"}]}],
         \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
@@ -4388,14 +4390,16 @@ test "a picked Your move item ends its row in its first action's key, dim, left 
     try std.testing.expect(app.planSheet(&sheet));
     var buf: [65536]u8 = undefined;
     var out: Writer = .fixed(&buf);
-    try benchPlanRow(&app, &out, bench.roles(), &sheet, 0, 0, rect.x, rect.w - 1, true);
-    try std.testing.expect(std.mem.indexOf(u8, out.buffered(), "⏎") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.buffered(), "push") != null);
+    try benchPlanRow(&app, &out, bench.roles(), &sheet, 0, 0, rect.x, rect.w - 1, false);
+    try std.testing.expect(std.mem.indexOf(u8, out.buffered(), "⏎ push") != null);
+    var picked_out: Writer = .fixed(&buf);
+    try benchPlanRow(&app, &picked_out, bench.roles(), &sheet, 1, 0, rect.x, rect.w - 1, true);
+    try std.testing.expect(std.mem.indexOf(u8, picked_out.buffered(), "⏎ push") != null);
 
     app.plan_open.set(.move, 7);
     try std.testing.expect(app.planSheet(&sheet));
     var open_out: Writer = .fixed(&buf);
-    try benchPlanRow(&app, &open_out, bench.roles(), &sheet, 0, 0, rect.x, rect.w - 1, true);
+    try benchPlanRow(&app, &open_out, bench.roles(), &sheet, 1, 0, rect.x, rect.w - 1, true);
     try std.testing.expect(std.mem.indexOf(u8, open_out.buffered(), "⏎") == null);
 }
 

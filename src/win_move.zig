@@ -39,12 +39,13 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             const right = x0 + ww -| (cellCount(age) + 1);
             try bench.say(w, right, y, age, r.dim, bg, false);
             var end = right;
-            if (picked and need.actions.len > 0 and app.plan_open.get(.move) != row.ticket) {
+            const open = if (row.ticket) |id| app.plan_open.get(.move) == id else false;
+            if (need.actions.len > 0 and !open) {
                 var hint_buf: [96]u8 = undefined;
                 const hint = std.fmt.bufPrint(&hint_buf, "{s} {s}", .{ need.actions[0].key, need.actions[0].label }) catch "";
                 const at_x = right -| (cellCount(hint) + 2);
                 if (at_x > x + 8) {
-                    try bench.say(w, at_x, y, hint, r.dim, bg, false);
+                    try bench.say(w, at_x, y, hint, if (picked) r.text else r.dim, bg, false);
                     end = at_x;
                 }
             }
