@@ -123,11 +123,14 @@ pub fn runGit(app: *App, repo: []const u8, git: []const u8) !void {
     const path = app.detailPath(app.repos_req, &buf) orelse return;
     std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
     const hash = std.hash.Wyhash.hash(0, repo);
-    for (app.repos_asked.items, 0..) |old, i| {
-        if (old.repo != hash) continue;
+    for (app.repos_asked.items, 0..) |*old, i| {
+        if (old.dropped or old.repo != hash) continue;
         var old_buf: [std.fs.max_path_bytes]u8 = undefined;
-        if (app.detailPath(old.id, &old_buf)) |old_path| std.Io.Dir.cwd().deleteFile(app.io, old_path) catch {};
-        _ = app.repos_asked.orderedRemove(i);
+        const gone = if (app.detailPath(old.id, &old_buf)) |old_path|
+            if (std.Io.Dir.cwd().deleteFile(app.io, old_path)) |_| true else |_| false
+        else
+            true;
+        if (gone) _ = app.repos_asked.orderedRemove(i) else old.dropped = true;
         break;
     }
     try app.repos_asked.append(app.gpa, .{ .id = app.repos_req, .repo = hash });

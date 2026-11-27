@@ -159,22 +159,33 @@ const BoardFile = struct {
             const id = app.repos_asked.items[i].id;
             var buf: [std.fs.max_path_bytes]u8 = undefined;
             const path = app.detailPath(id, &buf) orelse return;
-            if (id == open) readDetail(app, path);
+            if (id == open and !app.repos_asked.items[i].dropped) readDetail(app, path);
             if (std.Io.Dir.cwd().deleteFile(app.io, path)) {
                 _ = app.repos_asked.orderedRemove(i);
             } else |_| i += 1;
         }
     }
 
-    /// Deletes the detail files a run before this one left beside the board.
+    /// Deletes the detail files of runs that are no longer running, and no other's.
     fn sweep(app: *App) void {
         const dir_path = app.board_dir orelse return;
         var dir = std.Io.Dir.cwd().openDir(app.io, dir_path, .{ .iterate = true }) catch return;
         defer dir.close(app.io);
         var it = dir.iterate();
         while (it.next(app.io) catch null) |entry| {
-            if (std.mem.startsWith(u8, entry.name, "detail-")) dir.deleteFile(app.io, entry.name) catch {};
+            if (!std.mem.startsWith(u8, entry.name, "detail-")) continue;
+            const owner = std.mem.sliceTo(entry.name["detail-".len..], '-');
+            const pid = std.fmt.parseInt(u32, owner, 10) catch 0;
+            if (pid != 0 and running(app, pid)) continue;
+            dir.deleteFile(app.io, entry.name) catch {};
         }
+    }
+
+    fn running(app: *App, pid: u32) bool {
+        var buf: [32]u8 = undefined;
+        const proc = std.fmt.bufPrint(&buf, "/proc/{d}", .{pid}) catch return false;
+        std.Io.Dir.cwd().access(app.io, proc, .{}) catch return false;
+        return true;
     }
 
     fn readDetail(app: *App, path: []const u8) void {
@@ -341,11 +352,12 @@ test "the repos view reads only its latest git request, whichever answer arrives
     try app.repos_asked.appendSlice(std.testing.allocator, &.{ .{ .id = 0x8000_0001, .repo = 1 }, .{ .id = 0x8000_0002, .repo = 2 } });
     var file: BoardFile = undefined;
 
-    try cwd.writeFile(io, .{ .sub_path = dir ++ "/detail-2147483650.txt", .data = "second repo's commits\n" });
+    var name: [std.fs.max_path_bytes]u8 = undefined;
+    try cwd.writeFile(io, .{ .sub_path = app.detailPath(0x8000_0002, &name).?, .data = "second repo's commits\n" });
     file.checkDetail(&app);
     try std.testing.expectEqualStrings("second repo's commits\n", app.detail.items);
 
-    try cwd.writeFile(io, .{ .sub_path = dir ++ "/detail-2147483649.txt", .data = "first repo's commits\n" });
+    try cwd.writeFile(io, .{ .sub_path = app.detailPath(0x8000_0001, &name).?, .data = "first repo's commits\n" });
     file.checkDetail(&app);
     try std.testing.expectEqualStrings("second repo's commits\n", app.detail.items);
     try std.testing.expectEqual(@as(usize, 0), app.repos_asked.items.len);
@@ -381,7 +393,8 @@ test "forty quick repo picks leave one file per repo, and a ticket's pending det
     while (try it.next(io)) |entry| files += @intFromBool(std.mem.startsWith(u8, entry.name, "detail-"));
     try std.testing.expectEqual(@as(usize, 2), files);
 
-    try cwd.writeFile(io, .{ .sub_path = dir ++ "/detail-7.txt", .data = "ticket seven\n" });
+    var seven: [std.fs.max_path_bytes]u8 = undefined;
+    try cwd.writeFile(io, .{ .sub_path = app.detailPath(7, &seven).?, .data = "ticket seven\n" });
     var file: BoardFile = undefined;
     file.checkDetail(&app);
     try std.testing.expectEqualStrings("ticket seven\n", app.detail.items);
@@ -393,6 +406,60 @@ test "forty quick repo picks leave one file per repo, and a ticket's pending det
     var it2 = d2.iterate();
     while (try it2.next(io)) |entry| files += @intFromBool(std.mem.startsWith(u8, entry.name, "detail-"));
     try std.testing.expectEqual(@as(usize, 0), files);
+}
+
+test "repo answers that land after all forty picks leave no file behind" {
+    const io = std.testing.io;
+    const dir = "arena-test-detail-1293a";
+    const cwd = std.Io.Dir.cwd();
+    try cwd.createDirPath(io, dir);
+    defer cwd.deleteTree(io, dir) catch {};
+    const sent = try cwd.createFile(io, dir ++ "/tmux", .{ .read = true });
+    defer sent.close(io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = io, .tmux_in = sent, .board_dir = dir };
+    defer app.detail.deinit(std.testing.allocator);
+    defer app.repos_asked.deinit(std.testing.allocator);
+    defer app.pending.deinit(std.testing.allocator);
+    app.home = .{ .repos = true };
+    const win_repos = @import("win_repos.zig");
+    var ids: [40]u32 = undefined;
+    for (&ids, 0..) |*id, i| {
+        try win_repos.runGit(&app, if (i % 2 == 0) "arena" else "babylon", "log");
+        id.* = app.repos_req;
+    }
+    for (ids) |id| {
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        try cwd.writeFile(io, .{ .sub_path = app.detailPath(id, &buf).?, .data = "late\n" });
+    }
+    var file: BoardFile = undefined;
+    file.checkDetail(&app);
+    try std.testing.expectEqual(@as(usize, 0), app.repos_asked.items.len);
+    var files: usize = 0;
+    var d = try cwd.openDir(io, dir, .{ .iterate = true });
+    defer d.close(io);
+    var it = d.iterate();
+    while (try it.next(io)) |entry| files += @intFromBool(std.mem.startsWith(u8, entry.name, "detail-"));
+    try std.testing.expectEqual(@as(usize, 0), files);
+}
+
+test "a sweep deletes the detail files of a pid no longer running, never a running one's" {
+    const io = std.testing.io;
+    const dir = "arena-test-detail-1293b";
+    const cwd = std.Io.Dir.cwd();
+    try cwd.createDirPath(io, dir);
+    defer cwd.deleteTree(io, dir) catch {};
+    const sent = try cwd.createFile(io, dir ++ "/tmux", .{ .read = true });
+    defer sent.close(io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = io, .tmux_in = sent, .board_dir = dir };
+    var live: [64]u8 = undefined;
+    const live_name = try std.fmt.bufPrint(&live, dir ++ "/detail-{d}-5.txt", .{std.posix.system.getpid()});
+    try cwd.writeFile(io, .{ .sub_path = live_name, .data = "mine\n" });
+    try cwd.writeFile(io, .{ .sub_path = dir ++ "/detail-2147483646-5.txt", .data = "dead\n" });
+    try cwd.writeFile(io, .{ .sub_path = dir ++ "/detail-2147483646-5.txt.part", .data = "dead\n" });
+    BoardFile.sweep(&app);
+    try cwd.access(io, live_name, .{});
+    try std.testing.expectError(error.FileNotFound, cwd.access(io, dir ++ "/detail-2147483646-5.txt", .{}));
+    try std.testing.expectError(error.FileNotFound, cwd.access(io, dir ++ "/detail-2147483646-5.txt.part", .{}));
 }
 
 test showTarget {

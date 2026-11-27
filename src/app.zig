@@ -470,7 +470,7 @@ pub fn anyKey(pressed: []const u8, names: []const []const u8) bool {
 }
 
 /// A repos-view git request: its detail file's id and the hash of the repo it asked about.
-pub const RepoAsk = struct { id: u32, repo: u64 };
+pub const RepoAsk = struct { id: u32, repo: u64, dropped: bool = false };
 
 pub const App = struct {
     gpa: Allocator,
@@ -3478,7 +3478,7 @@ pub const App = struct {
     /// Where babylon writes ticket `id`'s detail for the board to read.
     pub fn detailPath(app: *const App, id: u32, buf: []u8) ?[]const u8 {
         const dir = app.board_dir orelse return null;
-        return std.fmt.bufPrint(buf, "{s}/detail-{d}.txt", .{ dir, id }) catch null;
+        return std.fmt.bufPrint(buf, "{s}/detail-{d}-{d}.txt", .{ dir, std.posix.system.getpid(), id }) catch null;
     }
 
     /// What the board's cards are narrowed to: what is being typed after `/`, else what Enter kept.
