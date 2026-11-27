@@ -4294,6 +4294,9 @@ test "a done card's modal has a blank row between its sections, its fixes and fo
     try std.testing.expect(std.mem.indexOf(u8, rows[changed_at + 1], "Cards read well") != null);
     const checks_at = find(&rows, "Checks").?;
     try std.testing.expect(changed_at < checks_at and checks_at < landed_at);
+    try std.testing.expectEqual(@as(usize, 0), std.mem.trim(u8, rows[changed_at - 1], " │").len);
+    try std.testing.expectEqual(@as(usize, 0), std.mem.trim(u8, rows[checks_at - 1], " │").len);
+    try std.testing.expect(std.mem.trim(u8, rows[checks_at - 2], " │").len > 0);
     try std.testing.expect(std.mem.indexOf(u8, rows[checks_at + 1], "\u{2713} 1 it reads") != null);
     const chips = rows[find(&rows, "med").?];
     try std.testing.expect(std.mem.indexOf(u8, chips, "arena") != null);

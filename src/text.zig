@@ -169,8 +169,15 @@ pub fn fullHash(note: []const u8) ?[]const u8 {
     const lead = "landed on main as ";
     if (!std.mem.startsWith(u8, note, lead)) return null;
     const body = note[lead.len..];
-    const hash = body[0 .. std.mem.indexOfAny(u8, body, ", ") orelse body.len];
+    const hash = body[0 .. std.mem.indexOfAny(u8, body, ",; ") orelse body.len];
     return if (hash.len > 0) hash else null;
+}
+
+test "a landing note's full hash stops at its first join" {
+    try std.testing.expectEqualStrings("abc", fullHash("landed on main as abc; follow-ups filed: #5 a").?);
+    try std.testing.expectEqualStrings("abc", fullHash("landed on main as abc, with the review's fixes: x").?);
+    try std.testing.expectEqualStrings("abc", fullHash("landed on main as abc \u{b7} installing").?);
+    try std.testing.expect(fullHash("gate ok") == null);
 }
 
 /// A landing note as lines to draw, in `buf`: a blank row, the heading `Landed`, `on main`, the
