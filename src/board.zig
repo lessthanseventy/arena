@@ -259,6 +259,9 @@ pub const Need = struct {
     orch: bool = false,
 };
 
+/// A repo's main against its origin, as babylon's push item of it says.
+pub const RepoState = struct { repo: []const u8, ahead: u32 = 0, behind: u32 = 0 };
+
 /// One line of the orchestrator's: `text` for a line to say to it, `item` for a `needs_you` item it
 /// points at, which carries that item's own `ticket` and `text`.
 pub const Suggestion = struct {
@@ -440,6 +443,10 @@ pub const Board = struct {
     /// Found once at parse, since a frame asks for them on every line it draws.
     names: []const []const u8 = &.{},
     lane_names: []const []const u8 = &.{},
+    /// What babylon's `needs_you` says that is status, not the human's move: its restart waiting
+    /// on the gates running, and each repo's unpushed commits. Taken out of `needs_you` at parse.
+    restart: ?[]const u8 = null,
+    repo_states: []const RepoState = &.{},
 
     pub fn parse(gpa: std.mem.Allocator, text: []const u8) !Board {
         var parsed = try std.json.parseFromSlice(File, gpa, text, .{ .ignore_unknown_fields = true, .allocate = .alloc_always });
@@ -484,6 +491,21 @@ pub const Board = struct {
                 for (step.actions) |*action| action.label = try cleanLine(arena, action.label);
             }
         }
+        var restart: ?[]const u8 = null;
+        var states: std.ArrayList(RepoState) = .empty;
+        var kept: usize = 0;
+        const all = parsed.value.needs_you;
+        for (all) |need| {
+            if (std.mem.eql(u8, need.id, "restart-pending")) {
+                restart = need.text;
+            } else if (std.mem.eql(u8, need.kind, "push") and need.ticket == null) {
+                try states.append(arena, .{ .repo = need.repo, .ahead = countBefore(need.text, " unpushed"), .behind = countBefore(need.text, " behind") });
+            } else {
+                all[kept] = need;
+                kept += 1;
+            }
+        }
+        parsed.value.needs_you = all[0..kept];
         try suggest(arena, &parsed.value);
         if (parsed.value.plan) |*given| {
             for (given.now) |*item| {
@@ -522,10 +544,46 @@ pub const Board = struct {
                 if (card.id == id and card.proposal == null) card.proposal = proposal.*;
             };
         }
-        var b: Board = .{ .parsed = parsed };
+        var b: Board = .{ .parsed = parsed, .restart = restart, .repo_states = states.items };
         b.names = try b.findRepos(arena);
         b.lane_names = try b.findLanes(arena);
         return b;
+    }
+
+    /// The number that ends the words before `word` in `text`, 0 when there is none.
+    fn countBefore(text: []const u8, word: []const u8) u32 {
+        const at = std.mem.indexOf(u8, text, word) orelse return 0;
+        var start = at;
+        while (start > 0 and std.ascii.isDigit(text[start - 1])) start -= 1;
+        return std.fmt.parseInt(u32, text[start..at], 10) catch 0;
+    }
+
+    /// The commits main is ahead of origin's, summed over the repos.
+    pub fn unpushed(b: *const Board) u32 {
+        var sum: u32 = 0;
+        for (b.repo_states) |s| sum += s.ahead;
+        return sum;
+    }
+
+    /// The commits origin is ahead of main by, summed over the repos.
+    pub fn behind(b: *const Board) u32 {
+        var sum: u32 = 0;
+        for (b.repo_states) |s| sum += s.behind;
+        return sum;
+    }
+
+    /// What `repo`'s main is against its origin; level when babylon says nothing of it.
+    pub fn repoState(b: *const Board, repo: []const u8) RepoState {
+        for (b.repo_states) |s| if (std.mem.eql(u8, s.repo, repo)) return s;
+        return .{ .repo = repo };
+    }
+
+    /// The tickets babylon's restart waits on, as `#12, #13`; empty when it says none.
+    pub fn restartAfter(b: *const Board) []const u8 {
+        const text = b.restart orelse return "";
+        const from = (std.mem.indexOf(u8, text, "until ") orelse return "") + "until ".len;
+        const to = std.mem.indexOfPos(u8, text, from, " finish") orelse return "";
+        return text[from..to];
     }
 
     fn findRepos(b: *const Board, arena: std.mem.Allocator) ![]const []const u8 {

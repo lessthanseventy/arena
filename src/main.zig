@@ -143,7 +143,7 @@ const BoardFile = struct {
     /// whichever way its box closed, one written after it closed too.
     fn checkDetail(file: *BoardFile, app: *App) void {
         _ = file;
-        const open: ?u32 = if (app.home) |view| (if (view.item_open or view.claude_diff) 0 else view.detail) else null;
+        const open: ?u32 = if (app.home) |view| (if (view.item_open or view.repos or view.claude_diff) 0 else view.detail) else null;
         var i: usize = 0;
         while (i < app.detail_asked.items.len) {
             const id = app.detail_asked.items[i];
@@ -184,6 +184,7 @@ const BoardFile = struct {
 fn checkRefusals(app: *App) !void {
     try app.checkPoll();
     try takeRefusal(app, "report");
+    @import("win_repos.zig").polled(app);
     const b = if (app.board) |*b| b else return;
     for (b.needsYou()) |need| try takeRefusal(app, need.id);
     var wanted = app.auto_wants.list.items.len;

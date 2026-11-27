@@ -18,6 +18,7 @@ const grab_mod = @import("grab.zig");
 const capture = @import("report.zig");
 const draw = @import("draw.zig");
 const win_feed = @import("win_feed.zig");
+const win_repos = @import("win_repos.zig");
 const win_driving = @import("win_driving.zig");
 const win_goals = @import("win_goals.zig");
 const win_into = @import("win_into.zig");
@@ -379,6 +380,13 @@ pub const HomeView = struct {
     /// The card of the Your move item `App.item_id` names, an item with no ticket, is shown over
     /// the board; its text is scrolled with `detail_scroll`.
     item_open: bool = false,
+    /// The repos view fills the middle column: the repo picked, the commit picked in it (⏎ on a
+    /// repo goes into its commits), whether that commit's diff is shown, and `A` asking to push all.
+    repos: bool = false,
+    repos_pick: usize = 0,
+    repos_commit: ?usize = null,
+    repos_diff: bool = false,
+    repos_confirm: bool = false,
     /// The pane of the Claude shown live in the middle column, and whether the column has turned
     /// to its ticket's changes. Typing into it is insert mode, `App.normal` false.
     claude: ?u32 = null,
@@ -436,12 +444,12 @@ pub const HomeView = struct {
 
     /// Whether a box sits in the middle column, beside Plan rather than over it.
     pub fn columnOpen(view: HomeView) bool {
-        return view.claude != null or view.detail != null or view.item_open or view.giving != null or view.into != null or view.auto_pick != null or view.goal_open or view.draft != null;
+        return view.claude != null or view.detail != null or view.item_open or view.repos or view.giving != null or view.into != null or view.auto_pick != null or view.goal_open or view.draft != null;
     }
 
     /// Whether a box lies over the board, the keys its own.
     pub fn boxed(view: HomeView) bool {
-        return view.help or view.claude != null or view.detail != null or view.item_open or view.giving != null or view.into != null or view.auto_pick != null or view.goal_open or view.draft != null or view.whole != null;
+        return view.help or view.claude != null or view.detail != null or view.item_open or view.repos or view.giving != null or view.into != null or view.auto_pick != null or view.goal_open or view.draft != null or view.whole != null;
     }
 };
 
@@ -562,6 +570,12 @@ pub const App = struct {
     projects_dir: ?[]const u8 = null,
     /// The tickets whose detail babylon was asked to write and arena has yet to take in.
     detail_asked: std.ArrayList(u32) = .empty,
+    /// The pushes run from the repos view and not yet answered, as `repos:<repo>:<commits>`, and
+    /// what the view says of the last.
+    repos_pushing: std.ArrayList([]u8) = .empty,
+    repos_said: [160]u8 = undefined,
+    repos_said_len: usize = 0,
+    repos_bad: bool = false,
     item_id: [96]u8 = undefined,
     item_id_len: usize = 0,
     /// The subagent a click on its row asked its Claude to show.
@@ -685,6 +699,8 @@ pub const App = struct {
         app.detail.deinit(app.gpa);
         app.grab.deinit(app.gpa);
         app.detail_asked.deinit(app.gpa);
+        for (app.repos_pushing.items) |id| app.gpa.free(id);
+        app.repos_pushing.deinit(app.gpa);
         app.guard.deinit(app.gpa);
         app.out.deinit(app.gpa);
         app.plain.deinit(app.gpa);
@@ -2119,7 +2135,7 @@ pub const App = struct {
 
     /// `runNeed`, and with `report` also a word on success, `ok`, for arena to read: the board's
     /// start closes it only then.
-    fn runWith(app: *App, id: []const u8, argv: []const []const u8, report: bool) !bool {
+    pub fn runWith(app: *App, id: []const u8, argv: []const []const u8, report: bool) !bool {
         // a refusal under a next row stays only until the next key of either
         if (std.mem.startsWith(u8, id, "next:")) {
             var i: usize = app.refusals.items.len;
@@ -3335,8 +3351,7 @@ pub const App = struct {
     }
 
     /// Your move item `at`, which has no ticket, opened in the middle column: a digest with its
-    /// doc, a push with the commits not yet pushed, any other with its text. A push's commits
-    /// are written beside the board, as a ticket's detail is, under the id 0.
+    /// doc, any other with its text.
     pub fn openItem(app: *App, at: usize) !void {
         try app.showItem(at, null);
     }
@@ -3364,15 +3379,6 @@ pub const App = struct {
                 try app.detail.print(app.gpa, "no such file: {s}", .{name});
                 return;
             }
-        }
-        if (std.mem.eql(u8, need.kind, "push")) {
-            var buf: [std.fs.max_path_bytes]u8 = undefined;
-            const path = app.detailPath(0, &buf) orelse return;
-            std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
-            if (app.detail_asked.items.len == 16) _ = app.detail_asked.orderedRemove(0);
-            try app.detail_asked.append(app.gpa, 0);
-            try app.send(.ignore, "run-shell -b \"git -C \\\"\\$HOME/projects/{s}\\\" log --oneline origin/main..main >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ need.repo, path, path, path });
-            return;
         }
         try text.appendClean(&app.detail, app.gpa, need.text);
     }
@@ -4044,7 +4050,7 @@ pub const App = struct {
         if (view.whole != null and is(key, &.{ "\x1b", "q" })) return app.closeWhole();
         if (view.whole != null and !is(key, &.{ "J", "K", "x", "e", "\r", " ", "t", "o", "p", ">", "<", "G", "w", "W", "H" })) return;
         if (app.workbench()) if (sheet.picked(view.plan_pick)) |row| {
-            if (row.kind == .need and !win_move.isDrive(app.board.?.needsYou()[row.item]) and !is(key, &.{ "j", "k", "h", "l", "f", "/", "r", "?", "q", "\x1b", "`", "g", "A", "]", "[", " ", "o", "O", "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D" }) and try win_move.answer(app, row, key)) return;
+            if (row.kind == .need and !win_move.isDrive(app.board.?.needsYou()[row.item]) and !is(key, &.{ "j", "k", "h", "l", "f", "/", "r", "?", "q", "\x1b", "`", "g", "u", "A", "]", "[", " ", "o", "O", "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D" }) and try win_move.answer(app, row, key)) return;
             if (row.kind == .chips and try win_unplanned.chipKey(app, key)) return;
             if (is(key, &.{"f"})) return app.openWhole(row.win);
         };
@@ -4117,6 +4123,7 @@ pub const App = struct {
         if (is(key, &.{ "\x1b", "q" })) return app.closeBoard();
         if (is(key, &.{"`"})) return app.foldSide();
         if (is(key, &.{"g"})) return app.gateModal();
+        if (is(key, &.{"u"})) return win_repos.open(app);
         if (is(key, &.{"o"})) return app.openDrawer();
         if (is(key, &.{"O"})) return app.openOverview();
         if (is(key, &.{"A"})) return app.openAuto();
@@ -4194,6 +4201,7 @@ pub const App = struct {
             if (draw.planHeadHit(app, m.x)) |hit| switch (hit) {
                 .orch => try app.openDrawer(),
                 .menu => app.openMenu(&menu.main),
+                .unpushed => try win_repos.open(app),
             };
             return;
         }
@@ -4433,6 +4441,7 @@ pub const App = struct {
             view.help = false;
             return;
         }
+        if (view.repos) return win_repos.key(app, key);
         if (view.item_open) return app.itemKey(key);
         if (view.detail != null) return app.modalKey(key);
         if (anyKey(key, &.{"s"})) return app.openSwitcher();
@@ -5881,6 +5890,9 @@ pub const App = struct {
                     return true;
                 }
             };
+            if (open.repos) if (app.columnRect()) |rect| {
+                if (rect.contains(m.x, m.y)) return true;
+            };
             if (open.item_open) if (app.columnRect()) |rect| {
                 var items: [16]ModalButton = undefined;
                 for (app.itemButtons(&items)) |button| if (button.hit(m.x, m.y)) {
@@ -5913,6 +5925,7 @@ pub const App = struct {
             open.help = false;
             open.detail = null;
             open.item_open = false;
+            open.repos = false;
             if (open.claude != null) app.dropOwned();
             open.claude = null;
             open.giving = null;
@@ -6879,6 +6892,10 @@ pub const App = struct {
                 }
                 if (app.sideFocused()) if (app.home) |view| if (view.item_open) {
                     try app.itemKey(key);
+                    continue;
+                };
+                if (app.sideFocused()) if (app.home) |view| if (view.repos) {
+                    try win_repos.key(app, key);
                     continue;
                 };
                 if (app.sideFocused() and app.drawerOpen() and anyKey(key, &.{"\x1b"})) {
@@ -10301,7 +10318,7 @@ const try_move_board =
     \\  {"n":2,"text":"the pick stays","result":null,"actions":[{"key":"y","label":"✓","argv":["babylon","tried","1105","2","ok"]},
     \\  {"key":"n","label":"✗","argv":["babylon","tried","1105","2","no"],"needs":"words"}]}],
     \\ "actions":[{"key":"x","label":"close untried","argv":["babylon","tried","1105","skip"]}]},
-    \\{"id":"push:arena:abc:0","kind":"push","ticket":null,"repo":"arena","text":"▲ arena: 2 unpushed",
+    \\{"id":"push:arena:abc:0","kind":"human","ticket":null,"repo":"arena","text":"▲ arena: 2 unpushed",
     \\ "actions":[{"key":"⏎","label":"push","argv":["babylon","push","arena"]}]}],
     \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
 ;
@@ -10402,17 +10419,18 @@ test "a click on a Your move row opens that row's item, with nothing open, a car
         \\"needs_you":[
         \\{"id":"try:1201","kind":"try","ticket":1201,"repo":"arena","text":"#1201 arena  to try","actions":[]},
         \\{"id":"try:1202","kind":"try","ticket":1202,"repo":"arena","text":"#1202 arena  to try","actions":[]},
-        \\{"id":"push:arena:abc:0","kind":"push","ticket":null,"repo":"arena","text":"▲ arena: 2 unpushed",
+        \\{"id":"push:arena:abc:0","kind":"human","ticket":null,"repo":"arena","text":"▲ arena: 2 unpushed",
         \\ "actions":[{"key":"⏎","label":"push","argv":["babylon","push","arena"]}]},
         \\{"id":"try:1203","kind":"try","ticket":1203,"repo":"arena","text":"#1203 arena  to try","actions":[]},
         \\{"id":"try:1204","kind":"try","ticket":1204,"repo":"arena","text":"#1204 arena  to try","actions":[]},
-        \\{"id":"push:ficciones:abc:0","kind":"push","ticket":null,"repo":"ficciones","text":"▲ ficciones: 1 unpushed",
+        \\{"id":"push:ficciones:abc:0","kind":"human","ticket":null,"repo":"ficciones","text":"▲ ficciones: 1 unpushed",
         \\ "actions":[{"key":"⏎","label":"push","argv":["babylon","push","ficciones"]}]},
         \\{"id":"try:1205","kind":"try","ticket":1205,"repo":"arena","text":"#1205 arena  to try","actions":[]}],
         \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
     );
     defer app.pending.deinit(std.testing.allocator);
     defer app.detail_asked.deinit(std.testing.allocator);
+    defer app.detail.deinit(std.testing.allocator);
     defer app.board.?.deinit();
     app.roles = @import("parts.zig").roles();
     app.home.?.focus = .plan;
@@ -10809,38 +10827,62 @@ test "a digest in Your move opens in the middle column with its doc, scrolls, an
     try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'digest' 'ok'") != null);
 }
 
-test "a push item in Your move opens in the middle column asking for its repo's unpushed commits, and ⏎ there runs babylon push" {
+test "restart-pending and a repo's unpushed are chips on the head, not Your move; u opens the repos view, P pushes the picked repo and A asks first" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
     defer sent.close(std.testing.io);
-    var app = try tryApp(sent, "{\"tickets\":[],\"needs_you\":[{\"id\":\"push:arena:abc:0\",\"kind\":\"push\",\"ticket\":null,\"repo\":\"arena\",\"text\":\"▲ arena: 2 unpushed\"," ++
-        "\"actions\":[{\"key\":\"⏎\",\"label\":\"push\",\"argv\":[\"babylon\",\"push\",\"arena\"]},{\"key\":\"l\",\"label\":\"look\",\"argv\":[\"true\"]}]}]," ++ plan_tail);
+    var app = try tryApp(sent, "{\"tickets\":[],\"needs_you\":[" ++
+        "{\"id\":\"restart-pending\",\"kind\":\"human\",\"ticket\":null,\"repo\":\"babylon\",\"text\":\"↻ restart pending: holding new gates until #12, #13 finish\",\"actions\":[]}," ++
+        "{\"id\":\"push:arena:abc:0\",\"kind\":\"push\",\"ticket\":null,\"repo\":\"arena\",\"text\":\"▲ arena: 2 unpushed\",\"actions\":[]}," ++
+        "{\"id\":\"push:tlon:def:0\",\"kind\":\"push\",\"ticket\":null,\"repo\":\"tlon\",\"text\":\"▲ tlon: 1 unpushed\",\"actions\":[]}]," ++ plan_tail);
     defer app.pending.deinit(std.testing.allocator);
     defer app.detail_asked.deinit(std.testing.allocator);
     defer app.detail.deinit(std.testing.allocator);
     defer app.grab.deinit(std.testing.allocator);
     defer app.out.deinit(std.testing.allocator);
     defer app.board.?.deinit();
+    defer {
+        for (app.repos_pushing.items) |id| std.testing.allocator.free(id);
+        app.repos_pushing.deinit(std.testing.allocator);
+    }
     app.roles = @import("parts.zig").roles();
     app.home.?.focus = .plan;
     const view = &app.home.?;
     var got: [4096]u8 = undefined;
+    const has = std.mem.indexOf;
 
-    try app.planKey(" ");
-    try std.testing.expect(view.item_open);
-    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "log --oneline origin/main..main") != null);
-
-    try app.detail.appendSlice(std.testing.allocator, "a1b2c3d one commit\ne4f5a6b another commit\n");
+    try std.testing.expectEqual(@as(usize, 0), app.board.?.needsYou().len);
     var shot: Writer.Allocating = .init(std.testing.allocator);
     defer shot.deinit();
     try draw.frame(&app, &shot.writer, .all);
-    try std.testing.expect(std.mem.indexOf(u8, shot.written(), "a1b2c3d one commit") != null);
-    try std.testing.expect(std.mem.indexOf(u8, shot.written(), "another commit") != null);
+    try std.testing.expect(has(u8, shot.written(), "↻ restarting after #12, #13") != null);
+    try std.testing.expect(has(u8, shot.written(), "↑ 3 unpushed") != null);
+    try std.testing.expect(has(u8, shot.written(), "arena: 2 unpushed") == null);
 
-    try app.homeKey("\r");
-    try std.testing.expect(!view.item_open);
-    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'push' 'arena'") != null);
+    try app.planKey("u");
+    try std.testing.expect(view.repos);
+    try std.testing.expect(has(u8, try sentText(sent, &got), "log --oneline origin/main..main") != null);
+    try app.detail.appendSlice(std.testing.allocator, "a1b2c3d one commit\ne4f5a6b another commit\n");
+    shot.clearRetainingCapacity();
+    try draw.frame(&app, &shot.writer, .all);
+    for ([_][]const u8{ "arena  main  ↑2 ↓0", "tlon  main  ↑1 ↓0", "a1b2c3d  one commit", "another commit" }) |want| {
+        try std.testing.expect(has(u8, shot.written(), want) != null);
+    }
+
+    try app.homeKey("j");
+    try app.homeKey("P");
+    const after_p = try sentText(sent, &got);
+    try std.testing.expect(has(u8, after_p, "'babylon' 'push' 'tlon'") != null);
+    try std.testing.expect(has(u8, after_p, "'babylon' 'push' 'arena'") == null);
+
+    try app.homeKey("A");
+    try std.testing.expect(view.repos_confirm);
+    try app.homeKey("y");
+    try std.testing.expect(has(u8, try sentText(sent, &got), "'babylon' 'push' 'arena'") != null);
+
+    try app.homeKey("\x1b");
+    try std.testing.expect(!view.repos);
 }
 
 test "< on a done card's modal asks before reopening, n keeps it done and y reopens; reopen is the last button" {
@@ -10896,7 +10938,7 @@ test "y on a to-try card's last open check closes the card and Your move's pick 
         \\"checks":[{"n":1,"text":"it is told","result":"ok"},{"n":2,"text":"it has buttons","result":null}]}],
         \\"needs_you":[
         \\{"id":"try:7","kind":"try","ticket":7,"repo":"arena","text":"try it","actions":[]},
-        \\{"id":"push:ficciones","kind":"push","ticket":null,"repo":"ficciones","text":"ficciones: 2 unpushed","actions":[]}]}
+        \\{"id":"push:ficciones","kind":"human","ticket":null,"repo":"ficciones","text":"ficciones: 2 unpushed","actions":[]}]}
     ;
     app.board = try tickets.Board.parse(std.testing.allocator, with_try);
     defer app.board.?.deinit();
@@ -10911,7 +10953,7 @@ test "y on a to-try card's last open check closes the card and Your move's pick 
     try app.setBoard(
         \\{"tickets":[{"id":7,"repo":"arena","title":"Lights","status":"done","checks":[]}],
         \\"needs_you":[
-        \\{"id":"push:ficciones","kind":"push","ticket":null,"repo":"ficciones","text":"ficciones: 2 unpushed","actions":[]}]}
+        \\{"id":"push:ficciones","kind":"human","ticket":null,"repo":"ficciones","text":"ficciones: 2 unpushed","actions":[]}]}
     );
     var f: feed.Feed = undefined;
     try std.testing.expect(app.feedOf(&f));

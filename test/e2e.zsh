@@ -1474,7 +1474,7 @@ foot_json=${foot_json/'{"tickets":['/'{"tickets":[{"id":934,"repo":"arena","titl
 print -r -- "${foot_json%\}}"',"needs_you":[{"id":"try:934","kind":"try","ticket":934,"repo":"arena","text":"#934 arena  Foot","since":"2026-11-24T10:00:00Z","machine":"gate ✓","steps":['\
 '{"n":1,"text":"the row says which of the two is which","result":null,"actions":[{"key":"y","label":"✓","argv":["babylon","tried","934","1","ok"]},{"key":"n","label":"✗","argv":["babylon","tried","934","1","no"],"needs":"words"}]}],'\
 '"actions":[{"key":"x","label":"close untried","argv":["babylon","tried","934","skip"]}]},'\
-'{"id":"push:arena:abc:0","kind":"push","ticket":null,"repo":"arena","text":"▲ arena: 2 unpushed","actions":[{"key":"⏎","label":"push","argv":["babylon","push","arena"]}]}]}' >$tmp/run/babylon/board.json
+'{"id":"push:arena:abc:0","kind":"human","ticket":null,"repo":"arena","text":"▲ arena: 2 unpushed","actions":[{"key":"⏎","label":"push","argv":["babylon","push","arena"]}]}]}' >$tmp/run/babylon/board.json
 outer resize-window -t o -x 121 -y 40
 click ${(z)$(spot '#934 arena')}
 check "a click on a Your move item opens its card in the middle column" await shows 'q close'

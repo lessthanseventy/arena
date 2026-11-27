@@ -19,6 +19,7 @@ const win_now = @import("win_now.zig");
 const win_move = @import("win_move.zig");
 const win_foot = @import("win_foot.zig");
 const win_modal = @import("win_modal.zig");
+const win_repos = @import("win_repos.zig");
 const win_feed = @import("win_feed.zig");
 const win_next = @import("win_next.zig");
 const win_goals = @import("win_goals.zig");
@@ -1479,7 +1480,15 @@ fn planFoot(app: *App, w: *Writer, sheet: *const sheets.Sheet, pick: usize) !voi
     try fitted(w, text, app.boardW());
 }
 
-const PlanHeadBufs = struct { auto: [48]u8, auto_pad: [64]u8, today: [32]u8, needs: [16]u8, orch: [40]u8 };
+const PlanHeadBufs = struct { auto: [48]u8, auto_pad: [64]u8, today: [32]u8, needs: [16]u8, orch: [40]u8, restart: [64]u8, unpushed: [32]u8 };
+
+/// The head's pieces, in order: the restart and unpushed chips, which come and go, then auto,
+/// today, Your move, the orchestrator and the menu.
+const head_chip_restart = 0;
+const head_chip_unpushed = 1;
+const head_auto = 2;
+const head_orch = 5;
+const head_menu = 6;
 
 const auto_ask = "◐ turn off?";
 
@@ -1509,13 +1518,22 @@ test "auto's piece keeps one width asking and not" {
 /// words taking `left_w`; with less room it keeps auto and what needs the human, then auto alone.
 /// Auto says its tools slots when babylon gives them and the room is there.
 const PlanHead = struct {
-    pieces: [5]struct { text: []const u8, style: vt.Style },
-    keep: u5,
+    pieces: [7]struct { text: []const u8, style: vt.Style },
+    keep: u7,
     start: usize,
     left_w: usize,
 
     fn shows(head: PlanHead, i: usize) bool {
-        return head.keep >> @intCast(i) & 1 == 1;
+        return head.keep >> @intCast(i) & 1 == 1 and head.pieces[i].text.len > 0;
+    }
+
+    /// The first cell of piece `i`, from the board's left edge.
+    fn xOf(head: PlanHead, i: usize) usize {
+        var at = head.start;
+        for (head.pieces[0..i], 0..) |piece, j| if (head.shows(j)) {
+            at += cellCount(piece.text) + 3;
+        };
+        return at;
     }
 };
 
@@ -1525,13 +1543,25 @@ fn planHead(app: *const App, bufs: *PlanHeadBufs) PlanHead {
     const needs_n = b.needsYou().len;
     const dim = ink(app, "dim", 8);
     const left_w = cellCount(App.plan_title) + if (app.oneColumn()) cellCount(App.orch_link) + 2 else 0;
-    var head: PlanHead = .{ .pieces = undefined, .keep = 0b11111, .start = 0, .left_w = left_w };
-    const tries = [_]struct { tools: bool, keep: u5 }{
-        .{ .tools = true, .keep = if (app.oneColumn()) 0b10101 else 0b11111 },
-        .{ .tools = false, .keep = if (app.oneColumn()) 0b10101 else 0b11111 },
-        .{ .tools = false, .keep = 0b10101 },
-        .{ .tools = false, .keep = 0b10001 },
+    var head: PlanHead = .{ .pieces = undefined, .keep = 0b1111111, .start = 0, .left_w = left_w };
+    const tries = [_]struct { tools: bool, keep: u7 }{
+        .{ .tools = true, .keep = if (app.oneColumn()) 0b1010111 else 0b1111111 },
+        .{ .tools = false, .keep = if (app.oneColumn()) 0b1010111 else 0b1111111 },
+        .{ .tools = false, .keep = 0b1010111 },
+        .{ .tools = false, .keep = 0b1010100 },
+        .{ .tools = false, .keep = 0b1000100 },
     };
+    const restart_after = b.restartAfter();
+    const restart_text: []const u8 = if (b.restart == null) "" else (if (restart_after.len > 0)
+        std.fmt.bufPrint(&bufs.restart, "↻ restarting after {s}", .{restart_after}) catch "↻ restarting"
+    else
+        "↻ restarting");
+    const unpushed_text: []const u8 = if (b.unpushed() > 0)
+        std.fmt.bufPrint(&bufs.unpushed, "↑ {d} unpushed", .{b.unpushed()}) catch "↑"
+    else if (b.behind() > 0)
+        std.fmt.bufPrint(&bufs.unpushed, "↓ {d} behind", .{b.behind()}) catch "↓"
+    else
+        "";
     for (tries) |try_| {
         const tools = try_.tools;
         head.keep = try_.keep;
@@ -1542,6 +1572,8 @@ fn planHead(app: *const App, bufs: *PlanHeadBufs) PlanHead {
         const armed = app.auto() != null and app.now < app.auto_armed_until;
         const auto = autoPiece(&bufs.auto_pad, plain, armed);
         head.pieces = .{
+            .{ .text = restart_text, .style = dim },
+            .{ .text = unpushed_text, .style = dim },
             .{ .text = auto, .style = if (app.auto() != null) autoOn(app) else dim },
             .{ .text = std.fmt.bufPrint(&bufs.today, "✓ {d} today", .{given.landed_today.count}) catch "", .style = dim },
             .{ .text = std.fmt.bufPrint(&bufs.needs, "▲ {d}", .{needs_n}) catch "", .style = if (needs_n > 0) heading(app) else dim },
@@ -1573,7 +1605,7 @@ fn orchPiece(app: *const App, buf: []u8) []const u8 {
 }
 
 /// What Plan's head holds at column `x`: its orchestrator state or its `≡`.
-pub fn planHeadHit(app: *const App, x: u16) ?enum { orch, menu } {
+pub fn planHeadHit(app: *const App, x: u16) ?enum { orch, menu, unpushed } {
     var bufs: PlanHeadBufs = undefined;
     const head = planHead(app, &bufs);
     if (head.start <= head.left_w) return null;
@@ -1582,8 +1614,9 @@ pub fn planHeadHit(app: *const App, x: u16) ?enum { orch, menu } {
         if (!head.shows(i)) continue;
         const end = at + cellCount(piece.text);
         if (x >= at and x < end) return switch (i) {
-            3 => .orch,
-            4 => .menu,
+            head_chip_unpushed => .unpushed,
+            head_orch => .orch,
+            head_menu => .menu,
             else => null,
         };
         at = end + 3;
@@ -1604,7 +1637,7 @@ pub fn planAutoSwitch(app: *const App) ?struct { x: u16, w: u16 } {
     var bufs: PlanHeadBufs = undefined;
     const head = planHead(app, &bufs);
     if (head.start <= head.left_w) return null;
-    return .{ .x = @as(u16, @intCast(head.start)), .w = @intCast(cellCount(head.pieces[0].text)) };
+    return .{ .x = @as(u16, @intCast(head.xOf(head_auto))), .w = @intCast(cellCount(head.pieces[head_auto].text)) };
 }
 
 /// The repo filter in the plan's head: `every` and each repo, the one the plan is narrowed to lit.
@@ -1732,7 +1765,7 @@ fn planView(app: *App, w: *Writer, view: app_mod.HomeView) !void {
 /// Whether a box is open that is drawn in the middle column.
 fn columnOpen(app: *const App, view: app_mod.HomeView) bool {
     const words = if (app.prompt) |prompt| prompt.multiline() else false;
-    return words or view.claude != null or view.detail != null or view.item_open or view.giving != null or view.into != null or view.goal_open or
+    return words or view.claude != null or view.detail != null or view.item_open or view.repos or view.giving != null or view.into != null or view.goal_open or
         app.autoRect() != null or app.draftRect() != null;
 }
 
@@ -1748,6 +1781,7 @@ fn planBoxes(app: *App, w: *Writer, view: app_mod.HomeView) !void {
     }
     if (view.detail) |id| try win_modal.detailBox(app, w, id, view.detail_scroll);
     if (view.item_open) try win_modal.itemBox(app, w, view.detail_scroll);
+    if (view.repos) try win_repos.paint(app, w);
     if (view.claude != null) try claudeBox(app, w, view);
     if (app.autoRect() != null) app.grab.cover();
     try win_modal.autoBox(app, w);
@@ -3781,7 +3815,7 @@ test "on the e2e's 24-row screen every Plan window keeps its title and a body ro
 test "a Your move item ends its row in its first action's key, ticket or none, picked or not, and an open one does not and wears ▸" {
     var board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[],"needs_you":[
-        \\{"id":"push:arena:abc:0","kind":"push","ticket":null,"repo":"arena","text":"▲ arena: 3 unpushed",
+        \\{"id":"push:arena:abc:0","kind":"human","ticket":null,"repo":"arena","text":"▲ arena: 3 unpushed",
         \\ "actions":[{"key":"⏎","label":"push","argv":["babylon","push","arena"]},{"key":"l","label":"look"}]},
         \\{"id":"push:1","kind":"push","ticket":7,"repo":"arena","text":"3 commits to push","since":"2026-11-21T10:00:00Z",
         \\ "actions":[{"key":"⏎","label":"push","argv":["babylon","push","arena"]},{"key":"l","label":"look"}]}],
@@ -3823,7 +3857,7 @@ test "with a Your move item's card open, every Your move row is drawn beside it,
         \\ "steps":[{"n":1,"text":"it folds back","result":null,"actions":[{"key":"y","label":"✓"},{"key":"n","label":"✗"}]},
         \\  {"n":2,"text":"the pick stays","result":null,"actions":[{"key":"y","label":"✓"},{"key":"n","label":"✗"}]}],
         \\ "actions":[{"key":"x","label":"close untried","argv":["babylon","tried","1105","skip"]}]},
-        \\{"id":"push:arena:abc:0","kind":"push","ticket":null,"repo":"arena","text":"▲ arena: 2 unpushed",
+        \\{"id":"push:arena:abc:0","kind":"human","ticket":null,"repo":"arena","text":"▲ arena: 2 unpushed",
         \\ "actions":[{"key":"⏎","label":"push","argv":["babylon","push","arena"]}]}],
         \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
     );
