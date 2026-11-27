@@ -3554,7 +3554,6 @@ pub const App = struct {
         try app.jumpTo(at.session, at.index);
     }
 
-    /// The Claude whose pane is in the middle column, if one is.
     const ColumnWant = struct { pane: u32, session: u32, keep: bool, lists: u8 = 0 };
 
     /// `tail`, a command, run in a detached session of its own sized to the middle column, whose
@@ -3599,6 +3598,7 @@ pub const App = struct {
         app.send(.ignore, "kill-session -t '${d}'", .{id}) catch {};
     }
 
+    /// The Claude whose pane is in the middle column, if one is.
     pub fn claudeColumn(app: *const App) ?Agent {
         const view = app.home orelse return null;
         const at = app.paneWindow(view.claude orelse return null) orelse return null;
