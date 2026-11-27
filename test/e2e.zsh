@@ -1459,6 +1459,9 @@ check "and no close untried anywhere" gone 'close untried'
 : >$tmp/babylon
 key y
 check "y in the card answers its check, through babylon" await last 'tried 934 1 ok'
+check "and, it being the last, closes the card" gone 'q close'
+key -l ' '
+check "space opens it again" await shows 'q close'
 key n
 check "and n asks for the words" see 'What went wrong\?'
 key Escape
