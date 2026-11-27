@@ -1478,7 +1478,7 @@ fn planFoot(app: *App, w: *Writer, sheet: *const sheets.Sheet, pick: usize) !voi
     if (app.workbench() and cellCount(text) <= room) try w.writeAll(keys);
 }
 
-const PlanHeadBufs = struct { auto: [48]u8, auto_pad: [64]u8, today: [32]u8, needs: [16]u8, orch: [40]u8, restart: [64]u8, unpushed: [32]u8, claudes: [24]u8 };
+const PlanHeadBufs = struct { auto: [48]u8, auto_pad: [64]u8, today: [32]u8, needs: [16]u8, orch: [40]u8, restart: [64]u8, unpushed: [48]u8, claudes: [24]u8 };
 
 /// The head's pieces, in order: the restart and unpushed chips, which come and go, then auto,
 /// the Claudes, today, Your move, the orchestrator and the menu.
@@ -1560,8 +1560,11 @@ fn planHead(app: *const App, bufs: *PlanHeadBufs) PlanHead {
         std.fmt.bufPrint(&bufs.restart, "↻ restarting after {s}", .{restart_after}) catch "↻ restarting"
     else
         "↻ restarting");
+    const stray = win_repos.anyStray(app);
     const unpushed_text: []const u8 = if (b.unpushed() > 0)
-        std.fmt.bufPrint(&bufs.unpushed, "↑ {d} unpushed", .{b.unpushed()}) catch "↑"
+        std.fmt.bufPrint(&bufs.unpushed, "↑ {d} unpushed{s}", .{ b.unpushed(), if (stray) " · ● dirty" else "" }) catch "↑"
+    else if (stray)
+        "● dirty"
     else
         "";
     for (tries) |try_| {

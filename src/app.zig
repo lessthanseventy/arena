@@ -399,11 +399,16 @@ pub const HomeView = struct {
     /// The card of the Your move item `App.item_id` names, an item with no ticket, is shown over
     /// the board; its text is scrolled with `detail_scroll`.
     item_open: bool = false,
-    /// The repos view fills the middle column: the repo picked, the commit picked in it (⏎ on a
-    /// repo goes into its commits), whether that commit's diff is shown, and `A` asking to push all.
+    /// The repos view fills the middle column: the repo picked, whether the right side (the
+    /// repo's status, worktrees and commits) has the keys, the section and the row picked in each
+    /// section, whether a diff is shown, and `A` asking to push all.
     repos: bool = false,
     repos_pick: usize = 0,
-    repos_commit: ?usize = null,
+    repos_in: bool = false,
+    repos_section: u8 = 0,
+    repos_file: usize = 0,
+    repos_tree: usize = 0,
+    repos_commit: usize = 0,
     repos_diff: bool = false,
     repos_confirm: bool = false,
     /// The pane of the Claude shown live in the middle column, and whether the column has turned
@@ -493,6 +498,7 @@ pub fn anyKey(pressed: []const u8, names: []const []const u8) bool {
 
 /// A repos-view git request: its detail file's id and the hash of the repo it asked about.
 pub const RepoAsk = struct { id: u32, repo: u64, dropped: bool = false };
+pub const RepoGit = struct { name: [48]u8, len: u8, text: []u8 };
 
 pub const App = struct {
     gpa: Allocator,
@@ -605,9 +611,10 @@ pub const App = struct {
     /// The pushes run from the repos view and not yet answered, as `repos:<repo>:<commits>`, and
     /// what the view says of the last.
     repos_pushing: std.ArrayList([]u8) = .empty,
-    /// What git says of each repo's main against its origin, once counted.
-    repo_counts: [max_repos]struct { name: [48]u8 = undefined, len: u8 = 0, ahead: u32 = 0, behind: u32 = 0 } = undefined,
-    repo_counts_n: usize = 0,
+    /// What git answered of each repo (see win_repos.zig), once asked, and when to ask again.
+    repo_git: [max_repos]RepoGit = undefined,
+    repo_git_n: usize = 0,
+    repos_next: i64 = 0,
     repos_said: [160]u8 = undefined,
     repos_said_len: usize = 0,
     repos_bad: bool = false,
@@ -733,6 +740,7 @@ pub const App = struct {
         app.grab.deinit(app.gpa);
         app.detail_asked.deinit(app.gpa);
         app.repos_asked.deinit(app.gpa);
+        for (app.repo_git[0..app.repo_git_n]) |g| app.gpa.free(g.text);
         for (app.repos_pushing.items) |id| app.gpa.free(id);
         app.repos_pushing.deinit(app.gpa);
         app.guard.deinit(app.gpa);
@@ -11281,7 +11289,7 @@ test "restart-pending and a repo's unpushed are chips on the head, not Your move
     app.roles = @import("parts.zig").roles();
     app.home.?.focus = .plan;
     const view = &app.home.?;
-    var got: [4096]u8 = undefined;
+    var got: [16384]u8 = undefined;
     const has = std.mem.indexOf;
 
     try std.testing.expectEqual(@as(usize, 1), app.board.?.needsYou().len);
@@ -11290,24 +11298,41 @@ test "restart-pending and a repo's unpushed are chips on the head, not Your move
     try draw.frame(&app, &shot.writer, .all);
     try std.testing.expect(has(u8, shot.written(), "↻ restarting after #12, #13") != null);
     try std.testing.expect(has(u8, shot.written(), "↑ 3 unpushed") != null);
+    try std.testing.expect(has(u8, shot.written(), "dirty") == null);
     try std.testing.expect(has(u8, shot.written(), "arena: 2 unpushed") == null);
+    defer for (app.repo_git[0..app.repo_git_n]) |g| std.testing.allocator.free(g.text);
+    try giveGit(&app, "arena", arena_git);
+    try giveGit(&app, "tlon", "--wt\n/p/tlon\n# branch.head main\n# branch.ab +1 -3\n--stash\n2\n--today\n1000\n--unpushed\n--log\n");
+    shot.clearRetainingCapacity();
+    try draw.frame(&app, &shot.writer, .all);
+
+    try std.testing.expect(has(u8, shot.written(), "↑ 3 unpushed · ● dirty") != null);
 
     var x: u16 = 0;
     while (x < 200 and draw.planHeadHit(&app, x) != .unpushed) x += 1;
     try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = x, .y = 0, .release = false }));
     try std.testing.expect(view.repos);
-    try std.testing.expect(has(u8, try sentText(sent, &got), "log --format=") != null);
-    try std.testing.expect(has(u8, try sentText(sent, &got), "rev-list --left-right --count main...origin/main") != null);
-    try app.detail.appendSlice(std.testing.allocator, "a1b2c3d one commit ‖ Ticket: #7\ne4f5a6b another #9 commit ‖ \n");
-    app.repo_counts_n = 1;
-    @memcpy(app.repo_counts[0].name[0..4], "tlon");
-    app.repo_counts[0] = .{ .name = app.repo_counts[0].name, .len = 4, .ahead = 1, .behind = 3 };
+    try std.testing.expect(has(u8, try sentText(sent, &got), "git worktree list --porcelain") != null);
+    try std.testing.expect(has(u8, try sentText(sent, &got), "git log -n 200") != null);
     shot.clearRetainingCapacity();
     try draw.frame(&app, &shot.writer, .all);
-    for ([_][]const u8{ "arena  main  ↑2 ↓0", "tlon  main  ↑1 ↓3", "a1b2c3d  one commit  #7", "another #9 commit" }) |want| {
+
+    for ([_][]const u8{ "arena  main  ↑2 ↓0  ●1  ⎇1", "tlon  main  ↑1 ↓3  ●0  ⎇0  ≡2", "↑ a1b2c3d  one commit  #7", "another #9 commit", "✓ today", "M   src/x.zig", "Worktrees  ⎇1", "t42-x" }) |want| {
         try std.testing.expect(has(u8, shot.written(), want) != null);
     }
 
+    try app.homeKey("\t");
+
+    try std.testing.expect(view.repos_in);
+    try app.homeKey("\t");
+    try std.testing.expectEqual(@as(u8, 1), view.repos_section);
+    try app.homeKey("\r");
+
+    try std.testing.expect(!view.repos);
+    try std.testing.expectEqual(@as(?u32, 42), view.detail);
+    try app.homeKey("\x1b");
+    try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = x, .y = 0, .release = false }));
+    try std.testing.expect(view.repos);
     try app.homeKey("j");
     try app.homeKey("P");
     const after_p = try sentText(sent, &got);
@@ -11321,6 +11346,18 @@ test "restart-pending and a repo's unpushed are chips on the head, not Your move
 
     try app.homeKey("\x1b");
     try std.testing.expect(!view.repos);
+}
+
+const arena_git = "--wt\n/p/arena\n# branch.head main\n# branch.ab +2 -0\n1 .M N... 100644 100644 100644 a b src/x.zig\n" ++
+    "--wt\n/p/arena/.worktrees/t42-x\n# branch.head t42-x\n--stash\n0\n--today\n1000\n--unpushed\na1b2c3d\n" ++
+    "--log\na1b2c3d 2000 one commit ‖ Ticket: #7\ne4f5a6b 500 another #9 commit ‖ \n";
+
+fn giveGit(app: *App, name: []const u8, text: []const u8) !void {
+    const g = &app.repo_git[app.repo_git_n];
+    @memcpy(g.name[0..name.len], name);
+    g.len = @intCast(name.len);
+    g.text = try std.testing.allocator.dupe(u8, text);
+    app.repo_git_n += 1;
 }
 
 test "a push that answers ok has its repo counted again, and the row reads what git says" {
@@ -11342,16 +11379,15 @@ test "a push that answers ok has its repo counted again, and the row reads what 
     }
     app.board_dir = dir;
     app.home.?.repos = true;
-    app.repo_counts_n = 1;
-    app.repo_counts[0] = .{ .len = 5, .ahead = 7, .behind = 0 };
-    @memcpy(app.repo_counts[0].name[0..5], "arena");
+    defer for (app.repo_git[0..app.repo_git_n]) |g| std.testing.allocator.free(g.text);
+    try giveGit(&app, "arena", "--wt\n/p/arena\n# branch.head main\n# branch.ab +7 -0\n");
     try app.repos_pushing.append(std.testing.allocator, try std.testing.allocator.dupe(u8, "repos:arena:7"));
     try cwd.writeFile(std.testing.io, .{ .sub_path = dir ++ "/refused-repos:arena:7", .data = "ok\n" });
 
     win_repos.polled(&app);
     var got: [4096]u8 = undefined;
-    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "rev-list --left-right --count main...origin/main") != null);
-    try cwd.writeFile(std.testing.io, .{ .sub_path = dir ++ "/repos-arena.counts", .data = "0\t0\n" });
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "git worktree list --porcelain") != null);
+    try cwd.writeFile(std.testing.io, .{ .sub_path = dir ++ "/repos-arena.status", .data = "--wt\n/p/arena\n# branch.head main\n# branch.ab +0 -0\n" });
     win_repos.polled(&app);
     var rows: [max_repos]tickets.RepoState = undefined;
     try std.testing.expectEqual(@as(u32, 0), win_repos.list(&app, &rows)[0].ahead);
