@@ -1529,7 +1529,8 @@ check "a look at is an item with its doc named and o to open it" see 'o open   y
 key ']'
 key o
 check "o opens its doc in the middle column, with no window of its own" await eval '! doc_window'
-check "which says so when the file is not in the ticket's repo" see 'no such file: docs/none'
+check "which says so when the file is not in the ticket's repo" see 'no such file:'
+check "and the path under it, whole" see 'docs/none-jkdufltb.md'
 key Escape
 gone 'no such file'
 mkdir -p $tmp/projects/tlon/.worktrees/t307-design/docs
