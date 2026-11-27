@@ -4251,3 +4251,47 @@ test "a card opened on a backlog epic with a three-paragraph body draws the firs
     for (0..app.view_h) |y| seen = seen or std.mem.indexOf(u8, try screenRow(out.buffered(), app.term_w, y, &line), "Step back: put the meta first.") != null;
     try std.testing.expect(seen);
 }
+
+test "a done card's modal has a blank row between its sections, its fixes and follow-ups each a bullet row, and the hash seven long" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1148,"repo":"arena","title":"Cards read well","status":"done","stage":"landed",
+        \\"stage_note":"landed on main as f06e86a1234567890abcdef1234567890abcdef12, with the review's fixes: first fix; second fix; follow-ups filed: #1300 a follow up; #1301 another · installed",
+        \\"checks":[{"n":1,"text":"it reads","result":"ok"}]}],
+        \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer board.deinit();
+    var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
+    app.view_w = 60;
+    app.view_h = 40;
+    app.roles = bench.roles();
+    app.home = .{ .focus = .plan, .detail = 1148, .body_open = true };
+    var buf: [1 << 18]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try planView(&app, &out, app.home.?);
+    var line: [1024]u8 = undefined;
+    const rect = app.modalRect().?;
+    var rows: [40][]const u8 = undefined;
+    var copy: [40][160]u8 = undefined;
+    for (0..40) |i| {
+        const row = try screenRow(out.buffered(), app.term_w, rect.y + i, &line);
+        const n = @min(row.len, 160);
+        @memcpy(copy[i][0..n], row[0..n]);
+        rows[i] = copy[i][0..n];
+    }
+    const find = struct {
+        fn at(all: [][]const u8, text: []const u8) ?usize {
+            for (all, 0..) |row, i| if (std.mem.indexOf(u8, row, text) != null) return i;
+            return null;
+        }
+    }.at;
+    const landed_at = find(&rows, "Landed").?;
+    try std.testing.expect(std.mem.indexOf(u8, rows[landed_at], "on main") == null);
+    try std.testing.expectEqual(@as(usize, 0), std.mem.trim(u8, rows[landed_at - 1], " │").len);
+    try std.testing.expect(std.mem.indexOf(u8, rows[find(&rows, "on main").?], "f06e86a \u{b7} installed") != null);
+    try std.testing.expect(find(&rows, "f06e86a1") == null);
+    try std.testing.expect(std.mem.indexOf(u8, rows[find(&rows, "first fix").?], "- first fix") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rows[find(&rows, "second fix").?], "- second fix") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rows[find(&rows, "#1300").?], "- #1300 a follow up") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rows[find(&rows, "#1301").?], "- #1301 another") != null);
+}

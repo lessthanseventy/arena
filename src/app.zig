@@ -3297,11 +3297,14 @@ pub const App = struct {
         if (app.modalCard()) |card| if (app.bodyHidden(card)) return 0;
         var n: usize = 0;
         const body_folded = if (app.modalCard()) |card| card.status == .done and !app.home.?.body_open else false;
-        var lines = DetailLines.init(if (body_folded) "space more" else if (app.detail.items.len > 0) app.detail.items else "…", inner);
+        const body = if (body_folded) "\n" ++ "details \u{25b8}" else if (app.detail.items.len > 0) app.detail.items else "…";
+        var lines = DetailLines.init(body, inner);
         while (lines.next()) |_| n += 1;
         if (app.modalCard()) |card| if (card.stage_note.len > 0) {
-            var note = DetailLines.init(card.stage_note, inner);
+            var note_buf: [4096]u8 = undefined;
+            var note = DetailLines.init(text_mod.landed(&note_buf, card.stage_note), inner);
             while (note.next()) |_| n += 1;
+            if (body[0] != '\n') n += 1;
         };
         return n;
     }
@@ -5223,6 +5226,7 @@ pub const App = struct {
             head.options = head.n;
             for (0..@min(ask.options.len, max_ask_options) + @intFromBool(words)) |_| head.add(.options, "", .{});
         }
+        if (card.status == .done and card.checks.len > 0) head.add(.dim, "", .{});
         if (card.status == .done) for (card.checks) |check| {
             const sign: []const u8 = if (check.result) |result| (if (std.mem.eql(u8, result, "ok")) "✓" else "✗") else "·";
             head.add(.dim, "{s} {d} {s}", .{ sign, check.n, check.text });

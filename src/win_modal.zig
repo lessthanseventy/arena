@@ -10,6 +10,7 @@ const modelName = draw.modelName;
 const ago = draw.ago;
 const feed = @import("feed.zig");
 const color = @import("color.zig");
+const text_mod = @import("text.zig");
 const boxLine = draw.boxLine;
 const benchState = draw.benchState;
 const fitted = draw.fitted;
@@ -167,16 +168,21 @@ pub fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
     const hidden = if (card) |it| app.bodyHidden(it) else false;
     const text = if (app.detail.items.len > 0) app.detail.items else "…";
     var row: usize = 0;
-    const parts = [2]struct { text: []const u8, style: vt.Style }{
-        .{ .text = if (card != null and !hidden) card.?.stage_note else "", .style = dim },
+    var note_buf: [4096]u8 = undefined;
+    const stage_note = if (card != null and !hidden) text_mod.landed(&note_buf, card.?.stage_note) else "";
+    const parts = [3]struct { text: []const u8, style: vt.Style }{
+        .{ .text = stage_note, .style = dim },
+        .{ .text = if (stage_note.len > 0 and !hidden) "\n" else "", .style = dim },
         .{ .text = if (hidden) "" else text, .style = .{} },
     };
-    for (parts) |part| {
+    for (parts, 0..) |part, at| {
         if (part.text.len == 0) continue;
         var lines = app_mod.DetailLines.init(part.text, inner);
-        while (lines.next()) |line| : (row += 1) {
+        while (lines.next()) |shown| : (row += 1) {
             if (row < scroll or y >= text_end) continue;
-            try boxLine(w, &pen, edge, part.style, x, y, line, inner);
+            const mark = at == 0 and shown.len > 0 and shown[0] == text_mod.heading_mark;
+            const line = if (mark) shown[1..] else shown;
+            try boxLine(w, &pen, edge, if (mark) heading(app) else part.style, x, y, line, inner);
             try app.grab.row(app.gpa, x + 2, y - 1, line, lines.dropped);
             y += 1;
         }
@@ -435,18 +441,24 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
 
     const hidden = if (card) |it| app.bodyHidden(it) else false;
     const folded = if (card) |it| it.status == .done and !app.home.?.body_open else false;
-    const text = if (folded) "space more" else if (app.detail.items.len > 0) app.detail.items else "…";
+    const text = if (hidden) "" else if (folded) "\n" ++ "details \u{25b8}" else if (app.detail.items.len > 0) app.detail.items else "…";
     var row: usize = 0;
-    const parts = [2]struct { text: []const u8, fg: color.RGB }{
-        .{ .text = if (card != null and !hidden) card.?.stage_note else "", .fg = r.dim },
-        .{ .text = if (hidden) "" else text, .fg = if (folded) r.dim else r.text },
+    var note_buf: [4096]u8 = undefined;
+    const stage_note = if (card != null and !hidden) text_mod.landed(&note_buf, card.?.stage_note) else "";
+    const parts = [3]struct { text: []const u8, fg: color.RGB }{
+        .{ .text = stage_note, .fg = r.dim },
+        .{ .text = if (stage_note.len > 0 and text.len > 0 and text[0] != '\n') "\n" else "", .fg = r.dim },
+        .{ .text = text, .fg = if (folded) r.dim else r.text },
     };
-    for (parts) |part| {
+    for (parts, 0..) |part, at| {
         if (part.text.len == 0) continue;
         var lines = app_mod.DetailLines.init(part.text, inner);
-        while (lines.next()) |line| : (row += 1) {
+        while (lines.next()) |shown| : (row += 1) {
             if (row < scroll or y >= text_end) continue;
-            try bench.say(w, x0, y, cut(line, inner), part.fg, r.panel, false);
+            const mark = at == 0 and shown.len > 0 and shown[0] == text_mod.heading_mark;
+            const line = if (mark) shown[1..] else shown;
+            const bullet = at == 0 and std.mem.startsWith(u8, line, "  - ");
+            try bench.say(w, x0, y, cut(line, inner), if (mark) r.accent else if (bullet) r.text else part.fg, r.panel, mark);
             try app.grab.row(app.gpa, x0, y, cut(line, inner), lines.dropped);
             y += 1;
         }

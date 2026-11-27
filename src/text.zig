@@ -160,3 +160,52 @@ test "a cut ends at a word with an ellipsis, and a lone long word is cut in it" 
     try std.testing.expectEqualStrings("Portabl…", cut(&buf, "Portable-transportation", 8));
     try std.testing.expectEqualStrings("é…", cut(&buf, "éééé", 2));
 }
+
+/// What a heading line in `landed`'s text starts with, taken off when it is drawn.
+pub const heading_mark = '\x01';
+
+/// A landing note as lines to draw, in `buf`: a blank row, the heading `Landed`, `on main`, the
+/// short hash and what happened since, then the review's fixes and the follow-ups as bullets.
+/// Babylon writes the note as one string, so it is split on its joins; a note not in that shape
+/// comes back as it was.
+pub fn landed(buf: []u8, note: []const u8) []const u8 {
+    const lead = "landed on main as ";
+    if (!std.mem.startsWith(u8, note, lead)) return note;
+    var body = note[lead.len..];
+    var state: []const u8 = "";
+    if (std.mem.lastIndexOf(u8, body, " \u{b7} ")) |at| {
+        state = body[at + 4 ..];
+        body = body[0..at];
+    }
+    var follow: []const u8 = "";
+    if (std.mem.indexOf(u8, body, "; follow-ups filed: ")) |at| {
+        follow = body[at + 20 ..];
+        body = body[0..at];
+    }
+    const hash_end = std.mem.indexOfAny(u8, body, ", ") orelse body.len;
+    const hash = body[0..hash_end];
+    var fixes = body[hash_end..];
+    const fixes_lead = ", with the review's fixes: ";
+    fixes = if (std.mem.startsWith(u8, fixes, fixes_lead)) fixes[fixes_lead.len..] else "";
+
+    var w: std.Io.Writer = .fixed(buf);
+    w.print("\n{c}Landed\non main \u{b7} {s}", .{ heading_mark, hash[0..@min(hash.len, 7)] }) catch return w.buffered();
+    if (state.len > 0) w.print(" \u{b7} {s}", .{state}) catch return w.buffered();
+    inline for (.{ .{ "Review fixes", fixes }, .{ "Follow-ups", follow } }) |part| if (part[1].len > 0) {
+        w.print("\n{s}", .{part[0]}) catch return w.buffered();
+        var items = std.mem.splitSequence(u8, part[1], "; ");
+        while (items.next()) |item| w.print("\n  - {s}", .{item}) catch return w.buffered();
+    };
+    return w.buffered();
+}
+
+test "a landing note is split into its hash, fixes and follow-ups, each its own row" {
+    var buf: [512]u8 = undefined;
+    const note = "landed on main as 70119238def8b48a6c7ce684a4abfbe1e4a75a5e, with the review's fixes: one.; two. \u{b7} installing";
+    try std.testing.expectEqualStrings("\n\x01Landed\non main \u{b7} 7011923 \u{b7} installing\nReview fixes\n  - one.\n  - two.", landed(&buf, note));
+    try std.testing.expectEqualStrings(
+        "\n\x01Landed\non main \u{b7} abcdef0\nFollow-ups\n  - #5 a\n  - #6 b",
+        landed(&buf, "landed on main as abcdef0123, with the review's fixes: ; follow-ups filed: #5 a; #6 b"),
+    );
+    try std.testing.expectEqualStrings("gate ok", landed(&buf, "gate ok"));
+}
