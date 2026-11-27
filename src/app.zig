@@ -8580,6 +8580,39 @@ test "a ticket with an open ask and a try sheet: the ask's row shows the ask and
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon answer 9 1") != null);
 }
 
+test "a send-back with an open ask on one ticket: the card opened from the send-back row marks that row open, and from the ask row the ask's" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 140;
+    app.view_w = 140;
+    app.view_h = 30;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":7,"repo":"arena","title":"Lights","status":"doing",
+        \\"ask":{"id":9,"question":"When?","options":["now","later"]}}],
+        \\"needs_you":[{"id":"ask:9","kind":"ask","ticket":7,"repo":"arena","text":"#7 asks","actions":[]},
+        \\{"id":"back-7","kind":"sent_back","ticket":7,"repo":"arena","text":"#7 sent back","actions":[]}]}
+    );
+    defer app.board.?.deinit();
+    const ask_row: sheets.Row = .{ .kind = .need, .item = 0, .ticket = 7 };
+    const back_row: sheets.Row = .{ .kind = .need, .item = 1, .ticket = 7 };
+
+    app.home = .{ .detail = 7 };
+    try std.testing.expect(win_move.isOpen(&app, back_row));
+    app.home = .{ .detail = 7, .ask_first = true };
+    try std.testing.expect(win_move.isOpen(&app, ask_row));
+    try std.testing.expect(!win_move.isOpen(&app, back_row));
+
+    app.board.?.deinit();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"needs_you":[{"id":"ask:9","kind":"ask","ticket":7,"repo":"arena","text":"#7 asks","actions":[]}]}
+    );
+    try std.testing.expect(win_move.isOpen(&app, ask_row));
+}
+
 test "in Workbench's look a click on a popup's option answers the ask and one on its ✕ closes it" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

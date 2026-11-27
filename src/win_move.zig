@@ -65,7 +65,9 @@ pub fn isOpen(app: *const App, row: sheets.Row) bool {
     const view = app.home orelse return false;
     const id = row.ticket orelse return row.kind == .need and app.itemNeed() == row.item;
     if (view.detail != id or view.gate) return false;
-    return std.mem.eql(u8, app.board.?.needsYou()[row.item].kind, "ask") == app.showsAsk(id);
+    const shown = app.showsAsk(id);
+    if (!std.mem.eql(u8, app.board.?.needsYou()[row.item].kind, "ask")) return !(view.ask_first and shown);
+    return shown or app.cardById(id) == null;
 }
 
 fn isSendBack(need: tickets.Need) bool {
