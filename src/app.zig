@@ -10688,6 +10688,12 @@ test "⏎ on a subagent row in a card's modal shows that subagent, as a click on
     try std.testing.expect(std.mem.indexOf(u8, log[0..n], "select-window") == null);
     try std.testing.expectEqual(@as(u32, 12), app.pick.?.pane);
     try std.testing.expectEqualStrings("check deps", app.pick.?.name[0..app.pick.?.len]);
+
+    app.home.?.claude = null;
+    try app.showHolder(4);
+    try std.testing.expectEqual(@as(?u32, 12), app.home.?.claude);
+    const m = try sent.readPositionalAll(std.testing.io, &log, 0);
+    try std.testing.expect(std.mem.indexOf(u8, log[0..m], "select-window") == null);
 }
 
 test "a try card's foot has no its Claude, though its Claude is still there, and c does nothing" {
