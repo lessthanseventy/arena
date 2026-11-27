@@ -235,6 +235,10 @@ fn checkRefusals(app: *App) !void {
         var id: [24]u8 = undefined;
         try takeRefusal(app, std.fmt.bufPrint(&id, "next:{d}", .{item.ticket}) catch continue);
     }
+    if (app.home) |view| if (view.detail) |open| {
+        var id: [24]u8 = undefined;
+        try takeRefusal(app, std.fmt.bufPrint(&id, "close:{d}", .{open}) catch unreachable);
+    };
     try takeRefusal(app, "start");
     try takeRefusal(app, "move");
     try takeRefusal(app, "goal");

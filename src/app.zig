@@ -2043,7 +2043,7 @@ pub const App = struct {
             const id = prompt.item()["close:".len..];
             var said: [40]u8 = undefined;
             const refusal = std.fmt.bufPrint(&said, "close:{s}", .{id}) catch return;
-            _ = try app.runNeed(refusal, &.{ "babylon", "update", id, "--status", "done", "--why", prompt.text() });
+            _ = try app.runWith(refusal, &.{ "babylon", "close", id, "--why", prompt.text() }, true);
             return;
         }
         var said: [40]u8 = undefined;
@@ -5245,7 +5245,7 @@ pub const App = struct {
                 const next = if (eql(u8, card.priority, "low")) "med" else if (eql(u8, card.priority, "med")) "high" else "low";
                 try app.send(.ignore, captured("babylon update {d} --priority {s}"), .{ card.id, next });
             },
-            .close => try app.send(.ignore, captured("babylon update {d} --status done"), .{card.id}),
+            .close => if (card.status == .backlog) win_backlog.openClose(app, card.id) else try app.send(.ignore, captured("babylon update {d} --status done"), .{card.id}),
             .to_next => try app.toNext(card.id, false),
             .goal => {
                 view.detail = null;
@@ -5632,6 +5632,10 @@ pub const App = struct {
             squeeze = .{ .rows = rect.h -| 4 -| claude -| note_rows -| after -| 1, .pick = pick, .rect_w = rect.w };
         }
         cardHeadOpen(card, inner, app.epoch, words, if (app.home) |view| view.details else false, if (app.home) |view| view.ask_first else false, squeeze, head);
+        var close_id: [24]u8 = undefined;
+        if (app.refusalOf(std.fmt.bufPrint(&close_id, "close:{d}", .{card.id}) catch "")) |said| {
+            if (!std.mem.eql(u8, said, "ok")) head.add(.warn, "✗ not closed: {s}", .{said}) else if (card.status == .done) head.add(.plain, "✓ closed", .{});
+        }
         if (!app.sheeted(card)) return;
         var id: [24]u8 = undefined;
         const note = app.refusalOf(std.fmt.bufPrint(&id, "try:{d}", .{card.id}) catch return) orelse return;
@@ -5795,7 +5799,7 @@ pub const App = struct {
                     .handoff => "H",
                     .edit => "e",
                     .priority => "p",
-                    .close => ">",
+                    .close => if (card.status == .backlog) "x" else ">",
                     .reopen => "<",
                     .to_todo => "t",
                     .goal => "a",
@@ -5805,7 +5809,8 @@ pub const App = struct {
                     .send_back => "s",
                     else => continue,
                 };
-                const button: ModalButton = .{ .action = .{ .card = action }, .key = key, .label = action.label(), .x = x, .y = foot };
+                const label = if (action == .close and card.status == .backlog) (if (card.isEpic()) "close idea…" else "close ticket…") else action.label();
+                const button: ModalButton = .{ .action = .{ .card = action }, .key = key, .label = label, .x = x, .y = foot };
                 if (x + button.width() > right or n == out.len) break;
                 out[n] = button;
                 n += 1;
@@ -6129,7 +6134,10 @@ pub const App = struct {
         }
         if (is(key, &.{"g"})) return app.openGate(view.detail orelse return);
         if (is(key, &.{"d"})) return app.openAskDoc(view.detail orelse return);
-        if (is(key, &.{"x"}) and (app.modalCard() orelse return).proposal != null) return app.pressModal(.{ .card = .no });
+        if (is(key, &.{"x"})) if (app.modalCard()) |open| {
+            if (open.proposal != null) return app.pressModal(.{ .card = .no });
+            if (open.status == .backlog) return app.pressModal(.{ .card = .close });
+        };
         const card = app.modalCard() orelse return;
         if (key.len == 1 and key[0] >= '1' and key[0] <= '9' and app.showsAsk(card.id)) return app.pressModal(.{ .option = key[0] - '0' });
         if (card.ask == null or card.ask.?.options.len == 0) if (app.claudeOf(card)) |win| if (win.subs() > 0) {
@@ -8943,6 +8951,74 @@ test "a card opened over the repos view has clickable buttons, and its ✕ close
     try std.testing.expect(app.home.?.repos);
 }
 
+test "an idea's card: q closes the card, x close idea… asks why and closes the idea through babylon, and the card says closed or babylon's refusal" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    defer {
+        for (app.refusals.items) |r| {
+            std.testing.allocator.free(r.id);
+            std.testing.allocator.free(r.text);
+        }
+        app.refusals.deinit(std.testing.allocator);
+    }
+    app.term_w = 100;
+    app.view_w = 100;
+    app.view_h = 24;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"backlog":[{"id":1201,"kind":"epic","title":"list","status":"backlog"}]}
+    );
+    app.home = .{ .detail = 1201 };
+
+    var buttons: [16]App.ModalButton = undefined;
+    var labels: [16][]const u8 = undefined;
+    var n: usize = 0;
+    for (app.modalButtons(&buttons)) |b| if (b.action == .close or (b.action == .card and b.action.card == .close)) {
+        labels[n] = b.label;
+        n += 1;
+        try std.testing.expectEqualStrings(if (b.action == .close) "q" else "x", b.key);
+    };
+    try std.testing.expectEqual(@as(usize, 2), n);
+    try std.testing.expectEqualStrings("close idea…", labels[0]);
+    try std.testing.expectEqualStrings("close", labels[1]);
+
+    try app.modalKey("x");
+    try std.testing.expectEqual(@as(?u32, 1201), app.home.?.detail);
+    try std.testing.expect(app.prompt.?.what == .why);
+    try std.testing.expectEqualStrings("close:1201", app.prompt.?.item());
+    var typed = app.prompt.?;
+    @memcpy(typed.buf[0..9], "a test, n");
+    typed.len = 9;
+    try app.sendWhy(typed);
+    try std.testing.expect(app.prompt == null);
+    try std.testing.expectEqual(@as(?u32, 1201), app.home.?.detail);
+    var got: [1024]u8 = undefined;
+    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'close' '1201' '--why' 'a test, n'") != null);
+
+    var head: App.CardHead = undefined;
+    try app.refuse("close:1201", "babylon: #1201 has open steps: #5\n");
+    app.modalHead(app.modalCard().?, 60, false, &head);
+    try std.testing.expect(for (head.lines[0..head.n]) |line| {
+        if (std.mem.eql(u8, line, "✗ not closed: babylon: #1201 has open steps: #5")) break true;
+    } else false);
+
+    app.board.?.deinit();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1201,"kind":"epic","title":"list","status":"done"}],"backlog":[]}
+    );
+    defer app.board.?.deinit();
+    try app.refuse("close:1201", "ok");
+    app.modalHead(app.modalCard().?, 60, false, &head);
+    try std.testing.expect(for (head.lines[0..head.n]) |line| {
+        if (std.mem.eql(u8, line, "✓ closed")) break true;
+    } else false);
+}
+
 test "a backlog ticket's card with an open ask lists its options, and 1 answers it" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -10777,7 +10853,7 @@ test "J K on a todo row move it in its repo, W adds it to next, + opens the new 
     typed.len = 8;
     try app.sendWhy(typed);
     len = try sent.readPositionalAll(std.testing.io, &got, 0);
-    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'update' '6' '--status' 'done' '--why' 'not need'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'close' '6' '--why' 'not need'") != null);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "not need") != null);
 }
 
