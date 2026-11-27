@@ -132,8 +132,41 @@ fn statusPath(app: *const App, repo: []const u8, buf: []u8) ?[]const u8 {
 fn askStatus(app: *App, repo: []const u8, comptime fetched: bool) !void {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const path = statusPath(app, repo, &buf) orelse return;
+    const hash = std.hash.Wyhash.hash(0, repo);
+    if (askedOut(app, hash)) return;
     const fetch = if (fetched) "git fetch -q origin main 2>/dev/null; " else "";
     try app.send(.ignore, "run-shell -b \"cd \\\"\\$HOME/projects/{s}\\\" && {s}(git worktree list --porcelain | sed -n 's/^worktree //p' | while read d; do echo --wt; echo \\$d; git --no-optional-locks -C \\$d status --porcelain=v2 --branch; echo --ahead; git -C \\$d rev-list --count main..HEAD; done; echo --stash; git stash list | wc -l; echo --today; date -d 00:00 +%s; echo --unpushed; git log --format=%h origin/main..main; echo --log; git log -n 200 --format='%h %ct %s ‖ %(trailers:valueonly,separator=%x20)' main) >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ repo, fetch, path, path, path });
+    if (app.status_out_n < app.status_out.len) {
+        app.status_out[app.status_out_n] = .{ .repo = hash, .at = app.now };
+        app.status_out_n += 1;
+    }
+}
+
+/// How long an ask with no answer blocks the next, in milliseconds.
+const ask_lost_ms = 120_000;
+
+/// Whether a status ask of `repo`'s hash is out and not yet answered: one job per repo writes
+/// its file at a time.
+fn askedOut(app: *const App, hash: u64) bool {
+    for (app.status_out[0..app.status_out_n]) |a| {
+        if (a.repo == hash and app.now - a.at < ask_lost_ms) return true;
+    }
+    return false;
+}
+
+fn answered(app: *App, hash: u64) void {
+    var i: usize = 0;
+    while (i < app.status_out_n) {
+        if (app.status_out[i].repo == hash) {
+            app.status_out_n -= 1;
+            app.status_out[i] = app.status_out[app.status_out_n];
+        } else i += 1;
+    }
+}
+
+fn gitBad(app: *const App, repo: []const u8) bool {
+    for (app.repo_git[0..app.repo_git_n]) |g| if (std.mem.eql(u8, g.name[0..g.len], repo)) return g.bad;
+    return false;
 }
 
 fn askAll(app: *App, comptime fetched: bool) !void {
@@ -146,8 +179,12 @@ fn takeStatus(app: *App) void {
     for (list(app, &rows)) |s| {
         var buf: [std.fs.max_path_bytes]u8 = undefined;
         const path = statusPath(app, s.repo, &buf) orelse continue;
-        const text = std.Io.Dir.cwd().readFileAlloc(app.io, path, app.gpa, .limited(1 << 20)) catch continue;
+        const read = std.Io.Dir.cwd().readFileAlloc(app.io, path, app.gpa, .limited(1 << 20));
+        if (read) |_| {} else |err| if (err == error.FileNotFound) continue;
         std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
+        answered(app, std.hash.Wyhash.hash(0, s.repo));
+        const text = read catch app.gpa.alloc(u8, 0) catch continue;
+        const bad = text.len == 0;
         if (s.repo.len > 48) {
             app.gpa.free(text);
             continue;
@@ -164,11 +201,13 @@ fn takeStatus(app: *App) void {
             @memcpy(g.name[0..s.repo.len], s.repo);
             g.len = @intCast(s.repo.len);
             g.text = &.{};
+            g.bad = false;
             break :blk app.repo_git_n - 1;
         };
         const g = &app.repo_git[slot];
         app.gpa.free(g.text);
         g.text = text;
+        g.bad = bad;
         app.dirty = true;
     }
 }
@@ -674,6 +713,8 @@ pub fn paint(app: *App, w: *Writer) !void {
         var stash: [16]u8 = undefined;
         const text = if (sum) |m|
             std.fmt.bufPrint(&line, "{s}●{d}  ⎇{d}{s}", .{ prefix, m.checkout.changed, m.worktrees, if (m.stashes > 0) std.fmt.bufPrint(&stash, "  ≡{d}", .{m.stashes}) catch "" else "" }) catch s.repo
+        else if (gitBad(app, s.repo))
+            std.fmt.bufPrint(&line, "{s}  main  ↑{d} ↓{d}  ●?", .{ s.repo, s.ahead, s.behind }) catch s.repo
         else
             std.fmt.bufPrint(&line, "{s}  main  ↑{d} ↓{d}", .{ s.repo, s.ahead, s.behind }) catch s.repo;
         const level = isLevel(s, sum);

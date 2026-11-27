@@ -498,7 +498,8 @@ pub fn anyKey(pressed: []const u8, names: []const []const u8) bool {
 
 /// A repos-view git request: its detail file's id and the hash of the repo it asked about.
 pub const RepoAsk = struct { id: u32, repo: u64, dropped: bool = false };
-pub const RepoGit = struct { name: [48]u8, len: u8, text: []u8 };
+pub const RepoGit = struct { name: [48]u8, len: u8, text: []u8, bad: bool = false };
+pub const StatusAsk = struct { repo: u64, at: i64 };
 
 pub const App = struct {
     gpa: Allocator,
@@ -614,6 +615,8 @@ pub const App = struct {
     /// What git answered of each repo (see win_repos.zig), once asked, and when to ask again.
     repo_git: [max_repos]RepoGit = undefined,
     repo_git_n: usize = 0,
+    status_out: [max_repos]StatusAsk = undefined,
+    status_out_n: usize = 0,
     repos_next: i64 = 0,
     repos_said: [160]u8 = undefined,
     repos_said_len: usize = 0,
@@ -6007,7 +6010,7 @@ pub const App = struct {
                     return true;
                 }
             };
-            if (open.repos or open.claudes) if (app.columnRect()) |rect| {
+            if ((open.repos and open.detail == null) or open.claudes) if (app.columnRect()) |rect| {
                 if (rect.contains(m.x, m.y)) return true;
             };
             if (open.item_open) if (app.columnRect()) |rect| {
@@ -8624,6 +8627,41 @@ test "a card's modal lists every option of its ask and its words, and ⏎ answer
     var got: [512]u8 = undefined;
     const len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon answer 9 2") != null);
+}
+
+test "a card opened over the repos view has clickable buttons, and its ✕ closes the card and not the view" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 24;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":4,"repo":"tlon","title":"d","status":"doing","ask":{"id":9,"question":"Which?","options":["x","y"]}}],
+        \\"needs_you":[{"id":"ask:9","kind":"ask","ticket":4,"repo":"tlon","text":"t","actions":[{"key":"1","label":"x"}]}]}
+    );
+    defer app.board.?.deinit();
+    app.home = .{ .detail = 4, .repos = true };
+    var buttons: [16]App.ModalButton = undefined;
+    const second = for (app.modalButtons(&buttons)) |b| {
+        if (b.action == .option and std.mem.eql(u8, b.key, "2")) break b;
+    } else return error.NoButton;
+    try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = second.x, .y = second.y, .release = false }));
+    try std.testing.expectEqual(@as(?u32, null), app.home.?.detail);
+    var got: [512]u8 = undefined;
+    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon answer 9 2") != null);
+    try std.testing.expect(app.home.?.repos);
+
+    app.home.?.detail = 4;
+    const card = app.modalRect().?;
+    try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = card.x + card.w - 3, .y = card.y, .release = false }));
+    try std.testing.expectEqual(@as(?u32, null), app.home.?.detail);
+    try std.testing.expect(app.home.?.repos);
 }
 
 test "a backlog ticket's card with an open ask lists its options, and 1 answers it" {
@@ -11333,6 +11371,12 @@ test "restart-pending and a repo's unpushed are chips on the head, not Your move
     try app.homeKey("\r");
     try std.testing.expectEqual(@as(?u32, 42), view.detail);
     try std.testing.expect(view.repos);
+    const card = app.modalRect().?;
+    try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = card.x + card.w - 3, .y = card.y, .release = false }));
+    try std.testing.expectEqual(@as(?u32, null), view.detail);
+    try std.testing.expect(view.repos);
+    try app.homeKey("\r");
+    try std.testing.expectEqual(@as(?u32, 42), view.detail);
     try app.homeKey("\x1b");
     try std.testing.expectEqual(@as(?u32, null), view.detail);
     try std.testing.expect(view.repos and view.repos_in);
@@ -11398,6 +11442,49 @@ test "a push that answers ok has its repo counted again, and the row reads what 
     win_repos.polled(&app);
     var rows: [max_repos]tickets.RepoState = undefined;
     try std.testing.expectEqual(@as(u32, 0), win_repos.list(&app, &rows)[0].ahead);
+}
+
+test "one status ask per repo is out at a time, and an answer that cannot be read is dropped and shown as ●?" {
+    const dir = "arena-test-status-asks";
+    const cwd = std.Io.Dir.cwd();
+    try cwd.createDirPath(std.testing.io, dir);
+    defer cwd.deleteTree(std.testing.io, dir) catch {};
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try tryApp(sent, "{\"tickets\":[],\"needs_you\":[" ++
+        "{\"id\":\"push:arena:abc:0\",\"kind\":\"push\",\"ticket\":null,\"repo\":\"arena\",\"status\":true,\"text\":\"▲ arena: 7 unpushed\",\"actions\":[]}]," ++ plan_tail);
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.detail.deinit(std.testing.allocator);
+    defer app.grab.deinit(std.testing.allocator);
+    defer app.out.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    defer for (app.repo_git[0..app.repo_git_n]) |g| std.testing.allocator.free(g.text);
+    app.roles = @import("parts.zig").roles();
+    app.home.?.focus = .plan;
+    app.board_dir = dir;
+    app.repos_next = std.math.maxInt(i64);
+
+    try win_repos.open(&app);
+    try win_repos.open(&app);
+    var got: [8192]u8 = undefined;
+    const asked = try sentText(sent, &got);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, asked, "git worktree list --porcelain"));
+
+    const big = try std.testing.allocator.alloc(u8, (1 << 20) + 1);
+    defer std.testing.allocator.free(big);
+    @memset(big, 'x');
+    try cwd.writeFile(std.testing.io, .{ .sub_path = dir ++ "/repos-arena.status", .data = big });
+    win_repos.polled(&app);
+    try std.testing.expectError(error.FileNotFound, cwd.access(std.testing.io, dir ++ "/repos-arena.status", .{}));
+    var shot: Writer.Allocating = .init(std.testing.allocator);
+    defer shot.deinit();
+    try draw.frame(&app, &shot.writer, .all);
+    try std.testing.expect(std.mem.indexOf(u8, shot.written(), "●?") != null);
+
+    try win_repos.open(&app);
+    try std.testing.expectEqual(@as(usize, 2), std.mem.count(u8, try sentText(sent, &got), "git worktree list --porcelain"));
 }
 
 test "< on a done card's modal asks before reopening, n keeps it done and y reopens; reopen is the last button" {
