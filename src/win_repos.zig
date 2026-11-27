@@ -117,13 +117,20 @@ fn nextRequest(app: *App) void {
 }
 
 /// Runs `git` in `repo`, its answer into a file of its own.
-fn runGit(app: *App, repo: []const u8, git: []const u8) !void {
+pub fn runGit(app: *App, repo: []const u8, git: []const u8) !void {
     nextRequest(app);
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const path = app.detailPath(app.repos_req, &buf) orelse return;
     std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
-    if (app.detail_asked.items.len == 16) _ = app.detail_asked.orderedRemove(0);
-    try app.detail_asked.append(app.gpa, app.repos_req);
+    const hash = std.hash.Wyhash.hash(0, repo);
+    for (app.repos_asked.items, 0..) |old, i| {
+        if (old.repo != hash) continue;
+        var old_buf: [std.fs.max_path_bytes]u8 = undefined;
+        if (app.detailPath(old.id, &old_buf)) |old_path| std.Io.Dir.cwd().deleteFile(app.io, old_path) catch {};
+        _ = app.repos_asked.orderedRemove(i);
+        break;
+    }
+    try app.repos_asked.append(app.gpa, .{ .id = app.repos_req, .repo = hash });
     try app.send(.ignore, "run-shell -b \"git -C \\\"\\$HOME/projects/{s}\\\" {s} >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ repo, git, path, path, path });
 }
 

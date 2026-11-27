@@ -469,6 +469,9 @@ pub fn anyKey(pressed: []const u8, names: []const []const u8) bool {
     return false;
 }
 
+/// A repos-view git request: its detail file's id and the hash of the repo it asked about.
+pub const RepoAsk = struct { id: u32, repo: u64 };
+
 pub const App = struct {
     gpa: Allocator,
     io: std.Io,
@@ -572,6 +575,8 @@ pub const App = struct {
     projects_dir: ?[]const u8 = null,
     /// The tickets whose detail babylon was asked to write and arena has yet to take in.
     detail_asked: std.ArrayList(u32) = .empty,
+    /// The repos view's git requests not yet taken in, the latest of each repo (by name hash).
+    repos_asked: std.ArrayList(RepoAsk) = .empty,
     /// The id of the repos view's latest git request, each with its own detail file: only that
     /// one's answer is read, so a slower earlier answer cannot show.
     repos_req: u32 = 0,
@@ -705,6 +710,7 @@ pub const App = struct {
         app.detail.deinit(app.gpa);
         app.grab.deinit(app.gpa);
         app.detail_asked.deinit(app.gpa);
+        app.repos_asked.deinit(app.gpa);
         for (app.repos_pushing.items) |id| app.gpa.free(id);
         app.repos_pushing.deinit(app.gpa);
         app.guard.deinit(app.gpa);
@@ -10969,6 +10975,7 @@ test "restart-pending and a repo's unpushed are chips on the head, not Your move
         "{\"id\":\"push:ficciones:ghi:2\",\"kind\":\"push\",\"ticket\":null,\"repo\":\"ficciones\",\"text\":\"▲ ficciones: 1 unpushed, origin moved, 2 behind · rebase\",\"actions\":[]}]," ++ plan_tail);
     defer app.pending.deinit(std.testing.allocator);
     defer app.detail_asked.deinit(std.testing.allocator);
+    defer app.repos_asked.deinit(std.testing.allocator);
     defer app.detail.deinit(std.testing.allocator);
     defer app.grab.deinit(std.testing.allocator);
     defer app.out.deinit(std.testing.allocator);
