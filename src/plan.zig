@@ -625,9 +625,9 @@ pub const Sheet = struct {
     }
 
     fn clipped(s: *Sheet, width: usize, line: []const u8) []const u8 {
+        if (text_mod.cells(line) <= width) return line;
         var buf: [256]u8 = undefined;
-        const shown = text_mod.cut(&buf, line, width);
-        return if (shown.ptr == line.ptr) line else s.print("{s}", .{shown});
+        return s.print("{s}", .{text_mod.cut(&buf, line, width)});
     }
 
     /// The plan as rows `width` cells wide, `epoch` the time now, the stages in `unfolded` shown

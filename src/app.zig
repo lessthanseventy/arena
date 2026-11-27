@@ -5064,11 +5064,17 @@ pub const App = struct {
             var it = DetailLines.init(text, inner);
             var n: usize = 0;
             while (it.next()) |line| : (n += 1) {
-                if (n == rows or head.n == head.lines.len or head.used + line.len > head.buf.len) return;
-                const slot = head.buf[head.used..][0..line.len];
-                @memcpy(slot, line);
-                head.used += line.len;
-                head.lines[head.n] = slot;
+                if (n == rows or head.n == head.lines.len) return;
+                const inside = @intFromPtr(line.ptr) >= @intFromPtr(text.ptr) and @intFromPtr(line.ptr) + line.len <= @intFromPtr(text.ptr) + text.len;
+                if (!inside and head.used + line.len > head.buf.len) return;
+                if (inside) {
+                    head.lines[head.n] = line;
+                } else {
+                    const slot = head.buf[head.used..][0..line.len];
+                    @memcpy(slot, line);
+                    head.used += line.len;
+                    head.lines[head.n] = slot;
+                }
                 head.kinds[head.n] = kind;
                 head.joins[head.n] = it.dropped;
                 head.n += 1;

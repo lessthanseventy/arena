@@ -97,23 +97,10 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             const place_x = age_x -| (cellCount(place) + 2);
             try bench.say(w, age_x, y, age, r.dim, bg, false);
             try bench.say(w, place_x, y, place, r.dim, bg, false);
-            var name_buf: [160]u8 = undefined;
-            try sayCut(w, x0 + 7, y, otherName(app, win, &name_buf), place_x -| (x0 + 8), r.text, bg, false);
+            try sayCut(w, x0 + 7, y, win.label(), place_x -| (x0 + 8), r.text, bg, false);
         },
         else => {},
     }
-}
-
-/// What an other-Claudes row calls `win`: a title that starts with a ticket's `#number` says the
-/// ticket's short name in its place, since a session's name is cut where it was named.
-fn otherName(app: *const app_mod.App, win: *const app_mod.Window, buf: []u8) []const u8 {
-    const label = win.label();
-    if (label.len < 2 or label[0] != '#') return label;
-    var end: usize = 1;
-    while (end < label.len and std.ascii.isDigit(label[end])) end += 1;
-    const id = std.fmt.parseInt(u32, label[1..end], 10) catch return label;
-    const card = app.cardById(id) orelse return label;
-    return std.fmt.bufPrint(buf, "#{d} {s}", .{ id, card.name() }) catch label;
 }
 
 /// Enter on an in flight row: to the Claude building it, or with none and nothing moving it,
