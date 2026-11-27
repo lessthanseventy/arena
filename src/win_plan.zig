@@ -75,7 +75,7 @@ pub fn planHit(app: *const App, sheet: *const sheets.Sheet, x: u16, y: u16) ?Pla
 }
 
 pub fn hitIn(app: *const App, sheet: *const sheets.Sheet, win: sheets.Window, rect: sheets.Rect, x: u16, y: u16) ?PlanHit {
-    if (win == .driving) {
+    if (win == .driving and !sheet.hasProjects()) {
         if (rect.h == 0 or x < rect.x or x + 1 >= rect.x + rect.w or y != rect.y) return null;
         const span = sheet.span(win);
         return .{ .win = win, .row = if (span.len > 0) span.start else null };
@@ -119,7 +119,8 @@ pub fn planButtonClick(app: *App, sheet: *const sheets.Sheet, at: usize, m: keys
 
 pub fn windowCount(b: *const tickets.Board, given: *const tickets.Plan, win: sheets.Window) ?usize {
     return switch (win) {
-        .driving, .board => null,
+        .driving => if (b.projects().len > 0) b.projects().len else null,
+        .board => null,
         .move => b.needsYou().len,
         .next => given.next.len,
         .goals => given.goals.len,
@@ -136,7 +137,7 @@ pub fn windowCount(b: *const tickets.Board, given: *const tickets.Plan, win: she
 pub fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, view: app_mod.HomeView, win: sheets.Window, lit: bool) !void {
     const rect = app.planRect(win);
     const whole = lit and view.whole == win;
-    if (win == .driving) {
+    if (win == .driving and !sheet.hasProjects()) {
         const mine = sheet.span(win);
         if (rect.h == 0 or rect.w < 16 or mine.len == 0) return;
         if (lit) {
@@ -153,7 +154,7 @@ pub fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.S
     const mine = sheet.span(win);
     const picked_at = if (lit) sheet.rowOf(view.plan_pick) else null;
     const focused = !app.columnFocused() and (if (picked_at) |at| sheet.rows[at].win == win else false);
-    try bench.window(w, r, rect.x, rect.y, ww, rect.h, win.title(), windowCount(&app.board.?, given, win), focused);
+    try bench.window(w, r, rect.x, rect.y, ww, rect.h, if (win == .driving) "projects" else win.title(), windowCount(&app.board.?, given, win), focused);
     const bar = r.panel;
     if (win == .board) try win_board.tally(app, w, r, sheet, rect.x, rect.y, ww);
     if (whole) {
@@ -214,6 +215,7 @@ pub fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.
         },
         .need => try win_move.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .focal, .drove => {},
+        .project => try win_driving.paintProject(app, w, r, sheet, at, y, x0, ww, lit),
         .now, .now_line, .landed => try win_board.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .next => if (row.win == .board) try win_board.paint(app, w, r, sheet, at, y, x0, ww, lit) else try win_next.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .goal, .goal_ticket => try win_goals.paint(app, w, r, sheet, at, y, x0, ww, lit),

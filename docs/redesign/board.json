@@ -1,4 +1,8 @@
 {
+  "projects": [
+    {"name": "Ficciones", "repos": ["ficciones", "arena", "babylon", "menard"], "driving": 326, "goal": {"id": 326, "title": "The board, redesigned: an app, not a terminal dump", "landed": 13, "total": 18}, "settings": {"auto": {"value": true}, "hold": {"value": false}}},
+    {"name": "asterion", "repos": ["tlon"], "driving": 410, "goal": {"id": 410, "title": "menard runs zig too", "landed": 2, "total": 7}, "settings": {"auto": {"value": false}, "hold": {"value": false}}}
+  ],
   "auto": {"on": true, "cap": 4, "working": 3, "tools": {"working": 1, "cap": 3}, "repo_caps": {"arena": 2, "babylon": 1, "tlon": 1, "menard": 0}},
   "hold": false,
   "orchestrator": {"on": true, "running": true},

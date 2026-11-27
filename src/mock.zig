@@ -1414,7 +1414,8 @@ fn planHead(sc: *Scene, screen: Screen) void {
         x += c.print(x, 0, word, .{ .fg = if (on) s.on_accent else s.dim, .bg = if (on) s.accent else s.raised, .bold = on }, 12) + 1;
     }
     x += 2;
-    x += c.print(x, 0, "every · arena · babylon · tlon · …   / find", .{ .fg = s.dim, .bg = s.raised }, 60);
+    const picker = if (sc.board.projects().len > 0) "all · Ficciones · asterion   / find" else "every · arena · babylon · tlon · …   / find";
+    x += c.print(x, 0, picker, .{ .fg = s.dim, .bg = s.raised }, 60);
     const plan = sc.board.plan().?;
     const tail = sc.fmt("◐ auto 4/6   ◆ orch working 12s   ✓ {d} today   ▲ {d}   ≡", .{ plan.landed_today.count, sc.board.needsYou().len });
     _ = c.print(c.w - text_mod.cells(tail) - 1, 0, tail, .{ .fg = s.text, .bg = s.raised }, 80);
@@ -1466,18 +1467,38 @@ fn doing(sc: *Scene) void {
     var ny = sc.panel(1, y, w, move_h, "needs you", needs.len, true);
     for (needs, 0..) |need, i| {
         if (i == 5) break;
-        ticketRow(sc, 2, ny, w - 2, need.ticket orelse 0, "asks you", s.you, i == 0);
+        ticketRow(sc, 2, ny, w - 2, need.ticket orelse 0, if (sc.board.projectOf(need.repo)) |project| sc.fmt("{s}   asks you", .{project}) else "asks you", s.you, i == 0);
         ny += 1;
     }
     y += move_h + 2;
 
-    const goal = plan.goals[0];
-    c.fill(1, y, w, 1, s.tile);
-    _ = c.print(3, y, sc.fmt("◆ heading for  #{d} {s}", .{ goal.epic, goal.title }), .{ .fg = s.text, .bg = s.tile, .bold = true }, w / 2);
-    const pct = goal.landed * 100 / goal.total;
-    sc.bar(w - 40, y, 20, goal.landed, goal.total, s.accent);
-    _ = c.print(w - 18, y, sc.fmt("{d}/{d}  {d}%", .{ goal.landed, goal.total, pct }), .{ .fg = s.text, .bg = s.tile }, 14);
-    y += 2;
+    const projects = sc.board.projects();
+    if (projects.len > 0) {
+        var py = sc.panel(1, y, w, 6, "projects", projects.len, false);
+        for (projects, 0..) |project, i| {
+            const pick = i == 0;
+            if (pick) c.fill(2, py, w - 2, 1, s.raised);
+            const bg: ?RGB = if (pick) s.raised else null;
+            _ = c.print(3, py, project.name, .{ .fg = s.accent, .bold = true, .bg = bg }, 14);
+            if (project.goal) |goal| {
+                _ = c.print(19, py, sc.fmt("#{d} {s}", .{ goal.id, goal.title }), .{ .fg = s.text, .bg = bg }, w -| 70);
+                sc.bar(w - 52, py, 14, goal.landed, goal.total, s.accent);
+                _ = c.print(w - 37, py, sc.fmt("{d}/{d}", .{ goal.landed, goal.total }), .{ .fg = s.text, .bg = bg }, 8);
+            }
+            _ = c.print(w - 28, py, project.autoWord(false), .{ .fg = s.dim, .bg = bg }, 10);
+            _ = c.print(w - 18, py, if (i == 0) "3 building" else "idle", .{ .fg = s.dim, .bg = bg }, 16);
+            py += 1;
+        }
+        y += 8;
+    } else {
+        const goal = plan.goals[0];
+        c.fill(1, y, w, 1, s.tile);
+        _ = c.print(3, y, sc.fmt("◆ heading for  #{d} {s}", .{ goal.epic, goal.title }), .{ .fg = s.text, .bg = s.tile, .bold = true }, w / 2);
+        const pct = goal.landed * 100 / goal.total;
+        sc.bar(w - 40, y, 20, goal.landed, goal.total, s.accent);
+        _ = c.print(w - 18, y, sc.fmt("{d}/{d}  {d}%", .{ goal.landed, goal.total, pct }), .{ .fg = s.text, .bg = s.tile }, 14);
+        y += 2;
+    }
 
     const rows = foot - y;
     var by = sc.panel(1, y, w, rows, "board", plan.landed_today.count, false);

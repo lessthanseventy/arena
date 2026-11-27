@@ -40,8 +40,17 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
     };
     var age_buf: [8]u8 = undefined;
     const age = sheets.ago(&age_buf, need.since, app.epoch);
-    const right = x0 + ww -| (cellCount(age) + 1);
+    var right = x0 + ww -| (cellCount(age) + 1);
     try bench.say(w, right, y, age, r.dim, bg, false);
+    if (app.board.?.projectOf(need.repo)) |project| {
+        var tag_buf: [64]u8 = undefined;
+        const tag = draw.clipMark(&tag_buf, project, App.scope_label_w);
+        const tag_x = right -| (cellCount(tag) + 2);
+        if (tag_x > x + 16) {
+            try bench.say(w, tag_x, y, tag, r.dim, bg, false);
+            right = tag_x;
+        }
+    }
     var end = right;
     if (need.actions.len > 0 and !opened) {
         var hint_buf: [96]u8 = undefined;

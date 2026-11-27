@@ -461,8 +461,8 @@ pub const HomeView = struct {
     other_pick: usize = 0,
     /// No goal's chip the pick is on, by its place on the chip row.
     plan_chip: usize = 0,
-    /// The repo every window of the plan is narrowed to: 0 for every one, else its place in the
-    /// board's repos from 1.
+    /// What every window of the plan is narrowed to: 0 for all, else its place from 1 in the
+    /// board's projects, or in its repos when it has no project.
     plan_repo: usize = 0,
     unfolded: u8 = 0,
     /// Workbench's plan window shown whole, as a modal over the plan.
@@ -2582,6 +2582,7 @@ pub const App = struct {
             .holder => |id| try app.showHolder(id),
             .inbox => try app.showInbox(),
             .claudes => try win_now.open(app),
+            .project => |name| try app.showProject(name),
             .exit => {
                 app.ended = true;
                 app.quit = true;
@@ -3227,6 +3228,17 @@ pub const App = struct {
 
     /// Home's Planning screen, what `arena planning [<id>]` asks for: opened as `showPlan` opens
     /// the plan, with the pick on ticket `id` when given.
+    /// The plan opened narrowed to the project called `name`; all when the board has none by it.
+    pub fn showProject(app: *App, name: []const u8) !void {
+        try app.openPlan(null, null);
+        const view = &(app.home orelse return);
+        const b = if (app.board) |*b| b else return;
+        for (b.projects(), 0..) |project, i| if (std.mem.eql(u8, project.name, name)) {
+            view.plan_repo = i + 1;
+            view.plan_pick = 0;
+        };
+    }
+
     pub fn showPlanning(app: *App, id: ?u32) !void {
         try app.openPlan(.planning, id);
     }
@@ -3886,7 +3898,7 @@ pub const App = struct {
     pub fn planSee(app: *const App, out: *[max_repos][]const u8) sheets.See {
         for (0..app.fold_n) |i| out[i] = app.folds[i][0..app.fold_lens[i]];
         const screen: sheets.Screen = if (app.home) |view| view.screen else .doing;
-        return .{ .screen = screen, .repos_shut = out[0..app.fold_n], .goals_shut = app.goals_shut[0..app.goals_shut_n] };
+        return .{ .screen = screen, .project = app.planProject(), .repos_shut = out[0..app.fold_n], .goals_shut = app.goals_shut[0..app.goals_shut_n] };
     }
 
     /// No goal's chips where they are drawn and clicked, on the screen.
@@ -3912,36 +3924,67 @@ pub const App = struct {
         if (to == .doing) app.enterBoard();
     }
 
-    /// `sheet` narrowed to the plan's repo and to what the find line holds.
+    /// `sheet` narrowed to the plan's repos and to what the find line holds.
     pub fn narrowPlan(app: *const App, sheet: *sheets.Sheet) void {
         const b = &app.board.?;
-        sheet.narrowTo(b.plan().?, b, app.planRepo() orelse "", app.findText());
+        sheet.narrowTo(b.plan().?, b, app.planScope(), app.findText());
     }
 
-    /// The repo the plan is narrowed to; null for every one.
+    /// The repos the plan is narrowed to: a project's, or the one repo; none for all.
+    pub fn planScope(app: *const App) []const []const u8 {
+        const view = app.home orelse return &.{};
+        const b = if (app.board) |*b| b else return &.{};
+        if (view.plan_repo == 0) return &.{};
+        if (app.planProject()) |i| return b.projects()[i].repos;
+        return if (view.plan_repo <= b.names.len) b.names[view.plan_repo - 1 ..][0..1] else &.{};
+    }
+
+    /// The project the plan is narrowed to, by its place in the board's; null for all.
+    pub fn planProject(app: *const App) ?usize {
+        const view = app.home orelse return null;
+        const b = if (app.board) |*b| b else return null;
+        return if (view.plan_repo >= 1 and view.plan_repo <= b.projects().len) view.plan_repo - 1 else null;
+    }
+
+    /// The repo the plan is narrowed to; null for all, and for a project.
     pub fn planRepo(app: *const App) ?[]const u8 {
         const view = app.home orelse return null;
         const b = if (app.board) |*b| b else return null;
-        var repos: [max_repos][]const u8 = undefined;
-        const n = b.repos(&repos);
-        return if (view.plan_repo >= 1 and view.plan_repo <= n) repos[view.plan_repo - 1] else null;
+        if (b.projects().len > 0) return null;
+        return if (view.plan_repo >= 1 and view.plan_repo <= b.names.len) b.names[view.plan_repo - 1] else null;
     }
+
+    /// How many things the head's picker has after `all`: the projects, else the repos.
+    pub fn scopeCount(app: *const App) usize {
+        const b = if (app.board) |*b| b else return 0;
+        return if (b.projects().len > 0) b.projects().len else b.names.len;
+    }
+
+    /// The head's picker label `i`: `all`, then each project, else `every` and each repo.
+    pub fn scopeLabel(app: *const App, i: usize) []const u8 {
+        const b = &app.board.?;
+        if (b.projects().len == 0) return if (i == 0) "every" else b.names[i - 1];
+        return if (i == 0) "all" else b.projects()[i - 1].name;
+    }
+
+    /// The most cells of a project's name in the head's picker.
+    pub const scope_label_w = 14;
 
     pub const RepoTab = struct { repo: usize, x: u16, w: u16 };
 
-    /// Where the head draws and clicks the repo filter, `every` and then each repo, that fit
-    /// before the right group; and the first cell after them.
+    /// Where the head draws and clicks the picker, `all` and then each project (`every` and each
+    /// repo with no project), that fit before the right group; and the first cell after them. A
+    /// label is cut at `scope_label_w` cells, so it keeps its width whatever is picked.
     pub fn planRepoTabs(app: *const App, out: []RepoTab) struct { n: usize, end: u16 } {
-        const b = if (app.board) |*b| b else return .{ .n = 0, .end = 0 };
-        var repos: [max_repos][]const u8 = undefined;
-        const count = b.repos(&repos);
+        if (app.board == null) return .{ .n = 0, .end = 0 };
+        const count = app.scopeCount();
         const orch: usize = if (app.oneColumn()) cellCount(orch_link) + 2 else 0;
         var x: u16 = @as(u16, @intCast(cellCount(plan_title) + orch)) + 3;
         const limit: u16 = @as(u16, @intCast(draw.planHeadStart(app) -| 1));
         var n: usize = 0;
         for (0..count + 1) |i| {
             if (n == out.len) break;
-            const w: u16 = @intCast(cellCount(if (i == 0) "every" else repos[i - 1]));
+            const w: u16 = @intCast(@min(cellCount(app.scopeLabel(i)), scope_label_w));
             if (x + w >= limit) break;
             out[n] = .{ .repo = i, .x = x, .w = w };
             n += 1;
@@ -3988,13 +4031,18 @@ pub const App = struct {
     /// next's or a card's rows is left out, so picking moves nothing. Zero outside one column.
     fn planRows(app: *const App) sheets.Rows {
         var rows = sheets.Rows.initFill(0);
-        if (!app.oneColumn()) return rows;
         const b = &app.board.?;
+        const projects: usize = if (app.planProject() == null) b.projects().len else 0;
+        if (!app.oneColumn()) {
+            rows.set(.driving, projects);
+            return rows;
+        }
         var sheet: sheets.Sheet = undefined;
         var repos: [max_repos][]const u8 = undefined;
         sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, app.home.?.unfolded, true, app.workbench(), app.planSee(&repos));
         app.narrowPlan(&sheet);
         for (std.enums.values(sheets.Window)) |win| rows.set(win, sheet.span(win).len);
+        rows.set(.driving, projects);
         return rows;
     }
 
@@ -4220,12 +4268,10 @@ pub const App = struct {
         }
     }
 
-    /// `r` on the plan: every window narrowed to the next repo, and after the last to every one.
+    /// `r` on the plan: every window narrowed to the next project, and after the last to all.
     fn cyclePlanRepo(app: *App) void {
         const view = &app.home.?;
-        var repos: [max_repos][]const u8 = undefined;
-        const n = if (app.board) |*b| b.repos(&repos) else 0;
-        view.plan_repo = if (view.plan_repo >= n) 0 else view.plan_repo + 1;
+        view.plan_repo = if (view.plan_repo >= app.scopeCount()) 0 else view.plan_repo + 1;
         view.plan_pick = 0;
         app.dirty = true;
     }
@@ -4250,6 +4296,10 @@ pub const App = struct {
             },
             .idea => try win_backlog.act(app, row),
             .goal, .goal_ticket, .focal => try win_goals.act(app, row),
+            .project => {
+                view.plan_repo = row.item + 1;
+                view.plan_pick = 0;
+            },
             .now, .landed => try win_board.act(app, row),
             .next => try win_next.act(app, row),
             .chips, .todo, .unplanned => try win_unplanned.act(app, row),
@@ -10217,9 +10267,10 @@ test "the orchestrator is the picked card's project's own when it runs, else the
     var both = [_]*Session{ &orch, &tlon };
     app.sessions = .fromOwnedSlice(&both);
     const eq = std.testing.expectEqual;
+    app.home.?.plan_pick = 2;
     try eq(@as(u32, 1), app.pickedCard().?.id);
     try eq(@as(?usize, 1), app.orchestratorSession());
-    app.home.?.plan_pick = 1;
+    app.home.?.plan_pick = 3;
     try eq(@as(u32, 2), app.pickedCard().?.id);
     try eq(@as(?usize, 0), app.orchestratorSession());
 }

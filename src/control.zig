@@ -29,6 +29,8 @@ pub const Event = union(enum) {
     inbox,
     /// `arena claudes` asks for the Claudes list in the middle column.
     claudes,
+    /// `arena show --project <name>` asks for the plan narrowed to that project.
+    project: []const u8,
     exit,
     other,
 };
@@ -40,11 +42,12 @@ pub const planning_message = "arena planning";
 pub const show_message = "arena show ";
 pub const inbox_message = "arena inbox";
 pub const claudes_message = "arena claudes";
+pub const project_message = "arena project ";
 
 /// Whether `line` is what `arena plan`, `show`, `inbox` or `claudes` had tmux say to a running arena.
 pub fn told(line: []const u8) bool {
     return switch (parse(line, null)) {
-        .card, .planning, .pane, .holder, .inbox, .claudes => true,
+        .card, .planning, .pane, .holder, .inbox, .claudes, .project => true,
         else => false,
     };
 }
@@ -92,6 +95,10 @@ pub fn parse(line: []const u8, open: ?[]const u8) Event {
             '#' => .{ .holder = id },
             else => .other,
         };
+    }
+    if (std.mem.startsWith(u8, line, "%message " ++ project_message)) {
+        const name = line["%message ".len + project_message.len ..];
+        return if (name.len == 0) .other else .{ .project = name };
     }
     if (std.mem.eql(u8, line, "%message " ++ inbox_message)) return .inbox;
     if (std.mem.eql(u8, line, "%message " ++ claudes_message)) return .claudes;
@@ -196,6 +203,8 @@ test "what arena board, show and inbox say is told apart from tmux's own lines" 
     try std.testing.expect(told("%message arena plan 240"));
     try std.testing.expect(told("%message arena show %290"));
     try std.testing.expect(told("%message arena inbox"));
+    try std.testing.expectEqualStrings("the shop", parse("%message arena project the shop", null).project);
+    try std.testing.expectEqual(Event.other, parse("%message arena project ", null));
     try std.testing.expect(!told("%message hello"));
     try std.testing.expect(!told("%output %1 x"));
 }

@@ -195,7 +195,7 @@ pub fn tally(app: *const App, w: *Writer, r: theme.Roles, sheet: *const sheets.S
         .next => next += 1,
         else => {},
     };
-    const whole = app.planRepo() == null and app.findText().len == 0;
+    const whole = app.planScope().len == 0 and app.findText().len == 0;
     if (whole) landed = app.board.?.plan().?.landed_today.count;
     var buf: [96]u8 = undefined;
     const text = std.fmt.bufPrint(&buf, " │ {d} landed today · {d} moving · {d} next ", .{ landed, moving, next }) catch return;

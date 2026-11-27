@@ -1458,7 +1458,10 @@ fn planFoot(app: *App, w: *Writer, sheet: *const sheets.Sheet, pick: usize) !voi
     const row = sheet.picked(pick);
     var buf: [320]u8 = undefined;
     var text: []const u8 = "";
-    if (row) |r| if (r.ticket) |id| {
+    if (row) |r| if (r.kind == .project) {
+        text = std.fmt.bufPrint(&buf, " {s}  ⏎ narrow to it   space its goal", .{app.board.?.projects()[r.item].name}) catch "";
+    };
+    if (row) |r| if (r.ticket) |id| if (r.kind != .project) {
         for (given.now) |item| if (item.ticket == id) {
             text = std.fmt.bufPrint(&buf, " #{d} {s}  {s}", .{ id, item.repo orelse "", item.title }) catch "";
         };
@@ -1651,13 +1654,12 @@ pub fn planAutoSwitch(app: *const App) ?struct { x: u16, w: u16 } {
 fn repoTabs(app: *App, w: *Writer, view: app_mod.HomeView) !void {
     var slots: [33]App.RepoTab = undefined;
     const found = app.planRepoTabs(&slots);
-    var repos: [32][]const u8 = undefined;
-    _ = app.board.?.repos(&repos);
     var pen: Pen = .{};
     for (slots[0..found.n], 0..) |tab, i| {
         try w.print("\x1b[1;{d}H", .{tab.x + 1});
         try pen.set(w, if (view.plan_repo == tab.repo) heading(app) else ink(app, "dim", 8), null);
-        try w.writeAll(if (tab.repo == 0) "every" else repos[tab.repo - 1]);
+        var cut: [96]u8 = undefined;
+        try w.writeAll(clipMark(&cut, app.scopeLabel(tab.repo), tab.w));
         if (i + 1 < found.n) {
             try pen.set(w, ink(app, "dim", 8), null);
             try w.writeAll(" · ");
@@ -2093,7 +2095,7 @@ const plan_keys = [_][2][]const u8{
     .{ "tab", "the other screen: Doing, or Planning" },
     .{ "j k, arrows", "pick a row: on Doing needs you, then the board, landed above its now line; on Planning goals, no goal, next, backlog" },
     .{ "⏎, click it", "go: building or stuck, its Claude; up next, start it; landed or in the pipeline, its card; plan an idea, unfold a row, the board on it" },
-    .{ "space", "open the row in place; on an open row, its whole ticket" },
+    .{ "space", "open the row in place; on an open row, its whole ticket; on a project, its goal" },
     .{ "f", "the picked window whole, over the plan; q closes it" },
     .{ "+", "on Planning: a new ticket in the picked goal or in no goal; elsewhere a new goal, planned now or just kept" },
     .{ "a", "on Planning: move the picked ticket into a goal, or out of its goal; or drag its row onto one" },
@@ -2102,7 +2104,7 @@ const plan_keys = [_][2][]const u8{
     .{ "z", "on Planning: fold a goal's tickets away, or list them" },
     .{ "x e", "on a kept idea: withdraw it, edit it" },
     .{ "B, b", "the board, and back to the plan" },
-    .{ "] [", "needs you, first or last" },
+    .{ "] [  r", "needs you, first or last; r narrows to the next project, then all" },
     .{ "l, h", "the orchestrator's column, and back" },
     .{ "c g o A u", "the Claudes list, the gate, the orchestrator, babylon's auto mode, the repos and what they have to push" },
     .{ "`", "fold the orchestrator's column, or unfold" },
@@ -3973,18 +3975,101 @@ fn planGrid(board: *tickets.Board, width: u16) !Shot {
 const Shot = struct { app: App, grid: bench.Grid };
 
 fn planGridOn(board: *tickets.Board, width: u16, screen: sheets.Screen) !Shot {
+    return planGridPicked(board, width, screen, 0);
+}
+
+/// `planGridOn` with the plan narrowed to project `scope` from 1, or to all with 0.
+fn planGridPicked(board: *tickets.Board, width: u16, screen: sheets.Screen, scope: usize) !Shot {
     var app = homeApp(board);
     app.term_w = 120;
     app.view_w = width;
     app.view_h = 38;
     app.epoch = tickets.epochOf("2026-11-23T07:10:00Z").?;
     app.roles = bench.roles();
-    app.home = .{ .alone = false, .focus = .plan, .screen = screen };
+    app.home = .{ .alone = false, .focus = .plan, .screen = screen, .plan_repo = scope };
     app.side_folded = true;
     var buf: [262144]u8 = undefined;
     var out: Writer = .fixed(&buf);
     try planView(&app, &out, app.home.?);
     return .{ .app = app, .grid = try bench.Grid.init(out.buffered()) };
+}
+
+const project_board =
+    \\{"tickets":[
+    \\{"id":701,"repo":"arena","status":"doing","title":"Building in the shop"},
+    \\{"id":702,"repo":"babylon","status":"doing","title":"Landing in the dungeon"},
+    \\{"id":410,"repo":"arena","kind":"epic","status":"doing","title":"menard goal"}],
+    \\"projects":[
+    \\{"name":"Shop","repos":["arena","menard"],"driving":410,"goal":{"id":410,"title":"menard goal","total":12,"landed":5}},
+    \\{"name":"A roguelike with a very long name","repos":["babylon"],"driving":9,"goal":{"id":9,"title":"a dungeon you walk","total":15,"landed":14}}],
+    \\"needs_you":[{"id":"ask:1","kind":"ask","ticket":702,"repo":"babylon","text":"#702 babylon asks: B?","actions":[]}],
+    \\"plan":{"driving":410,"now":[
+    \\{"ticket":701,"repo":"arena","title":"Building in the shop","state":"building","since":"2026-11-23T07:04:00Z"},
+    \\{"ticket":702,"repo":"babylon","title":"Landing in the dungeon","state":"landing","stage":"verifying","since":"2026-11-22T04:04:00Z"}],
+    \\"next":[],
+    \\"goals":[
+    \\{"epic":410,"title":"menard goal","total":12,"landed":5,"steps":[{"ticket":701,"state":"building"}]},
+    \\{"epic":9,"title":"a dungeon you walk","total":15,"landed":14,"steps":[{"ticket":702,"state":"building"}]}],
+    \\"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+;
+
+test "on all with two projects, Projects draws a row to each with its goal, bar, auto word and what moves" {
+    const eq = std.testing.expectEqual;
+    var board = try tickets.Board.parse(std.testing.allocator, project_board);
+    defer board.deinit();
+    var shot = try planGrid(&board, 140);
+    defer shot.app.grab.deinit(std.testing.allocator);
+    const g = &shot.grid;
+    const slot = shot.app.planSlot(.driving);
+    try eq(@as(u16, sheets.window_chrome + sheets.projects_rows), slot.h);
+    const shop = rowWith(g, slot, "Shop").?;
+    try std.testing.expect(g.find(shop, slot.x, slot.x + slot.w, "#410 menard goal") != null);
+    try std.testing.expect(g.find(shop, slot.x, slot.x + slot.w, "5/12") != null);
+    try std.testing.expect(g.find(shop, slot.x, slot.x + slot.w, "○ manual") != null);
+    try std.testing.expect(g.find(shop, slot.x, slot.x + slot.w, "1 building") != null);
+    const dungeon = rowWith(g, slot, "A roguelike…").?;
+    try std.testing.expect(g.find(dungeon, slot.x, slot.x + slot.w, "#9 a dungeon you walk") != null);
+    try std.testing.expect(g.find(dungeon, slot.x, slot.x + slot.w, "14/15") != null);
+    try std.testing.expect(g.find(dungeon, slot.x, slot.x + slot.w, "1 landing") != null);
+}
+
+test "one project narrows the board and shows its goal on one row, and Needs you keeps the other project's item with its tag" {
+    const eq = std.testing.expectEqual;
+    var board = try tickets.Board.parse(std.testing.allocator, project_board);
+    defer board.deinit();
+    var shot = try planGridPicked(&board, 140, .doing, 1);
+    defer shot.app.grab.deinit(std.testing.allocator);
+    const g = &shot.grid;
+    const driving = shot.app.planSlot(.driving);
+    try eq(@as(u16, 1), driving.h);
+    try std.testing.expect(g.find(driving.y, driving.x, driving.x + driving.w, "heading for  #410 menard goal") != null);
+    const board_slot = shot.app.planSlot(.board);
+    try std.testing.expect(rowWith(g, board_slot, "#701") != null);
+    try std.testing.expect(rowWith(g, board_slot, "#702") == null);
+    const move = shot.app.planSlot(.move);
+    const item = rowWith(g, move, "#702 babylon").?;
+    try std.testing.expect(g.find(item, move.x, move.x + move.w, "A roguelike…") != null);
+}
+
+test "the head's picker keeps each label's place and width when the pick moves, and cuts a long name with …" {
+    const eq = std.testing.expectEqual;
+    var board = try tickets.Board.parse(std.testing.allocator, project_board);
+    defer board.deinit();
+    var shot = try planGrid(&board, 140);
+    defer shot.app.grab.deinit(std.testing.allocator);
+    var all: [33]App.RepoTab = undefined;
+    const first = shot.app.planRepoTabs(&all);
+    try eq(@as(usize, 3), first.n);
+    try eq(@as(u16, App.scope_label_w), all[2].w);
+    shot.app.home.?.plan_repo = 2;
+    var again: [33]App.RepoTab = undefined;
+    const second = shot.app.planRepoTabs(&again);
+    try eq(first.n, second.n);
+    for (all[0..first.n], again[0..second.n]) |a, b| {
+        try eq(a.x, b.x);
+        try eq(a.w, b.w);
+    }
+    try std.testing.expectEqualStrings("all", shot.app.scopeLabel(0));
 }
 
 /// The first row of `slot` whose cells within it hold `needle`.

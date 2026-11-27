@@ -455,8 +455,29 @@ pub const Plan = struct {
     not_planned: NotPlanned = .{},
 };
 
-/// A made project: a named set of repos.
-const Project = struct { name: []const u8, repos: []const []const u8 = &.{} };
+/// A project's setting babylon says the value of.
+const Setting = struct { value: bool = false };
+
+/// The goal a project is driving: its epic's title and how far it has got.
+pub const ProjectGoal = struct { id: u32, title: []const u8 = "", total: u32 = 0, landed: u32 = 0 };
+
+/// A made project: a named set of repos, the goal it drives, and its auto and hold.
+pub const Project = struct {
+    name: []const u8,
+    repos: []const []const u8 = &.{},
+    driving: ?u32 = null,
+    goal: ?ProjectGoal = null,
+    settings: ?struct { auto: ?Setting = null, hold: ?Setting = null } = null,
+
+    /// `◐ auto`, `○ manual` or `‖ held`, as babylon's settings say; `fallback_auto` stands for an
+    /// auto it does not say.
+    pub fn autoWord(project: Project, fallback_auto: bool) []const u8 {
+        const set = project.settings;
+        if (set) |s| if (s.hold) |hold| if (hold.value) return "‖ held";
+        const auto = if (set) |s| if (s.auto) |a| a.value else fallback_auto else fallback_auto;
+        return if (auto) "◐ auto" else "○ manual";
+    }
+};
 
 const File = struct {
     tickets: []Card,
@@ -813,6 +834,17 @@ pub const Board = struct {
         return if (b.parsed.value.plan) |given| given.next else &.{};
     }
 
+    /// The projects babylon has made, in its order.
+    pub fn projects(b: *const Board) []const Project {
+        return b.parsed.value.projects;
+    }
+
+    /// Whether `repo` is one of project `project`'s.
+    pub fn inProject(b: *const Board, project: usize, repo: []const u8) bool {
+        for (b.parsed.value.projects[project].repos) |r| if (std.mem.eql(u8, r, repo)) return true;
+        return false;
+    }
+
     /// The name of the project `repo` is in, when it is in one.
     pub fn projectOf(b: *const Board, repo: []const u8) ?[]const u8 {
         for (b.parsed.value.projects) |project| for (project.repos) |r| {
@@ -979,6 +1011,22 @@ test "a stage note's escapes and control characters are gone once the board is p
     );
     defer b.deinit();
     try std.testing.expectEqualStrings("sent back why", b.cards()[0].stage_note);
+}
+
+test "a project's goal and settings are read, and its auto word is held, auto or manual" {
+    var b = try Board.parse(std.testing.allocator,
+        \\{"tickets":[],"projects":[
+        \\{"name":"A","repos":["x"],"driving":7,"goal":{"id":7,"title":"G","total":4,"landed":1},"settings":{"auto":{"value":true},"hold":{"value":true}}},
+        \\{"name":"B","repos":["y"],"settings":{"auto":{"value":false}}},
+        \\{"name":"C","repos":[]}]}
+    );
+    defer b.deinit();
+    const ps = b.projects();
+    try std.testing.expectEqual(@as(u32, 4), ps[0].goal.?.total);
+    try std.testing.expectEqualStrings("‖ held", ps[0].autoWord(false));
+    try std.testing.expectEqualStrings("○ manual", ps[1].autoWord(true));
+    try std.testing.expectEqualStrings("◐ auto", ps[2].autoWord(true));
+    try std.testing.expect(b.inProject(1, "y") and !b.inProject(1, "x"));
 }
 
 test "a ticket closed without a landing is not among today's landed, nor in its count" {

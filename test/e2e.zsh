@@ -1417,6 +1417,16 @@ sed 's/"title":"First building","state":"building"/&,"stalled":"idle 9m"/' $tmp/
 check "a stalled ticket is a stuck item in needs you" await shows '▲ #701 arena +stuck: its Claude has stopped'
 cp $tmp/board.plain $tmp/run/babylon/board.json
 check "and it leaves when the ticket stops being stalled" gone 'stuck: its Claude'
+sed 's/^{"tickets"/{"projects":[{"name":"Shop","repos":["arena"],"driving":null},{"name":"Tlon","repos":["tlon"]}],"tickets"/' $tmp/board.plain >$tmp/run/babylon/board.json
+check "with projects the head's picker reads all and each project" await shows 'all · Shop · Tlon'
+check "and on all, Heading for is Projects, a row to each" see '◆ projects +│ 2'
+key r
+check "r narrows to the next project: the board keeps its repos' tickets only" await gone '#7 +Lights'
+check "and Heading for is one row again, with no goal driven" see 'heading for +nothing · pick a goal on planning'
+key r
+key r
+check "r past the last project shows all again" await shows '◆ projects +│ 2'
+cp $tmp/board.plain $tmp/run/babylon/board.json
 title_row() { settled | grep -n "$1" | head -1 | cut -d: -f1 }
 next_row=$(title_row '◆ board')
 key z

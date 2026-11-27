@@ -307,6 +307,7 @@ const usage =
     \\       arena [-L socket] board <ticket>         the same: board is its old name
     \\       arena [-L socket] planning [ticket]      the Planning screen, with its pick on that ticket
     \\       arena [-L socket] show <%pane|#ticket>   that pane, or the Claude holding that ticket, in front
+    \\       arena [-L socket] show --project <name>  the plan narrowed to that project
     \\       arena [-L socket] inbox                  home, with what needs you
     \\       arena [-L socket] claudes                home, with every Claude listed
     \\
@@ -560,6 +561,11 @@ fn run(init: std.process.Init, exe: ?[]const u8) !Ended {
             i += 1;
         } else if (isVerb(args[i])) {
             const next: ?[]const u8 = if (i + 1 < args.len) args[i + 1] else null;
+            if (std.mem.eql(u8, args[i], "show") and next != null and std.mem.eql(u8, next.?, "--project") and i + 2 < args.len) {
+                door = try std.fmt.allocPrint(init.arena.allocator(), control.project_message ++ "{s}", .{args[i + 2]});
+                i += 2;
+                continue;
+            }
             if (!verbArgOk(args[i], next)) {
                 try std.Io.File.stderr().writeStreamingAll(io, usage);
                 std.process.exit(2);

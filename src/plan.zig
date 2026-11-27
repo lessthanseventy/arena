@@ -19,7 +19,7 @@ const ideas_shown = 3;
 /// The bit of `unfolded` that holds the ideas open.
 pub const ideas_fold: u3 = 0;
 
-pub const Kind = enum { head, blank, need, now, now_line, next, why, more, goals_more, goal, goal_ticket, landed, unplanned, chips, todo, backlog, focal, drove, idea, ideas_more, note, buttons, detail };
+pub const Kind = enum { head, blank, need, now, now_line, next, why, more, goals_more, goal, goal_ticket, landed, unplanned, chips, todo, backlog, focal, project, drove, idea, ideas_more, note, buttons, detail };
 pub const Style = enum { normal, dim, heading, attention };
 
 /// The plan is two screens: Doing, what needs the human and what is moving, and Planning, where
@@ -102,8 +102,10 @@ pub const Rect = struct { x: u16, y: u16, w: u16, h: u16 };
 
 /// Rows of a window's slot that are not its body: the title bar, and the shadow's row.
 pub const window_chrome = 2;
-/// Driving towards is one row: a title bar with no body.
+/// Heading for is one row: a title bar with no body.
 const driving_h = 1;
+/// Projects, on all, is a window of this many body rows whatever its count.
+pub const projects_rows = 4;
 /// The blank rows between two windows of a column; it comes out of the lower window's height.
 pub const gap = 1;
 
@@ -135,7 +137,7 @@ pub fn slot(win: Window, screen: Screen, w: u16, h: u16, stack: bool, rows: Rows
     const shown: u16 = if (h < short_area) @as(u16, 1) else move_rows;
     const move_h = @min(shown + window_chrome, h);
     const drive_y = @min(move_h + gap, h);
-    const drive_h = @min(@as(u16, driving_h), h - drive_y);
+    const drive_h = @min(drivingHeight(rows), h - drive_y);
     const top = @min(drive_y + drive_h + gap, h);
     return switch (win) {
         .move => .{ .x = 0, .y = 0, .w = w, .h = move_h },
@@ -146,6 +148,12 @@ pub fn slot(win: Window, screen: Screen, w: u16, h: u16, stack: bool, rows: Rows
 
 /// The rows each window holds, counted before a pick adds any.
 pub const Rows = std.EnumArray(Window, usize);
+
+/// What the driving window is tall: Heading for's one row, or Projects' four rows in a frame when
+/// it holds projects.
+fn drivingHeight(rows: Rows) u16 {
+    return if (rows.get(.driving) > 0) window_chrome + projects_rows else driving_h;
+}
 
 /// The most body rows a window of the one column takes of its own rows.
 fn stackedCap(win: Window) usize {
@@ -178,7 +186,7 @@ fn stacked(win: Window, screen: Screen, w: u16, h: u16, rows: Rows) Rect {
     var heights: [8]usize = undefined;
     var total: usize = gap * (order.len - 1);
     for (order, 0..) |each, i| {
-        heights[i] = if (each == .driving) driving_h else window_chrome + @max(1, @min(rows.get(each), stackedCap(each)));
+        heights[i] = if (each == .driving) drivingHeight(rows) else window_chrome + @max(1, @min(rows.get(each), stackedCap(each)));
         total += heights[i];
     }
     var at = order.len;
@@ -331,6 +339,14 @@ pub fn focalGoal(given: *const tickets.Plan) ?usize {
     return null;
 }
 
+/// The goal `project` is driving, as its place in the plan's goals; none when it has none or the
+/// plan does not list it.
+pub fn projectGoal(given: *const tickets.Plan, project: tickets.Project) ?usize {
+    const epic = project.driving orelse return null;
+    for (given.goals, 0..) |goal, i| if (goal.epic == epic) return i;
+    return null;
+}
+
 /// The Your move item asking for the next goal, when the goal driven towards has landed: it is
 /// driving, no longer among the open goals, and babylon asks.
 pub fn driveLanded(given: *const tickets.Plan, b: *const tickets.Board) ?*const tickets.Need {
@@ -367,6 +383,8 @@ pub fn nextPlace(given: *const tickets.Plan, id: u32) ?usize {
 /// whose tickets are folded away.
 pub const See = struct {
     screen: Screen = .doing,
+    /// The project the plan is narrowed to, when it is.
+    project: ?usize = null,
     repos_shut: []const []const u8 = &.{},
     goals_shut: []const u32 = &.{},
 };
@@ -469,8 +487,8 @@ pub const Sheet = struct {
     /// Workbench's rows narrowed to the repo `repo` (none for every one) and to what `find` holds.
     /// Another repo's rows are left out of their windows; a row that does not hold `find` stays,
     /// dim and out of the picks, so nothing moves. A window left with no row says so.
-    pub fn narrowTo(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, repo: []const u8, find: []const u8) void {
-        if (!s.bench or (repo.len == 0 and find.len == 0)) return;
+    pub fn narrowTo(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, repos: []const []const u8, find: []const u8) void {
+        if (!s.bench or (repos.len == 0 and find.len == 0)) return;
         var rows: [max_rows]Row = undefined;
         var n: usize = 0;
         var in_win: ?Window = null;
@@ -488,7 +506,7 @@ pub const Sheet = struct {
                 kept_in_win = false;
             }
             had = true;
-            const verdict: Verdict = if (row.kind == .why) last else s.verdictOf(given, b, row, repo, find);
+            const verdict: Verdict = if (row.kind == .why) last else s.verdictOf(given, b, row, repos, find);
             last = verdict;
             if (verdict == .hide or n == rows.len) continue;
             rows[n] = row;
@@ -514,38 +532,51 @@ pub const Sheet = struct {
 
     const Verdict = enum { keep, dim, hide };
 
-    fn verdictOf(s: *const Sheet, given: *const tickets.Plan, b: *const tickets.Board, row: Row, repo: []const u8, find: []const u8) Verdict {
+    fn verdictOf(s: *const Sheet, given: *const tickets.Plan, b: *const tickets.Board, row: Row, repos: []const []const u8, find: []const u8) Verdict {
         _ = s;
         const id, const title, const repo_of, const in_repo = switch (row.kind) {
-            .now => .{ given.now[row.item].ticket, given.now[row.item].title, given.now[row.item].repo orelse "", std.mem.eql(u8, given.now[row.item].repo orelse "", repo) },
-            .next => .{ given.next[row.item].ticket, given.next[row.item].title, given.next[row.item].repo orelse "", std.mem.eql(u8, given.next[row.item].repo orelse "", repo) },
-            .goal => .{ given.goals[row.item].epic, given.goals[row.item].title, "", goalIn(b, given.goals[row.item], repo) },
+            .now => .{ given.now[row.item].ticket, given.now[row.item].title, given.now[row.item].repo orelse "", inScope(repos, given.now[row.item].repo orelse "") },
+            .next => .{ given.next[row.item].ticket, given.next[row.item].title, given.next[row.item].repo orelse "", inScope(repos, given.next[row.item].repo orelse "") },
+            .goal => .{ given.goals[row.item].epic, given.goals[row.item].title, "", goalIn(b, given.goals[row.item], repos) },
             .goal_ticket => blk: {
                 const card = for (b.cards()) |*card| {
                     if (card.id == row.ticket.?) break card;
                 } else return .keep;
-                break :blk .{ card.id, card.title, card.repo orelse "", std.mem.eql(u8, card.repo orelse "", repo) };
+                break :blk .{ card.id, card.title, card.repo orelse "", inScope(repos, card.repo orelse "") };
             },
             .idea => .{ given.ideas[row.item].epic, given.ideas[row.item].title, "", true },
             .landed => blk: {
                 const card = for (b.cards()) |*card| {
                     if (card.id == row.ticket.?) break card;
                 } else return .keep;
-                break :blk .{ card.id, card.title, card.repo orelse "", std.mem.eql(u8, card.repo orelse "", repo) };
+                break :blk .{ card.id, card.title, card.repo orelse "", inScope(repos, card.repo orelse "") };
             },
             else => return .keep,
         };
-        if (repo.len > 0 and !in_repo) return .hide;
+        if (!in_repo) return .hide;
         return if (tickets.holds(find, id, title, repo_of)) .keep else .dim;
     }
 
-    /// Whether a step of `goal` is a ticket of `repo`.
-    fn goalIn(b: *const tickets.Board, goal: tickets.Goal, repo: []const u8) bool {
-        if (repo.len == 0) return true;
+    /// Whether `repo` is in `repos`, the plan's narrowing; every repo is when it names none.
+    fn inScope(repos: []const []const u8, repo: []const u8) bool {
+        if (repos.len == 0) return true;
+        for (repos) |r| if (std.mem.eql(u8, r, repo)) return true;
+        return false;
+    }
+
+    /// Whether a step of `goal` is a ticket of one of `repos`.
+    fn goalIn(b: *const tickets.Board, goal: tickets.Goal, repos: []const []const u8) bool {
+        if (repos.len == 0) return true;
         for (goal.steps) |step| for (b.cards()) |card| {
-            if (card.id == step.ticket and std.mem.eql(u8, card.repo orelse "", repo)) return true;
+            if (card.id == step.ticket and inScope(repos, card.repo orelse "")) return true;
         };
         return false;
+    }
+
+    /// Whether the driving window holds projects, as it does on all, and not Heading for's row.
+    pub fn hasProjects(s: *const Sheet) bool {
+        const mine = s.span(.driving);
+        return mine.len > 0 and s.rows[mine.start].kind == .project;
     }
 
     /// The picks of `win`: the first and how many.
@@ -640,7 +671,7 @@ pub const Sheet = struct {
     /// Workbench's plan: the rows of each window of the screen, in the order the pick walks them.
     fn windowRows(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64, see: See) void {
         switch (see.screen) {
-            .doing => s.doingRows(given, b, width, epoch),
+            .doing => s.doingRows(given, b, width, epoch, see),
             .planning => s.planningRows(given, b, width, epoch, see),
         }
     }
@@ -661,14 +692,19 @@ pub const Sheet = struct {
         s.end("the backlog is empty");
     }
 
-    fn doingRows(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64) void {
+    fn doingRows(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, width: usize, epoch: i64, see: See) void {
         s.begin(.move);
         for (b.needsYou(), 0..) |need, at| {
             s.add(.{ .kind = .need, .pick = 0, .ticket = need.ticket, .item = at });
         }
         s.end("✓ nothing needs you");
         s.begin(.driving);
-        if (driveLanded(given, b)) |need| {
+        const projects = b.projects();
+        if (see.project) |i| {
+            if (projectGoal(given, projects[i])) |at| s.add(.{ .kind = .focal, .item = at, .pick = 0, .ticket = given.goals[at].epic });
+        } else if (projects.len > 0) {
+            for (projects, 0..) |project, i| s.add(.{ .kind = .project, .item = i, .pick = 0, .ticket = project.driving });
+        } else if (driveLanded(given, b)) |need| {
             const title = drivenTitle(b, need, given.driving.?);
             s.add(.{ .kind = .drove, .pick = 0, .ticket = given.driving, .text = s.print("✓ #{d} {s} landed · pick the next goal on planning", .{ given.driving.?, title }) });
         } else if (focalGoal(given)) |at| {
