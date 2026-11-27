@@ -8311,8 +8311,10 @@ test "a backlog ticket's card with an open ask lists its options, and 1 answers 
     app.roles = @import("parts.zig").roles();
     app.board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[],"backlog":[
-        \\{"id":4,"repo":"tlon","title":"d","status":"backlog","ask":{"id":9,"question":"Which?","options":["x","y","z"]}}
-        \\]}
+        \\{"id":4,"repo":"tlon","title":"d","status":"backlog"}
+        \\],"needs_you":[{"id":"ask:9","kind":"ask","ticket":4,"repo":"tlon","text":"#4 tlon  asks: Which?",
+        \\"actions":[{"key":"1","label":"x","argv":["babylon","answer","9","1"]},{"key":"2","label":"y","argv":["babylon","answer","9","2"]},
+        \\{"key":"3","label":"z","argv":["babylon","answer","9","3"]},{"key":"c","label":"in words","argv":["babylon","answer","9","--words"],"needs":"words"}]}]}
     );
     defer app.board.?.deinit();
     app.home = .{ .detail = 4 };
