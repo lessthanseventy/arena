@@ -1427,6 +1427,7 @@ key r
 key r
 check "r past the last project shows all again" await shows '◆ projects +│ 2'
 cp $tmp/board.plain $tmp/run/babylon/board.json
+check "and without projects Heading for is its row again" await shows 'heading for +nothing'
 title_row() { settled | grep -n "$1" | head -1 | cut -d: -f1 }
 next_row=$(title_row '◆ board')
 key z
