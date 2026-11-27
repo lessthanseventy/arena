@@ -144,7 +144,7 @@ pub fn window(w: *Writer, r: Roles, x: usize, y: usize, width: usize, h: usize, 
     try w.writeAll("┌─ ");
     try paint(w, edge, r.panel, false);
     try w.writeAll("◆ ");
-    try paint(w, if (focused) r.text else r.dim, r.panel, true);
+    try paint(w, r.accent, r.panel, true);
     try w.writeAll(named);
     try paint(w, r.dim, r.panel, false);
     try w.writeAll(tally);
@@ -292,7 +292,7 @@ test "a window is a box of line-drawing cells with its title and count in the to
     const f = w.buffered();
     try expectCell(f, 10, 3, '┌', r.dim, r.panel);
     try expectCell(f, 13, 3, '◆', r.dim, r.panel);
-    try expectCell(f, 15, 3, 't', r.dim, r.panel);
+    try expectCell(f, 15, 3, 't', r.accent, r.panel);
     try expectCell(f, 20, 3, '│', r.dim, r.panel);
     try expectCell(f, 22, 3, '1', r.dim, r.panel);
     try expectCell(f, 30, 3, '─', r.dim, r.panel);
@@ -323,7 +323,7 @@ test "a window's top row is one border from corner to corner with its title in i
     try std.testing.expectEqual(@as(usize, 40), x);
 }
 
-test "a focused window's border and diamond are amber and its title bright" {
+test "a window's title is in the accent role, focused or not, and a focused one's border is amber too" {
     const r = roles();
     var buf: [4096]u8 = undefined;
     var w: Writer = .fixed(&buf);
@@ -331,7 +331,7 @@ test "a focused window's border and diamond are amber and its title bright" {
     const f = w.buffered();
     try expectCell(f, 0, 0, '┌', r.accent, r.panel);
     try expectCell(f, 3, 0, '◆', r.accent, r.panel);
-    try expectCell(f, 5, 0, 'd', r.text, r.panel);
+    try expectCell(f, 5, 0, 'd', r.accent, r.panel);
     try expectCell(f, 29, 0, '┐', r.accent, r.panel);
     try expectCell(f, 0, 2, '│', r.accent, r.panel);
     try expectCell(f, 29, 4, '┘', r.accent, r.panel);

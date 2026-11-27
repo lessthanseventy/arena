@@ -59,7 +59,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             try bench.say(w, x0 + 5, y, repo.glyph, repo.hue, bg, false);
             try bench.say(w, x0 + 8, y, id, repo.hue, bg, true);
             var lbuf: [64]u8 = undefined;
-            const state = stateWords(&lbuf, given, step);
+            const state = stateWords(&lbuf, step);
             const label_x = x0 + ww -| (cellCount(state.text) + 1);
             try bench.say(w, label_x, y, state.text, if (state.attention) r.you else r.dim, bg, false);
             const title_x = x0 + 9 + cellCount(id);
@@ -70,8 +70,8 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
 }
 
 /// What a goal's ticket says of itself on the right: where it is in the pipeline, `← #N` while it
-/// waits on one, or its place in next.
-fn stateWords(buf: []u8, given: *const tickets.Plan, step: tickets.Step) struct { text: []const u8, attention: bool } {
+/// waits on one.
+fn stateWords(buf: []u8, step: tickets.Step) struct { text: []const u8, attention: bool } {
     for (step.waits_on) |wait| if (wait.ticket) |on| {
         return .{ .text = std.fmt.bufPrint(buf, "○ ← #{d}", .{on}) catch "", .attention = false };
     };
@@ -84,10 +84,7 @@ fn stateWords(buf: []u8, given: *const tickets.Plan, step: tickets.Step) struct 
         .failed, .sent_back => "sent back",
         .other => "",
     };
-    if (word.len == 0) {
-        if (sheets.nextPlace(given, step.ticket)) |place| return .{ .text = std.fmt.bufPrint(buf, "next {d}", .{place}) catch "", .attention = false };
-        return .{ .text = "○ todo", .attention = false };
-    }
+    if (word.len == 0) return .{ .text = "○ todo", .attention = false };
     const attention = std.mem.eql(u8, step.state, "to_try") or std.mem.eql(u8, step.state, "failed") or std.mem.eql(u8, step.state, "sent_back");
     return .{ .text = std.fmt.bufPrint(buf, "{s} {s}", .{ sheets.Sheet.stepMark(step.state), word }) catch "", .attention = attention };
 }

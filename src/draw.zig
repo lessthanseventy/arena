@@ -3533,7 +3533,7 @@ test "Plan's rows start with a ▌ in their repo's colour, and a goal's card has
     }
 }
 
-test "an in-flight row with a Claude says its session, window and pane on a second line, in the session's repo colour" {
+test "an in-flight row with a Claude has no second line for its session, window and pane" {
     var board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[{"id":701,"repo":"arena","status":"doing","title":"A","claimed_by":"%5"}],
         \\"plan":{"now":[{"ticket":701,"repo":"arena","title":"A","state":"building","pane":"%5"}],"next":[],"goals":[],
@@ -3561,7 +3561,7 @@ test "an in-flight row with a Claude says its session, window and pane on a seco
     var out: Writer = .fixed(&buf);
     try planView(&app, &out, app.home.?);
     const drawn = out.buffered();
-    try std.testing.expect(std.mem.indexOf(u8, drawn, "babylon-work:2 · %5") != null);
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "babylon-work:2") == null);
 }
 
 /// The `y`th row of `frame` drawn on a terminal `cols` wide, without its trailing spaces.
@@ -3933,7 +3933,7 @@ test "driving towards is one line: the goal, then its bar and count, with nothin
     const r = bench.roles();
     const driving = shot.app.planSlot(.driving);
     try eq(@as(u16, 1), driving.h);
-    try eq(driving.y + 1, shot.app.planSlot(.now).y);
+    try eq(driving.y + 1 + sheets.gap, shot.app.planSlot(.now).y);
     const title = g.find(driving.y, driving.x, driving.x + driving.w, "towards #410 menard goal").?;
     const count = g.find(driving.y, driving.x, driving.x + driving.w, "5/12  41%").?;
     try std.testing.expect(title < count);

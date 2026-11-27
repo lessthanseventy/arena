@@ -56,13 +56,12 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             try bench.say(w, x0 + 1, y, "▌", repo.hue, bg, false);
             try bench.say(w, x0 + 2, y, repo.glyph, repo.hue, bg, false);
             try bench.say(w, x0 + 4, y, id, repo.hue, bg, true);
-            var lbuf: [64]u8 = undefined;
             var age: [16]u8 = undefined;
             const how = sheets.ago(&age, card.inserted_at, app.epoch);
-            const label = if (how.len > 0) std.fmt.bufPrint(&lbuf, "{s}  {s}", .{ card.priority, how }) catch card.priority else card.priority;
+            const label = how;
             const label_x = x0 + ww -| (cellCount(label) + 1);
             const title_x = x0 + 5 + cellCount(id);
-            try bench.say(w, label_x, y, label, if (std.mem.eql(u8, card.priority, "high")) r.you else r.dim, bg, false);
+            try bench.say(w, label_x, y, label, r.dim, bg, false);
             try sayCut(w, title_x, y, card.name(), label_x -| title_x -| 1, if (row.dim) r.dim else r.text, bg, false);
         },
         else => {},

@@ -30,7 +30,7 @@ pub fn titleRoom(item: tickets.Next, ww: usize) struct { x: usize, room: usize }
     var lbuf: [48]u8 = undefined;
     const chip_x = ww -| (cellCount(nextLabel(item, &lbuf)) + 3);
     const title_x = 7 + cellCount(id);
-    return .{ .x = title_x, .room = chip_x -| title_x -| 1 -| (if (item.pinned()) @as(usize, 2) else 0) };
+    return .{ .x = title_x, .room = chip_x -| title_x -| 1 };
 }
 
 /// What of a next row's name goes on a second line, in a window `ww` cells wide.
@@ -65,7 +65,6 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             const title_x = x0 + 7 + cellCount(id);
 
             _ = try bench.chipInk(w, r, chip_x, y, label, if (first == null) r.landed else r.dim, if (first == null) r.text else r.dim, false);
-            if (item.pinned()) try bench.say(w, chip_x -| 2, y, "\u{f08d}", r.accent, bg, false);
             const name = if (at + 1 < sheet.n and sheet.rows[at + 1].kind == .wrap) draw.wrapHead(item.name(), sheet.rows[at + 1].text) else item.name();
             try sayCut(w, title_x, y, name, titleRoom(item, ww).room, if (row.dim) r.dim else r.text, bg, false);
         },

@@ -19,7 +19,7 @@ const ideas_shown = 3;
 /// The bit of `unfolded` that holds the ideas open.
 pub const ideas_fold: u3 = 0;
 
-pub const Kind = enum { head, blank, other, need, now, next, why, more, goals_more, goal, goal_ticket, landed, unplanned, chips, todo, backlog, focal, drove, idea, ideas_more, note, buttons, held, wrap };
+pub const Kind = enum { head, blank, other, need, now, next, why, more, goals_more, goal, goal_ticket, landed, unplanned, chips, todo, backlog, focal, drove, idea, ideas_more, note, buttons, wrap };
 pub const Style = enum { normal, dim, heading, attention };
 
 /// The plan is two screens: Doing, what needs the human and what is moving, and Planning, where
@@ -66,6 +66,8 @@ pub const Rect = struct { x: u16, y: u16, w: u16, h: u16 };
 pub const window_chrome = 2;
 /// Driving towards is one row: a title bar with no body.
 const driving_h = 1;
+/// The blank rows between two windows of a column; it comes out of the lower window's height.
+pub const gap = 1;
 
 /// Under this many rows the windows above the lists keep one body row each, so not planned and
 /// the rest keep rows of theirs.
@@ -85,24 +87,26 @@ pub fn slot(win: Window, screen: Screen, w: u16, h: u16, stack: bool, rows: Rows
         const left = w * 3 / 5;
         return switch (win) {
             .goals => .{ .x = 0, .y = 0, .w = left, .h = h * 6 / 10 },
-            .no_goal => .{ .x = 0, .y = h * 6 / 10, .w = left, .h = h - h * 6 / 10 },
+            .no_goal => .{ .x = 0, .y = h * 6 / 10 + gap, .w = left, .h = h -| (h * 6 / 10 + gap) },
             .next => .{ .x = left, .y = 0, .w = w - left, .h = h * 4 / 10 },
-            else => .{ .x = left, .y = h * 4 / 10, .w = w - left, .h = h - h * 4 / 10 },
+            else => .{ .x = left, .y = h * 4 / 10 + gap, .w = w - left, .h = h -| (h * 4 / 10 + gap) },
         };
     }
     const move_rows = move_rows_full;
     // on a short screen Your move gives rows to the windows under it, down to one
     const shown: u16 = if (h < short_area) @as(u16, 1) else move_rows;
     const move_h = @min(shown + window_chrome, h);
-    const drive_h = @min(@as(u16, driving_h), h - move_h);
-    const top = move_h + drive_h;
+    const drive_y = @min(move_h + gap, h);
+    const drive_h = @min(@as(u16, driving_h), h - drive_y);
+    const top = @min(drive_y + drive_h + gap, h);
     const rest = h - top;
     const half = w * 3 / 5;
+    const now_h = rest * 6 / 10;
     return switch (win) {
         .move => .{ .x = 0, .y = 0, .w = w, .h = move_h },
-        .driving => .{ .x = 0, .y = move_h, .w = w, .h = drive_h },
-        .now => .{ .x = 0, .y = top, .w = half, .h = rest * 6 / 10 },
-        .next => .{ .x = 0, .y = top + rest * 6 / 10, .w = half, .h = rest - rest * 6 / 10 },
+        .driving => .{ .x = 0, .y = drive_y, .w = w, .h = drive_h },
+        .now => .{ .x = 0, .y = top, .w = half, .h = now_h },
+        .next => .{ .x = 0, .y = top + now_h + gap, .w = half, .h = rest -| (now_h + gap) },
         else => .{ .x = half, .y = top, .w = w - half, .h = rest },
     };
 }
@@ -140,7 +144,7 @@ fn stackOrder(screen: Screen) []const Window {
 fn stacked(win: Window, screen: Screen, w: u16, h: u16, rows: Rows) Rect {
     const order = stackOrder(screen);
     var heights: [8]usize = undefined;
-    var total: usize = 0;
+    var total: usize = gap * (order.len - 1);
     for (order, 0..) |each, i| {
         heights[i] = if (each == .driving) driving_h else window_chrome + @max(1, @min(rows.get(each), stackedCap(each)));
         total += heights[i];
@@ -166,7 +170,7 @@ fn stacked(win: Window, screen: Screen, w: u16, h: u16, rows: Rows) Rect {
         const top = @min(y, h);
         const rows_h = @min(heights[i], h - top);
         if (each == win) return .{ .x = 0, .y = @intCast(top), .w = w, .h = @intCast(rows_h) };
-        y += heights[i];
+        y += heights[i] + gap;
     }
     unreachable;
 }
@@ -183,14 +187,36 @@ test "in one column each window is as tall as its rows up to its cap, and what i
     for (stackOrder(.doing)) |win| {
         const at = slot(win, .doing, 103, 50, true, rows);
         try eq(y, at.y);
-        y += at.h;
+        y += at.h + gap;
     }
-    try std.testing.expect(y <= 50);
+    try std.testing.expect(y - gap <= 50);
     var spare = Rows.initFill(1);
     spare.set(.now, 40);
     spare.set(.next, 40);
     try std.testing.expect(slot(.now, .doing, 103, 50, true, spare).h > window_chrome + 6);
     try eq(@as(u16, window_chrome + 7), slot(.next, .doing, 103, 50, true, spare).h);
+}
+
+test "each window of a column starts one blank row below the one above, at both widths on both screens" {
+    const sizes = [_][2]u16{ .{ 220, 51 }, .{ 110, 51 } };
+    for ([_]Screen{ .doing, .planning }) |screen| {
+        for (sizes) |size| {
+            for ([_]bool{ false, true }) |stack| {
+                const rows = Rows.initFill(30);
+                for (std.enums.values(Window)) |win| {
+                    const a = slot(win, screen, size[0], size[1], stack, rows);
+                    if (a.h == 0) continue;
+                    var below: ?Rect = null;
+                    for (std.enums.values(Window)) |other| {
+                        const b = slot(other, screen, size[0], size[1], stack, rows);
+                        if (b.h == 0 or b.x != a.x or b.y <= a.y) continue;
+                        if (below == null or b.y < below.?.y) below = b;
+                    }
+                    if (below) |b| try std.testing.expectEqual(a.y + a.h + gap, b.y);
+                }
+            }
+        }
+    }
 }
 
 test "each screen has its own windows, and next is on both" {
@@ -204,7 +230,7 @@ test "each screen has its own windows, and next is on both" {
     }
     const goals = slot(.goals, .planning, 220, 49, false, Rows.initFill(0));
     const no_goal = slot(.no_goal, .planning, 220, 49, false, Rows.initFill(0));
-    try eq(goals.y + goals.h, no_goal.y);
+    try eq(goals.y + goals.h + gap, no_goal.y);
     try eq(@as(u16, 49), no_goal.y + no_goal.h);
     const landed = slot(.landed, .doing, 220, 49, false, Rows.initFill(0));
     try eq(@as(u16, 220 * 3 / 5), landed.x);
@@ -401,13 +427,13 @@ pub const Sheet = struct {
     /// A second line under each ticket row whose name `ctx.rest` says does not fit its line, while
     /// its window has spare rows (`ctx.spare`): the rest of the name, indented to start under it
     /// (`ctx.indent`). A window's spare is what its body has over the rows it holds without a
-    /// pick's why, card buttons or held line, so picking never takes a wrap away. It is no pick,
+    /// pick's why or card buttons, so picking never takes a wrap away. It is no pick,
     /// so the picks stay where they were.
     pub fn withWraps(s: *Sheet, ctx: anytype) void {
         var spare = Rows.initFill(0);
         var base = Rows.initFill(0);
         for (s.rows[0..s.n]) |row| switch (row.kind) {
-            .why, .buttons, .held, .wrap => {},
+            .why, .buttons, .wrap => {},
             else => base.set(row.win, base.get(row.win) + 1),
         };
         for (std.enums.values(Window)) |win| spare.set(win, ctx.spare(win, base.get(win)));
@@ -429,35 +455,6 @@ pub const Sheet = struct {
             if (rest[i]) |tail| {
                 const owner = s.rows[j];
                 s.rows[j] = .{ .kind = .wrap, .ticket = owner.ticket, .item = owner.item, .win = owner.win, .text = tail, .part = ctx.indent(owner) };
-                j -= 1;
-                s.rows[j] = owner;
-            }
-        }
-        s.n += extra;
-    }
-
-    /// A second line under each in-flight row whose Claude's pane `known` has, for its workspace
-    /// chip; it is no pick, so the picks stay where they were.
-    pub fn withHeld(s: *Sheet, given: *const tickets.Plan, known: anytype) void {
-        var extra: usize = 0;
-        var has: [max_rows]bool = @splat(false);
-        for (s.rows[0..s.n], 0..) |row, i| {
-            if (row.kind != .now) continue;
-            const pane = given.now[row.item].holder() orelse continue;
-            if (!known.has(pane)) continue;
-            has[i] = true;
-            extra += 1;
-        }
-        if (extra == 0 or s.n + extra > max_rows) return;
-        var j = s.n + extra;
-        var i = s.n;
-        while (i > 0) {
-            i -= 1;
-            j -= 1;
-            s.rows[j] = s.rows[i];
-            if (has[i]) {
-                const owner = s.rows[j];
-                s.rows[j] = .{ .kind = .held, .ticket = owner.ticket, .item = owner.item, .win = owner.win };
                 j -= 1;
                 s.rows[j] = owner;
             }
@@ -1338,32 +1335,6 @@ test "landed is a row to each of today's tickets, newest first" {
     };
     try std.testing.expectEqual(@as(usize, 2), n);
     try std.testing.expectEqualSlices(u32, &.{ 6, 5 }, &tickets_seen);
-}
-
-test "a second line under each in-flight row whose pane is known, and no pick of its own" {
-    var b = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[],"plan":{"now":[
-        \\{"ticket":1,"repo":"arena","title":"Held","state":"building","pane":"%7"},
-        \\{"ticket":2,"repo":"arena","title":"Elsewhere","state":"building","pane":"%8"},
-        \\{"ticket":3,"repo":"arena","title":"Nobody","state":"building"}]}}
-    );
-    defer b.deinit();
-    var s: Sheet = undefined;
-    s.build(b.plan().?, &b, 100, 0, 0, false, true, .{});
-    const before = s.n;
-    const Known = struct {
-        pub fn has(_: @This(), pane: u32) bool {
-            return pane == 7;
-        }
-    };
-    s.withHeld(b.plan().?, Known{});
-    try std.testing.expectEqual(before + 1, s.n);
-    for (s.rows[0..s.n], 0..) |row, i| if (row.kind == .held) {
-        try std.testing.expectEqual(@as(?u32, 1), row.ticket);
-        try std.testing.expectEqual(Kind.now, s.rows[i - 1].kind);
-        try std.testing.expectEqual(@as(?u32, 1), s.rows[i - 1].ticket);
-        try std.testing.expectEqual(@as(?usize, null), row.pick);
-    };
 }
 
 test "no goal holds the open repos' todo tickets that are in no goal, startable first, and the backlog is a window of its own" {

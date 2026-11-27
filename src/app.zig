@@ -967,14 +967,6 @@ pub const App = struct {
         return null;
     }
 
-    /// Whether a pane of this session's tmux is known, for the plan's workspace chips.
-    const KnownPanes = struct {
-        app: *const App,
-        pub fn has(k: KnownPanes, pane: u32) bool {
-            return k.app.workspace(pane) != null;
-        }
-    };
-
     /// The lowest ticket among a session's Claudes, null for a session holding none.
     fn sessionTicket(app: *const App, si: usize) ?TicketKey {
         var best: ?TicketKey = null;
@@ -3760,7 +3752,6 @@ pub const App = struct {
         if (app.workbench()) {
             sheet.withWhyOnPick(app);
             sheet.withButtons(app.plan_open);
-            sheet.withHeld(b.plan().?, KnownPanes{ .app = app });
             var others: [max_others]Agent = undefined;
             sheet.withOthers(app.otherClaudes(&others).len, app.findText());
             sheet.withWraps(Wraps{ .app = app });
@@ -3920,7 +3911,6 @@ pub const App = struct {
         sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, app.home.?.unfolded, true, app.workbench(), app.planSee(&repos));
         app.narrowPlan(&sheet);
         sheet.withButtons(app.plan_open);
-        sheet.withHeld(b.plan().?, KnownPanes{ .app = app });
         var others: [max_others]Agent = undefined;
         sheet.withOthers(app.otherClaudes(&others).len, app.findText());
         for (std.enums.values(sheets.Window)) |win| rows.set(win, sheet.span(win).len);
@@ -4221,7 +4211,6 @@ pub const App = struct {
         const row = sheet.rows[at];
 
         if (row.kind == .buttons) return win_plan.planButtonClick(app, &sheet, at, m);
-        if (row.kind == .held) return win_now.heldClick(app, row);
         const pick = row.pick orelse return;
         const picked = view.plan_pick == pick;
         view.plan_pick = pick;

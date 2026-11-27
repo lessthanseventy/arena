@@ -110,7 +110,7 @@ pub fn planButtonClick(app: *App, sheet: *const sheets.Sheet, at: usize, m: keys
     for (planButtons(app, sheet, at, &buttons)) |button| {
         if (m.y != button.y or m.x < button.x or m.x >= button.x + button.w) continue;
         var from = at - 1;
-        while (sheet.rows[from].kind == .why or sheet.rows[from].kind == .held or sheet.rows[from].kind == .wrap) from -= 1;
+        while (sheet.rows[from].kind == .why or sheet.rows[from].kind == .wrap) from -= 1;
         const owner = sheet.rows[from];
         app.home.?.plan_pick = owner.pick orelse return;
         return app.act(button.action);
@@ -178,8 +178,6 @@ pub fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.S
 /// The row at `at` of the plan, drawn on row `y`, in the `ww` cells from `x0` between a
 /// window's side borders.
 pub fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, at: usize, y: u16, x0: usize, ww: usize, lit: bool) !void {
-    const b = &app.board.?;
-    const given = b.plan().?;
     const row = sheet.rows[at];
     const picked = lit and app.planRowLit(row);
     const mark = if (app.columnFocused()) r.dim else r.accent;
@@ -200,16 +198,6 @@ pub fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.
             try bench.fill(w, x0, y, ww, under);
             if (picked_owner) try bench.say(w, x0, y, "▌", mark, under, true);
             try draw.sayCut(w, x0 + row.part, y, row.text, ww -| row.part -| 1, r.text, under, false);
-        },
-        .held => {
-            const item = given.now[row.item];
-            try bench.fill(w, x0, y, ww, bg);
-            try bench.say(w, x0 + 1, y, "▌", repoHue(r, item.repo).hue, bg, false);
-            const pane = item.holder() orelse return;
-            const there = app.workspace(pane) orelse return;
-            var buf: [96]u8 = undefined;
-            const label = std.fmt.bufPrint(&buf, "{s}:{d} · %{d}", .{ there.session, there.window, pane }) catch return;
-            _ = try bench.chipOn(w, x0 + 4, y, clip(label, ww -| 8), repoHue(r, there.repo).hue, r.text, false, r.well);
         },
         .head => {
             try bench.fill(w, x0, y, ww, r.panel);
