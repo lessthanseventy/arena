@@ -1070,7 +1070,7 @@ pub fn ago(buf: []u8, since: ?[]const u8, epoch: i64) []const u8 {
 }
 
 const sample =
-    \\{"tickets":[{"id":322,"repo":"arena","title":"held card e2e","status":"done"}],
+    \\{"tickets":[{"id":322,"repo":"arena","title":"held card e2e","status":"done","stage":"landed"}],
     \\"plan":{
     \\"now":[
     \\{"ticket":600,"repo":"arena","title":"Design","state":"building","since":"2026-11-23T07:04:00Z","pane":"%757"},
@@ -1324,7 +1324,7 @@ test "a now row waiting on a ticket says so, with its own mark, and is not drawn
 
 test "landed is a row to each of today's tickets, the latest last" {
     var b = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[{"id":5,"title":"Five","status":"done"},{"id":6,"title":"Six","status":"done"}],"plan":{"now":[],"next":[],"goals":[],
+        \\{"tickets":[{"id":5,"title":"Five","status":"done","stage":"landed"},{"id":6,"title":"Six","status":"done","stage":"landed"}],"plan":{"now":[],"next":[],"goals":[],
         \\"landed_today":{"count":23,"newest":[6,5]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
     );
     defer b.deinit();
@@ -1342,7 +1342,7 @@ test "landed is a row to each of today's tickets, the latest last" {
 
 test "the board orders landed, the now line, the pipeline, building and next, each with its wait word" {
     var b = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[{"id":1,"repo":"arena","title":"one","status":"done"},{"id":2,"repo":"arena","title":"two","status":"done"}],
+        \\{"tickets":[{"id":1,"repo":"arena","title":"one","status":"done","stage":"landed"},{"id":2,"repo":"arena","title":"two","status":"done","stage":"landed"}],
         \\"plan":{"driving":10,
         \\"now":[
         \\{"ticket":4,"repo":"arena","title":"d","state":"building","since":"2026-11-27T08:00:00Z"},

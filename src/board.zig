@@ -527,6 +527,20 @@ pub const Board = struct {
                 overlap.files = files;
             }
         }
+        if (parsed.value.plan) |*given| {
+            const today = &given.landed_today;
+            var kept_ids: usize = 0;
+            for (today.newest) |id| {
+                const card = for (parsed.value.tickets) |*card| {
+                    if (card.id == id) break card;
+                } else null;
+                if (card) |c| if (c.landing == null and !std.mem.eql(u8, c.stage orelse "", "landed")) continue;
+                today.newest[kept_ids] = id;
+                kept_ids += 1;
+            }
+            today.count -|= @intCast(today.newest.len - kept_ids);
+            today.newest = today.newest[0..kept_ids];
+        }
         for (parsed.value.backlog) |*card| {
             card.title = try cleanLine(arena, card.title);
             if (card.short) |short| card.short = try cleanLine(arena, short);
@@ -965,6 +979,17 @@ test "a stage note's escapes and control characters are gone once the board is p
     );
     defer b.deinit();
     try std.testing.expectEqualStrings("sent back why", b.cards()[0].stage_note);
+}
+
+test "a ticket closed without a landing is not among today's landed, nor in its count" {
+    var b = try Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1,"title":"Landed","status":"done","stage":"landed"},{"id":2,"title":"Folded","status":"done","stage_note":"folded into #1"},{"id":3,"title":"Shipped","status":"done","landing":{"sha":"abc","fixes":[],"follow_ups":[],"install":null}}],
+        \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":3,"newest":[3,2,1]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer b.deinit();
+    const today = b.plan().?.landed_today;
+    try std.testing.expectEqual(@as(u32, 2), today.count);
+    try std.testing.expectEqualSlices(u32, &.{ 3, 1 }, today.newest);
 }
 
 test "a landing is parsed from the board, its words cleaned, an unfiled follow-up without an id" {

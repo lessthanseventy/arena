@@ -2660,9 +2660,9 @@ test "too narrow for Plan, the orchestrator and a column, the words prompt takes
 const epic_board =
     \\{"tickets":[
     \\{"id":326,"repo":"arena","kind":"epic","status":"doing","title":"The board, redesigned"},
-    \\{"id":11,"repo":"arena","title":"done a","status":"done","epic_id":326,"closed_at":"2026-11-24T00:00:00Z"},
-    \\{"id":12,"repo":"arena","title":"done b","status":"done","epic_id":326,"closed_at":"2026-11-24T00:00:00Z"},
-    \\{"id":13,"repo":"arena","title":"done c","status":"done","epic_id":326,"closed_at":"2026-11-24T00:00:00Z"},
+    \\{"id":11,"repo":"arena","title":"done a","status":"done","stage":"landed","epic_id":326,"closed_at":"2026-11-24T00:00:00Z"},
+    \\{"id":12,"repo":"arena","title":"done b","status":"done","stage":"landed","epic_id":326,"closed_at":"2026-11-24T00:00:00Z"},
+    \\{"id":13,"repo":"arena","title":"done c","status":"done","stage":"landed","epic_id":326,"closed_at":"2026-11-24T00:00:00Z"},
     \\{"id":14,"repo":"arena","title":"building one","status":"doing","epic_id":326,"claimed_by":"%3"},
     \\{"id":15,"repo":"arena","title":"todo a","status":"todo","epic_id":326},
     \\{"id":16,"repo":"arena","title":"todo b","status":"todo","epic_id":326},
@@ -3436,7 +3436,7 @@ test "a card to try wears ▲ try it in the you colour, filled" {
     const r = app.roles.?;
     app.board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[
-        \\{"id":2,"repo":"menard","title":"old","status":"done","closed_at":"2026-11-24T00:00:00Z"},
+        \\{"id":2,"repo":"menard","title":"old","status":"done","stage":"landed","closed_at":"2026-11-24T00:00:00Z"},
         \\{"id":7,"repo":"tlon","title":"Lights","status":"try","stage":"landed","checks":[{"n":1,"text":"it is told","result":null}]},
         \\{"id":8,"repo":"tlon","title":"Ask","status":"review","ask":{"id":1,"question":"q?"}}
         \\]}
@@ -3948,7 +3948,7 @@ test "with a Your move item's card open, every Your move row is drawn beside it,
 
 const grid_board =
     \\{"tickets":[
-    \\{"id":701,"repo":"arena","status":"doing","title":"A step that is building right now and long, with more words to push it past the edge of any window"},
+    \\{"id":701,"repo":"arena","status":"doing","stage":"landed","title":"A step that is building right now and long, with more words to push it past the edge of any window"},
     \\{"id":702,"repo":"babylon","status":"doing","title":"B"},
     \\{"id":703,"repo":"menard","status":"todo","title":"C"},
     \\{"id":410,"repo":"arena","kind":"epic","status":"doing","title":"menard goal"}],
@@ -4040,7 +4040,7 @@ const landed_title = "Landed ticket title of forty cells wide.";
 
 test "at 200 columns a 40-cell landed title shows whole" {
     var board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[{"id":801,"repo":"arena","status":"done","title":"Landed ticket title of forty cells wide.","closed_at":"2026-11-23T07:00:00Z"}],
+        \\{"tickets":[{"id":801,"repo":"arena","status":"done","stage":"landed","title":"Landed ticket title of forty cells wide.","closed_at":"2026-11-23T07:00:00Z"}],
         \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":1,"newest":[801]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
     );
     defer board.deinit();
