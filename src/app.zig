@@ -5775,6 +5775,7 @@ pub const App = struct {
                 if (app.checkRunOf(card.id, check.n)) |run| if (run.pane) |pane| return app.openClaude(pane);
             };
             app.checkCancel();
+            if (is(key, &.{"\r"})) return;
         };
         if (is(key, &.{ "j", "\x1b[B", "\x1bOB" }) and view.detail_scroll + 1 < app.detailRows()) view.detail_scroll += 1;
         if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.detail_scroll -|= 1;
@@ -8570,6 +8571,8 @@ test "a ticket with an open ask and a try sheet: the ask's row shows the ask and
 
     try app.modalKey("1");
     var unsent: [64]u8 = undefined;
+    try eq(@as(usize, 0), try sent.readPositionalAll(std.testing.io, &unsent, 0));
+    try app.modalKey("\r");
     try eq(@as(usize, 0), try sent.readPositionalAll(std.testing.io, &unsent, 0));
 
     app.home = .{ .detail = 7, .ask_first = true };
