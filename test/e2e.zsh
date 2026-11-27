@@ -866,6 +866,7 @@ key ' '
 see 'the whole of it'
 key q
 check "q closes it too" gone 'the whole of it'
+
 nofile() { [[ -z $(print -l $tmp/run/babylon/detail-*-7.txt(N)) ]] }
 check "leaving no file of it behind" await nofile
 close_at() { local l=$(settled | grep -m1 "q close"); print $(( ${#${l%%q close*}} + 1 )) $(settled | grep -n -m1 "q close" | cut -d: -f1) }
@@ -1707,6 +1708,15 @@ check "whose foot has H for asking its Claude to hand off" see 'H hand off'
 key H
 sent() { [[ $(inner capture-pane -J -p -t gamma:g6) == *'hand #920 off: commit what is uncommitted as a WIP commit, then call handoff.'* ]] }
 check "H in it types the ask into the Claude holding it, as babylon's own does" await sent
+key Escape
+print -r -- '{"tickets":[{"id":930,"repo":"arena","title":"Held for a migration","kind":"ticket","status":"review","priority":"med","blocked_by":[],"stage":"held","stage_note":"held for you: a migration"}],"plan":{"now":[{"ticket":930,"repo":"arena","title":"Held for a migration","state":"landing","stage":"held","since":"2026-11-24T10:00:00Z"}],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}' >$tmp/run/babylon/board.json
+zselect -t 150
+plan_at 930
+: >$tmp/babylon
+key ' '
+check "a held ticket's card, opened from in flight, offers y land and s send back in its foot" await shows 'y land.*s send back'
+key y
+check "and y runs babylon land on it" await last 'land 930'
 key Escape
 mkdir -p $tmp/.config/ficciones/theme
 for name in AMBER VIOLET AMBERDIM EMBERDIM INK DIM GREY SURFACE0 SURFACE2 SURFACE3 SURFACE4 BG CYAN MOSS PINK RED; do print -r -- "PALETTE_$name=#808080"; done >$tmp/.config/ficciones/theme/palette.sh

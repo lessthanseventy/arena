@@ -4983,6 +4983,11 @@ pub const App = struct {
         try app.ticketWindow("babylon new --epic {d}{s}", .{ epic, narrowed });
     }
 
+    /// Whether babylon holds `card` in its pipeline for the human to land or send back.
+    fn heldCard(card: *const tickets.Card) bool {
+        return if (card.stage) |stage| std.mem.eql(u8, stage, "held") else false;
+    }
+
     /// What can be done to a card from the board, by its key or its chip.
     pub const CardAction = enum {
         go,
@@ -5004,6 +5009,10 @@ pub const App = struct {
         drive,
         /// A goal's card: a new ticket in it.
         new_ticket,
+        /// A ticket held for the human: say land to it.
+        land,
+        /// A ticket held for the human: send it back.
+        send_back,
 
         /// The key that does it, as the box on the board writes it.
         pub fn key(action: CardAction) []const u8 {
@@ -5023,6 +5032,8 @@ pub const App = struct {
                 .goal => "a",
                 .drive => "d",
                 .new_ticket => "+",
+                .land => "y",
+                .send_back => "s",
             };
         }
 
@@ -5043,6 +5054,8 @@ pub const App = struct {
                 .goal => "goal…",
                 .drive => "drive",
                 .new_ticket => "ticket",
+                .land => "land",
+                .send_back => "send back",
             };
         }
     };
@@ -5055,7 +5068,9 @@ pub const App = struct {
     pub fn cardActions(card: *const tickets.Card, out: *[12]CardAction) []CardAction {
         var n: usize = 0;
         const open = card.status != .@"try" and card.status != .done;
+        const held = heldCard(card);
         const all = [_]struct { CardAction, bool }{
+            .{ .land, held },                                                                     .{ .send_back, held },
             .{ .go, open and (card.proposal != null or card.holder() != null or givable(card)) }, .{ .no, card.proposal != null },
             .{ .handoff, card.status == .doing and card.holder() != null },                       .{ .give, givable(card) },
             .{ .edit, open },                                                                     .{ .priority, open and card.status != .backlog },
@@ -5104,6 +5119,8 @@ pub const App = struct {
             .new_ticket => try app.newTicketIn(card.id),
             .handoff => try app.askHandoff(card),
             .gate => try app.openGate(card.id),
+            .land => try app.settleProposal("land", card.id),
+            .send_back => try app.settleProposal("back", card.id),
             .reopen, .to_todo => try app.send(.ignore, captured("babylon update {d} --status todo"), .{card.id}),
             .open => unreachable,
         }
@@ -5528,6 +5545,8 @@ pub const App = struct {
                     .goal => "a",
                     .drive => "d",
                     .new_ticket => "+",
+                    .land => "y",
+                    .send_back => "s",
                     else => continue,
                 };
                 const button: ModalButton = .{ .action = .{ .card = action }, .key = key, .label = action.label(), .x = x, .y = foot };
@@ -5872,7 +5891,7 @@ pub const App = struct {
         };
         if (app.askWords(card)) |w| if (is(key, &.{w.action.key})) return app.pressModal(.words);
         const claude_key = app.claudeKey(card);
-        const action: ?ModalAction = if (is(key, &.{"\r"})) .{ .card = .go } else if (is(key, &.{"G"})) .{ .card = .give } else if (is(key, &.{"H"})) .{ .card = .handoff } else if (is(key, &.{"e"})) .{ .card = .edit } else if (is(key, &.{"p"})) .{ .card = .priority } else if (is(key, &.{">"})) .{ .card = .close } else if (is(key, &.{"<"})) .{ .card = .reopen } else if (is(key, &.{claude_key}) and card.status != .@"try" and app.claudeOf(card) != null) .claude else null;
+        const action: ?ModalAction = if (is(key, &.{"\r"})) .{ .card = .go } else if (is(key, &.{"G"})) .{ .card = .give } else if (is(key, &.{"H"})) .{ .card = .handoff } else if (is(key, &.{"e"})) .{ .card = .edit } else if (is(key, &.{"p"})) .{ .card = .priority } else if (is(key, &.{">"})) .{ .card = .close } else if (is(key, &.{"<"})) .{ .card = .reopen } else if (is(key, &.{"y"}) and heldCard(card)) .{ .card = .land } else if (is(key, &.{"s"}) and heldCard(card)) .{ .card = .send_back } else if (is(key, &.{claude_key}) and card.status != .@"try" and app.claudeOf(card) != null) .claude else null;
         if (action) |pressed| return app.pressModal(pressed);
         var buttons: [48]ModalButton = undefined;
         for (app.modalButtons(&buttons)) |button| if (button.action == .need and is(key, &.{button.key})) return app.pressModal(button.action);
@@ -5891,8 +5910,8 @@ pub const App = struct {
         try app.columnRun(false, line.written());
     }
 
-    /// Proposal `id` settled as `word`, go or no, through babylon, which only a human's own
-    /// command line may do; its refusal is said.
+    /// `babylon WORD ID` (go or no on a proposal, land or back on a held ticket), which only a
+    /// human's own command line may run; its refusal is said.
     fn settleProposal(app: *App, comptime word: []const u8, id: u32) !void {
         try app.send(.ignore, "run-shell -b \"out=\\$(babylon " ++ word ++ " {d} 2>&1) || " ++
             "{{ command -v notify-send >/dev/null && notify-send -a arena -- \\\"\\$out\\\"; }}\"", .{id});
@@ -7846,6 +7865,16 @@ test "hand off is a doing card's action while a Claude holds it, and no other ca
     c.claimed_by = "%3";
     c.status = .todo;
     try std.testing.expect(std.mem.indexOfScalar(App.CardAction, App.cardActions(&c, &have), .handoff) == null);
+}
+
+test "land and send back are the actions of a card whose stage is held, and no other card's" {
+    var have: [12]App.CardAction = undefined;
+    var c: tickets.Card = .{ .id = 1, .title = "a", .status = .review, .stage = "held" };
+    const held = App.cardActions(&c, &have);
+    try std.testing.expect(std.mem.indexOfScalar(App.CardAction, held, .land) != null);
+    try std.testing.expect(std.mem.indexOfScalar(App.CardAction, held, .send_back) != null);
+    c.stage = "queued";
+    try std.testing.expect(std.mem.indexOfScalar(App.CardAction, App.cardActions(&c, &have), .land) == null);
 }
 
 test "a card is given only while it is free to claim, whatever its repo" {
