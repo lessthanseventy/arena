@@ -452,6 +452,20 @@ pub const Sheet = struct {
         return null;
     }
 
+    /// The pick the board is entered at: its first pickable row under the `now` line, or with
+    /// nothing under it the latest landed row.
+    pub fn boardEntry(s: *const Sheet) ?usize {
+        const mine = s.span(.board);
+        const line = s.nowLine(.board) orelse return null;
+        var before: ?usize = null;
+        for (s.rows[mine.start..][0..mine.len], 0..) |row, i| {
+            const p = row.pick orelse continue;
+            if (i > line and row.kind != .detail and row.kind != .buttons) return p;
+            if (i < line) before = p;
+        }
+        return before;
+    }
+
     /// Workbench's rows narrowed to the repo `repo` (none for every one) and to what `find` holds.
     /// Another repo's rows are left out of their windows; a row that does not hold `find` stays,
     /// dim and out of the picks, so nothing moves. A window left with no row says so.

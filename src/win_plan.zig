@@ -43,7 +43,7 @@ pub fn planButtons(app: *const App, sheet: *const sheets.Sheet, at: usize, out: 
     const y = rect.y + 1 + @as(u16, @intCast(pin + line - top));
     var have: [12]CardAction = undefined;
     const actions = App.cardActions(card, &have);
-    const order = [_]CardAction{ .go, .open, .give, .handoff, .edit, .priority, .close, .reopen, .to_todo, .to_next, .goal };
+    const order = [_]CardAction{ .go, .open, .gate, .give, .handoff, .edit, .priority, .close, .reopen, .to_todo, .to_next, .goal };
     var x = rect.x + 3;
     const right = rect.x + rect.w -| 3;
     var n: usize = 0;

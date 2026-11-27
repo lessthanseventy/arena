@@ -3778,7 +3778,8 @@ pub const App = struct {
         app.orchestrating = false;
         app.normal = false;
         app.dirty = true;
-        if (app.home == null) app.home = .{};
+        const fresh = app.home == null;
+        if (fresh) app.home = .{};
         const view = &app.home.?;
         view.help = false;
         view.detail = null;
@@ -3787,6 +3788,19 @@ pub const App = struct {
         view.alone = false;
         view.focus = .plan;
         app.reflow();
+        if (fresh) app.enterBoard();
+    }
+
+    /// With the pick on the board's first row, Doing's, it moves to the row the board is entered
+    /// at, so the board opens at its `now` line.
+    fn enterBoard(app: *App) void {
+        const view = &app.home.?;
+        if (view.screen != .doing or view.plan_pick != 0) return;
+        var sheet: sheets.Sheet = undefined;
+        if (!app.planSheet(&sheet)) return;
+        const row = sheet.picked(0) orelse return;
+        if (row.win != .board) return;
+        if (sheet.boardEntry()) |entry| view.plan_pick = entry;
     }
 
     /// Why home has no plan to draw, in `buf`: babylon's file is not there or did not parse, or
@@ -3869,6 +3883,7 @@ pub const App = struct {
         view.giving = null;
         view.into = null;
         view.whole = null;
+        if (to == .doing) app.enterBoard();
     }
 
     /// `sheet` narrowed to the plan's repo and to what the find line holds.
@@ -3926,6 +3941,11 @@ pub const App = struct {
             .open => if (card.status == .review) "log" else action.label(),
             else => action.label(),
         };
+    }
+
+    /// Whether `item` is in the pipeline: landing, reviewing, verifying or queued.
+    fn isPipeline(item: tickets.NowItem) bool {
+        return std.mem.eql(u8, item.state, "landing");
     }
 
     /// Whether `row` opens in place when it is picked: the rows that are one ticket.
@@ -4076,7 +4096,12 @@ pub const App = struct {
         const first = if (range) |r| r.first else 0;
         const last = if (range) |r| r.first + r.n - 1 else sheet.picks -| 1;
         view.plan_pick = std.math.clamp(view.plan_pick, first, last);
-        if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) view.plan_pick = @min(view.plan_pick + 1, last);
+        const from_board = if (sheet.picked(view.plan_pick)) |row| row.win == .board else false;
+        if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) {
+            view.plan_pick = @min(view.plan_pick + 1, last);
+            const into = if (sheet.picked(view.plan_pick)) |row| row.win == .board else false;
+            if (into and !from_board and view.whole == null) view.plan_pick = sheet.boardEntry() orelse view.plan_pick;
+        }
         if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.plan_pick = @max(view.plan_pick -| 1, first);
         if (is(key, &.{ "j", "\x1b[B", "\x1bOB", "k", "\x1b[A", "\x1bOA" })) try app.toSide();
         if (is(key, &.{"?"})) view.help = true;
@@ -4152,7 +4177,7 @@ pub const App = struct {
         if (is(key, &.{ "\x1b", "q" })) return app.closeBoard();
         if (is(key, &.{"`"})) return app.foldSide();
         if (is(key, &.{"g"})) {
-            if (sheet.picked(view.plan_pick)) |row| if (row.kind == .now and !std.mem.eql(u8, app.board.?.plan().?.now[row.item].state, "building")) {
+            if (sheet.picked(view.plan_pick)) |row| if (row.kind == .now and isPipeline(app.board.?.plan().?.now[row.item])) {
                 return app.openGate(row.ticket.?);
             };
             return app.gateModal();
@@ -4957,6 +4982,8 @@ pub const App = struct {
         to_next,
         handoff,
         open,
+        /// A pipeline row's gate.
+        gate,
         /// Into another goal, or out of its goal.
         goal,
         /// A goal's card: drive towards it.
@@ -4978,6 +5005,7 @@ pub const App = struct {
                 .to_next => "w",
                 .handoff => "H",
                 .open => "space",
+                .gate => "g",
                 .goal => "a",
                 .drive => "d",
                 .new_ticket => "+",
@@ -4987,6 +5015,7 @@ pub const App = struct {
         pub fn label(action: CardAction) []const u8 {
             return switch (action) {
                 .open => "open",
+                .gate => "gate",
                 .go => "go",
                 .no => "no",
                 .give => "give",
@@ -5019,7 +5048,7 @@ pub const App = struct {
             .{ .close, card.status == .todo or card.status == .backlog },                         .{ .reopen, card.status == .done },
             .{ .to_todo, card.status == .backlog },                                               .{ .to_next, card.status == .todo },
             .{ .goal, open and !card.isEpic() },                                                  .{ .drive, open and card.isEpic() and card.status != .backlog },
-            .{ .new_ticket, open and card.isEpic() and card.status != .backlog },
+            .{ .new_ticket, open and card.isEpic() and card.status != .backlog },                 .{ .gate, card.status == .review },
         };
         for (all) |pair| if (pair[1]) {
             out[n] = pair[0];
@@ -5060,6 +5089,7 @@ pub const App = struct {
             .drive => try win_driving.drive(app, card.id),
             .new_ticket => try app.newTicketIn(card.id),
             .handoff => try app.askHandoff(card),
+            .gate => try app.openGate(card.id),
             .reopen, .to_todo => try app.send(.ignore, captured("babylon update {d} --status todo"), .{card.id}),
             .open => unreachable,
         }
@@ -8976,6 +9006,29 @@ test "on Doing's board ⏎ on an up next row starts it, and on a reviewing row o
     app.home.?.detail = null;
     try app.planKey("g");
     try expectSent(sent, &got, "gate 21");
+}
+
+test "Doing's board opens with the pick under the now line and the line two rows from its top, with ten landed" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = undefined;
+    try movesApp(&app, sent, .doing);
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    app.view_h = 24;
+    app.board.?.deinit();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"plan":{"now":[{"ticket":21,"repo":"arena","title":"Run","state":"building"}],"next":[],"goals":[],
+        \\"landed_today":{"count":10,"newest":[1,2,3,4,5,6,7,8,9,10]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    app.enterBoard();
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    try std.testing.expectEqual(sheets.Kind.now, sheet.picked(app.home.?.plan_pick).?.kind);
+    const body = @as(usize, app.planRect(.board).h) - sheets.window_chrome;
+    try std.testing.expectEqual(sheet.nowLine(.board).? - 2, app.planWindowTop(&sheet, .board, body));
 }
 
 test "d on a goal runs babylon drive on Planning, and does nothing on Doing" {

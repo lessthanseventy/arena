@@ -225,8 +225,8 @@ pub fn detail(app: *const App, row: sheets.Row, ww: usize, lines: *sheets.Lines)
     }
 }
 
-/// Enter on a board row: a building or stuck one to the Claude on it, or with none and nothing
-/// moving it, starts one; any other row opens its card.
+/// Enter on a landed or pipeline row: its card. On a building or stuck row it goes to the Claude
+/// on it; a stuck one with no Claude starts one. An up next row is started by next's own `act`.
 pub fn act(app: *App, row: *const sheets.Row) !void {
     const id = row.ticket orelse return;
     if (row.kind == .landed) {
@@ -242,4 +242,31 @@ pub fn act(app: *App, row: *const sheets.Row) !void {
     if (pane) |held| if (building or item.stalled != null) return app.openClaude(held);
     if (item.stalled != null) return app.send(.ignore, app_mod.captured("babylon start {d}"), .{id});
     if (!building) _ = try app.openDetail(id);
+}
+
+test "the board's rows say their state, a ◆ for the driven goal's step, and one wait word each" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1,"repo":"arena","title":"one","status":"done"},{"id":2,"repo":"arena","title":"two","status":"done"}],
+        \\"plan":{"driving":10,
+        \\"now":[
+        \\{"ticket":3,"repo":"arena","title":"r","state":"landing","stage":"reviewing"},
+        \\{"ticket":4,"repo":"arena","title":"d","state":"building"}],
+        \\"next":[{"ticket":5,"repo":"arena","title":"e","held":{"why":"repo cap","by":3}},{"ticket":6,"repo":"menard","title":"f"}],
+        \\"goals":[{"epic":10,"title":"g","total":1,"landed":0,"steps":[{"ticket":4,"state":"building"}]}],
+        \\"landed_today":{"count":2,"newest":[1,2]}}}
+    );
+    defer board.deinit();
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.board = board;
+    const r = bench.roles();
+    const given = app.board.?.plan().?;
+    var s: Scratch = .{};
+    const eq = std.testing.expectEqualStrings;
+    try eq("◒ reviewing", facts(&app, r, .{ .kind = .now, .item = 0, .ticket = 3 }, &s).?.state);
+    try eq("◐ building", facts(&app, r, .{ .kind = .now, .item = 1, .ticket = 4 }, &s).?.state);
+    try eq("· up next", facts(&app, r, .{ .kind = .next, .item = 0, .ticket = 5 }, &s).?.state);
+    try eq("after #3", facts(&app, r, .{ .kind = .next, .item = 0, .ticket = 5 }, &s).?.wait);
+    try eq("ready", facts(&app, r, .{ .kind = .next, .item = 1, .ticket = 6 }, &s).?.wait);
+    try std.testing.expect(inDrivenGoal(given, 4));
+    try std.testing.expect(!inDrivenGoal(given, 3));
 }

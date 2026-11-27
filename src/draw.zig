@@ -1472,7 +1472,10 @@ fn planFoot(app: *App, w: *Writer, sheet: *const sheets.Sheet, pick: usize) !voi
     var pen: Pen = .{};
     try w.print("\x1b[{d};{d}H", .{ app.view_h, 1 });
     try pen.set(w, ink(app, "dim", 8), null);
-    try fitted(w, text, app.boardW());
+    const keys = "c Claudes   ? keys ";
+    const room = @as(usize, app.boardW()) -| cellCount(keys) -| 1;
+    try fitted(w, text, if (app.workbench() and cellCount(text) <= room) room else app.boardW());
+    if (app.workbench() and cellCount(text) <= room) try w.writeAll(keys);
 }
 
 const PlanHeadBufs = struct { auto: [48]u8, auto_pad: [64]u8, today: [32]u8, needs: [16]u8, orch: [40]u8, restart: [64]u8, unpushed: [32]u8, claudes: [24]u8 };
@@ -2087,7 +2090,6 @@ const plan_keys = [_][2][]const u8{
     .{ "tab", "the other screen: Doing, or Planning" },
     .{ "j k, arrows", "pick a row: on Doing your move, then the board, landed above its now line; on Planning goals, no goal, next, backlog" },
     .{ "⏎, click it", "go: building or stuck, its Claude; up next, start it; landed or in the pipeline, its card; plan an idea, unfold a row, the board on it" },
-
     .{ "space", "open the row in place; on an open row, its whole ticket" },
     .{ "f", "the picked window whole, over the plan; q closes it" },
     .{ "+", "on Planning: a new ticket in the picked goal or in no goal; elsewhere a new goal, planned now or just kept" },

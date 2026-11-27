@@ -1400,7 +1400,9 @@ key -l ' '
 check "and space on it opens its modal" see 'q close'
 key Escape
 check "which Escape puts away, the row staying open" gone 'q close'
-check "the pick starts on the board's first row, the oldest landed" see '▌ ✓ landed +#703'
+key Tab
+key Tab
+check "Doing shown again, the pick is on the board's first row under the now line" see '▌ ◒ verifying +#702'
 key /
 key -l Light
 key Enter
