@@ -97,10 +97,38 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             const place_x = age_x -| (cellCount(place) + 2);
             try bench.say(w, age_x, y, age, r.dim, bg, false);
             try bench.say(w, place_x, y, place, r.dim, bg, false);
-            try sayCut(w, x0 + 7, y, win.label(), place_x -| (x0 + 8), r.text, bg, false);
+            var name_buf: [160]u8 = undefined;
+            try sayCut(w, x0 + 7, y, otherName(app, win, &name_buf), place_x -| (x0 + 8), r.text, bg, false);
         },
         else => {},
     }
+}
+
+/// What an other-Claudes row calls a Claude: `#N` and the board's short name when its label
+/// leads with a ticket's number, else the label itself.
+fn otherName(app: *const App, win: *const app_mod.Window, buf: []u8) []const u8 {
+    const label = win.label();
+    if (label.len < 2 or label[0] != '#') return label;
+    var end: usize = 1;
+    while (end < label.len and std.ascii.isDigit(label[end])) end += 1;
+    const id = std.fmt.parseInt(u32, label[1..end], 10) catch return label;
+    const card = app.cardById(id) orelse return label;
+    return std.fmt.bufPrint(buf, "#{d} {s}", .{ id, card.name() }) catch label;
+}
+
+test "an other-Claudes row names a ticket's Claude by the ticket's short name" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1154,"repo":"arena","title":"A to-try card opens on its try sheet","short":"try-sheet card","status":"doing"}]}
+    );
+    defer app.board.?.deinit();
+    var buf: [160]u8 = undefined;
+    var held: app_mod.Window = .{ .id = 1, .name = @constCast("#1154 A to-try card opens on its try s"), .info = @constCast("") };
+    try std.testing.expectEqualStrings("#1154 try-sheet card", otherName(&app, &held, &buf));
+    var unknown: app_mod.Window = .{ .id = 2, .name = @constCast("#99 gone"), .info = @constCast("") };
+    try std.testing.expectEqualStrings("#99 gone", otherName(&app, &unknown, &buf));
+    var plain: app_mod.Window = .{ .id = 3, .name = @constCast("fixing the build"), .info = @constCast("") };
+    try std.testing.expectEqualStrings("fixing the build", otherName(&app, &plain, &buf));
 }
 
 /// Enter on an in flight row: to the Claude building it, or with none and nothing moving it,
