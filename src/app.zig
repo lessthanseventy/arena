@@ -356,6 +356,10 @@ const Pending = union(enum) {
     modes: u32,
     capture: u32,
     cursor: u32,
+    /// A command started in a session of its own to be shown in the middle column, answered by
+    /// its pane and session: the session is closed with the column, or `column_keep` left running.
+    column_kill,
+    column_keep,
 };
 
 pub const HomeView = struct {
@@ -519,6 +523,10 @@ pub const App = struct {
     look_drawn: i64 = 0,
     /// When the Claude in the middle column had its screen captured last.
     claude_at: i64 = 0,
+    /// A command's pane started for the middle column, opened there once tmux lists it; and the
+    /// session closed with the column, when it is arena's to close.
+    column_want: ?ColumnWant = null,
+    column_own: ?u32 = null,
     key_at: i64 = 0,
     /// The last input was a key that moves the pick: only then does a peek follow the pick.
     key_typed: bool = false,
@@ -2096,7 +2104,7 @@ pub const App = struct {
         var n: [12]u8 = undefined;
         var cmd: Writer.Allocating = .init(app.gpa);
         defer cmd.deinit();
-        try cmd.writer.writeAll("new-window -a -n look sh -c ");
+        try cmd.writer.writeAll("sh -c ");
         const args = [_][]const u8{
             script,                                                   "_",
             need.repo,                                                step.range,
@@ -2107,7 +2115,7 @@ pub const App = struct {
             if (i > 0) try cmd.writer.writeAll(" ");
             try tmuxQuote(&cmd.writer, arg);
         }
-        try app.send(.ignore, "{s}", .{cmd.written()});
+        try app.columnRun(false, cmd.written());
         return true;
     }
 
@@ -2232,7 +2240,7 @@ pub const App = struct {
             "printf '\\nexit %s · ⏎ closes\\n' \"$(cat \"$d/rc\")\"; read _";
         var cmd: Writer.Allocating = .init(app.gpa);
         defer cmd.deinit();
-        try cmd.writer.print("new-window -d -a -n \"check ##{d}\" sh -c ", .{ask.ticket});
+        try cmd.writer.writeAll("sh -c ");
         for ([_][]const u8{ script, "_", dir, ask.cmds[0..ask.len] }, 0..) |arg, i| {
             if (i > 0) try cmd.writer.writeAll(" ");
             try tmuxQuote(&cmd.writer, arg);
@@ -2242,7 +2250,7 @@ pub const App = struct {
             const at = std.fmt.bufPrint(&path, "{s}/{s}", .{ dir, name }) catch continue;
             std.Io.Dir.cwd().deleteFile(app.io, at) catch {};
         }
-        try app.send(.ignore, "{s}", .{cmd.written()});
+        try app.columnRun(true, cmd.written());
         for (app.check_runs.items, 0..) |run, i| if (run.ticket == ask.ticket and run.n == ask.n) {
             _ = app.check_runs.orderedRemove(i);
             break;
@@ -2556,6 +2564,8 @@ pub const App = struct {
     fn onReply(app: *App, kind: Pending, body: []const u8) !void {
         switch (kind) {
             .ignore, .switched => {},
+            .column_kill => app.columnStarted(false, body),
+            .column_keep => app.columnStarted(true, body),
             .sessions => try app.onSessions(body),
             .panes => try app.onPanes(body),
             // What the program set before arena was watching, which no capture shows: without
@@ -2751,6 +2761,7 @@ pub const App = struct {
         app.follow_active = false;
         if (app.cur()) |s| try app.see(s);
         try app.settle();
+        try app.takeColumn();
         if (app.cur()) |s| app.listed = app.listed or s.wins.items.len > 0;
         app.dirty = true;
     }
@@ -3254,6 +3265,7 @@ pub const App = struct {
     /// The board put away, and the side with it, back in the session the human was in.
     fn closeBoard(app: *App) !void {
         const view = app.home orelse return;
+        app.dropOwned();
         app.home = null;
         app.find_len = 0;
         app.clearStartRefusal();
@@ -3543,6 +3555,50 @@ pub const App = struct {
     }
 
     /// The Claude whose pane is in the middle column, if one is.
+    const ColumnWant = struct { pane: u32, session: u32, keep: bool, lists: u8 = 0 };
+
+    /// `tail`, a command, run in a detached session of its own sized to the middle column, whose
+    /// pane the column then shows: no window is made on the strip. `keep` leaves it running when the
+    /// column closes.
+    fn columnRun(app: *App, keep: bool, tail: []const u8) !void {
+        if (app.home == null) try app.goHome();
+        const rect = app.columnRect();
+        const cols: u16 = if (rect != null) detailWidth(app.columnRoom()).inner else 80;
+        const rows: u16 = if (rect) |r| r.h -| 2 else 24;
+        try app.send(if (keep) .column_keep else .column_kill, "new-session -d -P -F '#{{pane_id}} #{{session_id}}' -x {d} -y {d} -c '#{{pane_current_path}}' {s}", .{ @max(cols, 20), @max(rows, 5), tail });
+    }
+
+    /// The answer to `columnRun`: the pane and session it made, wanted in the column.
+    fn columnStarted(app: *App, keep: bool, body: []const u8) void {
+        var it = std.mem.tokenizeAny(u8, body, " \n");
+        const pane = std.fmt.parseInt(u32, std.mem.trimStart(u8, it.next() orelse return, "%"), 10) catch return;
+        const session = std.fmt.parseInt(u32, std.mem.trimStart(u8, it.next() orelse return, "$"), 10) catch return;
+        app.column_want = .{ .pane = pane, .session = session, .keep = keep };
+        app.want_list = true;
+    }
+
+    /// Opens the wanted command pane in the column once tmux lists it; one that is still unlisted
+    /// after a few lists has ended and is given up.
+    fn takeColumn(app: *App) !void {
+        const want = &(app.column_want orelse return);
+        if (app.paneWindow(want.pane) == null) {
+            want.lists += 1;
+            if (want.lists >= 3) app.column_want = null else app.want_list = true;
+            return;
+        }
+        const taken = want.*;
+        app.column_want = null;
+        try app.openClaude(taken.pane);
+        app.column_own = if (taken.keep) null else taken.session;
+    }
+
+    /// The session arena started for the column, closed.
+    fn dropOwned(app: *App) void {
+        const id = app.column_own orelse return;
+        app.column_own = null;
+        app.send(.ignore, "kill-session -t '${d}'", .{id}) catch {};
+    }
+
     pub fn claudeColumn(app: *const App) ?Agent {
         const view = app.home orelse return null;
         const at = app.paneWindow(view.claude orelse return null) orelse return null;
@@ -3554,6 +3610,7 @@ pub const App = struct {
     pub fn openClaude(app: *App, id: u32) !void {
         _ = app.paneWindow(id) orelse return;
         if (app.home == null) try app.goHome();
+        app.dropOwned();
         const view = &app.home.?;
         view.detail = null;
         view.item_open = false;
@@ -3580,6 +3637,7 @@ pub const App = struct {
         const view = &app.home.?;
         view.claude = null;
         view.claude_diff = false;
+        app.dropOwned();
         app.normal = false;
         app.dirty = true;
     }
@@ -5674,7 +5732,7 @@ pub const App = struct {
             if (is(key, &.{"r"})) return app.pressModal(.run_check);
             if (is(key, &.{"\r"})) if (pickedCheck(card, view.check_pick)) |check| {
                 if (app.check_ask) |ask| if (ask.ticket == card.id and ask.n == check.n) return app.checkStart();
-                if (app.checkRunOf(card.id, check.n)) |run| if (run.pane) |pane| return app.showPane(pane);
+                if (app.checkRunOf(card.id, check.n)) |run| if (run.pane) |pane| return app.openClaude(pane);
             };
             app.checkCancel();
         };
@@ -5724,8 +5782,10 @@ pub const App = struct {
     /// A command over a ticket that wants the terminal, as $EDITOR does: in a window by the
     /// focused one, kept open on a refusal to be read.
     pub fn ticketWindow(app: *App, comptime cmd: []const u8, args: anytype) !void {
-        try app.closeBoard();
-        try app.send(.ignore, "new-window -a -n ticket \"" ++ cmd ++ " || read _\"", args);
+        var line: Writer.Allocating = .init(app.gpa);
+        defer line.deinit();
+        try line.writer.print("\"" ++ cmd ++ " || read _\"", args);
+        try app.columnRun(false, line.written());
     }
 
     /// Proposal `id` settled as `word`, go or no, through babylon, which only a human's own
@@ -5844,6 +5904,7 @@ pub const App = struct {
             open.help = false;
             open.detail = null;
             open.item_open = false;
+            if (open.claude != null) app.dropOwned();
             open.claude = null;
             open.giving = null;
             // a click on another Your move item opens it in the closed one's place
@@ -7239,6 +7300,7 @@ pub const App = struct {
         app.dirty = true;
         win_foot.typed(app, win, bytes);
         try app.sendKeys(pane, bytes);
+        if (app.claudeColumn() != null) app.claude_at = app.now - claude_live_ms + 150;
     }
 
     /// The repo colour of the ticket claimed by the Claude in `pane`, if one is.
@@ -9492,7 +9554,8 @@ test "o on a check to look at the diff opens meatcheck on the landed range in a 
     try std.testing.expect(try win_feed.press(&app, "o"));
     var got: [4096]u8 = undefined;
     const said = try sentText(sent, &got);
-    try std.testing.expect(std.mem.indexOf(u8, said, "new-window -a -n look") != null);
+    try std.testing.expect(std.mem.indexOf(u8, said, "new-session -d -P") != null);
+    try std.testing.expect(std.mem.indexOf(u8, said, "new-window") == null);
     try std.testing.expect(std.mem.indexOf(u8, said, "meatcheck --diff") != null);
     try std.testing.expect(std.mem.indexOf(u8, said, "abc123^..abc123") != null);
     try std.testing.expect(std.mem.indexOf(u8, said, "is the retry bounded?") != null);
@@ -9908,9 +9971,10 @@ test "a click on not planned's + new button opens the new ticket window, and a w
     var got: [1024]u8 = undefined;
     const len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon new") != null);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "new-window") == null);
 
-    app.term_w = 60;
-    app.view_w = 60;
+    app.term_w = 30;
+    app.view_w = 30;
     try std.testing.expect(app.newHead() == null);
 }
 
@@ -10119,6 +10183,41 @@ test "a try card's foot has no its Claude, though its Claude is still there, and
     try std.testing.expect(!claude);
     try app.modalKey("c");
     try std.testing.expect(app.home != null);
+}
+
+test "a command started for the column is opened in it once listed, and its session is killed when it closes, unless kept" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    const eq = std.testing.expectEqual;
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    const pane = try Pane.create(&app, 7, 80, 24);
+    defer pane.destroy(std.testing.allocator);
+    var win: Window = .{ .id = 7, .name = @constCast("w") };
+    defer win.panes.deinit(std.testing.allocator);
+    try win.panes.append(std.testing.allocator, pane);
+    var s: Session = .{ .id = 3, .name = @constCast("s") };
+    var wins = [_]*Window{&win};
+    s.wins = .fromOwnedSlice(&wins);
+    var sessions = [_]*Session{&s};
+    app.sessions = .fromOwnedSlice(&sessions);
+    app.current = 3;
+    app.home = .{ .focus = .orchestrator };
+
+    app.columnStarted(false, "%7 $3\n");
+    try std.testing.expect(app.column_want != null);
+    try app.takeColumn();
+    try eq(@as(?u32, 7), app.home.?.claude);
+    try eq(@as(?u32, 3), app.column_own);
+    app.dropOwned();
+    var got: [256]u8 = undefined;
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "kill-session -t '$3'") != null);
+
+    app.columnStarted(true, "%7 $3\n");
+    try app.takeColumn();
+    try eq(@as(?u32, null), app.column_own);
 }
 
 fn needsBoard(buf: []u8, n: usize) ![]const u8 {

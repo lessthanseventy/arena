@@ -133,7 +133,7 @@ pub fn act(app: *App, item: feed.Item, key: []const u8) !bool {
             const step = need.steps[s];
             if (anyKey(key, &.{"r"}) and try app.checkOffer(ticket, step.n, step.text)) return true;
             if (std.mem.eql(u8, named, "⏎")) if (app.checkRunOf(ticket, step.n)) |run| if (run.pane) |pane| {
-                try app.showPane(pane);
+                try app.openClaude(pane);
                 return true;
             };
         }

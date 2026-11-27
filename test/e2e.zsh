@@ -1079,7 +1079,9 @@ plan_at 7
 key '>'
 check "> on a no goal row closes a ticket still to do" await last 'update 7 --status done'
 key e
-check "e on a no goal row edits it in a window of its own" await last 'edit 7'
+check "e on a no goal row edits it in the middle column" await last 'edit 7'
+zselect -t 500
+key Escape
 plan_at 8
 key ' '
 key ' '
@@ -1451,8 +1453,11 @@ key Enter
 check "and Enter adds it to next, through babylon" await last 'next 801 --why it is next'
 : >$tmp/babylon
 key +
-check "+ in no goal opens the new ticket window" await last 'new'
+check "+ in no goal opens the new ticket in the middle column" await last 'new'
+zselect -t 500
+key Escape
 normal
+key b
 key b
 cp $tmp/run/babylon/board.json $tmp/board.foot
 foot_json=$(<$tmp/board.foot)
@@ -1598,8 +1603,13 @@ key ']'
 key o
 check "o on a look check runs meatcheck on the landed range, with the check's words" await eval '[[ -f $tmp/meatcheck ]] && grep -q -- "--prompt look at the change: is the retry bounded" $tmp/meatcheck && grep -q -- "diff abc123^..abc123" $tmp/git'
 check "and no comments is a ✓, through babylon" await last 'tried 932 1 ok'
+
 print -r -- $'comments[2]{end_line,id,path,"side,omitempty",start_line,text}:\n  12,1,src/a.zig,"",12,loop never ends\n  5,2,src/b.zig,"",3,"why, \\"here\\"\\nsecond"' >$tmp/comments
 : >$tmp/babylon
+key b
+key b
+see 'o open'
+key ']'
 key o
 check "and its comments are the ✗'s words, an anchored line each" await eval '[[ $(<$tmp/babylon) == *"tried 932 1 no src/a.zig:12: loop never ends"* && $(<$tmp/babylon) == *"src/b.zig:3-5: why, \"here\" second"* ]]'
 rm -f $tmp/comments
@@ -1611,6 +1621,8 @@ running() {
 '"actions":[]}]}' | addplan
 }
 running
+key b
+key b
 see 'r run'
 key ']'
 key r
@@ -1621,12 +1633,14 @@ check "esc puts it away" gone 'run check 1\?'
 key ']'
 key r
 see 'run check 1\?'
+sessions_before=$(inner list-sessions -F '#{session_id}')
 key Enter
-check "⏎ runs it in a window named check #933" await eval '[[ $(inner list-windows -a -F "#{window_name}") == *"check #933"* ]]'
+check "⏎ runs it in the middle column: the strip gets no window of its own" await shows 'check 1: exit 0'
+check "and none named check #933 is made" eval '[[ $(inner list-windows -a -F "#{window_name}") != *"check #933"* ]]'
 check "and the tile says its exit and its last lines" await shows 'check 1: exit 0'
-check "with what the command printed" shows '^.*▌? *hi *$'
+check "with what the command printed" shows '^.*▌? *hi *│? *$'
 check "and y is still the human's to press" shows 'y ✓'
-inner kill-window -t "$(inner list-windows -a -F '#{window_id} #{window_name}' | awk '/check #933/ {print $1}')"
+for s in $(inner list-sessions -F '#{session_id}'); [[ $sessions_before == *$s* ]] || inner kill-session -t $s
 key M-b
 cp $tmp/board.nolook $tmp/run/babylon/board.json
 # home takes the plan as it opens, so arena must have read it back before b
