@@ -5649,24 +5649,20 @@ pub const App = struct {
                 try app.planClick(m);
                 return true;
             }
-            const closed = open.detail;
-            const closed_item = app.itemNeed();
+            // the row is found in the layout drawn, with the column open: closing it widens the plan
+            const reopens = open.detail != null or app.itemNeed() != null;
+            var sheet: sheets.Sheet = undefined;
+            const under: ?sheets.Row = if (m.y >= 2 and app.planSheet(&sheet)) if (app.planRowAt(&sheet, m.x, m.y)) |at| sheet.rows[at] else null else null;
+            const other = if (under) |row| row.kind == .need and !win_move.isOpen(app, row) else false;
             open.help = false;
             open.detail = null;
             open.item_open = false;
             open.giving = null;
             // a click on another Your move item opens it in the closed one's place
-            if (closed) |id| {
-                var sheet: sheets.Sheet = undefined;
-                if (m.y >= 2 and app.planSheet(&sheet)) if (app.planRowAt(&sheet, m.x, m.y)) |at| {
-                    if (sheet.rows[at].kind == .need and sheet.rows[at].ticket != id) try app.planClick(m);
-                };
-            }
-            if (closed_item) |was| {
-                var sheet: sheets.Sheet = undefined;
-                if (m.y >= 2 and app.planSheet(&sheet)) if (app.planRowAt(&sheet, m.x, m.y)) |at| {
-                    if (sheet.rows[at].kind == .need and sheet.rows[at].ticket == null and sheet.rows[at].item != was) try app.planClick(m);
-                };
+            if (reopens and other) {
+                const row = under.?;
+                open.plan_pick = row.pick orelse return true;
+                try win_move.open(app, &row);
             }
             return true;
         }
@@ -9930,6 +9926,75 @@ test "a to-try item in Your move opens in the middle column by click and by spac
     try app.modalKey("\x1b");
     try app.planKey("x");
     try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'skip'") == null);
+}
+
+/// The click on Your move's item `item` where it is drawn now: with the middle column open or not.
+fn movePoint(app: *const App, item: usize) !keys.Mouse {
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    const rect = app.planSlot(.move);
+    const x = rect.x + 4;
+    var y = rect.y + 1;
+    while (y + 1 < rect.y + rect.h) : (y += 1) {
+        const at = app.planRowAt(&sheet, x, y) orelse continue;
+        if (sheet.rows[at].kind == .need and sheet.rows[at].item == item) return .{ .code = 0, .x = x, .y = y, .release = false };
+    }
+    return error.TestUnexpectedResult;
+}
+
+test "a click on a Your move row opens that row's item, with nothing open, a card open or an item open in the middle column" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try tryApp(sent,
+        \\{"tickets":[{"id":1201,"repo":"arena","title":"first to try","status":"try","stage":"landed","checks":[]},
+        \\{"id":1202,"repo":"arena","title":"second to try","status":"try","stage":"landed","checks":[]},
+        \\{"id":1203,"repo":"arena","title":"third to try","status":"try","stage":"landed","checks":[]},
+        \\{"id":1204,"repo":"arena","title":"fourth to try","status":"try","stage":"landed","checks":[]},
+        \\{"id":1205,"repo":"arena","title":"fifth to try","status":"try","stage":"landed","checks":[]}],
+        \\"needs_you":[
+        \\{"id":"try:1201","kind":"try","ticket":1201,"repo":"arena","text":"#1201 arena  to try","actions":[]},
+        \\{"id":"try:1202","kind":"try","ticket":1202,"repo":"arena","text":"#1202 arena  to try","actions":[]},
+        \\{"id":"push:arena:abc:0","kind":"push","ticket":null,"repo":"arena","text":"▲ arena: 2 unpushed",
+        \\ "actions":[{"key":"⏎","label":"push","argv":["babylon","push","arena"]}]},
+        \\{"id":"try:1203","kind":"try","ticket":1203,"repo":"arena","text":"#1203 arena  to try","actions":[]},
+        \\{"id":"try:1204","kind":"try","ticket":1204,"repo":"arena","text":"#1204 arena  to try","actions":[]},
+        \\{"id":"push:ficciones:abc:0","kind":"push","ticket":null,"repo":"ficciones","text":"▲ ficciones: 1 unpushed",
+        \\ "actions":[{"key":"⏎","label":"push","argv":["babylon","push","ficciones"]}]},
+        \\{"id":"try:1205","kind":"try","ticket":1205,"repo":"arena","text":"#1205 arena  to try","actions":[]}],
+        \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.detail_asked.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    app.roles = @import("parts.zig").roles();
+    app.home.?.focus = .plan;
+    const view = &app.home.?;
+    const eq = std.testing.expectEqual;
+
+    try std.testing.expect(try app.homeMouse(try movePoint(&app, 3)));
+    try eq(@as(?u32, 1203), view.detail);
+    try std.testing.expect(try app.homeMouse(try movePoint(&app, 6)));
+    try eq(@as(?u32, 1205), view.detail);
+    try std.testing.expect(try app.homeMouse(try movePoint(&app, 1)));
+    try eq(@as(?u32, 1202), view.detail);
+    try std.testing.expect(try app.homeMouse(try movePoint(&app, 3)));
+    try eq(@as(?u32, 1203), view.detail);
+
+    try std.testing.expect(try app.homeMouse(try movePoint(&app, 1)));
+    try eq(@as(?u32, 1202), view.detail);
+
+    try std.testing.expect(try app.homeMouse(try movePoint(&app, 0)));
+    try eq(@as(?u32, 1201), view.detail);
+
+    try std.testing.expect(try app.homeMouse(try movePoint(&app, 2)));
+    try eq(@as(?u32, null), view.detail);
+    try eq(@as(?usize, 2), app.itemNeed());
+
+    try std.testing.expect(try app.homeMouse(try movePoint(&app, 1)));
+    try eq(@as(?u32, 1202), view.detail);
+    try eq(@as(?usize, null), app.itemNeed());
 }
 
 test "⏎ on a Claude with no ticket in in flight's foot shows its window, space opens its popup, and its peek is its window" {
