@@ -37,6 +37,7 @@ const history_lines = 5000;
 /// How long the pointer or the pick rests on a ticket or a Claude before a peek opens, and how often an open one is drawn again.
 const look_ms = 400;
 const look_live_ms = 500;
+const claude_live_ms = 1000;
 const quiet_s = 600;
 const stir_s = 60;
 /// A tmux `run-shell -b` of `cmd` whose output tmux never shows: it would open view mode on a pane,
@@ -373,6 +374,10 @@ pub const HomeView = struct {
     /// The card of the Your move item `App.item_id` names, an item with no ticket, is shown over
     /// the board; its text is scrolled with `detail_scroll`.
     item_open: bool = false,
+    /// The pane of the Claude shown live in the middle column, and whether the column has turned
+    /// to its ticket's changes. Typing into it is insert mode, `App.normal` false.
+    claude: ?u32 = null,
+    claude_diff: bool = false,
     /// A landed ticket's body is unfolded: it is one `space` away behind its checks.
     body_open: bool = false,
 
@@ -426,12 +431,12 @@ pub const HomeView = struct {
 
     /// Whether a box sits in the middle column, beside Plan rather than over it.
     pub fn columnOpen(view: HomeView) bool {
-        return view.detail != null or view.item_open or view.giving != null or view.into != null or view.auto_pick != null or view.goal_open or view.draft != null;
+        return view.claude != null or view.detail != null or view.item_open or view.giving != null or view.into != null or view.auto_pick != null or view.goal_open or view.draft != null;
     }
 
     /// Whether a box lies over the board, the keys its own.
     pub fn boxed(view: HomeView) bool {
-        return view.help or view.detail != null or view.item_open or view.giving != null or view.into != null or view.auto_pick != null or view.goal_open or view.draft != null or view.whole != null;
+        return view.help or view.claude != null or view.detail != null or view.item_open or view.giving != null or view.into != null or view.auto_pick != null or view.goal_open or view.draft != null or view.whole != null;
     }
 };
 
@@ -511,6 +516,8 @@ pub const App = struct {
     look_off: ?Look = null,
     look_here: ?struct { x: u16, y: u16 } = null,
     look_drawn: i64 = 0,
+    /// When the Claude in the middle column had its screen captured last.
+    claude_at: i64 = 0,
     key_at: i64 = 0,
     /// The last input was a key that moves the pick: only then does a peek follow the pick.
     key_typed: bool = false,
@@ -1493,7 +1500,7 @@ pub const App = struct {
                 return false;
             }
             if (was.?.win) |win| if (win.agent_pane != 0) {
-                try app.showPane(win.agent_pane);
+                try app.openClaude(win.agent_pane);
                 return true;
             };
         } else if (std.mem.eql(u8, text, " ")) if (was.?.card) |card| if (app.home != null) {
@@ -2298,7 +2305,7 @@ pub const App = struct {
     /// the card where its start button was.
     pub fn startAnswered(app: *App, text: []const u8) !void {
         const line = std.mem.trim(u8, text, " \n");
-        if (std.mem.eql(u8, line, "ok")) return app.closeBoard();
+        if (std.mem.eql(u8, line, "ok")) return;
         if (app.home == null) return;
         const first = line[0 .. std.mem.indexOfScalar(u8, line, '\n') orelse line.len];
         var clean: std.ArrayList(u8) = .empty;
@@ -3520,6 +3527,107 @@ pub const App = struct {
         try app.jumpTo(at.session, at.index);
     }
 
+    /// The Claude whose pane is in the middle column, if one is.
+    pub fn claudeColumn(app: *const App) ?Agent {
+        const view = app.home orelse return null;
+        const at = app.paneWindow(view.claude orelse return null) orelse return null;
+        return .{ .session = app.sessionIndex(at.session.id) orelse return null, .win = at.session.wins.items[at.index] };
+    }
+
+    /// Pane `id`, a Claude's, opened live in the middle column, in normal mode, for watching. The
+    /// strip is never visited, and what lay in the column is put away.
+    pub fn openClaude(app: *App, id: u32) !void {
+        _ = app.paneWindow(id) orelse return;
+        if (app.home == null) try app.goHome();
+        const view = &app.home.?;
+        view.detail = null;
+        view.item_open = false;
+        view.giving = null;
+        view.into = null;
+        view.claude = id;
+        view.claude_diff = false;
+        view.detail_scroll = 0;
+        view.focus = .plan;
+        app.normal = true;
+        app.dirty = true;
+        app.claude_at = app.now;
+        if (app.paneById(id)) |pane| {
+            pane.term.scrollViewport(.bottom);
+            if (!app.watched(pane) and pane.seed == .done) {
+                pane.seed = .wanted;
+                app.want_list = true;
+            }
+        }
+    }
+
+    /// The column back to what was under it, normal mode over.
+    fn closeClaude(app: *App) void {
+        const view = &app.home.?;
+        view.claude = null;
+        view.claude_diff = false;
+        app.normal = false;
+        app.dirty = true;
+    }
+
+    /// Turns the column between the Claude's pane and its ticket's changes: the branch's diff
+    /// against main, written beside the board as text.
+    fn claudeTurn(app: *App) !void {
+        const view = &app.home.?;
+        view.claude_diff = !view.claude_diff;
+        view.detail_scroll = 0;
+        app.dirty = true;
+        if (!view.claude_diff) return;
+        const a = app.claudeColumn() orelse return;
+        const dir = a.win.text(.path);
+        app.detail.clearRetainingCapacity();
+        if (dir.len == 0 or std.mem.indexOfScalar(u8, dir, '\'') != null) return;
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const path = app.detailPath(0, &buf) orelse return;
+        std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
+        if (app.detail_asked.items.len == 16) _ = app.detail_asked.orderedRemove(0);
+        try app.detail_asked.append(app.gpa, 0);
+        try app.send(.ignore, "run-shell -b \"git -C '{s}' diff --no-color --no-ext-diff main...HEAD >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ dir, path, path, path });
+    }
+
+    /// A key in normal mode with a Claude in the middle column: `esc` closes it, `i` types into
+    /// it, `d` turns it to its ticket's changes, `j` `k` scroll.
+    fn paneColumnKey(app: *App, key: []const u8) !void {
+        const view = &app.home.?;
+        const pane = app.paneById(view.claude.?) orelse return app.closeClaude();
+        app.dirty = true;
+        if (anyKey(key, &.{ "\x1b", "q" })) return app.closeClaude();
+        if (anyKey(key, &.{"i"})) {
+            app.normal = false;
+            pane.term.scrollViewport(.bottom);
+        } else if (anyKey(key, &.{"d"})) {
+            try app.claudeTurn();
+        } else if (anyKey(key, &.{ "j", "\x1b[B", "\x1bOB" })) {
+            if (view.claude_diff) {
+                if (view.detail_scroll + 1 < app.detailRows()) view.detail_scroll += 1;
+            } else pane.term.scrollViewport(.{ .delta = 1 });
+        } else if (anyKey(key, &.{ "k", "\x1b[A", "\x1bOA" })) {
+            if (view.claude_diff) view.detail_scroll -|= 1 else pane.term.scrollViewport(.{ .delta = -1 });
+        }
+    }
+
+    /// While a Claude's pane of a session tmux does not stream is in the column, its screen is
+    /// captured again each second. Returns how long until the next.
+    pub fn claudeStep(app: *App) i64 {
+        const never = std.math.maxInt(i64);
+        const view = app.home orelse return never;
+        const id = view.claude orelse return never;
+        const pane = app.paneById(id) orelse return never;
+        if (app.watched(pane)) return never;
+        const left = claude_live_ms - (app.now - app.claude_at);
+        if (left > 0) return left;
+        app.claude_at = app.now;
+        if (pane.seed == .done) {
+            pane.seed = .wanted;
+            app.want_list = true;
+        }
+        return claude_live_ms;
+    }
+
     /// The pane of the Claude holding ticket `id` put in front; nothing when none does.
     pub fn showHolder(app: *App, id: u32) !void {
         const b = if (app.board) |*b| b else return;
@@ -3972,8 +4080,8 @@ pub const App = struct {
         app.dirty = true;
         if (row.kind == .other) {
             const a = app.otherAt(row.item) orelse return;
+            if (std.mem.eql(u8, key, "\r")) return app.openClaude(a.win.agent_pane);
             try app.closeBoard();
-            if (std.mem.eql(u8, key, "\r")) return app.goAgent(a);
             app.normal = true;
             return app.openPopup(a.win.id);
         }
@@ -4862,7 +4970,7 @@ pub const App = struct {
             _ = try app.runWith("start", &.{ "babylon", "start", std.fmt.bufPrint(&id_buf, "{d}", .{card.id}) catch return }, true);
             return;
         };
-        try app.showPane(pane);
+        try app.openClaude(pane);
     }
 
     /// The session holding `card` asked to hand it off, in the words babylon's own handoff
@@ -5671,6 +5779,10 @@ pub const App = struct {
                 try app.autoClick(m);
                 return true;
             }
+            if (open.claude != null) if (app.columnRect()) |rect| {
+                if (m.y == rect.y and m.x + 4 >= rect.x + rect.w and m.x + 2 <= rect.x + rect.w) app.closeClaude();
+                if (rect.contains(m.x, m.y)) return true;
+            };
             if (open.item_open) if (app.columnRect()) |rect| {
                 var items: [16]ModalButton = undefined;
                 for (app.itemButtons(&items)) |button| if (button.hit(m.x, m.y)) {
@@ -5703,6 +5815,7 @@ pub const App = struct {
             open.help = false;
             open.detail = null;
             open.item_open = false;
+            open.claude = null;
             open.giving = null;
             // a click on another Your move item opens it in the closed one's place
             if (reopens and other) {
@@ -6546,7 +6659,8 @@ pub const App = struct {
     /// Whether what is typed is the focused pane's: nothing lies over the strip, or the board
     /// does with the orchestrator's column beside it focused.
     fn typing(app: *const App) bool {
-        return !app.normal and app.menu == null and app.prompt == null and app.overview == null and (app.home == null or app.sideFocused());
+        const column = if (app.home) |view| view.claude != null else false;
+        return !app.normal and app.menu == null and app.prompt == null and app.overview == null and (app.home == null or column or app.sideFocused());
     }
 
     /// Whether a left click at `m` is on the strip or the board's side column, which it makes
@@ -6559,7 +6673,8 @@ pub const App = struct {
     /// Normal mode ends where an overlay has the keys: it is the mode there, and closing it is
     /// back to insert.
     fn settleMode(app: *App) void {
-        if (app.normal and app.overlay() and !app.sideFocused() and app.popup == null) app.normal = false;
+        const column = if (app.home) |view| view.claude != null else false;
+        if (app.normal and app.overlay() and !app.sideFocused() and app.popup == null and !column) app.normal = false;
         if (!app.normal) {
             app.hash_len = null;
             app.closePopup();
@@ -6577,7 +6692,9 @@ pub const App = struct {
             app.prompt = null;
             app.overview = null;
         } else if (app.home) |*view| {
-            if (app.sideFocused()) {
+            if (view.claude != null) {
+                app.normal = true;
+            } else if (app.sideFocused()) {
                 app.normal = true;
             } else if (app.sideDue() and !view.boxed()) {
                 view.focus = .orchestrator;
@@ -6644,6 +6761,10 @@ pub const App = struct {
                     try app.popupKey(key);
                     continue;
                 }
+                if (app.home) |view| if (view.claude != null) {
+                    try app.paneColumnKey(key);
+                    continue;
+                };
                 if (app.hash_len != null) {
                     try app.hashKey(key);
                     continue;
@@ -7074,9 +7195,11 @@ pub const App = struct {
     }
 
     fn forward(app: *App, bytes: []const u8) !void {
-        const s = app.sessionById(app.bound()) orelse return;
-        const win = s.focused() orelse return;
-        const pane = win.activePane() orelse return;
+        const pane = if (app.claudeColumn()) |a| (app.paneById(app.home.?.claude.?) orelse a.win.activePane() orelse return) else blk: {
+            const s = app.sessionById(app.bound()) orelse return;
+            const win = s.focused() orelse return;
+            break :blk win.activePane() orelse return;
+        };
         if (bytes.len == 0) return;
         pane.term.screens.active.clearSelection();
         pane.term.scrollViewport(.bottom);
@@ -10094,9 +10217,37 @@ test "⏎ on a Claude with no ticket in in flight's foot shows its window, space
 
     app.home = .{ .focus = .plan, .plan_pick = first.pick.? };
     try app.planKey("\r");
-    try eq(@as(?HomeView, null), app.home);
+    try std.testing.expect(app.home != null);
+    try eq(@as(?u32, 7), app.home.?.claude);
     try std.testing.expect(app.popup == null);
-    try eq(@as(usize, 1), session.focus);
+    try eq(@as(usize, 0), session.focus);
+    try std.testing.expect(app.normal);
+    try std.testing.expect(app.claudeColumn().?.win == &asks);
+
+    try app.paneColumnKey("d");
+    try std.testing.expect(app.home.?.claude_diff);
+    try app.paneColumnKey("d");
+    try std.testing.expect(!app.home.?.claude_diff);
+
+    try app.paneColumnKey("i");
+    try std.testing.expect(!app.normal and app.typing());
+    try app.forward("\x1b");
+    try eq(@as(?u32, 7), app.home.?.claude);
+    try app.toggleMode();
+    try std.testing.expect(app.normal and !app.typing());
+    app.settleMode();
+    try std.testing.expect(app.normal);
+
+    try app.paneColumnKey("\x1b");
+    try eq(@as(?u32, null), app.home.?.claude);
+    try std.testing.expect(!app.normal);
+}
+
+test "go on a ticket leaves home open" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.home = .{ .focus = .plan };
+    try app.startAnswered("ok");
+    try std.testing.expect(app.home != null);
 }
 
 test "a Claude whose pane holds an in-flight ticket is not listed under other Claudes" {
@@ -10161,10 +10312,12 @@ test "a Claude waiting in its pane is a Your move item after babylon's, ⏎ show
     try std.testing.expectEqualStrings("arena", needs[1].repo);
     try std.testing.expectEqualStrings("arena:2 waits in its pane", needs[2].text);
 
+    app.home = .{ .focus = .plan };
     try std.testing.expect(try win_feed.act(&app, .{ .line = 0, .ticket = 7, .need = 1 }, "\r"));
+    try std.testing.expectEqual(@as(?u32, 5), app.home.?.claude);
     var got: [128]u8 = undefined;
     const len = try sent.readPositionalAll(std.testing.io, &got, 0);
-    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "select-pane -t %5") != null);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "select-pane") == null);
 
     win.claude = .working;
     try app.syncWaiting();

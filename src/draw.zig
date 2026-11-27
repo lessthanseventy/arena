@@ -1739,7 +1739,7 @@ fn planView(app: *App, w: *Writer, view: app_mod.HomeView) !void {
 /// Whether a box is open that is drawn in the middle column.
 fn columnOpen(app: *const App, view: app_mod.HomeView) bool {
     const words = if (app.prompt) |prompt| prompt.multiline() else false;
-    return words or view.detail != null or view.item_open or view.giving != null or view.into != null or view.goal_open or
+    return words or view.claude != null or view.detail != null or view.item_open or view.giving != null or view.into != null or view.goal_open or
         app.autoRect() != null or app.draftRect() != null;
 }
 
@@ -1755,6 +1755,7 @@ fn planBoxes(app: *App, w: *Writer, view: app_mod.HomeView) !void {
     }
     if (view.detail) |id| try win_modal.detailBox(app, w, id, view.detail_scroll);
     if (view.item_open) try win_modal.itemBox(app, w, view.detail_scroll);
+    if (view.claude != null) try claudeBox(app, w, view);
     if (app.autoRect() != null) app.grab.cover();
     try win_modal.autoBox(app, w);
     if (view.goal_open) {
@@ -1767,6 +1768,78 @@ fn planBoxes(app: *App, w: *Writer, view: app_mod.HomeView) !void {
         app.grab.cover();
         try helpBox(app, w);
     }
+}
+
+/// Where the typed-into Claude's cursor is in the middle column, set by `claudeBox` each frame.
+var column_cursor: ?Cursor = null;
+
+/// A Claude's pane live in the middle column, sized to it, alone: its screen from its bottom, or
+/// its ticket's changes as text, and the mode and keys in the foot.
+fn claudeBox(app: *App, w: *Writer, view: app_mod.HomeView) !void {
+    column_cursor = null;
+    const r = app.roles orelse bench.roles();
+    const rect = app.columnRect() orelse return;
+    const a = app.claudeColumn() orelse return;
+    const pane = app.paneById(view.claude.?) orelse return;
+    const win = a.win;
+    const inner = app_mod.detailWidth(app.columnRoom()).inner;
+    const x0 = rect.x + 2;
+    const foot = rect.y + rect.h - 1;
+    const rows_n: usize = foot -| (rect.y + 1);
+    app.grab.window(.{ .x = x0, .y = rect.y + 1, .w = inner, .h = rect.h -| 2 });
+
+    var tbuf: [128]u8 = undefined;
+    var title: Writer = .fixed(&tbuf);
+    title.writeAll("\u{25c6} ") catch {};
+    if (app_mod.branchTicket(win.text(.branch))) |n| title.print("#{s} \u{b7} ", .{n}) catch {};
+    title.print("{s}", .{clip(win.label(), 40)}) catch {};
+    if (win.claude != .none) {
+        var ago_buf: [8]u8 = undefined;
+        title.print(" \u{b7} {s} {s}", .{ @tagName(win.claude), ago(&ago_buf, app.epoch, win.since) }) catch {};
+    }
+    try bench.window(w, r, rect.x, rect.y, rect.w - 1, rect.h + 1, title.buffered(), null, true);
+    try bench.say(w, rect.x + rect.w - 5, rect.y, " \u{d7} ", r.text, r.panel, true);
+
+    if (view.claude_diff) {
+        var lines = app_mod.DetailLines.init(if (app.detail.items.len > 0) app.detail.items else "\u{2026}", inner);
+        var row: usize = 0;
+        var y = rect.y + 1;
+        while (lines.next()) |line| : (row += 1) {
+            if (row < view.detail_scroll) continue;
+            if (y >= foot) break;
+            const fg = if (line.len > 0 and line[0] == '+') r.accent else if (line.len > 0 and line[0] == '-') r.dim else r.text;
+            try bench.say(w, x0, y, clip(line, inner), fg, r.panel, false);
+            try app.grab.row(app.gpa, x0, y, clip(line, inner), lines.dropped);
+            y += 1;
+        }
+    } else {
+        try pane.render.update(app.gpa, &pane.term);
+        const cells = pane.render.row_data.items(.cells)[pane.render.viewportStart()..];
+        const live = App.following(pane);
+        var anchor: usize = 0;
+        if (live) {
+            var used = cells.len;
+            while (used > 0 and !rowHasText(cells[used - 1])) used -= 1;
+            anchor = used -| rows_n;
+        }
+        var pen: Pen = .{};
+        for (0..rows_n) |ry| {
+            try w.print("\x1b[{d};{d}H", .{ rect.y + 1 + ry + 1, x0 + 1 });
+            for (0..inner) |tx| try paneCell(app, &pen, w, pane, tx, anchor + ry, null, false, tx + 1 == inner);
+        }
+        try pen.set(w, .{}, null);
+        if (live and !app.normal and pane.render.cursor.visible) if (pane.render.cursor.viewport) |at| {
+            if (at.y >= anchor and at.y - anchor < rows_n and at.x < inner)
+                column_cursor = .{ .x = x0 + at.x, .y = @intCast(rect.y + 1 + at.y - anchor) };
+        };
+    }
+    const hint = if (view.claude_diff)
+        " NORMAL  d pane   j k scroll   esc back "
+    else if (app.normal)
+        " NORMAL  i type   d changes   esc back "
+    else
+        " INSERT  ctrl+space normal ";
+    try bench.say(w, x0, foot, hint, r.dim, r.panel, false);
 }
 
 const goal_prompt = "what should be true when it's done? as rough as you like";
@@ -2161,12 +2234,14 @@ pub fn frame(app: *App, w: *Writer, what: What) !void {
         try overview(app, w, spot);
         try modeRow(app, w);
     } else if (app.home) |view| {
+        column_cursor = null;
         if (!app.columnAlone()) try planView(app, w, view);
         try modeRow(app, w);
         // the orchestrator's window beside it, once arena is in its session
         if (app.sideShown()) {
             cursor = try strip(app, w, app.cur().?, 0, what);
         } else if (app.sided()) try sideEmpty(app, w);
+        if (column_cursor) |at| cursor = at;
     } else {
         if (app.yoff != 0) if (app.sessionById(app.prev)) |leaving| {
             const way: i32 = if (app.yoff > 0) 1 else -1;

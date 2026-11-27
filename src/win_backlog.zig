@@ -75,7 +75,7 @@ pub fn act(app: *App, row: *const sheets.Row) !void {
     const idea = given.ideas[row.item];
     switch (sheets.Sheet.ideaState(idea)) {
         .idea => try app.send(.ignore, captured("babylon idea {d} --plan"), .{idea.epic}),
-        .planning => if (idea.holder()) |held| if (app.paneWindow(held) != null) return app.showPane(held),
+        .planning => if (idea.holder()) |held| if (app.paneWindow(held) != null) return app.openClaude(held),
         .draft => unreachable,
     }
 }

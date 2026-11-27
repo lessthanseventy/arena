@@ -143,7 +143,7 @@ const BoardFile = struct {
     /// whichever way its box closed, one written after it closed too.
     fn checkDetail(file: *BoardFile, app: *App) void {
         _ = file;
-        const open: ?u32 = if (app.home) |view| (if (view.item_open) 0 else view.detail) else null;
+        const open: ?u32 = if (app.home) |view| (if (view.item_open or view.claude_diff) 0 else view.detail) else null;
         var i: usize = 0;
         while (i < app.detail_asked.items.len) {
             const id = app.detail_asked.items[i];
@@ -634,7 +634,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
         const lone = keys.lone(typed.items);
         const pick_ms = try app.pickStep();
         const auto_ms = try app.sendAuto();
-        _ = try posix.poll(&fds, @intCast(@min(wait_ms, idle_ms, @max(1, app.lookStep()), @max(1, pick_ms), @max(1, auto_ms), if (lone) @as(i64, keys.lone_wait_ms) else idle_ms)));
+        _ = try posix.poll(&fds, @intCast(@min(wait_ms, idle_ms, @max(1, app.lookStep()), @max(1, pick_ms), @max(1, app.claudeStep()), @max(1, auto_ms), if (lone) @as(i64, keys.lone_wait_ms) else idle_ms)));
 
         if (fds[0].revents & posix.POLL.IN != 0) {
             const n = try posix.read(posix.STDIN_FILENO, &buf);

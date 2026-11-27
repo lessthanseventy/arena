@@ -1044,12 +1044,23 @@ key Enter
 check "⏎ on a free todo row runs babylon start on it" await last 'start 7'
 await eval '[[ -e $tmp/run/babylon/refused-start ]]'
 await eval '[[ ! -e $tmp/run/babylon/refused-start ]]'
-check "and closes Plan once babylon has started it" gone "$plan_up"
-plan_home
+check "and leaves Doing on screen once babylon has started it" see "$plan_up"
 plan_at 8
 key Enter
-check "⏎ on an in flight row goes to the Claude holding it" see '╭─ 1 one '
-plan_home
+check "⏎ on an in flight row opens the Claude's pane in the middle column" await shows 'NORMAL  i type   d changes   esc back'
+check "and the strip is not visited" gone '╭─ 1 one '
+key d
+check "d turns the column to its ticket's changes" await shows 'NORMAL  d pane   j k scroll   esc back'
+key d
+key i
+check "i types into it" await shows 'INSERT  ctrl\+space normal'
+key Escape
+check "and esc then goes to the pane, the column staying" see 'INSERT  ctrl\+space normal'
+key C-Space
+await shows 'NORMAL  i type   d changes   esc back'
+key Escape
+check "esc in normal mode closes it, Doing on screen" await eval '! [[ $(screen) == *"esc back"* ]]'
+see "$plan_up"
 print -r -- "${$(<$tmp/board.kept)%\}}"',"proposals":[{"id":4,"action":"start","ticket_id":7,"what":"Start #7","why":"Next in line"}],"needs_you":[{"id":"proposal:4","kind":"proposal","ticket":7,"repo":"tlon","text":"P4 Start #7: Next in line","actions":[{"key":"⏎","label":"go","argv":["babylon","go","4"]},{"key":"x","label":"no","argv":["babylon","no","4"]}]}]}' >$tmp/run/babylon/board.json
 check "Plan's head counts what needs you" see ' ▲ 1'
 plan_at 7
@@ -1073,7 +1084,8 @@ key ' '
 check "a modal opened from an in flight row shows its body" see 'the whole of it'
 check "and its holder's state" see 'its Claude: '
 key Enter
-check "and ⏎ in it goes to the Claude holding it" see '╭─ 1 one '
+check "and ⏎ in it opens the Claude holding it in the middle column" await shows 'NORMAL  i type   d changes   esc back'
+key Escape
 plan_up='◆ (in flight|no goal)'
 plan_home() { normal; key b; see "$plan_up" }
 plan_at() { $bin -L $in plan $1; see "$plan_up" }
@@ -1107,10 +1119,8 @@ see 'Gatekeeping'
 plan_at 13
 key Enter
 check "⏎ on a babylon row starts it through babylon" await last 'start 13'
-check "and closes Plan" gone "$plan_up"
+check "and leaves Plan on screen" see "$plan_up"
 cp $tmp/board.kept $tmp/run/babylon/board.json
-plan_home
-key Tab
 see '#7 Lights'
 plan_at 7
 key o
@@ -1498,6 +1508,7 @@ key M-h
 gone '╭─ ○ orchestrator'
 key M-b
 gone 'in flight [0-9]'
+await in_session alpha
 key -l 'echo worker-jkdufltb'
 key Enter
 check "and the board closed, a worker's pane gets it whole too" await said alpha: worker-jkdufltb
@@ -1784,6 +1795,6 @@ see "alpha:$held_index · $held_pane"
 chip=$(spot "alpha:$held_index · $held_pane")
 mouse 0 ${(z)chip} M
 mouse 0 ${(z)chip} m
-check "and a click on it goes to that pane" await eval '[[ $(inner display -p -t alpha "#{pane_id}") == $held_pane ]]'
+check "and a click on it opens that pane in the middle column" await shows 'NORMAL  i type   d changes   esc back'
 
 exit $((fails > 0))

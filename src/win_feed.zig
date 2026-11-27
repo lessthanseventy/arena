@@ -104,14 +104,14 @@ pub fn act(app: *App, item: feed.Item, key: []const u8) !bool {
     const at = item.need orelse {
         if (!std.mem.eql(u8, named, "⏎")) return false;
         const id = item.ticket orelse return true;
-        for (b.cards()) |card| if (card.id == id) if (card.holder()) |pane| try app.showPane(pane);
+        for (b.cards()) |card| if (card.id == id) if (card.holder()) |pane| try app.openClaude(pane);
         return true;
     };
     const need = b.needsYou()[at];
     if (std.mem.eql(u8, need.kind, "pane")) {
         if (!std.mem.eql(u8, named, "⏎")) return false;
         const win = std.fmt.parseInt(u32, need.id["pane:".len..], 10) catch return true;
-        for (app.sessions.items) |s| for (s.wins.items) |w| if (w.id == win) try app.showPane(w.agent_pane);
+        for (app.sessions.items) |s| for (s.wins.items) |w| if (w.id == win) try app.openClaude(w.agent_pane);
         return true;
     }
     if (std.mem.eql(u8, need.kind, "draft") and anyKey(key, &.{" "})) {
