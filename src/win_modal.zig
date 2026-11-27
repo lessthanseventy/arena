@@ -17,6 +17,13 @@ const App = app_mod.App;
 const Writer = std.Io.Writer;
 const Pen = draw.Pen;
 const clip = draw.clip;
+
+var cut_scratch: [512]u8 = undefined;
+
+/// `text` in `room` cells, ended at a word with `…`; the result is good until the next call.
+fn cut(text: []const u8, room: usize) []const u8 {
+    return draw.clipMark(&cut_scratch, text, room);
+}
 const cellCount = draw.cellCount;
 const repoHue = draw.repoHue;
 const ink = draw.ink;
@@ -83,7 +90,7 @@ pub fn draftBox(app: *const App, w: *Writer) !void {
         var lead: [64]u8 = undefined;
         const front = std.fmt.bufPrint(&lead, "{d} #{d} {s: <10} {s: <7} ", .{ i + 1, step.id, clip(step.repo orelse "", 10), word }) catch "";
         const room = (rect.w -| 5) -| cellCount(front) -| cellCount(wait) -| 2;
-        const named = clip(step.title, room);
+        const named = cut(step.title, room);
         const text = std.fmt.bufPrint(&row, "{s}{s}  {s}", .{ front, named, wait }) catch "";
         try draftLine(app, w, rect, @intCast(3 + i), text, if (i == view.draft_pick) .pick else .plain);
     }
@@ -99,7 +106,7 @@ fn draftLine(app: *const App, w: *Writer, rect: App.ModalRect, row: u16, text: [
             .dim => r.dim,
         };
         if (tone == .pick) try bench.say(w, rect.x + 1, y, "▌", r.accent, r.panel, true);
-        try bench.say(w, rect.x + 2, y, clip(text, inner), ink_of, r.panel, tone == .pick);
+        try bench.say(w, rect.x + 2, y, cut(text, inner), ink_of, r.panel, tone == .pick);
         return;
     }
     var pen: Pen = .{};
@@ -154,7 +161,7 @@ pub fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
             .sub => if (at - head.subs.? + 1 == app.home.?.sub_pick) ink(app, "amber", 4) else .{},
         };
         try boxLine(w, &pen, edge, style, x, y, line, inner);
-        if (kind != .options and kind != .fold) try app.grab.row(app.gpa, x + 2, y - 1, clip(line, inner), head.joins[at]);
+        if (kind != .options and kind != .fold) try app.grab.row(app.gpa, x + 2, y - 1, cut(line, inner), head.joins[at]);
         y += 1;
     }
     const hidden = if (card) |it| app.bodyHidden(it) else false;
@@ -212,8 +219,8 @@ pub fn itemBox(app: *App, w: *Writer, scroll: usize) !void {
     while (lines.next()) |line| : (row += 1) {
         if (row < scroll) continue;
         if (y >= foot - 1) break;
-        try bench.say(w, x0, y, clip(line, inner), r.text, r.panel, false);
-        try app.grab.row(app.gpa, x0, y, clip(line, inner), lines.dropped);
+        try bench.say(w, x0, y, cut(line, inner), r.text, r.panel, false);
+        try app.grab.row(app.gpa, x0, y, cut(line, inner), lines.dropped);
         y += 1;
     }
     var buttons: [16]App.ModalButton = undefined;
@@ -275,7 +282,7 @@ pub fn autoBox(app: *const App, w: *Writer) !void {
             try bench.say(w, stepper.plus + 4, y, note, if (repo.cap == 0) r.failed else r.dim, r.panel, false);
         }
         if (said) |text| {
-            try bench.say(w, x0, foot, clip(text, rect.w -| 5), r.failed, r.panel, true);
+            try bench.say(w, x0, foot, cut(text, rect.w -| 5), r.failed, r.panel, true);
         } else if (cellCount(hint) < rect.w -| 4) try bench.say(w, x0, foot, hint, r.dim, r.panel, false);
         return;
     }
@@ -318,7 +325,7 @@ pub fn autoBox(app: *const App, w: *Writer) !void {
     try w.print("\x1b[{d};{d}H╰─", .{ rect.y + rect.h, rect.x + 1 });
     for (3..rect.w) |_| try w.writeAll("─");
     try w.writeAll("╯");
-    const foot_text = if (said) |text| clip(text, rect.w -| 5) else hint;
+    const foot_text = if (said) |text| cut(text, rect.w -| 5) else hint;
     if (cellCount(foot_text) + 3 < rect.w) {
         try pen.set(w, if (said != null) ink(app, "emberdim", 1) else dim, null);
         try w.print("\x1b[{d};{d}H{s}", .{ rect.y + rect.h, rect.x + 3, foot_text });
@@ -367,22 +374,22 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
         if (band) try bench.fill(w, rect.x + 1, y, rect.w - 3, bg);
         switch (kind) {
             .plain => {
-                try bench.say(w, x0, y, clip(line, inner), r.text, bg, true);
-                try app.grab.row(app.gpa, x0, y, clip(line, inner), head.joins[at]);
+                try bench.say(w, x0, y, cut(line, inner), r.text, bg, true);
+                try app.grab.row(app.gpa, x0, y, cut(line, inner), head.joins[at]);
             },
             .dim => if (facts) {
-                try bench.say(w, x0, y, clip(line, inner), r.dim, bg, false);
-                try app.grab.row(app.gpa, x0, y, clip(line, inner), null);
+                try bench.say(w, x0, y, cut(line, inner), r.dim, bg, false);
+                try app.grab.row(app.gpa, x0, y, cut(line, inner), null);
             } else {
                 facts = true;
                 try benchFacts(app, w, r, card.?, x0, y, inner);
             },
             .warn => {
-                try bench.say(w, x0, y, clip(line, inner), r.you, bg, true);
-                try app.grab.row(app.gpa, x0, y, clip(line, inner), null);
+                try bench.say(w, x0, y, cut(line, inner), r.you, bg, true);
+                try app.grab.row(app.gpa, x0, y, cut(line, inner), null);
             },
             .check => {
-                try app.grab.row(app.gpa, x0, y, clip(line, inner), null);
+                try app.grab.row(app.gpa, x0, y, cut(line, inner), null);
                 const settled = card.?.checks[at - head.checks.?].result != null;
                 const lit = !app.onFold(card.?) and at - head.checks.? + 1 == @min(@max(app.home.?.check_pick, 1), card.?.checks.len);
                 var room = inner;
@@ -393,23 +400,23 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
                 if (lit) try bench.fill(w, rect.x + 1, y, rect.w - 3, ground);
                 var said: [512]u8 = undefined;
                 const shown = if (lit) std.fmt.bufPrint(&said, "\u{25b8}{s}", .{line}) catch line else line;
-                try bench.say(w, x0, y, clip(shown, room), if (lit) r.accent else if (settled) r.dim else r.text, ground, lit);
+                try bench.say(w, x0, y, cut(shown, room), if (lit) r.accent else if (settled) r.dim else r.text, ground, lit);
                 for (modal) |button| if ((button.action == .row_ok or button.action == .row_no) and button.y == y) {
                     _ = try bench.button(w, r, button.x, y, button.key, button.label, false, null);
                 };
             },
             .sub => {
                 const lit = at - head.subs.? + 1 == app.home.?.sub_pick;
-                try app.grab.row(app.gpa, x0, y, clip(line, inner), null);
-                try bench.say(w, x0, y, clip(line, inner), if (lit) r.accent else r.text, bg, lit);
+                try app.grab.row(app.gpa, x0, y, cut(line, inner), null);
+                try bench.say(w, x0, y, cut(line, inner), if (lit) r.accent else r.text, bg, lit);
             },
             .shell => {
-                try app.grab.row(app.gpa, x0, y, clip(line, inner), null);
-                try bench.say(w, x0, y, clip(line, inner), r.dim, bg, false);
+                try app.grab.row(app.gpa, x0, y, cut(line, inner), null);
+                try bench.say(w, x0, y, cut(line, inner), r.dim, bg, false);
             },
             .sheet => {
-                try app.grab.row(app.gpa, x0, y, clip(line, inner), head.joins[at]);
-                try bench.say(w, x0, y, clip(line, inner), r.text, bg, false);
+                try app.grab.row(app.gpa, x0, y, cut(line, inner), head.joins[at]);
+                try bench.say(w, x0, y, cut(line, inner), r.text, bg, false);
             },
             .fold => for (modal) |button| if (button.action == .details) {
                 _ = try bench.button(w, r, button.x, y, button.key, button.label, app.onFold(card.?), r.tile);
@@ -439,8 +446,8 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
         var lines = app_mod.DetailLines.init(part.text, inner);
         while (lines.next()) |line| : (row += 1) {
             if (row < scroll or y >= text_end) continue;
-            try bench.say(w, x0, y, clip(line, inner), part.fg, r.panel, false);
-            try app.grab.row(app.gpa, x0, y, clip(line, inner), lines.dropped);
+            try bench.say(w, x0, y, cut(line, inner), part.fg, r.panel, false);
+            try app.grab.row(app.gpa, x0, y, cut(line, inner), lines.dropped);
             y += 1;
         }
     }
@@ -450,14 +457,14 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
         var said: [320]u8 = undefined;
         const state = if (it.claude == .none) "" else @tagName(it.claude);
         const line = std.fmt.bufPrint(&said, "its Claude: {s} {s} \u{b7} {s}", .{ state, ago(&ago_buf, app.epoch, it.since), it.detail() }) catch "its Claude";
-        try bench.say(w, x0, y, clip(line, inner), r.dim, r.panel, false);
+        try bench.say(w, x0, y, cut(line, inner), r.dim, r.panel, false);
         y += 1;
     };
     var noted = app_mod.DetailLines.init(note, inner);
     while (noted.next()) |line| {
         if (y >= foot - 1) break;
-        try bench.say(w, x0, y, clip(line, inner), r.dim, r.panel, false);
-        try app.grab.row(app.gpa, x0, y, clip(line, inner), noted.dropped);
+        try bench.say(w, x0, y, cut(line, inner), r.dim, r.panel, false);
+        try app.grab.row(app.gpa, x0, y, cut(line, inner), noted.dropped);
         y += 1;
     }
 
@@ -546,7 +553,7 @@ fn gateBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
         const room = inner -| (cellCount(dur) + 1);
         var row: [320]u8 = undefined;
         var out: Writer = .fixed(&row);
-        const shown = clip(head, room);
+        const shown = cut(head, room);
         out.writeAll(shown) catch {};
         for (cellCount(shown)..inner -| cellCount(dur)) |_| out.writeAll(" ") catch {};
         out.writeAll(dur) catch {};

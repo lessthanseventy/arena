@@ -257,7 +257,8 @@ const RowOut = struct {
     bg: color.RGB,
 
     fn say(o: *RowOut, fg: color.RGB, bold: bool, text: []const u8) !void {
-        const t = clip(text, o.room);
+        var buf: [256]u8 = undefined;
+        const t = draw.clipMark(&buf, text, o.room);
         if (t.len == 0) return;
         try o.pen.set(o.w, draw.paintStyle(fg, o.bg, bold), null);
         try o.w.writeAll(t);
@@ -376,19 +377,21 @@ fn benchTryRow(app: *const App, w: *Writer, pen: *draw.Pen, r: theme.Roles, f: *
             try o.chip(r, r.you, "try", true);
             const age = line.alt;
             const room = o.room -| (cellCount(age) + 2);
-            const text = clip(line.text, room);
+            var title_buf: [256]u8 = undefined;
+            const text = draw.clipMark(&title_buf, line.text, room);
             try o.say(r.text, false, text);
             try o.say(r.text, false, spaceRun(o.room -| (cellCount(age) + 1)));
             try o.say(if (line.old) r.you else r.dim, line.old, age);
         },
         .try_machine => {
             try o.say(r.text, false, "  ");
-            try o.say(r.dim, false, clip(line.text, o.room));
+            try o.say(r.dim, false, line.text);
         },
         .try_step => {
             try o.say(if (strong) r.accent else r.dim, true, if (lit) "▌ " else "  ");
             const room = o.room -| (if (line.settled) @as(usize, 2) else 0);
-            const text = clip(line.text, room);
+            var step_buf: [256]u8 = undefined;
+            const text = draw.clipMark(&step_buf, line.text, room);
             try o.say(if (line.settled) r.dim else r.text, false, text);
             if (line.settled) {
                 try o.say(r.text, false, spaceRun(o.room -| 1));
@@ -462,13 +465,11 @@ pub fn feedRow(app: *const App, w: *Writer, pen: *draw.Pen, f: *const feed.Feed,
     // without Workbench's raised cells, a settled check ends on its mark
     if (line.kind == .try_step and line.settled) shown = std.fmt.bufPrint(&marked, "{s}  ✓", .{line.text}) catch shown;
     if (app.feedLitItem(f)) |on| lit = on.line == row;
-    const cut = cellCount(shown) > room;
-    const avail = if (cut) room - 1 else room;
-    const text = clip(shown, avail);
+    var cut_buf: [256]u8 = undefined;
+    const text = draw.clipMark(&cut_buf, shown, room);
     const used = cellCount(text);
     try pen.set(w, draw.onPanel(app, if (lit) (if (app.feedLit() == .focused) draw.chip(app) else draw.dimLit(app)) else style), null);
     try w.writeAll(text);
     try pen.set(w, draw.onPanel(app, style), null);
-    if (cut) try w.writeAll("…");
-    for (used + @intFromBool(cut)..room) |_| try w.writeAll(" ");
+    for (used..room) |_| try w.writeAll(" ");
 }

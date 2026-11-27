@@ -149,7 +149,7 @@ pub fn paint(app: *App, w: *Writer) !void {
         const id = if (place.epic) |epic| std.fmt.bufPrint(&head, "◆ #{d} ", .{epic}) catch "" else "";
         try bench.say(w, box.x + 3, y, id, r.accent, bg, false);
         const x = box.x + 3 + draw.cellCount(id);
-        try bench.say(w, x, y, clip(place.title, inner -| (x - box.x) -| draw.cellCount(tail) -| 2), r.text, bg, picked);
+        try draw.sayCut(w, x, y, place.title, inner -| (x - box.x) -| draw.cellCount(tail) -| 2, r.text, bg, picked);
         try bench.say(w, box.x + box.w - 3 - draw.cellCount(tail), y, tail, r.dim, bg, false);
     }
     const foot = box.y + box.h - 2;

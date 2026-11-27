@@ -151,7 +151,8 @@ pub fn paint(app: *const App, w: *Writer, pen: *draw.Pen, i: usize, inner: u16) 
     try w.writeAll(lead);
     cells += 1 + cellCount(lead);
     try pen.set(w, draw.onPanel(app, if (used) dim else .{}), null);
-    const text = clip(r.need.text, @as(usize, inner) -| cells);
+    var cut_buf: [256]u8 = undefined;
+    const text = draw.clipMark(&cut_buf, r.need.text, @as(usize, inner) -| cells);
     try w.writeAll(text);
     cells += cellCount(text);
     try pen.set(w, draw.onPanel(app, .{}), null);

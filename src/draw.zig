@@ -544,7 +544,6 @@ pub fn goalBar(w: *Writer, r: theme.Roles, x: usize, y: usize, room: usize, goal
 }
 
 /// The last `max` characters of `text`.
-/// The last `max` characters of `text`.
 fn lastCells(text: []const u8, max: usize) []const u8 {
     var n = cellCount(text);
     var it = std.unicode.Utf8View.initUnchecked(text).iterator();
@@ -845,7 +844,8 @@ fn wordsModal(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
     try pen.set(w, edge, null);
     try w.print("\x1b[{d};{d}H╭─", .{ rect.y + 1, rect.x + 1 });
     try pen.set(w, heading(app), null);
-    const title = clip(about.title, inner -| 2);
+    var title_buf: [256]u8 = undefined;
+    const title = clipMark(&title_buf, about.title, inner -| 2);
     try w.print(" {s} ", .{title});
     try pen.set(w, edge, null);
     for (cellCount(title) + 4..rect.w -| 1) |_| try w.writeAll("─");
@@ -1367,7 +1367,8 @@ fn popupBox(app: *App, w: *Writer, pop: App.Popup) !void {
             var used: usize = 2;
             if (top or bottom) {
                 try pen.set(w, if (top) heading(app) else dim, null);
-                const text = clip(if (top) title.buffered() else foot, inner - 3);
+                var cut_buf: [256]u8 = undefined;
+                const text = clipMark(&cut_buf, if (top) title.buffered() else foot, inner - 3);
                 try w.writeAll(text);
                 used += cellCount(text);
                 try pen.set(w, edge, null);
@@ -3359,6 +3360,22 @@ test "a card to try wears ▲ try it in the you colour, filled" {
     const asks = benchState(&app, &app.board.?.cards()[2], r, &buf).?;
     try std.testing.expectEqualStrings("▲ asks you", asks.label);
     try std.testing.expect(!std.mem.eql(u8, state.label, asks.label));
+}
+
+test "a Your move row too long for its width ends at a whole word with …" {
+    var b = try tickets.Board.parse(std.testing.allocator, feed.try_sample);
+    defer b.deinit();
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.roles = @import("parts.zig").roles();
+    var f: feed.Feed = undefined;
+    feed.buildPicked(&f, &b, &.{}, &.{}, 20, 80, 1795262400, 2);
+    var buf: [2048]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    var pen: Pen = .{};
+    try win_feed.feedRow(&app, &out, &pen, &f, 4, 20);
+    const drawn = out.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "gate…") != null);
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "review") == null);
 }
 
 test "a to-try tile is drawn: its chip, its age in the you colour at a week, the machine's line, a check's rows and the picked check's buttons, with no close untried" {
