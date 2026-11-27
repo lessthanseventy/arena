@@ -10487,6 +10487,7 @@ test "a command started for the column is opened in it once listed, and its sess
     try eq(@as(?u32, 3), app.column_own);
     app.dropOwned();
     var got: [256]u8 = undefined;
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "set-option -t '$3' @arena_column 1") != null);
     try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "kill-session -t '$3'") != null);
 
     app.columnStarted(true, "%7 $3\n");
