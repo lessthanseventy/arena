@@ -1481,7 +1481,7 @@ fn planFoot(app: *App, w: *Writer, sheet: *const sheets.Sheet, pick: usize) !voi
     if (app.workbench() and cellCount(text) <= room) try w.writeAll(keys);
 }
 
-const PlanHeadBufs = struct { auto: [48]u8, auto_pad: [64]u8, today: [32]u8, needs: [16]u8, orch: [40]u8, restart: [64]u8, unpushed: [48]u8, claudes: [24]u8 };
+const PlanHeadBufs = struct { auto: [96]u8, auto_pad: [112]u8, today: [32]u8, needs: [16]u8, orch: [40]u8, restart: [64]u8, unpushed: [48]u8, claudes: [24]u8 };
 
 /// The head's pieces, in order: the restart and unpushed chips, which come and go, then auto,
 /// the Claudes, today, Your move, the orchestrator and the menu.
@@ -1513,6 +1513,15 @@ test "auto's piece keeps one width asking and not" {
         try std.testing.expectEqual(cellCount(autoPiece(&a, plain, false)), cellCount(autoPiece(&b, plain, true)));
     }
     try std.testing.expect(std.mem.startsWith(u8, autoPiece(&a, "◐ auto", true), auto_ask));
+}
+
+/// babylon's pause in auto's place in the head: safe to stop, or the first thing it waits on and
+/// how many more; auto's settings say them all.
+fn pausePiece(buf: []u8, pause: tickets.Pause) []const u8 {
+    if (pause.safe) return "⏸ paused: safe to stop";
+    if (pause.left.len == 0) return "⏸ pausing";
+    if (pause.left.len == 1) return std.fmt.bufPrint(buf, "⏸ pausing: waits on {s}", .{pause.left[0]}) catch "⏸ pausing";
+    return std.fmt.bufPrint(buf, "⏸ pausing: waits on {s} +{d}", .{ pause.left[0], pause.left.len - 1 }) catch "⏸ pausing";
 }
 
 /// Plan's head against its right edge: auto's switch, today's landings and what
@@ -1577,12 +1586,13 @@ fn planHead(app: *const App, bufs: *PlanHeadBufs) PlanHead {
             std.fmt.bufPrint(&bufs.auto, "◐ auto {d}/{d} · tools {d}/{d}", .{ state.working, state.cap, state.tools.?.working, state.tools.?.cap })
         else
             std.fmt.bufPrint(&bufs.auto, "◐ auto {d}/{d}", .{ state.working, state.cap })) catch "◐" else "◐ auto";
-        const armed = app.auto() != null and app.now < app.auto_armed_until;
-        const auto = autoPiece(&bufs.auto_pad, plain, armed);
+        const pause = app.pausing();
+        const armed = pause == null and app.auto() != null and app.now < app.auto_armed_until;
+        const auto = if (pause) |state| pausePiece(&bufs.auto, state) else autoPiece(&bufs.auto_pad, plain, armed);
         head.pieces = .{
             .{ .text = restart_text, .style = dim },
             .{ .text = unpushed_text, .style = dim },
-            .{ .text = auto, .style = if (app.auto() != null) autoOn(app) else dim },
+            .{ .text = auto, .style = if (pause != null) heading(app) else if (app.auto() != null) autoOn(app) else dim },
             .{ .text = claudes_text, .style = dim },
             .{ .text = std.fmt.bufPrint(&bufs.today, "✓ {d} today", .{given.landed_today.count}) catch "", .style = dim },
             .{ .text = std.fmt.bufPrint(&bufs.needs, "▲ {d}", .{needs_n}) catch "", .style = if (needs_n > 0) heading(app) else dim },
@@ -3467,6 +3477,33 @@ test "auto is in Plan's head alone, with its tools; the orchestrator's column, t
     const at = planAutoSwitch(&app).?;
     const mark = try bench.probe(head_out.buffered(), at.x, 0);
     try std.testing.expectEqual(@as(u21, '◐'), mark.cp);
+}
+
+test "paused, Plan's head says the pause in auto's place: what it waits on, then safe to stop" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"needs_you":[],"auto":{"on":false,"cap":6,"working":0},
+        \\"pause":{"on":true,"safe":false,"left":["1 gate(s) running","#34 uncommitted"],"tickets":[34]},
+        \\"plan":{"now":[],"next":[]}}
+    );
+    defer board.deinit();
+    var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
+    app.term_w = 160;
+    app.view_w = 40;
+    app.home = .{ .alone = false, .focus = .plan };
+    app.side_folded = true;
+    var buf: [1 << 17]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try planView(&app, &out, app.home.?);
+    try std.testing.expect(std.mem.indexOf(u8, out.buffered(), "⏸ pausing: waits on 1 gate(s) running +1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.buffered(), "◐ auto") == null);
+    app.board.?.parsed.value.pause = .{ .on = true, .safe = true };
+    out = .fixed(&buf);
+    try planView(&app, &out, app.home.?);
+    try std.testing.expect(std.mem.indexOf(u8, out.buffered(), "⏸ paused: safe to stop") != null);
+    const at = planAutoSwitch(&app).?;
+    const mark = try bench.probe(out.buffered(), at.x, 0);
+    try std.testing.expectEqual(@as(u21, '⏸'), mark.cp);
 }
 
 test "a card to try wears ▲ try it in the you colour, filled" {

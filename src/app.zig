@@ -4400,8 +4400,10 @@ pub const App = struct {
     }
 
     /// A click on Plan's auto switch: off turns it on; on asks to turn it off, and a second click
-    /// within a few seconds does.
+    /// within a few seconds does. While babylon is paused it says the pause, and opens auto's
+    /// settings, where resume is.
     fn planAutoClick(app: *App) !void {
+        if (app.pausing() != null) return app.openAuto();
         if (app.auto() != null and app.now >= app.auto_armed_until) {
             app.auto_armed_until = app.now + auto_confirm_ms;
             app.dirty = true;
@@ -4657,6 +4659,17 @@ pub const App = struct {
         return if (app.auto_wants.get(.hold, "")) |on| on != 0 else b.hold();
     }
 
+    /// babylon's pause, on as the human just asked it to be.
+    pub fn pausing(app: *const App) ?tickets.Pause {
+        const b = if (app.board) |*b| b else return null;
+        var state = b.pause();
+        if (app.auto_wants.get(.pause, "")) |on| {
+            if (on != 0 and !state.on) state = .{ .on = true };
+            if (on == 0) state.on = false;
+        }
+        return if (state.on) state else null;
+    }
+
     /// How many repos have a cap of their own in auto's modal.
     pub fn autoRepos(app: *const App) usize {
         const b = if (app.board) |*b| b else return 0;
@@ -4672,21 +4685,24 @@ pub const App = struct {
         return .{ .name = name, .cap = app.auto_wants.get(.cap, name) orelse caps.values()[i] };
     }
 
-    /// Auto's modal: a window over the board with a row for auto, its count, hold, a blank row, a
-    /// row for each repo, a blank one and the foot. Its rows are `autoRows`.
+    /// Auto's modal: a window over the board with a row for auto, its count, hold, pause, a blank
+    /// row, a row for each repo, a blank one and the foot. Its rows are `autoRows`.
     pub fn autoRect(app: *const App) ?ModalRect {
         const view = app.home orelse return null;
         if (view.auto_pick == null) return null;
         const col = app.columnRect() orelse return null;
         const bottom = app.view_h -| 2;
-        if (col.w < 30 or bottom < first_line + 7) return null;
-        const h: u16 = @intCast(@min(7 + app.autoRepos(), bottom - first_line + 1));
+        if (col.w < 30 or bottom < first_line + auto_repo_row + 2) return null;
+        const h: u16 = @intCast(@min(auto_repo_row + 2 + app.autoRepos(), bottom - first_line + 1));
         return .{ .x = col.x, .y = first_line, .w = col.w, .h = h };
     }
 
+    /// The row of auto's modal its first repo is on, under auto, its count, hold, pause and a blank.
+    pub const auto_repo_row = 6;
+
     /// How many repo rows auto's modal has room for.
     pub fn autoRoom(rect: ModalRect) usize {
-        return rect.h - 7;
+        return rect.h - auto_repo_row - 2;
     }
 
     /// Where auto's modal puts a repo row's `[-]` and its `[+]`: the name's cells, then the stepper.
@@ -4843,23 +4859,25 @@ pub const App = struct {
         app.dirty = true;
     }
 
-    /// A key in auto's modal: `j` `k` pick a row, `+` `-` step the cap of a repo, `a` and `H` turn
-    /// auto and hold on or off, and Escape closes it.
+    /// A key in auto's modal: `j` `k` pick a row, `+` `-` step the cap of a repo, `a`, `H` and `p`
+    /// turn auto, hold and pause on or off, and Escape closes it.
     fn autoKey(app: *App, key: []const u8) !void {
         const view = &app.home.?;
         const is = anyKey;
         const pick = &view.auto_pick.?;
         app.dirty = true;
         if (is(key, &.{ "\x1b", "q" })) return app.closeAuto();
-        const last = app.autoRepos() + 1;
+        const switches = [_]autos.Kind{ .on, .hold, .pause };
+        const last = app.autoRepos() + switches.len - 1;
         if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) pick.* = @min(pick.* + 1, last);
         if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) pick.* -|= 1;
         if (is(key, &.{"a"})) try app.autoToggle(.on);
         if (is(key, &.{"H"})) try app.autoToggle(.hold);
-        if (is(key, &.{ "\r", " " }) and pick.* < 2) try app.autoToggle(if (pick.* == 0) .on else .hold);
-        if (pick.* < 2) return;
-        if (is(key, &.{ "+", "=" })) try app.autoStep(pick.* - 2, true);
-        if (is(key, &.{"-"})) try app.autoStep(pick.* - 2, false);
+        if (is(key, &.{"p"})) try app.autoToggle(.pause);
+        if (is(key, &.{ "\r", " " }) and pick.* < switches.len) try app.autoToggle(switches[pick.*]);
+        if (pick.* < switches.len) return;
+        if (is(key, &.{ "+", "=" })) try app.autoStep(pick.* - switches.len, true);
+        if (is(key, &.{"-"})) try app.autoStep(pick.* - switches.len, false);
     }
 
     /// The `+ goal` modal over Plan's middle: a title bar, a prompt, a field of four lines, the
@@ -4955,9 +4973,14 @@ pub const App = struct {
         for (goalButtons(rect)) |button| if (m.x >= button.x and m.x < button.x + button.w) return app.goalKey(button.key);
     }
 
-    /// Turns auto or hold the other way, shown at once and sent once the presses stop.
+    /// Turns auto, hold or pause the other way, shown at once and sent once the presses stop.
     fn autoToggle(app: *App, kind: autos.Kind) !void {
-        const now_on = if (kind == .on) app.auto() != null else app.holding();
+        const now_on = switch (kind) {
+            .on => app.auto() != null,
+            .hold => app.holding(),
+            .pause => app.pausing() != null,
+            .cap => unreachable,
+        };
         try app.auto_wants.set(app.gpa, kind, "", @intFromBool(!now_on), app.now);
     }
 
@@ -4980,9 +5003,12 @@ pub const App = struct {
         } else if (m.y == rect.y + 3) {
             view.auto_pick = 1;
             try app.autoToggle(.hold);
-        } else if (m.y >= rect.y + 5 and m.y - rect.y - 5 < @min(app.autoRepos(), autoRoom(rect))) {
-            const i = m.y - rect.y - 5;
-            view.auto_pick = 2 + i;
+        } else if (m.y == rect.y + 4) {
+            view.auto_pick = 2;
+            try app.autoToggle(.pause);
+        } else if (m.y >= rect.y + auto_repo_row and m.y - rect.y - auto_repo_row < @min(app.autoRepos(), autoRoom(rect))) {
+            const i = m.y - rect.y - auto_repo_row;
+            view.auto_pick = 3 + i;
             const stepper = app.autoStepper(rect);
             if (m.x >= stepper.minus and m.x < stepper.minus + 3) try app.autoStep(i, false);
             if (m.x >= stepper.plus and m.x < stepper.plus + 3) try app.autoStep(i, true);
@@ -5004,6 +5030,7 @@ pub const App = struct {
             const argv: []const []const u8 = switch (want.kind) {
                 .on => &.{ "babylon", "auto", word },
                 .hold => &.{ "babylon", "hold", word },
+                .pause => &.{ "babylon", if (want.value != 0) "pause" else "resume" },
                 .cap => &.{ "babylon", "auto", "--repo-cap", std.fmt.bufPrint(&arg, "{s}={d}", .{ want.repo, want.value }) catch continue },
             };
             _ = try app.runNeed(want.id(&id), argv);
@@ -5025,6 +5052,7 @@ pub const App = struct {
             const has: ?u32 = switch (want.kind) {
                 .on => @intFromBool(state.on),
                 .hold => @intFromBool(b.hold()),
+                .pause => @intFromBool(b.pause().on),
                 .cap => state.repo_caps.map.get(want.repo),
             };
             const said = (want.due == 0 or want.sent_at == 0) and (if (has) |value| value == want.value else false);
@@ -8324,6 +8352,7 @@ test "auto's modal shows a step at once, and a cap babylon refused is back at it
     try std.testing.expect(app.home.?.focus == .plan);
     try app.homeKey("j");
     try app.homeKey("j");
+    try app.homeKey("j");
     try app.homeKey("+");
     try app.homeKey("+");
     try std.testing.expectEqual(@as(u32, 4), app.autoRepo(0).?.cap);
@@ -8343,6 +8372,39 @@ test "auto's modal shows a step at once, and a cap babylon refused is back at it
 
     try app.homeKey("\x1b");
     try std.testing.expectEqual(@as(?usize, null), app.home.?.auto_pick);
+}
+
+test "p in auto's modal pauses babylon, shown at once; a click on the head's pause opens the modal, where p resumes" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 140;
+    app.view_w = 56;
+    app.view_h = 24;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"auto":{"on":true,"cap":4,"working":1}}
+    );
+    defer app.board.?.deinit();
+    defer app.auto_wants.deinit(std.testing.allocator);
+    app.home = .{ .focus = .orchestrator };
+    try app.homeKey("A");
+    try std.testing.expect(app.pausing() == null);
+    try app.homeKey("p");
+    try std.testing.expect(app.pausing() != null);
+    try std.testing.expect(!app.pausing().?.safe);
+    try std.testing.expectEqual(autos.Kind.pause, app.auto_wants.list.items[0].kind);
+    try std.testing.expectEqual(@as(u32, 1), app.auto_wants.list.items[0].value);
+    try app.homeKey("\x1b");
+
+    app.auto_wants.deinit(std.testing.allocator);
+    app.auto_wants = .{};
+    app.board.?.parsed.value.pause = .{ .on = true, .safe = true };
+    try app.planAutoClick();
+    try std.testing.expect(app.home.?.auto_pick != null);
+    try std.testing.expect(app.auto() != null);
+    try app.homeKey("j");
+    try app.homeKey("j");
+    try app.homeKey("\r");
+    try std.testing.expect(app.pausing() == null);
+    try std.testing.expectEqual(@as(u32, 0), app.auto_wants.list.items[0].value);
 }
 
 test "⏎ on a card's peek is left to home, not sent to a Claude's pane" {

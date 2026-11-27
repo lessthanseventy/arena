@@ -254,9 +254,20 @@ fn knobText(on: bool) []const u8 {
     return if (on) "▐ ●▌" else "▐● ▌";
 }
 
-/// Auto's settings over the board: auto as a switch, how many of its cap work, hold as a switch,
-/// and each repo's cap as a stepper, `paused` at 0, with the Claudes working it. The foot says
-/// babylon's refusal, else the keys. Its rows are where `App.autoClick` looks.
+/// What babylon's pause says beside its switch: what it waits on, or that it is safe to stop.
+fn pauseNote(buf: []u8, pause: ?tickets.Pause) []const u8 {
+    const state = pause orelse return "";
+    if (state.safe) return "paused: safe to stop";
+    var w: Writer = .fixed(buf);
+    w.writeAll("pausing") catch return "pausing";
+    for (state.left, 0..) |left, i| w.print("{s}{s}", .{ if (i == 0) ": waits on " else ", ", left }) catch break;
+    return w.buffered();
+}
+
+/// Auto's settings over the board: auto as a switch, how many of its cap work, hold and pause as
+/// switches, pause's with what it waits on, and each repo's cap as a stepper, `paused` at 0, with
+/// the Claudes working it. The foot says babylon's refusal, else the keys. Its rows are where
+/// `App.autoClick` looks.
 pub fn autoBox(app: *const App, w: *Writer) !void {
     const rect = app.autoRect() orelse return;
     const view = app.home.?;
@@ -264,27 +275,37 @@ pub fn autoBox(app: *const App, w: *Writer) !void {
     const state = app.board.?.autoState() orelse tickets.Auto{};
     const on = app.auto() != null;
     const hold = app.holding();
+    const pause = app.pausing();
+    const switch_rows = [_]u16{ 1, 3, 4 };
+    const switch_names = [_][]const u8{ "auto", "hold", "pause" };
+    const switch_on = [_]bool{ on, hold, pause != null };
+    var note_buf: [160]u8 = undefined;
+    const note_x = rect.x + 2 + 16;
+    const pause_note = cut(pauseNote(&note_buf, pause), rect.w -| (note_x - rect.x) -| 3);
     const rows = @min(app.autoRepos(), App.autoRoom(rect));
+    const repo_row = App.auto_repo_row;
     const stepper = app.autoStepper(rect);
     const x0 = rect.x + 2;
     const foot = rect.y + rect.h - 1;
     var line: [96]u8 = undefined;
     const said = app.auto_wants.refused;
-    const hint = " j k pick   + - step   a auto   H hold   esc close ";
+    const hint = " j k pick   + - step   a auto   H hold   p pause   esc close ";
     const working = std.fmt.bufPrint(&line, "working {d} of {d}", .{ state.working, state.cap }) catch "";
     if (app.roles) |r| {
         try bench.window(w, r, rect.x, rect.y, rect.w - 1, rect.h + 1, "auto", null, true);
         try bench.say(w, rect.x + rect.w - 5, rect.y, " × ", r.text, r.panel, true);
-        _ = try bench.toggle(w, r, x0, rect.y + 1, "auto", on, r.panel);
-        try bench.say(w, x0 + 10, rect.y + 1, if (on) "on" else "off", if (on) r.accent else r.dim, r.panel, pick == 0);
+        for (switch_rows, switch_names, switch_on, 0..) |row, name, set, i| {
+            var label: [8]u8 = undefined;
+            _ = try bench.toggle(w, r, x0, rect.y + row, std.fmt.bufPrint(&label, "{s:<5}", .{name}) catch name, set, r.panel);
+            try bench.say(w, x0 + 11, rect.y + row, if (set) "on" else "off", if (set) r.accent else r.dim, r.panel, pick == i);
+        }
         try bench.say(w, x0, rect.y + 2, working, r.dim, r.panel, false);
-        _ = try bench.toggle(w, r, x0, rect.y + 3, "hold", hold, r.panel);
-        try bench.say(w, x0 + 10, rect.y + 3, if (hold) "on" else "off", if (hold) r.accent else r.dim, r.panel, pick == 1);
-        if (pick < 2) try bench.say(w, rect.x + 1, rect.y + 1 + 2 * @as(u16, @intCast(pick)), "▌", r.accent, r.panel, true);
+        if (pause) |paused| try bench.say(w, note_x, rect.y + 4, pause_note, if (paused.safe) r.landed else r.checking, r.panel, false);
+        if (pick < switch_rows.len) try bench.say(w, rect.x + 1, rect.y + switch_rows[pick], "▌", r.accent, r.panel, true);
         for (0..rows) |i| {
             const repo = app.autoRepo(i) orelse continue;
-            const y = rect.y + 5 + @as(u16, @intCast(i));
-            const picked = pick == 2 + i;
+            const y = rect.y + repo_row + @as(u16, @intCast(i));
+            const picked = pick == switch_rows.len + i;
             if (picked) try bench.say(w, rect.x + 1, y, "▌", r.accent, r.panel, true);
             try bench.say(w, x0, y, repo.name, if (picked) r.text else r.dim, r.panel, picked);
             try bench.say(w, stepper.minus, y, "[-]", r.accent, r.tile, true);
@@ -317,20 +338,25 @@ pub fn autoBox(app: *const App, w: *Writer) !void {
         var buf: [160]u8 = undefined;
         var style: vt.Style = .{};
         var text: []const u8 = "";
-        if (y == 1 or y == 3) {
-            const picked = pick == (y - 1) / 2;
-            const set = if (y == 1) on else hold;
-            style.flags.bold = picked;
-            text = std.fmt.bufPrint(&buf, "{s}  {s} {s}", .{ if (y == 1) "auto" else "hold", knobText(set), if (set) "on" else "off" }) catch "";
+        if (std.mem.indexOfScalar(u16, &switch_rows, y)) |row| {
+            const set = switch_on[row];
+            style.flags.bold = pick == row;
+            text = std.fmt.bufPrint(&buf, "{s:<5}  {s} {s:<3}{s}{s}", .{
+                switch_names[row],
+                knobText(set),
+                if (set) "on" else "off",
+                if (row == 2 and pause != null) "  " else "",
+                if (row == 2) pause_note else "",
+            }) catch "";
         } else if (y == 2) {
             style = dim;
             text = working;
-        } else if (y >= 5 and y - 5 < rows) {
-            const i = y - 5;
+        } else if (y >= repo_row and y - repo_row < rows) {
+            const i = y - repo_row;
             const repo = app.autoRepo(i) orelse continue;
             var tail: [32]u8 = undefined;
             const note = if (repo.cap == 0) "paused" else std.fmt.bufPrint(&tail, "{d} working", .{feed.working(&app.board.?, repo.name)}) catch "";
-            style.flags.bold = pick == 2 + i;
+            style.flags.bold = pick == switch_rows.len + i;
             text = std.fmt.bufPrint(&buf, "{s}{s}  [-]{d:^3}[+]  {s}", .{ repo.name, spaces[0..name_w -| cellCount(repo.name)], repo.cap, note }) catch "";
         }
         try boxLine(w, &pen, edge, style, rect.x, rect.y + y + 1, text, inner);

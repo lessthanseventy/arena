@@ -1099,6 +1099,21 @@ check "and a turns it off" await last 'auto off'
 key Escape
 cp $tmp/board.noauto $tmp/run/babylon/board.json
 check "off, the state is gone" gone 'auto [0-9]'
+key A
+key p
+check "p in auto's settings pauses babylon" await last 'pause'
+key Escape
+print -r -- "${$(<$tmp/board.noauto)%\}}"',"pause":{"on":true,"safe":false,"left":["1 gate(s) running"],"tickets":[]}}' >$tmp/run/babylon/board.json
+check "pausing, Plan's head says what the pause waits on" see '⏸ pausing: waits on 1 gate\(s\) running'
+print -r -- "${$(<$tmp/board.noauto)%\}}"',"pause":{"on":true,"safe":true,"left":[],"tickets":[]}}' >$tmp/run/babylon/board.json
+check "and once nothing is left, that it is safe to stop" see '⏸ paused: safe to stop'
+key A
+check "auto's settings say it beside the pause switch" see 'pause .* on +paused: safe to stop'
+key p
+check "and p there resumes it" await last 'resume'
+key Escape
+cp $tmp/board.noauto $tmp/run/babylon/board.json
+check "resumed, the head's pause is gone" gone '⏸'
 check "with nothing of the orchestrator in babylon's file, Plan's head has no button for it" hides ' ● orch '
 print -r -- "${$(<$tmp/board.noauto)%\}}"',"auto":{"on":true,"cap":4,"working":4,"tools":{"working":1,"cap":1}}}' >$tmp/run/babylon/board.json
 check "with room, Plan's head says the tools slots when babylon's file gives them" see ' ◐ auto 4/4 · tools 1/1( |$)'

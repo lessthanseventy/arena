@@ -196,6 +196,14 @@ pub const Auto = struct {
     repo_caps: std.json.ArrayHashMap(u32) = .{},
 };
 
+/// babylon's pause before a reboot: `left` is what it still waits on, and `safe` is true once
+/// nothing is.
+pub const Pause = struct {
+    on: bool = false,
+    safe: bool = false,
+    left: []const []const u8 = &.{},
+};
+
 /// What holds a ticket of next back, as babylon's auto says: `why` is the reason's name, `by` the
 /// ticket, ask or cap it is by when it has one.
 pub const Held = struct {
@@ -257,7 +265,8 @@ pub const Orchestrator = struct { on: bool = true, running: bool = true };
 /// What one of the human's moves offers: `argv` runs it, or with none, `needs` says what the
 /// human must give first (`words`, `pick`) or the surface must do itself (`surface`).
 pub const Action = struct {
-    key: []const u8,
+    /// babylon's pause row gives none; one missing must not lose the whole board.
+    key: []const u8 = "",
     label: []const u8,
     argv: ?[]const []const u8 = null,
     needs: ?[]const u8 = null,
@@ -486,6 +495,7 @@ const File = struct {
     backlog: []Card = &.{},
     auto: ?Auto = null,
     hold: bool = false,
+    pause: Pause = .{},
     orchestrator: ?Orchestrator = null,
     proposals: []Proposal = &.{},
     needs_you: []Need = &.{},
@@ -507,7 +517,8 @@ pub const Board = struct {
     names: []const []const u8 = &.{},
     lane_names: []const []const u8 = &.{},
     /// The `needs_you` items babylon marks `status`: its restart waiting on the gates running, and
-    /// a repo's unpushed commits. Taken out of `needs_you` at parse.
+    /// a repo's unpushed commits. Taken out of `needs_you` at parse, with its pause's row, which
+    /// the head says.
     restart: ?[]const u8 = null,
     repo_states: []const RepoState = &.{},
 
@@ -597,12 +608,15 @@ pub const Board = struct {
                 try states.append(arena, .{ .repo = need.repo, .ahead = countBefore(need.text, " unpushed") });
             } else if (std.mem.eql(u8, need.id, "restart-pending")) {
                 restart = need.text;
-            } else {
+            } else if (std.mem.eql(u8, need.id, "pause")) {} else {
                 all[kept] = need;
                 kept += 1;
             }
         }
         parsed.value.needs_you = all[0..kept];
+        const left = try arena.alloc([]const u8, parsed.value.pause.left.len);
+        for (parsed.value.pause.left, left) |words, *slot| slot.* = try cleanLine(arena, words);
+        parsed.value.pause.left = left;
         try suggest(arena, &parsed.value);
         if (parsed.value.plan) |*given| {
             for (given.now) |*item| {
@@ -835,6 +849,11 @@ pub const Board = struct {
     /// Whether babylon holds its pipeline.
     pub fn hold(b: *const Board) bool {
         return b.parsed.value.hold;
+    }
+
+    /// babylon's pause, off when its file says none.
+    pub fn pause(b: *const Board) Pause {
+        return b.parsed.value.pause;
     }
 
     /// The plan's next, in order.
@@ -1299,6 +1318,25 @@ test "babylon's own board parses with its plan, a planning ticket of no repo in 
     try std.testing.expectEqual(@as(u32, 1136), given.now[0].ticket);
     try std.testing.expectEqual(@as(?[]const u8, null), given.now[0].repo);
     try std.testing.expect(given.next.len > 0 and given.goals.len > 0);
+}
+
+test "babylon's pause is read with what it waits on, and its status row is left out of needs_you" {
+    var b = try Board.parse(std.testing.allocator,
+        \\{"tickets":[],"needs_you":[
+        \\{"id":"pause","kind":"human","ticket":null,"repo":"babylon","status":true,"text":"⏸ pausing: waits on #12 installing",
+        \\ "actions":[{"label":"resume","argv":["babylon","resume"]}]}],
+        \\"pause":{"on":true,"since":"2026-11-27T22:00:00Z","safe":false,"left":["#12 installing"],"tickets":[12]}}
+    );
+    defer b.deinit();
+    try std.testing.expect(b.pause().on);
+    try std.testing.expect(!b.pause().safe);
+    try std.testing.expectEqualStrings("#12 installing", b.pause().left[0]);
+    try std.testing.expectEqual(@as(usize, 0), b.needsYou().len);
+    var none = try Board.parse(std.testing.allocator,
+        \\{"tickets":[]}
+    );
+    defer none.deinit();
+    try std.testing.expect(!none.pause().on);
 }
 
 test "an item suggestion lifts and marks the needs_you item it copies, a text one is a row of its own, and others are dropped" {

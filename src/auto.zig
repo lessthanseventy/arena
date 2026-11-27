@@ -7,7 +7,7 @@ pub const settle_ms = 120;
 /// How long a sent value is shown while babylon's file does not yet say it.
 pub const trust_ms = 5000;
 
-pub const Kind = enum { on, hold, cap };
+pub const Kind = enum { on, hold, cap, pause };
 
 pub const Want = struct {
     kind: Kind,
@@ -24,6 +24,7 @@ pub const Want = struct {
         return switch (want.kind) {
             .on => "auto:on",
             .hold => "auto:hold",
+            .pause => "auto:pause",
             .cap => std.fmt.bufPrint(buf, "auto:cap:{s}", .{want.repo}) catch "auto:cap",
         };
     }
