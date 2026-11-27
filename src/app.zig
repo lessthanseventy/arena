@@ -8322,6 +8322,7 @@ test "a backlog ticket's card with an open ask lists its options, and 1 answers 
         \\{"key":"3","label":"z","argv":["babylon","answer","9","3"]},{"key":"c","label":"in words","argv":["babylon","answer","9","--words"],"needs":"words"}]}]}
     );
     defer app.board.?.deinit();
+    try std.testing.expectEqualStrings("Which?", app.board.?.backlog()[0].ask.?.question);
     app.home = .{ .detail = 4 };
 
     var buttons: [16]App.ModalButton = undefined;
