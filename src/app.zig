@@ -3123,11 +3123,20 @@ pub const App = struct {
     /// there is none when there is no file or it does not parse.
     pub fn setBoard(app: *App, text: ?[]const u8) !void {
         var old = app.board;
+        const picked: ?[]const u8 = if (old) |*ob| if (app.home) |view| if (view.plan_repo > 0 and view.plan_repo <= (if (ob.projects().len > 0) ob.projects().len else ob.names.len))
+            scopeNameIn(ob, view.plan_repo)
+        else
+            null else null else null;
         app.board_error = null;
         app.board = if (text) |t| tickets.Board.parse(app.gpa, t) catch |err| no: {
             app.board_error = err;
             break :no null;
         } else null;
+        if (app.home) |*view| if (picked) |name| {
+            view.plan_repo = if (app.board) |*nb| scopeFind(nb, name) else 0;
+        } else {
+            view.plan_repo = 0;
+        };
         if (old) |*b| b.deinit();
         // home stays, to say why there is no board, with nothing open over the one that was
         if (app.board == null) if (app.home) |view| {
@@ -3226,8 +3235,6 @@ pub const App = struct {
         try app.openPlan(null, id);
     }
 
-    /// Home's Planning screen, what `arena planning [<id>]` asks for: opened as `showPlan` opens
-    /// the plan, with the pick on ticket `id` when given.
     /// The plan opened narrowed to the project called `name`; all when the board has none by it.
     pub fn showProject(app: *App, name: []const u8) !void {
         try app.openPlan(null, null);
@@ -3239,6 +3246,8 @@ pub const App = struct {
         };
     }
 
+    /// Home's Planning screen, what `arena planning [<id>]` asks for: opened as `showPlan` opens
+    /// the plan, with the pick on ticket `id` when given.
     pub fn showPlanning(app: *App, id: ?u32) !void {
         try app.openPlan(.planning, id);
     }
@@ -3946,10 +3955,20 @@ pub const App = struct {
         return if (view.plan_repo >= 1 and view.plan_repo <= b.projects().len) view.plan_repo - 1 else null;
     }
 
-    /// The repo the plan is narrowed to; null for all, and for a project.
+    /// The repo the plan is narrowed to: the one repo picked, or the picked project's home repo
+    /// (its only one, or the one its home directory names, else its first); null for all.
     pub fn planRepo(app: *const App) ?[]const u8 {
         const view = app.home orelse return null;
         const b = if (app.board) |*b| b else return null;
+        if (app.planProject()) |i| {
+            const project = b.projects()[i];
+            if (project.repos.len == 0) return null;
+            if (project.home) |home| {
+                const dir = std.fs.path.basename(home);
+                for (project.repos) |repo| if (std.mem.eql(u8, repo, dir)) return repo;
+            }
+            return project.repos[0];
+        }
         if (b.projects().len > 0) return null;
         return if (view.plan_repo >= 1 and view.plan_repo <= b.names.len) b.names[view.plan_repo - 1] else null;
     }
@@ -3962,9 +3981,19 @@ pub const App = struct {
 
     /// The head's picker label `i`: `all`, then each project, else `every` and each repo.
     pub fn scopeLabel(app: *const App, i: usize) []const u8 {
-        const b = &app.board.?;
+        return scopeNameIn(&app.board.?, i);
+    }
+
+    fn scopeNameIn(b: *const tickets.Board, i: usize) []const u8 {
         if (b.projects().len == 0) return if (i == 0) "every" else b.names[i - 1];
         return if (i == 0) "all" else b.projects()[i - 1].name;
+    }
+
+    /// The place in `b`'s picker of what `name` says, which `scopeNameIn` gave in the board before.
+    fn scopeFind(b: *const tickets.Board, name: []const u8) usize {
+        const count = if (b.projects().len > 0) b.projects().len else b.names.len;
+        for (1..count + 1) |i| if (std.mem.eql(u8, scopeNameIn(b, i), name)) return i;
+        return 0;
     }
 
     /// The most cells of a project's name in the head's picker.
@@ -3982,9 +4011,11 @@ pub const App = struct {
         var x: u16 = @as(u16, @intCast(cellCount(plan_title) + orch)) + 3;
         const limit: u16 = @as(u16, @intCast(draw.planHeadStart(app) -| 1));
         var n: usize = 0;
+        var longest: usize = 0;
+        for (0..count + 1) |i| longest = @max(longest, @min(cellCount(app.scopeLabel(i)), scope_label_w));
+        const w: u16 = @intCast(longest + 2);
         for (0..count + 1) |i| {
             if (n == out.len) break;
-            const w: u16 = @intCast(@min(cellCount(app.scopeLabel(i)), scope_label_w));
             if (x + w >= limit) break;
             out[n] = .{ .repo = i, .x = x, .w = w };
             n += 1;
@@ -4028,7 +4059,8 @@ pub const App = struct {
     }
 
     /// The rows each window holds, as the one column sizes its windows by: what a pick adds to
-    /// next's or a card's rows is left out, so picking moves nothing. Zero outside one column.
+    /// next's or a card's rows is left out, so picking moves nothing. Outside one column only
+    /// Projects' count is set.
     fn planRows(app: *const App) sheets.Rows {
         var rows = sheets.Rows.initFill(0);
         const b = &app.board.?;
@@ -7269,7 +7301,7 @@ pub const App = struct {
         if (app.overview != null) return w.writeAll("overview");
         if (app.home) |view| {
             try w.writeAll("home");
-            if (app.planRepo()) |repo| try w.print(", {s} only", .{repo});
+            if (app.planProject()) |i| try w.print(", {s} only", .{app.board.?.projects()[i].name}) else if (app.planRepo()) |repo| try w.print(", {s} only", .{repo});
             if (view.boxed()) try w.writeAll(", a box open");
             if (app.sided()) try w.print(", orchestrator column {s}", .{if (view.focus == .orchestrator) "focused" else "beside"});
             return;
@@ -11118,6 +11150,46 @@ test "a stalled ticket is a stuck item in Needs you with ⏎ open pane, and it g
     app.board = try tickets.Board.parse(gpa, head ++ tail);
     try app.syncWaiting();
     try std.testing.expectEqual(@as(usize, 0), app.board.?.needsYou().len);
+}
+
+test "a picked project narrows new tickets to its home repo" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"projects":[{"name":"Tlon","repos":["tlon"]},{"name":"Ficciones","home":"/home/a/menard","repos":["arena","menard"]},{"name":"Pair","repos":["x","y"]}]}
+    );
+    defer app.board.?.deinit();
+    app.home = .{ .focus = .plan };
+    const eq = std.testing.expectEqual;
+    try eq(@as(?[]const u8, null), app.planRepo());
+    app.home.?.plan_repo = 1;
+    try std.testing.expectEqualStrings("tlon", app.planRepo().?);
+    app.home.?.plan_repo = 2;
+    try std.testing.expectEqualStrings("menard", app.planRepo().?);
+    try eq(@as(usize, 2), app.planScope().len);
+    app.home.?.plan_repo = 3;
+    try std.testing.expectEqualStrings("x", app.planRepo().?);
+}
+
+test "a pick that is no longer in the picker goes back to all, and one that moved is followed" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    defer if (app.board) |*b| b.deinit();
+    try app.setBoard(
+        \\{"tickets":[],"projects":[{"name":"Tlon","repos":["tlon"]},{"name":"Ficciones","repos":["arena"]}]}
+    );
+    app.home = .{ .focus = .plan, .plan_repo = 2 };
+    try app.setBoard(
+        \\{"tickets":[],"projects":[{"name":"Shop","repos":["shop"]},{"name":"Tlon","repos":["tlon"]},{"name":"Ficciones","repos":["arena"]}]}
+    );
+    try std.testing.expectEqual(@as(usize, 3), app.home.?.plan_repo);
+    try app.setBoard(
+        \\{"tickets":[],"projects":[{"name":"Shop","repos":["shop"]}]}
+    );
+    try std.testing.expectEqual(@as(usize, 0), app.home.?.plan_repo);
+    app.home.?.plan_repo = 1;
+    try app.setBoard(
+        \\{"tickets":[{"id":1,"title":"x","repo":"shop","stage":"queued"}]}
+    );
+    try std.testing.expectEqual(@as(usize, 0), app.home.?.plan_repo);
 }
 
 test "arena plan N opens the shut repo chip that holds N" {

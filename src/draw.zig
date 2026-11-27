@@ -1657,12 +1657,17 @@ fn repoTabs(app: *App, w: *Writer, view: app_mod.HomeView) !void {
     var pen: Pen = .{};
     for (slots[0..found.n], 0..) |tab, i| {
         try w.print("\x1b[1;{d}H", .{tab.x + 1});
-        try pen.set(w, if (view.plan_repo == tab.repo) heading(app) else ink(app, "dim", 8), null);
+        const lit = view.plan_repo == tab.repo;
+        try pen.set(w, if (lit) heading(app) else ink(app, "dim", 8), null);
         var cut: [96]u8 = undefined;
-        try w.writeAll(clipMark(&cut, app.scopeLabel(tab.repo), tab.w));
+        const label = clipMark(&cut, app.scopeLabel(tab.repo), tab.w - 2);
+        try w.writeAll(if (lit) "[" else " ");
+        try w.writeAll(label);
+        try w.splatByteAll(' ', tab.w - 2 - cellCount(label));
+        try w.writeAll(if (lit) "]" else " ");
         if (i + 1 < found.n) {
             try pen.set(w, ink(app, "dim", 8), null);
-            try w.writeAll(" · ");
+            try w.writeAll("·");
         }
     }
     try pen.set(w, .{}, null);
@@ -4057,10 +4062,13 @@ test "the head's picker keeps each label's place and width when the pick moves, 
     defer board.deinit();
     var shot = try planGrid(&board, 140);
     defer shot.app.grab.deinit(std.testing.allocator);
+    shot.app.term_w = 200;
+    shot.app.view_w = 200;
     var all: [33]App.RepoTab = undefined;
     const first = shot.app.planRepoTabs(&all);
     try eq(@as(usize, 3), first.n);
-    try eq(@as(u16, App.scope_label_w), all[2].w);
+    try eq(@as(u16, App.scope_label_w + 2), all[2].w);
+    try eq(all[0].w, all[2].w);
     shot.app.home.?.plan_repo = 2;
     var again: [33]App.RepoTab = undefined;
     const second = shot.app.planRepoTabs(&again);

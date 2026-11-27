@@ -464,6 +464,7 @@ pub const ProjectGoal = struct { id: u32, title: []const u8 = "", total: u32 = 0
 /// A made project: a named set of repos, the goal it drives, and its auto and hold.
 pub const Project = struct {
     name: []const u8,
+    home: ?[]const u8 = null,
     repos: []const []const u8 = &.{},
     driving: ?u32 = null,
     goal: ?ProjectGoal = null,
