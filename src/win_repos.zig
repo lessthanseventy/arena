@@ -121,6 +121,7 @@ fn runGit(app: *App, repo: []const u8, git: []const u8) !void {
     nextRequest(app);
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const path = app.detailPath(app.repos_req, &buf) orelse return;
+    std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
     if (app.detail_asked.items.len == 16) _ = app.detail_asked.orderedRemove(0);
     try app.detail_asked.append(app.gpa, app.repos_req);
     try app.send(.ignore, "run-shell -b \"git -C \\\"\\$HOME/projects/{s}\\\" {s} >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ repo, git, path, path, path });
