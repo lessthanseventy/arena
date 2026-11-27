@@ -7195,11 +7195,11 @@ pub const App = struct {
     }
 
     fn forward(app: *App, bytes: []const u8) !void {
-        const pane = if (app.claudeColumn()) |a| (app.paneById(app.home.?.claude.?) orelse a.win.activePane() orelse return) else blk: {
+        const win = if (app.claudeColumn()) |a| a.win else blk: {
             const s = app.sessionById(app.bound()) orelse return;
-            const win = s.focused() orelse return;
-            break :blk win.activePane() orelse return;
+            break :blk s.focused() orelse return;
         };
+        const pane = (if (app.claudeColumn() != null) app.paneById(app.home.?.claude.?) else null) orelse win.activePane() orelse return;
         if (bytes.len == 0) return;
         pane.term.screens.active.clearSelection();
         pane.term.scrollViewport(.bottom);
