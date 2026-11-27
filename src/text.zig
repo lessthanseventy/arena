@@ -182,7 +182,7 @@ pub fn landed(buf: []u8, note: []const u8) []const u8 {
     if (!std.mem.startsWith(u8, note, lead)) return note;
     var body = note[lead.len..];
     var state: []const u8 = "";
-    if (std.mem.lastIndexOf(u8, body, " \u{b7} ")) |at| {
+    if (std.mem.lastIndexOf(u8, body, " \u{b7} install")) |at| {
         state = body[at + 4 ..];
         body = body[0..at];
     }
@@ -217,4 +217,8 @@ test "a landing note is split into its hash, fixes and follow-ups, each its own 
         landed(&buf, "landed on main as abcdef0123, with the review's fixes: ; follow-ups filed: #5 a; #6 b"),
     );
     try std.testing.expectEqualStrings("gate ok", landed(&buf, "gate ok"));
+    try std.testing.expectEqualStrings(
+        "\n\x01Landed\non main \u{b7} abcdef0\nReview fixes\n  - a \u{b7} b",
+        landed(&buf, "landed on main as abcdef0123, with the review's fixes: a \u{b7} b"),
+    );
 }

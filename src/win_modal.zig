@@ -430,7 +430,10 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
                 try app.grab.row(app.gpa, x0, y, cut(line, inner), head.joins[at]);
                 try bench.say(w, x0, y, cut(line, inner), r.text, bg, false);
             },
-            .heading => try bench.say(w, x0, y, cut(line, inner), r.accent, bg, true),
+            .heading => {
+                try app.grab.row(app.gpa, x0, y, cut(line, inner), null);
+                try bench.say(w, x0, y, cut(line, inner), r.accent, bg, true);
+            },
             .mark => {
                 try app.grab.row(app.gpa, x0, y, cut(line, inner), null);
                 const ink_of = if (std.mem.startsWith(u8, line, "\u{2713}")) r.landed else if (std.mem.startsWith(u8, line, "\u{2717}")) r.failed else r.dim;

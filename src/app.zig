@@ -5158,7 +5158,7 @@ pub const App = struct {
         return app.cardById(view.detail orelse return null);
     }
 
-    /// Fills `head` with the card's title whole, its stage, holder, model and branch, what blocks
+    /// Fills `head` with the card's title whole, its repo, priority, stage, holder and age, what blocks
     /// it, the question it asks with its options, and what it was sent back for.
     pub fn cardHead(card: *const tickets.Card, inner: usize, epoch: i64, words: bool, head: *CardHead) void {
         cardHeadOpen(card, inner, epoch, words, true, head);
