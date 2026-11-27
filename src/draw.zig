@@ -759,7 +759,7 @@ fn switcherRow(b: *Box, row: App.Row, picked: bool) !void {
             try b.w.writeAll(" ");
         } else try b.w.writeAll("    ");
     }
-    const tail = clip(right, inner -| lead -| 2);
+    const tail = clipMark(&cb, right, inner -| lead -| 2);
     const room = inner -| lead -| cellCount(tail) -| 1;
     try fitted(b.w, label, room);
     try b.w.writeAll(" ");
@@ -1394,7 +1394,8 @@ fn popupBox(app: *App, w: *Writer, pop: App.Popup) !void {
                     try pen.set(w, heading(app), null);
                     try w.print(" {d} ", .{n});
                     try pen.set(w, .{}, null);
-                    const text = clip(option, @min(room - 4, 26));
+                    var ob: [128]u8 = undefined;
+                    const text = clipMark(&ob, option, @min(room - 4, 26));
                     try w.writeAll(text);
                     try w.writeAll("  ");
                     used += 3 + cellCount(text) + 2;
