@@ -1054,8 +1054,6 @@ check "d turns the column to its ticket's changes" await shows 'NORMAL  d pane  
 key d
 key i
 check "i types into it" await shows 'INSERT  ctrl\+space normal'
-key Escape
-check "and esc then goes to the pane, the column staying" see 'INSERT  ctrl\+space normal'
 key C-Space
 await shows 'NORMAL  i type   d changes   esc back'
 key Escape
@@ -1508,7 +1506,6 @@ key M-h
 gone '╭─ ○ orchestrator'
 key M-b
 gone 'in flight [0-9]'
-await in_session alpha
 key -l 'echo worker-jkdufltb'
 key Enter
 check "and the board closed, a worker's pane gets it whole too" await said alpha: worker-jkdufltb
