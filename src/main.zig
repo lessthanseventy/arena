@@ -143,7 +143,7 @@ const BoardFile = struct {
     /// whichever way its box closed, one written after it closed too.
     fn checkDetail(file: *BoardFile, app: *App) void {
         _ = file;
-        const open: ?u32 = if (app.home) |view| (if (view.repos) app.repos_req else if (view.item_open or view.claude_diff) 0 else view.detail) else null;
+        const open: ?u32 = if (app.home) |view| (if (view.repos and view.detail == null) app.repos_req else if (view.item_open or view.claude_diff) 0 else view.detail) else null;
         var i: usize = 0;
         while (i < app.detail_asked.items.len) {
             const id = app.detail_asked.items[i];

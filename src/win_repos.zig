@@ -133,7 +133,7 @@ fn askStatus(app: *App, repo: []const u8, comptime fetched: bool) !void {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const path = statusPath(app, repo, &buf) orelse return;
     const fetch = if (fetched) "git fetch -q origin main 2>/dev/null; " else "";
-    try app.send(.ignore, "run-shell -b \"cd \\\"\\$HOME/projects/{s}\\\" && {s}(git worktree list --porcelain | sed -n 's/^worktree //p' | while read d; do echo --wt; echo \\$d; git -C \\$d status --porcelain=v2 --branch; done; echo --stash; git stash list | wc -l; echo --today; date -d 00:00 +%s; echo --unpushed; git log --format=%h origin/main..main; echo --log; git log -n 200 --format='%h %ct %s ‖ %(trailers:valueonly,separator=%x20)' main) >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ repo, fetch, path, path, path });
+    try app.send(.ignore, "run-shell -b \"cd \\\"\\$HOME/projects/{s}\\\" && {s}(git worktree list --porcelain | sed -n 's/^worktree //p' | while read d; do echo --wt; echo \\$d; git --no-optional-locks -C \\$d status --porcelain=v2 --branch; echo --ahead; git -C \\$d rev-list --count main..HEAD; done; echo --stash; git stash list | wc -l; echo --today; date -d 00:00 +%s; echo --unpushed; git log --format=%h origin/main..main; echo --log; git log -n 200 --format='%h %ct %s ‖ %(trailers:valueonly,separator=%x20)' main) >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ repo, fetch, path, path, path });
 }
 
 fn askAll(app: *App, comptime fetched: bool) !void {
@@ -233,6 +233,12 @@ fn fileAt(text: []const u8, n: usize) ?File {
 
 const Tree = struct { co: Checkout, ticket: ?u32 };
 
+/// The commits of a worktree's branch that main has not: ticket branches have no upstream for
+/// `# branch.ab` to count against.
+fn aheadOf(text: []const u8, n: usize) u32 {
+    return std.fmt.parseInt(u32, std.mem.trim(u8, part(text, "ahead", n + 1) orelse "", " \n"), 10) catch 0;
+}
+
 /// The ticket a babylon branch `t<N>-…` is of.
 fn ticketOf(branch: []const u8) ?u32 {
     if (branch.len < 3 or branch[0] != 't') return null;
@@ -244,7 +250,8 @@ fn ticketOf(branch: []const u8) ?u32 {
 
 /// The `n`th worktree besides the main checkout.
 fn treeAt(text: []const u8, n: usize) ?Tree {
-    const co = checkoutOf(part(text, "wt", n + 1) orelse return null);
+    var co = checkoutOf(part(text, "wt", n + 1) orelse return null);
+    co.ahead = aheadOf(text, n);
     return .{ .co = co, .ticket = ticketOf(co.branch) };
 }
 
@@ -408,9 +415,6 @@ fn enter(app: *App, repo: []const u8) !void {
         },
         1 => {
             const id = (treeAt(text, row) orelse return).ticket orelse return;
-            view.repos = false;
-            app.detail.clearRetainingCapacity();
-            nextRequest(app);
             _ = try app.openDetail(id);
         },
         else => {
@@ -569,7 +573,7 @@ fn paintSection(app: *App, w: *Writer, r: anytype, view: anytype, text: []const 
     try bench.say(w, x, y0, cut(title, room), if (focused) r.accent else r.dim, r.panel, focused);
     const body = h - 1;
     const count = rowCount(text, s);
-    if (sum == null) return bench.say(w, x, y0 + 1, "…", r.dim, r.panel, false);
+    if (sum == null) return if (body > 0) bench.say(w, x, y0 + 1, "…", r.dim, r.panel, false);
     if (count == 0 and body > 0) {
         const none = switch (s) {
             0 => "clean",
@@ -628,6 +632,12 @@ fn paintSection(app: *App, w: *Writer, r: anytype, view: anytype, text: []const 
     }
 }
 
+/// Whether a repo is even with its upstream, clean, on main and has no worktrees: its row is dim.
+fn isLevel(s: tickets.RepoState, sum: ?Summary) bool {
+    const m = sum orelse return s.ahead == 0 and s.behind == 0;
+    return s.ahead == 0 and s.behind == 0 and !stray(m) and m.worktrees == 0;
+}
+
 fn cells(text: []const u8) usize {
     var n: usize = 0;
     for (text) |c| n += @intFromBool(c & 0xC0 != 0x80);
@@ -666,7 +676,7 @@ pub fn paint(app: *App, w: *Writer) !void {
             std.fmt.bufPrint(&line, "{s}●{d}  ⎇{d}{s}", .{ prefix, m.checkout.changed, m.worktrees, if (m.stashes > 0) std.fmt.bufPrint(&stash, "  ≡{d}", .{m.stashes}) catch "" else "" }) catch s.repo
         else
             std.fmt.bufPrint(&line, "{s}  main  ↑{d} ↓{d}", .{ s.repo, s.ahead, s.behind }) catch s.repo;
-        const level = s.ahead == 0 and s.behind == 0 and (if (sum) |m| !stray(m) and m.checkout.changed == 0 and m.worktrees == 0 else true);
+        const level = isLevel(s, sum);
         if (picked) try bench.say(w, rect.x + 1, y, "▌", r.accent, r.panel, true);
         try bench.say(w, x0, y, cut(text, left), if (level and !picked) r.dim else r.text, r.panel, picked);
         if (sum) |m| {
@@ -724,8 +734,8 @@ pub fn paint(app: *App, w: *Writer) !void {
 }
 
 const fixture = "--wt\n/p/arena\n# branch.head main\n# branch.ab +2 -1\n" ++
-    "1 .M N... 100644 100644 100644 a b src/late.zig\n1 A. N... 000000 100644 100644 a b src/staged.zig\n? notes.txt\n" ++
-    "--wt\n/p/arena/.worktrees/t42-x\n# branch.head t42-x\n--stash\n1\n--today\n1000\n--unpushed\naaa1111\n" ++
+    "1 .M N... 100644 100644 100644 a b src/late.zig\n1 A. N... 000000 100644 100644 a b src/staged.zig\n? notes.txt\n--ahead\n0\n" ++
+    "--wt\n/p/arena/.worktrees/t42-x\n# branch.head t42-x\n--ahead\n1\n--stash\n1\n--today\n1000\n--unpushed\naaa1111\n" ++
     "--log\naaa1111 2000 new ‖ \nbbb2222 900 old ‖ \n";
 
 test "an answer reads as a summary, its staged files first, and its log as today's and the last ten" {
@@ -739,6 +749,13 @@ test "an answer reads as a summary, its staged files first, and its log as today
     try std.testing.expectEqualStrings("src/staged.zig", fileAt(fixture, 0).?.path);
     try std.testing.expectEqualStrings("??", &fileAt(fixture, 2).?.code);
     try std.testing.expectEqual(@as(?u32, 42), treeAt(fixture, 0).?.ticket);
+    try std.testing.expectEqual(@as(u32, 1), treeAt(fixture, 0).?.co.ahead);
+    const clean = parse("--wt\n/p/a\n# branch.head main\n# branch.ab +0 -0\n--stash\n0\n").?;
+    try std.testing.expect(isLevel(.{ .repo = "a" }, clean));
+    try std.testing.expect(!isLevel(.{ .repo = "a", .ahead = 1 }, clean));
+    try std.testing.expect(!isLevel(.{ .repo = "a" }, parse(fixture)));
+    try std.testing.expect(!isLevel(.{ .repo = "a" }, parse("--wt\n/p/a\n# branch.head topic\n").?));
+    try std.testing.expect(!isLevel(.{ .repo = "a" }, parse("--wt\n/p/a\n# branch.head main\n? x\n").?));
     try std.testing.expectEqual(Log{ .today = 1, .shown = 2 }, logOf(fixture));
     try std.testing.expect(isUnpushed(fixture, "aaa1111") and !isUnpushed(fixture, "bbb2222"));
     try std.testing.expect(parse("") == null);

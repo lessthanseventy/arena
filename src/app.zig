@@ -4514,7 +4514,7 @@ pub const App = struct {
             return;
         }
         if (view.claudes) return win_now.key(app, key);
-        if (view.repos) return win_repos.key(app, key);
+        if (view.repos and view.detail == null) return win_repos.key(app, key);
         if (view.item_open) return app.itemKey(key);
         if (view.detail != null) return app.modalKey(key);
         if (anyKey(key, &.{"s"})) return app.openSwitcher();
@@ -11317,22 +11317,28 @@ test "restart-pending and a repo's unpushed are chips on the head, not Your move
     shot.clearRetainingCapacity();
     try draw.frame(&app, &shot.writer, .all);
 
-    for ([_][]const u8{ "arena  main  ↑2 ↓0  ●1  ⎇1", "tlon  main  ↑1 ↓3  ●0  ⎇0  ≡2", "↑ a1b2c3d  one commit  #7", "another #9 commit", "✓ today", "M   src/x.zig", "Worktrees  ⎇1", "t42-x" }) |want| {
+    for ([_][]const u8{ "arena  main  ↑2 ↓0  ●1  ⎇1", "tlon  main  ↑1 ↓3  ●0  ⎇0  ≡2", "↑ a1b2c3d  one commit  #7", "another #9 commit", "✓ today", "M   src/x.zig", "Worktrees  ⎇1", "t42-x  ●0 ↑1" }) |want| {
         try std.testing.expect(has(u8, shot.written(), want) != null);
     }
 
     try app.homeKey("\t");
-
     try std.testing.expect(view.repos_in);
+    try app.homeKey("\t");
+    try app.homeKey("\t");
+    try std.testing.expectEqual(@as(u8, 2), view.repos_section);
+    try app.homeKey("\t");
+    try std.testing.expectEqual(@as(u8, 0), view.repos_section);
     try app.homeKey("\t");
     try std.testing.expectEqual(@as(u8, 1), view.repos_section);
     try app.homeKey("\r");
-
-    try std.testing.expect(!view.repos);
     try std.testing.expectEqual(@as(?u32, 42), view.detail);
-    try app.homeKey("\x1b");
-    try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = x, .y = 0, .release = false }));
     try std.testing.expect(view.repos);
+    try app.homeKey("\x1b");
+    try std.testing.expectEqual(@as(?u32, null), view.detail);
+    try std.testing.expect(view.repos and view.repos_in);
+    try std.testing.expectEqual(@as(u8, 1), view.repos_section);
+    try std.testing.expectEqual(@as(usize, 0), view.repos_pick);
+    try app.homeKey("h");
     try app.homeKey("j");
     try app.homeKey("P");
     const after_p = try sentText(sent, &got);
@@ -11348,8 +11354,8 @@ test "restart-pending and a repo's unpushed are chips on the head, not Your move
     try std.testing.expect(!view.repos);
 }
 
-const arena_git = "--wt\n/p/arena\n# branch.head main\n# branch.ab +2 -0\n1 .M N... 100644 100644 100644 a b src/x.zig\n" ++
-    "--wt\n/p/arena/.worktrees/t42-x\n# branch.head t42-x\n--stash\n0\n--today\n1000\n--unpushed\na1b2c3d\n" ++
+const arena_git = "--wt\n/p/arena\n# branch.head main\n# branch.ab +2 -0\n1 .M N... 100644 100644 100644 a b src/x.zig\n--ahead\n0\n" ++
+    "--wt\n/p/arena/.worktrees/t42-x\n# branch.head t42-x\n--ahead\n1\n--stash\n0\n--today\n1000\n--unpushed\na1b2c3d\n" ++
     "--log\na1b2c3d 2000 one commit ‖ Ticket: #7\ne4f5a6b 500 another #9 commit ‖ \n";
 
 fn giveGit(app: *App, name: []const u8, text: []const u8) !void {
@@ -11378,6 +11384,7 @@ test "a push that answers ok has its repo counted again, and the row reads what 
         app.repos_pushing.deinit(std.testing.allocator);
     }
     app.board_dir = dir;
+    app.repos_next = std.math.maxInt(i64);
     app.home.?.repos = true;
     defer for (app.repo_git[0..app.repo_git_n]) |g| std.testing.allocator.free(g.text);
     try giveGit(&app, "arena", "--wt\n/p/arena\n# branch.head main\n# branch.ab +7 -0\n");

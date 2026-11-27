@@ -1786,9 +1786,9 @@ fn planBoxes(app: *App, w: *Writer, view: app_mod.HomeView) !void {
         app.grab.cover();
         try win_into.paint(app, w);
     }
+    if (view.repos) try win_repos.paint(app, w);
     if (view.detail) |id| try win_modal.detailBox(app, w, id, view.detail_scroll);
     if (view.item_open) try win_modal.itemBox(app, w, view.detail_scroll);
-    if (view.repos) try win_repos.paint(app, w);
     if (view.claudes) try win_now.paint(app, w);
     if (view.claude != null) try claudeBox(app, w, view);
     if (app.autoRect() != null) app.grab.cover();
