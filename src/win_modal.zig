@@ -151,7 +151,10 @@ pub fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
     if (card) |it| app.modalHead(it, inner, app.askWords(it) != null, &head);
     const win = if (card) |it| app.claudeOf(it) else null;
     if (win) |it| App.claudeHead(it, &head);
-    const claude_rows: u16 = if (win != null and bottom - top - 2 > note_rows + head.n + 1) 1 else 0;
+    var told: [320]u8 = undefined;
+    var told_rows: ClaudeRows = .{};
+    if (win) |it| claudeRows(&told_rows, claudeSaid(&told, app, it), inner);
+    const claude_rows: u16 = if (win != null and bottom - top - 2 > note_rows + head.n + 1) @intCast(told_rows.n) else 0;
     const text_end = bottom - note_rows - claude_rows;
 
     var y = top + 1;
@@ -161,7 +164,7 @@ pub fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
             .plain, .options => .{},
             .sheet, .fold => .{},
             .heading => heading(app),
-            .mark => if (std.mem.startsWith(u8, line, "\u{2717}")) ink(app, "emberdim", 1) else if (std.mem.startsWith(u8, line, "\u{25cb}")) dim else .{},
+            .mark => if (card.?.checks[head.of[at] - 1].result) |result| (if (std.mem.eql(u8, result, "ok")) .{} else ink(app, "emberdim", 1)) else dim,
             .dim, .check, .shell => dim,
             .warn => ink(app, "amber", 4),
             .sub => if (at - head.subs.? + 1 == app.home.?.sub_pick) ink(app, "amber", 4) else .{},
@@ -197,14 +200,10 @@ pub fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
         }
     }
     while (y < text_end) : (y += 1) try boxLine(w, &pen, edge, .{}, x, y, "", inner);
-    if (claude_rows > 0) if (win) |it| {
-        var ago_buf: [8]u8 = undefined;
-        var said: [320]u8 = undefined;
-        const state = if (it.claude == .none) "" else @tagName(it.claude);
-        const line = std.fmt.bufPrint(&said, "its Claude: {s} {s} · {s}", .{ state, ago(&ago_buf, app.epoch, it.since), it.detail() }) catch "its Claude";
+    for (told_rows.lines[0..claude_rows]) |line| {
         try boxLine(w, &pen, edge, dim, x, y, line, inner);
         y += 1;
-    };
+    }
     var noted = app_mod.DetailLines.init(note, inner);
     while (y < bottom) : (y += 1) {
         const line = noted.next() orelse "";
@@ -350,6 +349,35 @@ pub fn autoBox(app: *const App, w: *Writer) !void {
 
 const spaces: [64]u8 = @splat(' ');
 
+/// A card's `its Claude:` line, wrapped to at most three rows, the last ending in `…` when there
+/// was more.
+const ClaudeRows = struct {
+    lines: [3][]const u8 = undefined,
+    n: usize = 0,
+    last: [512]u8 = undefined,
+    ended: [512]u8 = undefined,
+};
+
+fn claudeSaid(buf: []u8, app: *const App, win: *const app_mod.Window) []const u8 {
+    var ago_buf: [8]u8 = undefined;
+    const state = if (win.claude == .none) "" else @tagName(win.claude);
+    return std.fmt.bufPrint(buf, "its Claude: {s} {s} \u{b7} {s}", .{ state, ago(&ago_buf, app.epoch, win.since), win.detail() }) catch "its Claude";
+}
+
+fn claudeRows(out: *ClaudeRows, said: []const u8, inner: usize) void {
+    var it = app_mod.DetailLines.init(said, inner);
+    while (it.next()) |line| {
+        if (out.n < 3) {
+            out.lines[out.n] = line;
+            out.n += 1;
+            continue;
+        }
+        const tail = std.fmt.bufPrint(&out.last, "{s}\u{2026}", .{out.lines[2]}) catch return;
+        out.lines[2] = draw.clipMark(&out.ended, tail, inner);
+        return;
+    }
+}
+
 /// The card's modal in Workbench's look: a window over the board with its shadow and `✕`, the
 /// title whole, the facts as chips, the open ask as a violet band with its options as buttons,
 /// the body, and the card's actions as buttons along the foot. Its rows are `modalButtons`'.
@@ -374,7 +402,10 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
         if (note_rows < foot - rect.y - 3) note_rows += 1;
     }
     const win = if (card) |it| app.claudeOf(it) else null;
-    const claude_rows: u16 = if (win != null and foot - rect.y - 3 > note_rows + head.n + 1) 1 else 0;
+    var told: [320]u8 = undefined;
+    var told_rows: ClaudeRows = .{};
+    if (win) |it| claudeRows(&told_rows, claudeSaid(&told, app, it), inner);
+    const claude_rows: u16 = if (win != null and foot - rect.y - 3 > note_rows + head.n + 1) @intCast(told_rows.n) else 0;
     const text_end = foot - 1 - note_rows - claude_rows;
 
     var buttons: [48]App.ModalButton = undefined;
@@ -405,8 +436,8 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
             },
             .check => {
                 try app.grab.row(app.gpa, x0, y, cut(line, inner), null);
-                const settled = card.?.checks[at - head.checks.?].result != null;
-                const lit = !app.onFold(card.?) and at - head.checks.? + 1 == @min(@max(app.home.?.check_pick, 1), card.?.checks.len);
+                const settled = card.?.checks[head.of[at] - 1].result != null;
+                const lit = !app.onFold(card.?) and head.of[at] == @min(@max(app.home.?.check_pick, 1), card.?.checks.len);
                 var room = inner;
                 for (modal) |button| if (button.action == .pick and button.y == y) {
                     room = button.width() -| 3;
@@ -414,7 +445,7 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
                 const ground = if (lit) r.raised else bg;
                 if (lit) try bench.fill(w, rect.x + 1, y, rect.w - 3, ground);
                 var said: [512]u8 = undefined;
-                const shown = if (lit) std.fmt.bufPrint(&said, "\u{25b8}{s}", .{line}) catch line else line;
+                const shown = if (lit) std.fmt.bufPrint(&said, "{s}{s}", .{ if (head.more[at]) " " else "\u{25b8}", line }) catch line else line;
                 try bench.say(w, x0, y, cut(shown, room), if (lit) r.accent else if (settled) r.dim else r.text, ground, lit);
                 for (modal) |button| if ((button.action == .row_ok or button.action == .row_no) and button.y == y) {
                     _ = try bench.button(w, r, button.x, y, button.key, button.label, false, null);
@@ -439,7 +470,7 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
             },
             .mark => {
                 try app.grab.row(app.gpa, x0, y, cut(line, inner), null);
-                const ink_of = if (std.mem.startsWith(u8, line, "\u{2713}")) r.landed else if (std.mem.startsWith(u8, line, "\u{2717}")) r.failed else r.dim;
+                const ink_of = if (card.?.checks[head.of[at] - 1].result) |result| (if (std.mem.eql(u8, result, "ok")) r.landed else r.failed) else r.dim;
                 try bench.say(w, x0, y, cut(line, inner), ink_of, bg, false);
             },
             .fold => for (modal) |button| if (button.action == .details) {
@@ -485,14 +516,10 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
         }
     }
     y = text_end;
-    if (claude_rows > 0) if (win) |it| {
-        var ago_buf: [8]u8 = undefined;
-        var said: [320]u8 = undefined;
-        const state = if (it.claude == .none) "" else @tagName(it.claude);
-        const line = std.fmt.bufPrint(&said, "its Claude: {s} {s} \u{b7} {s}", .{ state, ago(&ago_buf, app.epoch, it.since), it.detail() }) catch "its Claude";
-        try bench.say(w, x0, y, cut(line, inner), r.dim, r.panel, false);
+    for (told_rows.lines[0..claude_rows]) |line| {
+        try bench.say(w, x0, y, line, r.dim, r.panel, false);
         y += 1;
-    };
+    }
     var noted = app_mod.DetailLines.init(note, inner);
     while (noted.next()) |line| {
         if (y >= foot - 1) break;
@@ -739,4 +766,16 @@ pub fn giveBox(app: *App, w: *Writer, id: u32, picked: usize) !void {
     try w.print("\x1b[{d};{d}H╰", .{ y, x + 1 });
     for (0..bw - 2) |_| try w.writeAll("─");
     try w.writeAll("╯");
+}
+
+test "a long its Claude line takes three rows and then ends in an ellipsis" {
+    var rows: ClaudeRows = .{};
+    const said = "its Claude: done 23m \u{b7} 1340 is installed. Restart Asterion and then ask it what the money situation is like this check, and how much was spent on food in the last month, and so on and on";
+    claudeRows(&rows, said, 30);
+    try std.testing.expectEqual(@as(usize, 3), rows.n);
+    try std.testing.expect(std.mem.endsWith(u8, rows.lines[2], "\u{2026}"));
+    try std.testing.expect(std.mem.startsWith(u8, rows.lines[0], "its Claude: done"));
+    var short: ClaudeRows = .{};
+    claudeRows(&short, "its Claude: done 1m \u{b7} ok", 30);
+    try std.testing.expectEqual(@as(usize, 1), short.n);
 }

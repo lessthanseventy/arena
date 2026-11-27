@@ -5282,6 +5282,10 @@ pub const App = struct {
         kinds: [96]Kind = undefined,
         /// Of a line arena wrapped from the one before it: the spaces the wrap took out.
         joins: [96]?usize = @splat(null),
+        /// Of a check line: the position (from 1) of the check it belongs to, and whether it runs on
+        /// from the line before.
+        of: [96]u8 = @splat(0),
+        more: [96]bool = @splat(false),
         n: usize = 0,
         /// Of a to-try card with a sheet: the line of its `details` button, the facts and body
         /// folded under it.
@@ -5293,6 +5297,74 @@ pub const App = struct {
         /// The first of its Claude's subagent lines, one each, and how many.
         subs: ?usize = null,
         subs_n: usize = 0,
+
+        /// The rows the checks may wrap into, and the check that is never cut.
+        pub const Fit = struct { rows: usize, pick: ?usize };
+
+        const max_check_rows = 12;
+        const blanks: [8]u8 = @splat(' ');
+
+        /// One line per check, or several when `squeeze` has the rows: the picked check whole, then
+        /// the ones nearest it while the rows last, the rest on one line.
+        fn checkLines(head: *CardHead, kind: Kind, checks: []const tickets.Check, inner: usize, squeeze: ?Fit) void {
+            const cap = 32;
+            var wanted: [cap]usize = @splat(1);
+            var prefix: [cap]usize = @splat(0);
+            var width: [cap]usize = @splat(inner);
+            if (squeeze != null) for (checks[0..@min(checks.len, cap)], 0..) |check, i| {
+                var lead: [16]u8 = undefined;
+                prefix[i] = cellCount(std.fmt.bufPrint(&lead, "x {d} ", .{check.n}) catch "");
+                const buttons: usize = if (kind == .check and check.result == null) 10 else 0;
+                width[i] = inner -| prefix[i] -| buttons;
+                var lines = DetailLines.init(check.text, @max(width[i], 1));
+                var n: usize = 0;
+                while (lines.next()) |_| n += 1;
+                wanted[i] = std.math.clamp(n, 1, max_check_rows);
+            };
+            var granted: [cap]usize = @splat(1);
+            if (squeeze) |f| {
+                const total = @min(checks.len, cap);
+                var spare = f.rows -| head.n -| checks.len;
+                const pick = @min(f.pick orelse 0, total -| 1);
+                var step: usize = 0;
+                order: while (step < total * 2) : (step += 1) {
+                    const dist = (step + 1) / 2;
+                    const at: usize = if (step % 2 == 1) pick + dist else if (pick >= dist) pick - dist else continue;
+                    if (at >= total) continue;
+                    const extra = wanted[at] - 1;
+                    if (f.pick != null and at == pick) {
+                        granted[at] = wanted[at];
+                        spare -|= extra;
+                    } else if (extra <= spare) {
+                        granted[at] = wanted[at];
+                        spare -= extra;
+                    } else break :order;
+                }
+            }
+            for (checks, 0..) |check, i| {
+                const sign: []const u8 = if (check.result) |result| (if (std.mem.eql(u8, result, "ok")) "\u{2713}" else "\u{2717}") else "\u{25cb}";
+                const at = head.n;
+                if (i >= cap or granted[i] == 1) {
+                    head.add(kind, "{s} {d} {s}", .{ sign, check.n, check.text });
+                    if (head.n > at) head.of[at] = @intCast(i + 1);
+                    continue;
+                }
+                var lines = DetailLines.init(check.text, @max(width[i], 1));
+                var row: usize = 0;
+                while (lines.next()) |piece| : (row += 1) {
+                    if (row == granted[i]) break;
+                    const line_at = head.n;
+                    if (row == 0)
+                        head.add(kind, "{s} {d} {s}", .{ sign, check.n, piece })
+                    else
+                        head.add(kind, "{s}{s}", .{ blanks[0..@min(prefix[i], blanks.len)], piece });
+                    if (head.n > line_at) {
+                        head.of[line_at] = @intCast(i + 1);
+                        head.more[line_at] = row > 0;
+                    }
+                }
+            }
+        }
 
         fn add(head: *CardHead, kind: Kind, comptime fmt: []const u8, args: anytype) void {
             if (head.n == head.lines.len) return;
@@ -5342,7 +5414,7 @@ pub const App = struct {
     /// Fills `head` with the card's title whole, its repo, priority, stage, holder and age, what blocks
     /// it, the question it asks with its options, and what it was sent back for.
     pub fn cardHead(card: *const tickets.Card, inner: usize, epoch: i64, words: bool, head: *CardHead) void {
-        cardHeadOpen(card, inner, epoch, words, true, false, head);
+        cardHeadOpen(card, inner, epoch, words, true, false, null, head);
     }
 
     /// Whether `card` shows its try sheet and checks: it is to try, and its ask was not the item
@@ -5366,18 +5438,18 @@ pub const App = struct {
 
     /// `cardHead`; a to-try card with a try sheet leads with it and its checks, and `details` says
     /// whether the facts it folds under its `details` row are in.
-    fn cardHeadOpen(card: *const tickets.Card, inner: usize, epoch: i64, words: bool, details: bool, ask_first: bool, head: *CardHead) void {
+    fn cardHeadOpen(card: *const tickets.Card, inner: usize, epoch: i64, words: bool, details: bool, ask_first: bool, squeeze: ?CardHead.Fit, head: *CardHead) void {
         head.* = .{};
         if (sheetShown(card, ask_first)) if (card.@"try") |sheet| {
             sheetHead(card, sheet, inner, head);
-            checkHead(card, ask_first, head);
+            checkHead(card, ask_first, inner, squeeze, head);
             head.fold = head.n;
             head.add(.fold, "", .{});
-            if (details) factsHead(card, inner, epoch, words, head);
+            if (details) factsHead(card, inner, epoch, words, squeeze, head);
             return;
         };
-        factsHead(card, inner, epoch, words, head);
-        checkHead(card, ask_first, head);
+        factsHead(card, inner, epoch, words, squeeze, head);
+        checkHead(card, ask_first, inner, squeeze, head);
     }
 
     fn sheetHead(card: *const tickets.Card, sheet: tickets.TrySheet, inner: usize, head: *CardHead) void {
@@ -5391,7 +5463,7 @@ pub const App = struct {
         if (sheet.wrong.len > 0) head.wrapped(.sheet, inner, 3, "\u{2717} wrong: {s}", .{sheet.wrong});
     }
 
-    fn factsHead(card: *const tickets.Card, inner: usize, epoch: i64, words: bool, head: *CardHead) void {
+    fn factsHead(card: *const tickets.Card, inner: usize, epoch: i64, words: bool, squeeze: ?CardHead.Fit, head: *CardHead) void {
         head.wrap(.plain, card.title, inner, head.lines.len);
         var meta: [256]u8 = undefined;
         var wr: Writer = .fixed(&meta);
@@ -5438,30 +5510,29 @@ pub const App = struct {
                 head.add(.dim, "", .{});
                 head.add(.heading, "Checks", .{});
             }
-            for (card.checks) |check| {
-                const sign: []const u8 = if (check.result) |result| (if (std.mem.eql(u8, result, "ok")) "✓" else "✗") else "○";
-                head.add(.mark, "{s} {d} {s}", .{ sign, check.n, check.text });
-            }
+            head.checkLines(.mark, card.checks, inner, if (squeeze) |f| .{ .rows = f.rows, .pick = null } else null);
         }
     }
 
-    fn checkHead(card: *const tickets.Card, ask_first: bool, head: *CardHead) void {
+    fn checkHead(card: *const tickets.Card, ask_first: bool, inner: usize, squeeze: ?CardHead.Fit, head: *CardHead) void {
         if (sheetShown(card, ask_first)) {
             var tried: usize = 0;
             for (card.checks) |check| tried += @intFromBool(check.result != null);
             head.add(.warn, "▲ try it: {d} of {d} tried", .{ tried, card.checks.len });
             head.checks = head.n;
-            for (card.checks) |check| {
-                const sign: []const u8 = if (check.result) |result| (if (std.mem.eql(u8, result, "ok")) "✓" else "✗") else "○";
-                head.add(.check, "{s} {d} {s}", .{ sign, check.n, check.text });
-            }
+            head.checkLines(.check, card.checks, inner, squeeze);
         }
     }
 
     /// `cardHead` for the open modal: a to-try card's rows end with what arena says of the check
     /// it ran, or asks to run.
     pub fn modalHead(app: *const App, card: *const tickets.Card, inner: usize, words: bool, head: *CardHead) void {
-        cardHeadOpen(card, inner, app.epoch, words, if (app.home) |view| view.details else false, if (app.home) |view| view.ask_first else false, head);
+        var squeeze: ?CardHead.Fit = null;
+        if (app.modalRect()) |rect| {
+            const pick: ?usize = if (app.home) |view| (if (card.checks.len > 0) @min(@max(view.check_pick, 1), card.checks.len) - 1 else null) else null;
+            squeeze = .{ .rows = rect.h -| 6, .pick = pick };
+        }
+        cardHeadOpen(card, inner, app.epoch, words, if (app.home) |view| view.details else false, if (app.home) |view| view.ask_first else false, squeeze, head);
         if (!app.sheeted(card)) return;
         var id: [24]u8 = undefined;
         const note = app.refusalOf(std.fmt.bufPrint(&id, "try:{d}", .{card.id}) catch return) orelse return;
@@ -5682,13 +5753,17 @@ pub const App = struct {
                 n += 1;
             }
         };
-        if (app.modalCard()) |card| if (app.sheeted(card)) if (app.checkRows(card)) |at| {
+        if (app.modalCard()) |card| if (app.sheeted(card)) {
             const room = rect.w -| 4;
-            for (card.checks, 1..) |check, pos| {
-                if (check.result != null) continue;
-                const y = rect.y + 1 + @as(u16, @intCast(at + pos - 1));
+            var shape: CardHead = undefined;
+            app.modalHead(card, detailWidth(app.columnRoom()).inner, app.askWords(card) != null, &shape);
+            for (shape.kinds[0..shape.n], 0..) |kind, line| {
+                if (kind != .check or shape.more[line]) continue;
+                const pos = shape.of[line];
+                if (card.checks[pos - 1].result != null) continue;
+                const y = rect.y + 1 + @as(u16, @intCast(line));
                 if (y >= foot or n + 3 > out.len) break;
-                const pos8: u8 = @intCast(pos);
+                const pos8: u8 = pos;
                 const ok: ModalButton = .{ .action = .{ .row_ok = pos8 }, .key = "y", .label = "", .x = 0, .y = y };
                 const no: ModalButton = .{ .action = .{ .row_no = pos8 }, .key = "n", .label = "", .x = 0, .y = y };
                 const pair = ok.width() + 1 + no.width();
@@ -5715,13 +5790,6 @@ pub const App = struct {
     pub fn pickedCheck(card: *const tickets.Card, pick: u8) ?*const tickets.Check {
         if (card.checks.len == 0) return null;
         return &card.checks[@min(@max(pick, 1), card.checks.len) - 1];
-    }
-
-    /// The line of the open modal's head its first check is on.
-    fn checkRows(app: *const App, card: *const tickets.Card) ?usize {
-        var head: CardHead = undefined;
-        app.modalHead(card, detailWidth(app.columnRoom()).inner, app.askWords(card) != null, &head);
-        return head.checks;
     }
 
     /// The position (from 1) of the first untried check of `card` from `from` on, going forward or back.
@@ -11743,4 +11811,46 @@ test "y on a to-try card's last open check closes the card and Your move's pick 
     try eq(@as(usize, 0), app.home.?.pick);
     try std.testing.expectEqualStrings("push:ficciones", app.board.?.needsYou()[f.item(0).?.need.?].id);
     try std.testing.expect(app.home.?.detail == null and !app.home.?.item_open);
+}
+
+test "a check longer than the card is wide wraps to its whole text, its continuation lines indented under the text" {
+    const checks = [_]tickets.Check{
+        .{ .n = 1, .text = "On Telegram, ask what is my money situation like this check, then how much did I spend on food", .result = null },
+        .{ .n = 2, .text = "short", .result = null },
+    };
+    var head: App.CardHead = .{};
+    head.checkLines(.check, &checks, 40, .{ .rows = 20, .pick = 0 });
+    try std.testing.expect(head.n > 2);
+    try std.testing.expect(std.mem.startsWith(u8, head.lines[0], "\u{25cb} 1 On Telegram"));
+    try std.testing.expect(!head.more[0] and head.more[1]);
+    try std.testing.expect(std.mem.startsWith(u8, head.lines[1], "    "));
+    try std.testing.expectEqual(@as(u8, 2), head.of[head.n - 1]);
+    var words: usize = 0;
+    for (head.lines[0 .. head.n - 1]) |line| for (0..line.len) |i| {
+        if (line[i] != ' ' and (i == 0 or line[i - 1] == ' ')) words += 1;
+    };
+    // "○ 1" leads the first line: 3 words of its own, then the 19 of the text
+    try std.testing.expect(words >= 19);
+    for (head.lines[0 .. head.n - 1]) |line| try std.testing.expect(cellCount(line) <= 40 - 10);
+}
+
+test "a card with no room for every wrapped check keeps the picked one whole and the farthest on one line" {
+    const long = "one two three four five six seven eight nine ten eleven twelve thirteen fourteen";
+    const checks = [_]tickets.Check{
+        .{ .n = 1, .text = long, .result = null },
+        .{ .n = 2, .text = long, .result = null },
+        .{ .n = 3, .text = long, .result = null },
+    };
+    var head: App.CardHead = .{};
+    head.checkLines(.check, &checks, 30, .{ .rows = 8, .pick = 1 });
+    var per = [3]usize{ 0, 0, 0 };
+    for (head.of[0..head.n]) |of| per[of - 1] += 1;
+    try std.testing.expect(per[1] > 2);
+    try std.testing.expectEqual(@as(usize, 1), per[0]);
+    try std.testing.expectEqual(@as(usize, 1), per[2]);
+    var whole = false;
+    for (head.lines[0..head.n], head.of[0..head.n]) |line, of| if (of == 2 and std.mem.endsWith(u8, line, "fourteen")) {
+        whole = true;
+    };
+    try std.testing.expect(whole);
 }
