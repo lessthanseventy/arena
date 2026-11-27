@@ -157,6 +157,8 @@ pub fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
         const style: vt.Style = switch (kind) {
             .plain, .options => .{},
             .sheet, .fold => .{},
+            .heading => heading(app),
+            .mark => if (std.mem.startsWith(u8, line, "\u{2717}")) ink(app, "emberdim", 1) else if (std.mem.startsWith(u8, line, "\u{25cb}")) dim else .{},
             .dim, .check, .shell => dim,
             .warn => ink(app, "amber", 4),
             .sub => if (at - head.subs.? + 1 == app.home.?.sub_pick) ink(app, "amber", 4) else .{},
@@ -170,9 +172,12 @@ pub fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
     var row: usize = 0;
     var note_buf: [4096]u8 = undefined;
     const stage_note = if (card != null and !hidden) text_mod.landed(&note_buf, card.?.stage_note) else "";
-    const parts = [3]struct { text: []const u8, style: vt.Style }{
+    var hash_buf: [96]u8 = undefined;
+    const commit = if (card != null and !hidden) commitLine(&hash_buf, card.?) else "";
+    const parts = [4]struct { text: []const u8, style: vt.Style }{
         .{ .text = stage_note, .style = dim },
         .{ .text = if (stage_note.len > 0 and !hidden) "\n" else "", .style = dim },
+        .{ .text = commit, .style = dim },
         .{ .text = if (hidden) "" else text, .style = .{} },
     };
     for (parts, 0..) |part, at| {
@@ -182,7 +187,8 @@ pub fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
             if (row < scroll or y >= text_end) continue;
             const mark = at == 0 and shown.len > 0 and shown[0] == text_mod.heading_mark;
             const line = if (mark) shown[1..] else shown;
-            try boxLine(w, &pen, edge, if (mark) heading(app) else part.style, x, y, line, inner);
+            const bullet = at == 0 and std.mem.startsWith(u8, line, "  - ");
+            try boxLine(w, &pen, edge, if (mark) heading(app) else if (bullet) .{} else part.style, x, y, line, inner);
             try app.grab.row(app.gpa, x + 2, y - 1, line, lines.dropped);
             y += 1;
         }
@@ -424,6 +430,12 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
                 try app.grab.row(app.gpa, x0, y, cut(line, inner), head.joins[at]);
                 try bench.say(w, x0, y, cut(line, inner), r.text, bg, false);
             },
+            .heading => try bench.say(w, x0, y, cut(line, inner), r.accent, bg, true),
+            .mark => {
+                try app.grab.row(app.gpa, x0, y, cut(line, inner), null);
+                const ink_of = if (std.mem.startsWith(u8, line, "\u{2713}")) r.landed else if (std.mem.startsWith(u8, line, "\u{2717}")) r.failed else r.dim;
+                try bench.say(w, x0, y, cut(line, inner), ink_of, bg, false);
+            },
             .fold => for (modal) |button| if (button.action == .details) {
                 _ = try bench.button(w, r, button.x, y, button.key, button.label, app.onFold(card.?), r.tile);
             },
@@ -445,9 +457,12 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
     var row: usize = 0;
     var note_buf: [4096]u8 = undefined;
     const stage_note = if (card != null and !hidden) text_mod.landed(&note_buf, card.?.stage_note) else "";
-    const parts = [3]struct { text: []const u8, fg: color.RGB }{
+    var hash_buf: [96]u8 = undefined;
+    const commit = if (card != null and !hidden and !folded) commitLine(&hash_buf, card.?) else "";
+    const parts = [4]struct { text: []const u8, fg: color.RGB }{
         .{ .text = stage_note, .fg = r.dim },
         .{ .text = if (stage_note.len > 0 and text.len > 0 and text[0] != '\n') "\n" else "", .fg = r.dim },
+        .{ .text = commit, .fg = r.dim },
         .{ .text = text, .fg = if (folded) r.dim else r.text },
     };
     for (parts, 0..) |part, at| {
@@ -649,6 +664,13 @@ fn modalFrame(app: *const App, w: *Writer, rect: App.ModalRect, head: []const u8
         try w.print("\x1b[{d};{d}H{s}", .{ foot, end + 1, hint });
     }
     try pen.set(w, .{}, null);
+}
+
+/// A done card's full commit hash as a line, empty for any other card or a note without one.
+fn commitLine(buf: []u8, card: *const tickets.Card) []const u8 {
+    if (card.status != .done) return "";
+    const hash = text_mod.fullHash(card.stage_note) orelse return "";
+    return std.fmt.bufPrint(buf, "commit {s}", .{hash}) catch "";
 }
 
 /// Why babylon left done ticket `id`'s Claude running, empty when it says nothing of it.

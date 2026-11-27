@@ -1721,17 +1721,17 @@ print -r -- '{"tickets":[{"id":930,"repo":"arena","title":"Lights","kind":"ticke
 '"checks":[{"n":1,"text":"it is told","result":null},{"n":2,"text":"it has buttons","result":null}]}],"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}' >$tmp/run/babylon/board.json
 zselect -t 300
 $bin -L $in plan 930
-check "a ticket to try, opened from Plan, has a modal listing its checks, a row each" await shows '· 2 it has buttons'
+check "a ticket to try, opened from Plan, has a modal listing its checks, a row each" await shows '○ 2 it has buttons'
 clipped() { [[ $(outer show-buffer 2>/dev/null) == $1 ]] }
 key Y
 check "Y copies the picked check through OSC 52" await clipped 'it is told'
 check "and the foot says how much" await shows 'copied 10 chars'
-check_row=$(rowof '· 2 it has buttons')
-check_col=$(colof $check_row '· 2 it has buttons')
+check_row=$(rowof '○ 2 it has buttons')
+check_col=$(colof $check_row '○ 2 it has buttons')
 mouse 0 $check_col $check_row M
 mouse 32 $(( check_col + 17 )) $check_row M
 mouse 0 $(( check_col + 17 )) $check_row m
-check "a drag over a check in the modal copies what it covers" await clipped '· 2 it has buttons'
+check "a drag over a check in the modal copies what it covers" await clipped '○ 2 it has buttons'
 check "and the foot says how much" await shows 'copied 18 chars'
 mouse 0 $(( check_col + 8 )) $check_row M
 mouse 0 $(( check_col + 8 )) $check_row m

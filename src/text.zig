@@ -164,6 +164,15 @@ test "a cut ends at a word with an ellipsis, and a lone long word is cut in it" 
 /// What a heading line in `landed`'s text starts with, taken off when it is drawn.
 pub const heading_mark = '\x01';
 
+/// The whole commit hash of a landing note, null for a note not in `landed`'s shape.
+pub fn fullHash(note: []const u8) ?[]const u8 {
+    const lead = "landed on main as ";
+    if (!std.mem.startsWith(u8, note, lead)) return null;
+    const body = note[lead.len..];
+    const hash = body[0 .. std.mem.indexOfAny(u8, body, ", ") orelse body.len];
+    return if (hash.len > 0) hash else null;
+}
+
 /// A landing note as lines to draw, in `buf`: a blank row, the heading `Landed`, `on main`, the
 /// short hash and what happened since, then the review's fixes and the follow-ups as bullets.
 /// Babylon writes the note as one string, so it is split on its joins; a note not in that shape

@@ -4289,7 +4289,14 @@ test "a done card's modal has a blank row between its sections, its fixes and fo
     try std.testing.expect(std.mem.indexOf(u8, rows[landed_at], "on main") == null);
     try std.testing.expectEqual(@as(usize, 0), std.mem.trim(u8, rows[landed_at - 1], " │").len);
     try std.testing.expect(std.mem.indexOf(u8, rows[find(&rows, "on main").?], "f06e86a \u{b7} installed") != null);
-    try std.testing.expect(find(&rows, "f06e86a1") == null);
+    try std.testing.expect(std.mem.indexOf(u8, rows[find(&rows, "commit ").?], "commit f06e86a1234567890abcdef1234567890abcdef12") != null);
+    const changed_at = find(&rows, "What changed for you").?;
+    try std.testing.expect(std.mem.indexOf(u8, rows[changed_at + 1], "Cards read well") != null);
+    const checks_at = find(&rows, "Checks").?;
+    try std.testing.expect(changed_at < checks_at and checks_at < landed_at);
+    try std.testing.expect(std.mem.indexOf(u8, rows[checks_at + 1], "\u{2713} 1 it reads") != null);
+    const chips = rows[find(&rows, "med").?];
+    try std.testing.expect(std.mem.indexOf(u8, chips, "arena") != null);
     try std.testing.expect(std.mem.indexOf(u8, rows[find(&rows, "first fix").?], "- first fix") != null);
     try std.testing.expect(std.mem.indexOf(u8, rows[find(&rows, "second fix").?], "- second fix") != null);
     try std.testing.expect(std.mem.indexOf(u8, rows[find(&rows, "#1300").?], "- #1300 a follow up") != null);

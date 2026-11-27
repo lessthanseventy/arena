@@ -3305,6 +3305,7 @@ pub const App = struct {
             var note = DetailLines.init(text_mod.landed(&note_buf, card.stage_note), inner);
             while (note.next()) |_| n += 1;
             if (body[0] != '\n') n += 1;
+            if (card.status == .done and !body_folded and text_mod.fullHash(card.stage_note) != null) n += 1;
         };
         return n;
     }
@@ -5093,7 +5094,7 @@ pub const App = struct {
 
     /// What a card's modal says of it above its body, a line each.
     pub const CardHead = struct {
-        pub const Kind = enum { plain, dim, warn, options, check, sub, shell, sheet, fold };
+        pub const Kind = enum { plain, dim, warn, options, check, sub, shell, sheet, fold, heading, mark };
         buf: [4096]u8 = undefined,
         used: usize = 0,
         lines: [96][]const u8 = undefined,
@@ -5194,11 +5195,13 @@ pub const App = struct {
         head.wrap(.plain, card.title, inner, head.lines.len);
         var meta: [256]u8 = undefined;
         var wr: Writer = .fixed(&meta);
-        wr.print("{s}", .{@tagName(card.status)}) catch {};
+        wr.print("{s} · {s} · {s}", .{ card.repo orelse "no repo", card.priority, @tagName(card.status) }) catch {};
         if (card.stage) |stage| wr.print(" · {s}", .{stage}) catch {};
         if (card.heldBy()) |pane| wr.print(" · held by {s}", .{pane}) catch {};
-        if (card.model) |model| wr.print(" · {s}", .{model}) catch {};
-        if (card.branch) |branch| wr.print(" · {s}", .{branch}) catch {};
+        if (tickets.epochOf(card.inserted_at)) |at| {
+            var age: [8]u8 = undefined;
+            wr.print(" · filed {s}", .{waited(&age, epoch - at)}) catch {};
+        }
         head.add(.dim, "{s}", .{wr.buffered()});
         if (card.handed_off_from) |pane| head.add(.dim, "handed off from {s}", .{pane});
         if (card.blocked_by.len > 0) {
@@ -5226,11 +5229,20 @@ pub const App = struct {
             head.options = head.n;
             for (0..@min(ask.options.len, max_ask_options) + @intFromBool(words)) |_| head.add(.options, "", .{});
         }
-        if (card.status == .done and card.checks.len > 0) head.add(.dim, "", .{});
-        if (card.status == .done) for (card.checks) |check| {
-            const sign: []const u8 = if (check.result) |result| (if (std.mem.eql(u8, result, "ok")) "✓" else "✗") else "·";
-            head.add(.dim, "{s} {d} {s}", .{ sign, check.n, check.text });
-        };
+        if (card.status == .done) {
+            head.add(.dim, "", .{});
+            head.add(.heading, "What changed for you", .{});
+            const changed = if (card.@"try") |sheet| sheet.changed else "";
+            head.wrap(.sheet, if (changed.len > 0) changed else card.name(), inner, 4);
+            if (card.checks.len > 0) {
+                head.add(.dim, "", .{});
+                head.add(.heading, "Checks", .{});
+            }
+            for (card.checks) |check| {
+                const sign: []const u8 = if (check.result) |result| (if (std.mem.eql(u8, result, "ok")) "✓" else "✗") else "○";
+                head.add(.mark, "{s} {d} {s}", .{ sign, check.n, check.text });
+            }
+        }
     }
 
     fn checkHead(card: *const tickets.Card, head: *CardHead) void {
@@ -5240,7 +5252,7 @@ pub const App = struct {
             head.add(.warn, "▲ try it: {d} of {d} tried", .{ tried, card.checks.len });
             head.checks = head.n;
             for (card.checks) |check| {
-                const sign: []const u8 = if (check.result) |result| (if (std.mem.eql(u8, result, "ok")) "✓" else "✗") else "·";
+                const sign: []const u8 = if (check.result) |result| (if (std.mem.eql(u8, result, "ok")) "✓" else "✗") else "○";
                 head.add(.check, "{s} {d} {s}", .{ sign, check.n, check.text });
             }
         }
@@ -8234,6 +8246,32 @@ test "a card's modal runs a long title on over as many lines as it takes, none o
     try std.testing.expect(std.mem.endsWith(u8, last, "kappa lambda"));
 }
 
+test "a card's facts line is its repo, priority, state, holder and age, and a done card adds What changed and Checks" {
+    var checks = [_]tickets.Check{.{ .n = 1, .text = "it glows", .result = "ok" }};
+    const card: tickets.Card = .{
+        .id = 1,
+        .title = "Lights",
+        .short = "lights on",
+        .repo = "arena",
+        .priority = "high",
+        .status = .done,
+        .stage = "landed",
+        .claimed_by = "%3",
+        .inserted_at = "1970-01-01T00:00:00Z",
+        .checks = &checks,
+    };
+    var head: App.CardHead = undefined;
+    App.cardHead(&card, 80, 7200, false, &head);
+    try std.testing.expectEqualStrings("arena · high · done · landed · held by %3 · filed 2h", head.lines[1]);
+    var seen: usize = 0;
+    for (head.lines[0..head.n], head.kinds[0..head.n]) |line, kind| {
+        if (kind == .heading and (std.mem.eql(u8, line, "What changed for you") or std.mem.eql(u8, line, "Checks"))) seen += 1;
+        if (kind == .sheet) try std.testing.expectEqualStrings("lights on", line);
+        if (kind == .mark) try std.testing.expectEqualStrings("✓ 1 it glows", line);
+    }
+    try std.testing.expectEqual(@as(usize, 2), seen);
+}
+
 test "a card's detail runs its long lines on, broken at words within the box's width" {
     var lines = DetailLines.init("#3 Title\n\none two three four\n", 8);
     const want = [_][]const u8{ "#3 Title", "", "one two", "three", "four" };
@@ -9128,7 +9166,7 @@ test "a to-try card's modal lists its checks, j and k pick one, y says it works 
     };
     try eq(head.checks, first);
     try eql("✓ 1 it is told", head.lines[first.?]);
-    try eql("· 2 it has buttons", head.lines[first.? + 1]);
+    try eql("○ 2 it has buttons", head.lines[first.? + 1]);
     try eql("▲ try it: 1 of 3 tried", head.lines[first.? - 1]);
 
     var buttons: [16]App.ModalButton = undefined;
