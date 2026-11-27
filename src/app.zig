@@ -4170,7 +4170,7 @@ pub const App = struct {
         if (row.kind == .goal and m.x >= app.planRect(row.win).x + 3 and m.x < app.planRect(row.win).x + 5) return win_goals.fold(app, row.ticket.?);
         if (row.kind == .chips) return win_unplanned.chipClick(app, m);
         const kept_idea = row.kind == .idea and sheets.Sheet.ideaState(app.board.?.plan().?.ideas[row.item]) == .idea;
-        if (!picked and (row.kind == .backlog or kept_idea)) {
+        if (row.kind == .backlog or kept_idea) {
             _ = try app.openDetail(row.ticket orelse return);
             return;
         }
@@ -8500,6 +8500,9 @@ test "a click on a kept idea opens its card" {
     try std.testing.expect(app.planSheet(&sheet));
     var at: usize = 0;
     while (sheet.rows[at].kind != .idea or sheet.rows[at].ticket.? != 829) at += 1;
+    try app.planClick(.{ .code = 0, .x = 3, .y = @intCast(2 + at), .release = false });
+    try std.testing.expectEqual(@as(?u32, 829), app.home.?.detail);
+    app.home.?.detail = null;
     try app.planClick(.{ .code = 0, .x = 3, .y = @intCast(2 + at), .release = false });
     try std.testing.expectEqual(@as(?u32, 829), app.home.?.detail);
 }
