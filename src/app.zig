@@ -10254,6 +10254,8 @@ test "picking suggestions of the drawer's foot types each into the orchestrator'
     );
     defer app.board.?.deinit();
     try win_foot.pick(&app, 0);
+    try std.testing.expect(!try win_foot.press(&app, "1"));
+    try std.testing.expect(!try win_foot.press(&app, "\r"));
     var got: [512]u8 = undefined;
     try std.testing.expectEqual(@as(usize, 0), try sent.readPositionalAll(std.testing.io, &got, 0));
     try std.testing.expect(!app.drawerOpen());

@@ -44,6 +44,13 @@ pub fn height(app: *const App, top: u16) u16 {
     return @intCast(@min(count(app), room));
 }
 
+/// The rows drawn now: none unless the orchestrator's column is beside the board with its window.
+pub fn shown(app: *const App) usize {
+    const s = app.cur() orelse return 0;
+    if (!s.orchestrator() or !app.sided()) return 0;
+    return height(app, app.winTop(s, 0));
+}
+
 fn mark(id: []const u8) u64 {
     return std.hash.Wyhash.hash(0, id);
 }
@@ -63,16 +70,18 @@ fn anyTaken(app: *const App) bool {
 }
 
 /// Row `i` picked: a line is typed into the orchestrator's prompt unsent, after the lines already
-/// picked, on a line of its own; an item opens in Your move.
+/// picked, on a line of its own; an item opens in Your move. A line picked twice is typed twice:
+/// arena cannot see the prompt, so it cannot know the first was deleted.
 pub fn pick(app: *App, i: usize) !void {
     const r = row(app, i) orelse return;
     if (r.at) |at| {
         if (r.need.ticket) |id| _ = try app.openDetail(id) else try app.openItem(at);
         return;
     }
-    if (taken(app, r.need.id)) return;
     const win = app.orchestratorWindow() orelse return;
     if (win.panes.items.len == 0) return;
+    // a working orchestrator has been sent what was typed, so the prompt is empty again
+    if (app.orchestratorState() == .working) app.foot_taken = @splat(0);
     const pane = win.panes.items[0].id;
     if (anyTaken(app)) try app.send(.ignore, "send-keys -t %{d} M-Enter", .{pane});
     var buf: [1024]u8 = undefined;
@@ -90,15 +99,16 @@ pub fn pick(app: *App, i: usize) !void {
 /// picked. Whether the key was the foot's.
 pub fn press(app: *App, key: []const u8) !bool {
     if (key.len != 1) return false;
+    const visible = shown(app);
     if (key[0] >= '1' and key[0] <= '9') {
         const i = key[0] - '1';
-        if (row(app, i) == null) return false;
+        if (i >= visible) return false;
         try pick(app, i);
         return true;
     }
     if (key[0] != '\r') return false;
     var i: usize = 0;
-    while (row(app, i)) |r| : (i += 1) if (r.at == null and !taken(app, r.need.id)) {
+    while (i < visible) : (i += 1) if (row(app, i)) |r| if (r.at == null and !taken(app, r.need.id)) {
         try pick(app, i);
         return true;
     };
@@ -107,9 +117,7 @@ pub fn press(app: *App, key: []const u8) !bool {
 
 /// A click on a row of the foot. Whether it was one.
 pub fn click(app: *App, m: keys.Mouse) !bool {
-    const s = app.cur() orelse return false;
-    if (!s.orchestrator() or !app.sided()) return false;
-    const n = height(app, app.winTop(s, 0));
+    const n: u16 = @intCast(shown(app));
     if (n == 0) return false;
     const left = app.term_w - app.view_w;
     if (m.x < left + 1 or m.x + 1 >= app.term_w) return false;
@@ -122,6 +130,7 @@ pub fn click(app: *App, m: keys.Mouse) !bool {
 /// Row `i` of the foot, `inner` cells wide.
 pub fn paint(app: *const App, w: *Writer, pen: *draw.Pen, i: usize, inner: u16) !void {
     const r = row(app, i) orelse return;
+    if (inner < 8) return;
     const used = r.at == null and taken(app, r.need.id);
     const dim = draw.ink(app, "dim", 8);
     try pen.set(w, draw.onPanel(app, .{}), null);
@@ -140,5 +149,5 @@ pub fn paint(app: *const App, w: *Writer, pen: *draw.Pen, i: usize, inner: u16) 
     try w.writeAll(text);
     cells += cellCount(text);
     try pen.set(w, draw.onPanel(app, .{}), null);
-    for (cells..inner) |_| try w.writeAll(" ");
+    for (@min(cells, inner)..inner) |_| try w.writeAll(" ");
 }
