@@ -866,7 +866,6 @@ key ' '
 see 'the whole of it'
 key q
 check "q closes it too" gone 'the whole of it'
-
 nofile() { [[ -z $(print -l $tmp/run/babylon/detail-*-7.txt(N)) ]] }
 check "leaving no file of it behind" await nofile
 close_at() { local l=$(settled | grep -m1 "q close"); print $(( ${#${l%%q close*}} + 1 )) $(settled | grep -n -m1 "q close" | cut -d: -f1) }
