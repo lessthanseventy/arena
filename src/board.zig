@@ -484,12 +484,6 @@ pub const Board = struct {
                 for (step.actions) |*action| action.label = try cleanLine(arena, action.label);
             }
         }
-        for ([_][]Card{ parsed.value.tickets, parsed.value.backlog }) |list| for (list) |*card| {
-            if (card.ask != null) continue;
-            for (parsed.value.needs_you) |need| {
-                if (std.mem.eql(u8, need.kind, "ask") and need.ticket == card.id) card.ask = try askOf(arena, need);
-            }
-        };
         try suggest(arena, &parsed.value);
         if (parsed.value.plan) |*given| {
             for (given.now) |*item| {
@@ -573,22 +567,6 @@ pub const Board = struct {
             break;
         };
         return found.items;
-    }
-
-    /// The ask of a Your move item, for a card babylon sent without one (a backlog ticket's):
-    /// its id is in the answer actions' argv, its options their labels.
-    fn askOf(arena: std.mem.Allocator, need: Need) !?Ask {
-        var id: ?u32 = null;
-        var options: std.ArrayList([]const u8) = .empty;
-        for (need.actions) |action| {
-            const argv = action.argv orelse continue;
-            if (action.needs != null or argv.len < 3) continue;
-            id = std.fmt.parseInt(u32, argv[2], 10) catch continue;
-            try options.append(arena, action.label);
-        }
-        const marker = "asks: ";
-        const at = std.mem.indexOf(u8, need.text, marker) orelse return null;
-        return .{ .id = id orelse return null, .question = need.text[at + marker.len ..], .options = options.items };
     }
 
     fn cleanLine(arena: std.mem.Allocator, text: []const u8) ![]const u8 {
