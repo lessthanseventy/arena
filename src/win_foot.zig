@@ -62,6 +62,13 @@ pub fn taken(app: *const App, id: []const u8) bool {
     return false;
 }
 
+/// The human's keys reached the orchestrator's pane: an Enter among them sent the prompt, so no
+/// line of the foot is in it any more.
+pub fn typed(app: *App, win: *const app_mod.Window, bytes: []const u8) void {
+    if (win != app.orchestratorWindow()) return;
+    if (std.mem.indexOfScalar(u8, bytes, '\r') != null) app.foot_taken = @splat(0);
+}
+
 /// Whether any line of the foot now is in the prompt.
 fn anyTaken(app: *const App) bool {
     var i: usize = 0;
@@ -71,7 +78,8 @@ fn anyTaken(app: *const App) bool {
 
 /// Row `i` picked: a line is typed into the orchestrator's prompt unsent, after the lines already
 /// picked, on a line of its own; an item opens in Your move. A line picked twice is typed twice:
-/// arena cannot see the prompt, so it cannot know the first was deleted.
+/// arena cannot see the prompt, so it cannot know the first was deleted. The prompt is empty again
+/// when `typed` sees an Enter.
 pub fn pick(app: *App, i: usize) !void {
     const r = row(app, i) orelse return;
     if (r.at) |at| {
@@ -80,8 +88,6 @@ pub fn pick(app: *App, i: usize) !void {
     }
     const win = app.orchestratorWindow() orelse return;
     if (win.panes.items.len == 0) return;
-    // a working orchestrator has been sent what was typed, so the prompt is empty again
-    if (app.orchestratorState() == .working) app.foot_taken = @splat(0);
     const pane = win.panes.items[0].id;
     if (anyTaken(app)) try app.send(.ignore, "send-keys -t %{d} M-Enter", .{pane});
     var buf: [1024]u8 = undefined;

@@ -7081,6 +7081,7 @@ pub const App = struct {
         pane.term.screens.active.clearSelection();
         pane.term.scrollViewport(.bottom);
         app.dirty = true;
+        win_foot.typed(app, win, bytes);
         try app.sendKeys(pane, bytes);
     }
 
@@ -10277,11 +10278,20 @@ test "picking suggestions of the drawer's foot types each into the orchestrator'
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "Enter") == null);
     try std.testing.expect(app.drawerOpen() and !app.normal);
 
+    win.claude = .working;
     try win_foot.pick(&app, 1);
     len = try sent.readPositionalAll(std.testing.io, &got, 0);
     const second = std.mem.indexOf(u8, got[0..len], "M-Enter").?;
     try std.testing.expect(std.mem.indexOf(u8, got[second..len], "-l -- 'retry #9'") != null);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "\nsend-keys -t %5 Enter") == null);
+
+    try app.forward("\r");
+    win.claude = .done;
+    const before = len;
+    try win_foot.pick(&app, 0);
+    len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[before..len], "M-Enter") == null);
+    try std.testing.expect(std.mem.indexOf(u8, got[before..len], "-l -- 'rebase #7 onto main'") != null);
 }
 
 const plan_tail =
