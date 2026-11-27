@@ -221,7 +221,7 @@ pub fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.
         .note => {
             try bench.fill(w, x0, y, ww, bg);
             if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
-            try bench.say(w, x0 + 2, y, clip(row.text, room), r.dim, bg, false);
+            try draw.sayCut(w, x0 + 2, y, row.text, room, r.dim, bg, false);
         },
         .need => try win_move.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .focal, .drove => {},
@@ -232,11 +232,11 @@ pub fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.
         .ideas_more => {
             try bench.fill(w, x0, y, ww, bg);
             if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
-            try bench.say(w, x0 + 2, y, clip(std.mem.trim(u8, row.text, " "), room), r.dim, bg, false);
+            try draw.sayCut(w, x0 + 2, y, std.mem.trim(u8, row.text, " "), room, r.dim, bg, false);
         },
         .why, .more, .goals_more => {
             try bench.fill(w, x0, y, ww, r.panel);
-            try bench.say(w, x0 + 7, y, clip(std.mem.trim(u8, row.text, " "), room -| 5), r.dim, r.panel, false);
+            try draw.sayCut(w, x0 + 7, y, std.mem.trim(u8, row.text, " "), room -| 5, r.dim, r.panel, false);
         },
         .unplanned, .chips, .todo => try win_unplanned.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .landed => try win_landed.paint(app, w, r, sheet, at, y, x0, ww, lit),

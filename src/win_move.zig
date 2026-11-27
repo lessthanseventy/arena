@@ -52,7 +52,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             end = at_x;
         }
     }
-    try bench.say(w, x, y, clip(need.text, end -| x -| 1), if (failed) r.failed else r.text, bg, false);
+    try draw.sayCut(w, x, y, need.text, end -| x -| 1, if (failed) r.failed else r.text, bg, false);
 }
 
 /// Whether `need` is the landed goal's item, asking for the next goal to drive.
