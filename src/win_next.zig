@@ -14,8 +14,12 @@ const sayCut = draw.sayCut;
 const cellCount = draw.cellCount;
 const repoHue = draw.repoHue;
 
-/// The chip of a next row, what it waits on.
+/// The chip of a next row: why it has not started, from babylon's `held`, else what it waits on.
 fn nextLabel(item: tickets.Next, lbuf: *[48]u8) []const u8 {
+    if (item.held) |h| {
+        var wbuf: [32]u8 = undefined;
+        return std.fmt.bufPrint(lbuf, "{s}", .{h.word(&wbuf)}) catch "held";
+    }
     const first = tickets.Wait.first(item.waits_on);
     return if (first) |wt| if (wt.ticket) |t|
         std.fmt.bufPrint(lbuf, "\u{f0c1} waits #{d}", .{t}) catch "waits"
@@ -64,16 +68,43 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             try bench.say(w, x0 + 4, y, repo.glyph, repo.hue, bg, false);
             try bench.say(w, x0 + 6, y, id, repo.hue, bg, true);
             var lbuf: [48]u8 = undefined;
-            const first = tickets.Wait.first(item.waits_on);
+            const ready = if (item.held) |_| false else tickets.Wait.first(item.waits_on) == null;
             const label = nextLabel(item, &lbuf);
             const chip_x = x0 + ww -| (cellCount(label) + 3);
             const title_x = x0 + 7 + cellCount(id);
 
-            _ = try bench.chipInk(w, r, chip_x, y, label, if (first == null) r.landed else r.dim, if (first == null) r.text else r.dim, false);
+            _ = try bench.chipInk(w, r, chip_x, y, label, if (ready) r.landed else r.dim, if (ready) r.text else r.dim, false);
             try sayCut(w, title_x, y, item.name(), titleRoom(item, ww).room, if (row.dim) r.dim else r.text, bg, false);
         },
         else => {},
     }
+}
+
+test "each held reason draws its word; no held draws as before" {
+    const cases = [_]struct { why: []const u8, by: ?u32, word: []const u8 }{
+        .{ .why = "blocked", .by = 7, .word = "waits #7" },
+        .{ .why = "repo cap", .by = 1186, .word = "after #1186" },
+        .{ .why = "overlap", .by = 1172, .word = "after #1172" },
+        .{ .why = "cap", .by = null, .word = "cap full" },
+        .{ .why = "off", .by = null, .word = "auto off" },
+        .{ .why = "starting", .by = null, .word = "starting" },
+        .{ .why = "asked", .by = 4, .word = "asked" },
+        .{ .why = "sent back", .by = null, .word = "needs you" },
+        .{ .why = "repo not ready", .by = null, .word = "no repo dir" },
+        .{ .why = "queued", .by = null, .word = "queued" },
+        .{ .why = "not todo", .by = null, .word = "not todo" },
+        .{ .why = "project held", .by = null, .word = "held" },
+        .{ .why = "project off", .by = null, .word = "manual" },
+        .{ .why = "project cap", .by = null, .word = "cap full" },
+    };
+    var lbuf: [48]u8 = undefined;
+    for (cases) |c| {
+        const item: tickets.Next = .{ .ticket = 1, .held = .{ .why = c.why, .by = c.by } };
+        try std.testing.expectEqualStrings(c.word, nextLabel(item, &lbuf));
+    }
+    try std.testing.expectEqualStrings("ready", nextLabel(.{ .ticket = 1 }, &lbuf));
+    var waits = [_]tickets.Wait{.{ .ticket = 3 }};
+    try std.testing.expect(std.mem.endsWith(u8, nextLabel(.{ .ticket = 1, .waits_on = &waits }, &lbuf), "waits #3"));
 }
 
 /// Enter on a row of next: starts its ticket.

@@ -193,6 +193,36 @@ pub const Auto = struct {
     repo_caps: std.json.ArrayHashMap(u32) = .{},
 };
 
+/// What holds a ticket of next back, as babylon's auto says: `why` is the reason's name, `by` the
+/// ticket, ask or cap it is by when it has one.
+pub const Held = struct {
+    why: []const u8 = "",
+    by: ?u32 = null,
+
+    /// The one word of the row: `after #1186`, `cap full`, `needs you`. An unknown reason is shown
+    /// as babylon spells it.
+    pub fn word(h: Held, buf: []u8) []const u8 {
+        const eql = std.mem.eql;
+        if (eql(u8, h.why, "blocked")) if (h.by) |n| return std.fmt.bufPrint(buf, "waits #{d}", .{n}) catch "waits";
+        if (eql(u8, h.why, "repo cap") or eql(u8, h.why, "overlap")) if (h.by) |n| return std.fmt.bufPrint(buf, "after #{d}", .{n}) catch "after";
+        const words = [_][2][]const u8{
+            .{ "cap", "cap full" },
+            .{ "project cap", "cap full" },
+            .{ "off", "auto off" },
+            .{ "project off", "manual" },
+            .{ "project held", "held" },
+            .{ "starting", "starting" },
+            .{ "asked", "asked" },
+            .{ "sent back", "needs you" },
+            .{ "repo not ready", "no repo dir" },
+            .{ "queued", "queued" },
+            .{ "not todo", "not todo" },
+        };
+        for (words) |pair| if (eql(u8, h.why, pair[0])) return pair[1];
+        return h.why;
+    }
+};
+
 /// A ticket in next, the plan's ordered list of what should start soon. `set_by` is who placed it:
 /// `human` is a pin, which the orchestrator moves only with a proposal.
 pub const Next = struct {
@@ -204,6 +234,8 @@ pub const Next = struct {
     why: []const u8 = "",
     set_by: []const u8 = "",
     waits_on: []Wait = &.{},
+    /// Null when nothing holds it, or when babylon is too old to say.
+    held: ?Held = null,
     actions: []NextAction = &.{},
 
     /// What a row shows: its short name, else its title.
