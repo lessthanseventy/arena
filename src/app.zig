@@ -5780,7 +5780,7 @@ pub const App = struct {
         if (is(key, &.{"d"})) return app.openAskDoc(view.detail orelse return);
         if (is(key, &.{"x"}) and (app.modalCard() orelse return).proposal != null) return app.pressModal(.{ .card = .no });
         const card = app.modalCard() orelse return;
-        if (key.len == 1 and key[0] >= '1' and key[0] <= '9') return app.pressModal(.{ .option = key[0] - '0' });
+        if (key.len == 1 and key[0] >= '1' and key[0] <= '9' and app.showsAsk(card.id)) return app.pressModal(.{ .option = key[0] - '0' });
         if (card.ask == null or card.ask.?.options.len == 0) if (app.claudeOf(card)) |win| if (win.subs() > 0) {
             const n: u8 = @intCast(@min(win.subs(), max_sub_rows));
             if (is(key, &.{"\t"})) view.sub_pick = if (view.sub_pick < n) view.sub_pick + 1 else 0;
@@ -8528,6 +8528,10 @@ test "a ticket with an open ask and a try sheet: the ask's row shows the ask and
     }
     try eq(@as(usize, 1), tried);
     try eq(@as(usize, 0), options);
+
+    try app.modalKey("1");
+    var unsent: [64]u8 = undefined;
+    try eq(@as(usize, 0), try sent.readPositionalAll(std.testing.io, &unsent, 0));
 
     app.home = .{ .detail = 7, .ask_first = true };
     try std.testing.expect(win_move.isOpen(&app, ask_row));
