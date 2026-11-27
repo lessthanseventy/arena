@@ -3076,6 +3076,14 @@ fn commitPeek(app: *App, w: *Writer, repo: usize, row: usize) !void {
     p.add(.plain, "{s}", .{lines[0]});
     if (lines[1].len > 0) p.add(.plain, "{s}", .{lines[1]});
     if (win_repos.ticketNamed(c)) |id| if (app.ticketCard(id)) |card| p.add(.dim, "#{d} {s}", .{ id, card.title });
+    if (win_repos.filesOf(app, repo, row)) |text| {
+        var files: [6][]const u8 = undefined;
+        const stat = win_repos.statOf(text, &files);
+        if (stat.n == 0) p.add(.dim, "no files", .{});
+        for (files[0..stat.n]) |line| p.add(.dim, "{s}", .{line});
+        if (stat.more > 0) p.add(.dim, "+{d} more", .{stat.more});
+        if (stat.summary.len > 0) p.add(.plain, "{s}", .{stat.summary});
+    } else p.add(.dim, "files…", .{});
     p.add(.head, "esc away", .{});
     return peekBox(app, w, &p);
 }

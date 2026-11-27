@@ -13,6 +13,7 @@ const Writer = std.Io.Writer;
 const anyKey = app_mod.anyKey;
 
 const Repos = [app_mod.max_repos]tickets.RepoState;
+const CommitFiles = app_mod.CommitFiles;
 
 /// How often every repo is read again while the board is up, in milliseconds.
 const refresh_ms = 30_000;
@@ -471,6 +472,7 @@ pub fn polled(app: *App) void {
         askAll(app, false) catch {};
     }
     takeStatus(app);
+    takeFiles(app);
     var i = app.repos_pushing.items.len;
     while (i > 0) {
         i -= 1;
@@ -1057,17 +1059,124 @@ fn footWidth(k: FootKey) usize {
     return (if (k.key.len > 0) cells(k.key) + 1 else 0) + cells(k.label) + 2;
 }
 
-/// The key of the foot at column `x`, from `x0`.
-fn footAt(view: anytype, n_ahead: usize, x0: usize, x: usize) ?[]const u8 {
+/// The key of the foot at column `x`, from `x0`: where it starts, and what it presses if it is a button.
+fn footAt(view: anytype, n_ahead: usize, x0: usize, x: usize) ?struct { at: usize, press: ?[]const u8 } {
     var buf: [48]u8 = undefined;
     var keys: [8]FootKey = undefined;
     var at = x0;
     for (footKeys(view, &buf, n_ahead, &keys)) |k| {
         const width = footWidth(k);
-        if (x >= at and x < at + width) return k.press;
+        if (x >= at and x < at + width) return .{ .at = at, .press = k.press };
         at += width + 1;
     }
     return null;
+}
+
+/// The item of box `s` on screen row `y`, none on a rule, a border or past the end.
+fn itemAtY(text: []const u8, view: anytype, g: Geo, s: usize, y: usize) ?usize {
+    const body = g.inside(s);
+    if (y < body.y or y >= body.y + body.n) return null;
+    return itemOnRow(text, s, firstRow(text, view, s, body.n) + (y - body.y));
+}
+
+/// What the pointer at (`x`, `y`) is on that lights under it: a repo's row, a row of a box, or a
+/// button of the foot; 0 for nothing. Two cells with one answer light the same thing.
+pub fn hovered(app: *const App, x: u16, y: u16) u64 {
+    const view = app.home orelse return 0;
+    if (!view.repos or view.detail != null) return 0;
+    var rows: Repos = undefined;
+    const repos = list(app, &rows);
+    const pick = @min(view.repos_pick, repos.len -| 1);
+    const text = if (pick < repos.len) gitText(app, repos[pick].repo) else "";
+    const g = Geo.of(app, text) orelse return 0;
+    if (y == g.foot) {
+        var n_ahead: usize = 0;
+        for (repos) |s| n_ahead += @intFromBool(s.ahead > 0);
+        const hit = footAt(view, n_ahead, g.x0, x) orelse return 0;
+        return if (hit.press != null) @as(u64, 3) << 32 | hit.at else 0;
+    }
+    if (x >= g.x0 and x < g.x0 + g.left and y >= g.top and y < g.top + repos.len and y < g.body_end) return @as(u64, 1) << 32 | y;
+    if (view.repos_diff or pick >= repos.len or x < g.right_x + 1 or x + 1 >= g.right_x + g.right_w) return 0;
+    for (0..3) |s| if (itemAtY(text, view, g, s, y) != null) return @as(u64, 2) << 32 | y;
+    return 0;
+}
+
+fn filesPath(app: *const App, repo: []const u8, sha: []const u8, buf: []u8) ?[]const u8 {
+    const dir = app.board_dir orelse return null;
+    return std.fmt.bufPrint(buf, "{s}/files-{s}-{s}", .{ dir, repo, sha }) catch null;
+}
+
+fn filesFor(app: *const App, repo: []const u8, sha: []const u8) ?*CommitFiles {
+    for (app.commit_files.items) |*c| {
+        if (std.mem.eql(u8, c.repo[0..c.repo_len], repo) and std.mem.eql(u8, c.sha[0..c.sha_len], sha)) return c;
+    }
+    return null;
+}
+
+/// How many commits' files are kept; the oldest asked goes first.
+const files_kept = 32;
+
+/// Asks git for the files of the commit on row `row` of repo `repo`'s list, once: its answer is
+/// kept by repo and hash, so the status refresh stays as it is.
+pub fn askFiles(app: *App, repo: usize, row: usize) !void {
+    var rows: Repos = undefined;
+    const repos = list(app, &rows);
+    if (repo >= repos.len) return;
+    const name = repos[repo].repo;
+    const c = commitAt(gitText(app, name), row) orelse return;
+    if (c.sha.len > 40 or name.len > 48 or filesFor(app, name, c.sha) != null) return;
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path = filesPath(app, name, c.sha, &buf) orelse return;
+    if (app.commit_files.items.len == files_kept) {
+        if (app.commit_files.items[0].text) |text| app.gpa.free(text);
+        _ = app.commit_files.orderedRemove(0);
+    }
+    var e: CommitFiles = .{ .repo = undefined, .repo_len = @intCast(name.len), .sha = undefined, .sha_len = @intCast(c.sha.len) };
+    @memcpy(e.repo[0..name.len], name);
+    @memcpy(e.sha[0..c.sha.len], c.sha);
+    try app.commit_files.append(app.gpa, e);
+    try app.send(.ignore, "run-shell -b \"git -C \\\"\\$HOME/projects/{s}\\\" show --stat --format= {s} >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ name, c.sha, path, path, path });
+}
+
+/// Takes in the answers of the files asked for.
+fn takeFiles(app: *App) void {
+    for (app.commit_files.items) |*c| {
+        if (c.text != null) continue;
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const path = filesPath(app, c.repo[0..c.repo_len], c.sha[0..c.sha_len], &buf) orelse continue;
+        const text = std.Io.Dir.cwd().readFileAlloc(app.io, path, app.gpa, .limited(1 << 16)) catch continue;
+        std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
+        c.text = text;
+        app.dirty = true;
+    }
+}
+
+/// The `--stat` of the commit on row `row` of repo `repo`'s list; null until it answers.
+pub fn filesOf(app: *const App, repo: usize, row: usize) ?[]const u8 {
+    var rows: Repos = undefined;
+    const repos = list(app, &rows);
+    if (repo >= repos.len) return null;
+    const name = repos[repo].repo;
+    const c = commitAt(gitText(app, name), row) orelse return null;
+    return (filesFor(app, name, c.sha) orelse return null).text;
+}
+
+/// A `--stat`'s file lines, the first `out.len` of them, how many more there are, and its summary line.
+pub fn statOf(text: []const u8, out: [][]const u8) struct { n: usize, more: usize, summary: []const u8 } {
+    var files: usize = 0;
+    var summary: []const u8 = "";
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \r");
+        if (line.len == 0) continue;
+        if (std.mem.indexOf(u8, line, " changed") != null and std.mem.indexOfScalar(u8, line, '|') == null) {
+            summary = line;
+            continue;
+        }
+        if (files < out.len) out[files] = line;
+        files += 1;
+    }
+    return .{ .n = @min(files, out.len), .more = files -| out.len, .summary = summary };
 }
 
 fn paintFoot(app: *const App, w: *Writer, r: anytype, view: anytype, g: Geo, n_ahead: usize) !void {
@@ -1151,7 +1260,7 @@ pub fn click(app: *App, m: @import("keys.zig").Mouse) !void {
     var n_ahead: usize = 0;
     for (repos) |s| n_ahead += @intFromBool(s.ahead > 0);
     if (m.y == g.foot) {
-        if (footAt(view.*, n_ahead, g.x0, m.x)) |press| try key(app, press);
+        if (footAt(view.*, n_ahead, g.x0, m.x)) |hit| if (hit.press) |press| try key(app, press);
         return;
     }
     if (view.repos_confirm or view.repos_diff) return;
@@ -1352,4 +1461,14 @@ test "detached worktrees go last, and the rows of worktrees and commits map back
     try std.testing.expectEqual(@as(?usize, 0), commitOnRow(log, 1));
     try std.testing.expectEqual(@as(?usize, null), commitOnRow(log, 2));
     try std.testing.expectEqual(@as(?usize, 1), commitOnRow(log, 3));
+}
+
+test "a stat reads as its files, how many more there are, and its summary" {
+    var out: [2][]const u8 = undefined;
+    const s = statOf(" a | 1 +\n b | 2 ++\n c | 3 +++\n 3 files changed, 6 insertions(+)\n", &out);
+    try std.testing.expectEqual(@as(usize, 2), s.n);
+    try std.testing.expectEqual(@as(usize, 1), s.more);
+    try std.testing.expectEqualStrings("a | 1 +", out[0]);
+    try std.testing.expectEqualStrings("3 files changed, 6 insertions(+)", s.summary);
+    try std.testing.expectEqual(@as(usize, 0), statOf("", &out).n);
 }

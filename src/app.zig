@@ -501,6 +501,8 @@ pub fn anyKey(pressed: []const u8, names: []const []const u8) bool {
 pub const RepoAsk = struct { id: u32, repo: u64, dropped: bool = false };
 pub const RepoGit = struct { name: [48]u8, len: u8, text: []u8, bad: bool = false };
 pub const StatusAsk = struct { repo: u64, at: i64 };
+/// The files a commit changed, as a hovered commit's peek asked for them: `text` is null until the answer.
+pub const CommitFiles = struct { repo: [48]u8, repo_len: u8, sha: [40]u8, sha_len: u8, text: ?[]u8 = null };
 
 pub const App = struct {
     gpa: Allocator,
@@ -619,6 +621,10 @@ pub const App = struct {
     status_out: [max_repos]StatusAsk = undefined,
     status_out_n: usize = 0,
     repos_next: i64 = 0,
+    /// The commits whose files were asked for, the oldest first.
+    commit_files: std.ArrayList(CommitFiles) = .empty,
+    /// What in the repos view the pointer is on (see `win_repos.hovered`), to redraw when it changes.
+    repos_hover: u64 = 0,
     repos_said: [160]u8 = undefined,
     repos_said_len: usize = 0,
     repos_bad: bool = false,
@@ -745,6 +751,8 @@ pub const App = struct {
         app.detail_asked.deinit(app.gpa);
         app.repos_asked.deinit(app.gpa);
         for (app.repo_git[0..app.repo_git_n]) |g| app.gpa.free(g.text);
+        for (app.commit_files.items) |c| if (c.text) |text| app.gpa.free(text);
+        app.commit_files.deinit(app.gpa);
         for (app.repos_pushing.items) |id| app.gpa.free(id);
         app.repos_pushing.deinit(app.gpa);
         app.guard.deinit(app.gpa);
@@ -1442,6 +1450,13 @@ pub const App = struct {
     /// what a peek is of closes it.
     fn hoverLook(app: *App, m: keys.Mouse) void {
         app.key_typed = false;
+        if (app.home) |view| if (view.repos) {
+            const on = win_repos.hovered(app, m.x, m.y);
+            if (on != app.repos_hover) {
+                app.repos_hover = on;
+                app.dirty = true;
+            }
+        };
         const over = app.lookUnder(m.x, m.y);
         if (std.meta.eql(over, app.look_rest)) return;
         app.look_rest = over;
@@ -1493,6 +1508,7 @@ pub const App = struct {
         const left = since + app.look_after - app.now;
         if (left > 0) return left;
         app.look = want;
+        if (want == .commit) win_repos.askFiles(app, want.commit.repo, want.commit.row) catch {};
         app.look_drawn = app.now;
         app.look_here = if (app.look_rest != null) .{ .x = app.pointer.x, .y = app.pointer.y } else null;
         app.dirty = true;
@@ -6865,7 +6881,7 @@ pub const App = struct {
             }
             if (g.paneAt(at) == null) return false;
             const clicks = g.press(app.now, at);
-            if (clicks == 1 or !g.modal) {
+            if (clicks == 1 or !g.modal or win_repos.hovered(app, at.x, at.y) != 0) {
                 g.pressed = at;
                 return false;
             }
@@ -11765,7 +11781,7 @@ test "restart-pending and a repo's unpushed are chips on the head, not Your move
     defer tmp.cleanup();
     const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
     defer sent.close(std.testing.io);
-    var app = try tryApp(sent, "{\"tickets\":[],\"needs_you\":[" ++
+    var app = try tryApp(sent, "{\"tickets\":[{\"id\":90,\"repo\":\"zeta\",\"title\":\"Third\",\"status\":\"doing\",\"checks\":[]},{\"id\":91,\"repo\":\"arena\",\"title\":\"First\",\"status\":\"done\",\"checks\":[]},{\"id\":92,\"repo\":\"tlon\",\"title\":\"Second\",\"status\":\"done\",\"checks\":[]}],\"needs_you\":[" ++
         "{\"id\":\"restart-pending\",\"kind\":\"human\",\"ticket\":null,\"repo\":\"babylon\",\"status\":true,\"text\":\"↻ restart pending: holding new gates until #12, #13 finish\",\"actions\":[]}," ++
         "{\"id\":\"push:arena:abc:0\",\"kind\":\"push\",\"ticket\":null,\"repo\":\"arena\",\"status\":true,\"text\":\"▲ arena: 2 unpushed\",\"actions\":[]}," ++
         "{\"id\":\"push:tlon:def:0\",\"kind\":\"push\",\"ticket\":null,\"repo\":\"tlon\",\"status\":true,\"text\":\"▲ tlon: 1 unpushed\",\"actions\":[]}," ++
@@ -11817,8 +11833,8 @@ test "restart-pending and a repo's unpushed are chips on the head, not Your move
     }
 
     const list_at = win_repos.listAt(&app).?;
-    try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = @intCast(list_at.x), .y = @intCast(list_at.y + 1), .release = false }));
-    try std.testing.expectEqual(@as(usize, 1), view.repos_pick);
+    try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = @intCast(list_at.x), .y = @intCast(list_at.y + 2), .release = false }));
+    try std.testing.expectEqual(@as(usize, 2), view.repos_pick);
     try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = @intCast(list_at.x), .y = @intCast(list_at.y), .release = false }));
     try std.testing.expectEqual(@as(usize, 0), view.repos_pick);
 
@@ -11837,6 +11853,50 @@ test "restart-pending and a repo's unpushed are chips on the head, not Your move
     app.status_out_n = 0;
     try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = @intCast(win_repos.footColumn(&app, "f").?), .y = @intCast(app.columnRect().?.y + app.columnRect().?.h - 1), .release = false }));
     try std.testing.expect(has(u8, try sentText(sent, &got), "git fetch -q origin main") != null);
+    defer {
+        for (app.commit_files.items) |c| if (c.text) |text| std.testing.allocator.free(text);
+        app.commit_files.deinit(std.testing.allocator);
+    }
+
+    app.dirty = false;
+    const over: keys.Mouse = .{ .code = 35, .x = @intCast(list_at.x), .y = @intCast(list_at.y + 1), .release = false };
+    try app.onMouse(over);
+    try std.testing.expect(app.dirty);
+    shot.clearRetainingCapacity();
+    try draw.frame(&app, &shot.writer, .all);
+    const lit = try std.testing.allocator.dupe(u8, shot.written());
+    defer std.testing.allocator.free(lit);
+    app.dirty = false;
+    try app.onMouse(over);
+    try std.testing.expect(!app.dirty);
+    try app.onMouse(.{ .code = 35, .x = 0, .y = 0, .release = false });
+    try std.testing.expect(app.dirty);
+    shot.clearRetainingCapacity();
+    try draw.frame(&app, &shot.writer, .all);
+    try std.testing.expect(!std.mem.eql(u8, lit, shot.written()));
+
+    const cell_y: u16 = @intCast(commits.y + 4);
+    try app.onMouse(.{ .code = 0, .x = @intCast(commits.x + 6), .y = @intCast(commits.y), .release = false });
+    try app.onMouse(.{ .code = 0, .x = @intCast(commits.x + 6), .y = cell_y, .release = false });
+    try std.testing.expectEqual(@as(usize, 1), view.repos_commit);
+    try std.testing.expect(!view.repos_diff);
+    try app.onMouse(.{ .code = 0, .x = @intCast(commits.x + 6), .y = cell_y, .release = false });
+    try std.testing.expect(view.repos_diff);
+    try std.testing.expect(has(u8, try sentText(sent, &got), "show --stat --patch e4f5a6b") != null);
+    try app.homeKey("\x1b");
+    view.repos_in = false;
+    view.repos_commit = 0;
+
+    try win_repos.askFiles(&app, 0, 0);
+    try std.testing.expect(has(u8, try sentText(sent, &got), "show --stat --format= a1b2c3d") != null);
+    try std.testing.expect(win_repos.filesOf(&app, 0, 0) == null);
+    var path_buf: [256]u8 = undefined;
+    try std.Io.Dir.cwd().createDirPath(std.testing.io, app.board_dir.?);
+    defer std.Io.Dir.cwd().deleteTree(std.testing.io, app.board_dir.?) catch {};
+    const files = try std.fmt.bufPrint(&path_buf, "{s}/files-arena-a1b2c3d", .{app.board_dir.?});
+    try std.Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = files, .data = " src/x.zig | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)\n" });
+    win_repos.polled(&app);
+    try std.testing.expect(has(u8, win_repos.filesOf(&app, 0, 0).?, "src/x.zig") != null);
     view.repos_section = 0;
 
     try app.homeKey("\t");
