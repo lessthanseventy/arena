@@ -148,8 +148,8 @@ fn push(app: *App, state: tickets.RepoState) !void {
     if (state.ahead == 0) return;
     const id = try std.fmt.allocPrint(app.gpa, "repos:{s}:{d}", .{ state.repo, state.ahead });
     errdefer app.gpa.free(id);
-    try app.repos_pushing.append(app.gpa, id);
     _ = try app.runWith(id, &.{ "babylon", "push", state.repo }, true);
+    try app.repos_pushing.append(app.gpa, id);
     say(app, false, "pushing {s}…", .{state.repo});
 }
 

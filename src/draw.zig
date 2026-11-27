@@ -2093,7 +2093,7 @@ const plan_keys = [_][2][]const u8{
     .{ "B, b", "the board, and back to the plan" },
     .{ "] [", "your move, first or last" },
     .{ "l, h", "the orchestrator's column, and back" },
-    .{ "g o A", "the gate, the orchestrator, babylon's auto mode" },
+    .{ "g o A u", "the gate, the orchestrator, babylon's auto mode, the repos and what they have to push" },
     .{ "`", "fold the orchestrator's column, or unfold" },
     .{ "esc, q", "close home" },
     .{ "◐ ◒ » ◇", "building, in the pipeline, queued, stalled" },
