@@ -6,6 +6,7 @@ const app_mod = @import("app.zig");
 const tickets = @import("board.zig");
 const sheets = @import("plan.zig");
 const draw = @import("draw.zig");
+const win_detail = @import("win_detail.zig");
 const App = app_mod.App;
 const Writer = std.Io.Writer;
 const clip = draw.clip;
@@ -25,10 +26,14 @@ pub fn titleRoom(app: *const App, id: u32, ww: usize) struct { x: usize, room: u
     return .{ .x = title_x, .room = end -| title_x -| 1, .name = card.name() };
 }
 
-/// What of a landed row's name goes on a second line, in a window `ww` cells wide.
-pub fn wrapRest(app: *const App, row: sheets.Row, ww: usize) ?[]const u8 {
-    const at = titleRoom(app, row.ticket orelse return null, ww);
-    return draw.wrapRest(at.name, at.room);
+/// The block under an opened landed row, in a window `ww` cells wide: when it landed.
+pub fn detail(app: *const App, row: sheets.Row, ww: usize, lines: *sheets.Lines) void {
+    const id = row.ticket orelse return;
+    const at = titleRoom(app, id, ww);
+    var age: [16]u8 = undefined;
+    const closed = sheets.ago(&age, if (app.cardById(id)) |card| card.closed_at else null, app.epoch);
+    const stage = lines.print("landed{s}{s}", .{ if (closed.len > 0) " · " else "", closed });
+    win_detail.fill(app, lines, .{ .ticket = id, .title = at.name, .stage = stage }, ww, @intCast(at.x));
 }
 
 pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, at: usize, y: u16, x0: usize, ww: usize, lit: bool) !void {
@@ -57,8 +62,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             const how_x = x0 + ww -| (cellCount(how) + 1);
             if (how.len > 0 and how_x > title_x + 4) try bench.say(w, how_x, y, how, r.dim, bg, false);
             if (card) |c| {
-                const name = if (at + 1 < sheet.n and sheet.rows[at + 1].kind == .wrap) draw.wrapHead(c.name(), sheet.rows[at + 1].text) else c.name();
-                try draw.sayCut(w, title_x, y, name, titleRoom(app, id, ww).room, r.text, bg, false);
+                try draw.sayCut(w, title_x, y, c.name(), titleRoom(app, id, ww).room, r.text, bg, false);
             }
         },
         else => {},

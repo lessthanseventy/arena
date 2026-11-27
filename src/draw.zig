@@ -511,21 +511,6 @@ pub fn clipMark(buf: []u8, text: []const u8, max: usize) []const u8 {
     return text_mod.cut(buf, text, max);
 }
 
-/// What of `name` goes on a second line when it does not fit `room` cells: the words after the
-/// last one that ends within `room`. None when it fits, or when no word ends there.
-pub fn wrapRest(name: []const u8, room: usize) ?[]const u8 {
-    if (cellCount(name) <= room) return null;
-    const head = clip(name, room);
-    const at = if (name[head.len] == ' ') head.len else std.mem.lastIndexOfScalar(u8, head, ' ') orelse return null;
-    const rest = std.mem.trim(u8, name[at..], " ");
-    return if (at == 0 or rest.len == 0) null else rest;
-}
-
-/// `name`'s first line when `rest` of it goes on a second.
-pub fn wrapHead(name: []const u8, rest: []const u8) []const u8 {
-    return std.mem.trimEnd(u8, name[0 .. name.len - rest.len], " ");
-}
-
 /// `clipMark` of `text` said at (`x`, `y`) in `max` cells.
 pub fn sayCut(w: *Writer, x: usize, y: usize, text: []const u8, max: usize, fg: color.RGB, bg: color.RGB, bold: bool) !void {
     var buf: [256]u8 = undefined;
@@ -3034,15 +3019,6 @@ fn peekBox(app: *App, w: *Writer, p: *const PeekRows) !void {
     try w.writeAll("╯");
 }
 
-test "a name too long for its line wraps at a word, and one that fits or has no word to break at does not" {
-    const eq = std.testing.expectEqualStrings;
-    try eq("is shown", wrapRest("only your move is shown", 14).?);
-    try eq("move is shown", wrapRest("only your move is shown", 13).?);
-    try std.testing.expect(wrapRest("only your move", 14) == null);
-    try std.testing.expect(wrapRest("Portable:transportation", 10) == null);
-    try eq("only your", wrapHead("only your move is shown", wrapRest("only your move is shown", 13).?)[0..9]);
-}
-
 test "a title too long for its slot is cut at a word boundary and ends in …, and one that fits is whole" {
     var buf: [64]u8 = undefined;
     try std.testing.expectEqualStrings("only your move", clipMark(&buf, "only your move", 14));
@@ -3085,32 +3061,92 @@ test "a row shows the ticket's short name whole, and its title when the board ha
     try std.testing.expectEqualStrings("Only a title", board.next()[1].name());
 }
 
-test "a window with spare height wraps a long title onto a second line at a word, and a full one does not" {
-    var board = try tickets.Board.parse(std.testing.allocator, try nextBoard(0));
+/// The details of the block under the next row of `ticket`, and the kind of the row after them.
+fn blockOf(sheet: *const sheets.Sheet, ticket: u32, out: [][]const u8) struct { n: usize, last: sheets.Kind } {
+    var n: usize = 0;
+    var at: usize = 0;
+    while (at < sheet.n) : (at += 1) {
+        if (sheet.rows[at].kind == .next and sheet.rows[at].ticket.? == ticket) break;
+    }
+    at += 1;
+    while (at < sheet.n and sheet.rows[at].kind == .detail) : (at += 1) {
+        out[n] = sheet.rows[at].text;
+        n += 1;
+    }
+    return .{ .n = n, .last = if (at < sheet.n) sheet.rows[at].kind else .blank };
+}
+
+test "a picked next row opens to its title whole, a blank row, its why, what it waits on, and its keys last" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1,"repo":"arena","title":"The orchestrator's suggest tool: 1–6 suggestions it writes after each turn, carried in board.json, wrapped","status":"todo"}],
+        \\"plan":{"now":[],"next":[
+        \\{"ticket":1,"repo":"arena","title":"The orchestrator's suggest tool: 1–6 suggestions it writes after each turn, carried in board.json, wrapped","short":"suggest tool","why":"the human asked","waits_on":[{"ticket":9}]}],
+        \\"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer board.deinit();
+    var app = wrapApp(&board, 60);
+    defer app.grab.deinit(std.testing.allocator);
+    app.view_w = 70;
+    app.term_w = 70;
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    var lines: [sheets.max_detail][]const u8 = undefined;
+    const block = blockOf(&sheet, 1, &lines);
+    try std.testing.expectEqual(sheets.Kind.buttons, block.last);
+    const gap = for (lines[0..block.n], 0..) |text, i| {
+        if (text.len == 0) break i;
+    } else return error.TestUnexpectedResult;
+    try std.testing.expect(gap >= 2);
+    var title: [256]u8 = undefined;
+    var used: usize = 0;
+    for (lines[0..gap], 0..) |text, i| {
+        if (i > 0) {
+            title[used] = ' ';
+            used += 1;
+        }
+        @memcpy(title[used..][0..text.len], text);
+        used += text.len;
+    }
+    try std.testing.expectEqualStrings(board.next()[0].title, title[0..used]);
+    try std.testing.expect(std.mem.startsWith(u8, lines[gap + 1], "why      the human asked"));
+    try std.testing.expect(std.mem.startsWith(u8, lines[gap + 2], "waits    waits #9"));
+    try std.testing.expect(std.mem.startsWith(u8, lines[gap + 3], "stage    todo"));
+    try std.testing.expectEqual(gap + 4, block.n);
+}
+
+test "an opened row at a window's foot scrolls the window so its keys are in view, and the window keeps its rect" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],
+        \\"plan":{"now":[],"next":[
+        \\{"ticket":1,"repo":"arena","title":"one","why":"why one"},
+        \\{"ticket":2,"repo":"arena","title":"two","why":"why two"},
+        \\{"ticket":3,"repo":"arena","title":"three","why":"why three"},
+        \\{"ticket":4,"repo":"arena","title":"four","why":"why four"},
+        \\{"ticket":5,"repo":"arena","title":"five","why":"why five"}],
+        \\"goals":[],"landed_today":{"count":0,"newest":[]},
+        \\"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
     defer board.deinit();
     var app = wrapApp(&board, 60);
     defer app.grab.deinit(std.testing.allocator);
     var sheet: sheets.Sheet = undefined;
+    const first = app.planRect(.next);
+    app.home.?.plan_pick = 4;
     try std.testing.expect(app.planSheet(&sheet));
-    var wraps: usize = 0;
-    for (sheet.rows[0..sheet.n], 0..) |row, i| if (row.kind == .wrap) {
-        wraps += 1;
-        try std.testing.expectEqual(sheets.Window.next, row.win);
-        try std.testing.expectEqual(sheets.Kind.next, sheet.rows[i - 1].kind);
-        try std.testing.expect(std.mem.endsWith(u8, long_title, row.text));
-        try std.testing.expect(long_title[long_title.len - row.text.len - 1] == ' ');
-    };
-    try std.testing.expectEqual(@as(usize, 1), wraps);
-
-    var packed_board = try tickets.Board.parse(std.testing.allocator, try nextBoard(30));
-    defer packed_board.deinit();
-    var full = wrapApp(&packed_board, 24);
-    defer full.grab.deinit(std.testing.allocator);
-    try std.testing.expect(full.planSheet(&sheet));
-    for (sheet.rows[0..sheet.n]) |row| try std.testing.expect(row.kind != .wrap);
+    const rect = app.planRect(.next);
+    try std.testing.expectEqual(first, rect);
+    const body = rect.h - sheets.window_chrome;
+    const mine = sheet.span(.next);
+    const top = app.planWindowTop(&sheet, .next, body);
+    var keys_at: usize = 0;
+    for (sheet.rows[mine.start..][0..mine.len], 0..) |row, i| {
+        if (row.kind == .buttons) keys_at = i;
+    }
+    try std.testing.expect(keys_at > 0);
+    try std.testing.expect(keys_at >= top and keys_at < top + body);
 }
 
-test "next is one line a row, and only the picked row shows its why" {
+test "next is one line a row, and only the picked row opens, with its why" {
     var board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[],
         \\"plan":{"now":[],"next":[
@@ -3131,28 +3167,24 @@ test "next is one line a row, and only the picked row shows its why" {
     app.home = .{ .alone = false, .focus = .plan };
     app.side_folded = true;
     var sheet: sheets.Sheet = undefined;
-    try std.testing.expect(app.planSheet(&sheet));
-    var nexts: usize = 0;
-    var whys: usize = 0;
-    for (sheet.rows[0..sheet.n]) |row| {
-        nexts += @intFromBool(row.kind == .next);
-        whys += @intFromBool(row.kind == .why);
+    var lines: [sheets.max_detail][]const u8 = undefined;
+    for ([_]u32{ 1, 3 }) |ticket| {
+        try std.testing.expect(app.planSheet(&sheet));
+        for (sheet.rows[0..sheet.n]) |row| try std.testing.expect(row.kind != .why);
+        var opened: usize = 0;
+        for ([_]u32{ 1, 2, 3, 4, 5 }) |id| {
+            if (blockOf(&sheet, id, &lines).n > 0) opened += 1;
+        }
+        try std.testing.expectEqual(@as(usize, 1), opened);
+        const block = blockOf(&sheet, ticket, &lines);
+        try std.testing.expect(block.n > 0);
+        var why: bool = false;
+        for (lines[0..block.n]) |text| why = why or std.mem.endsWith(u8, text, if (ticket == 1) "why one" else "why three");
+        try std.testing.expect(why);
+        for (sheet.rows[0..sheet.n]) |row| {
+            if (row.kind == .next and row.ticket.? == 3) app.home.?.plan_pick = row.pick.?;
+        }
     }
-    try std.testing.expectEqual(@as(usize, 5), nexts);
-    try std.testing.expect(whys <= 1);
-    var third: usize = 0;
-    for (sheet.rows[0..sheet.n]) |row| {
-        if (row.kind == .next and row.ticket.? == 3) third = row.pick.?;
-    }
-    app.home.?.plan_pick = third;
-    try std.testing.expect(app.planSheet(&sheet));
-    whys = 0;
-    for (sheet.rows[0..sheet.n], 0..) |row, i| {
-        if (row.kind != .why) continue;
-        whys += 1;
-        try std.testing.expectEqual(@as(u32, 3), sheet.rows[i - 1].ticket.?);
-    }
-    try std.testing.expectEqual(@as(usize, 1), whys);
 }
 
 /// Drags the mouse over the recorded text that starts with `from`, to the end of the line it is on.
@@ -3202,7 +3234,7 @@ test "a drag over a next row and over a goal's title in the driving window each 
     next_app.term_w = 100;
     next_app.view_h = 31;
     next_app.roles = bench.roles();
-    next_app.home = .{ .alone = false, .focus = .plan };
+    next_app.home = .{ .alone = false, .focus = .plan, .plan_pick = 1 };
     var again: Writer.Allocating = .init(std.testing.allocator);
     defer again.deinit();
     try frame(&next_app, &again.writer, .all);
@@ -3231,7 +3263,7 @@ test "a selection is dropped when a redraw puts other text under it" {
     app.term_w = 100;
     app.view_h = 31;
     app.roles = bench.roles();
-    app.home = .{ .alone = false, .focus = .plan };
+    app.home = .{ .alone = false, .focus = .plan, .plan_pick = 1 };
     app.side_folded = true;
     var shot: Writer.Allocating = .init(std.testing.allocator);
     defer shot.deinit();

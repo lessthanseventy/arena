@@ -6,6 +6,7 @@ const app_mod = @import("app.zig");
 const tickets = @import("board.zig");
 const sheets = @import("plan.zig");
 const draw = @import("draw.zig");
+const win_detail = @import("win_detail.zig");
 const App = app_mod.App;
 const Writer = std.Io.Writer;
 const sayCut = draw.sayCut;
@@ -37,10 +38,16 @@ pub fn titleRoom(app: *const App, item: tickets.NowItem, ww: usize) struct { x: 
     return .{ .x = title_x, .room = (if (chip_x > title_x + 4) chip_x else ww) -| title_x -| 1 };
 }
 
-/// What of an in flight row's name goes on a second line, in a window `ww` cells wide.
-pub fn wrapRest(app: *const App, row: sheets.Row, ww: usize) ?[]const u8 {
+/// The block under an opened in flight row, in a window `ww` cells wide: its stage and age, and
+/// why nothing moves it when nothing does.
+pub fn detail(app: *const App, row: sheets.Row, ww: usize, lines: *sheets.Lines) void {
     const item = app.board.?.plan().?.now[row.item];
-    return draw.wrapRest(item.name(), titleRoom(app, item, ww).room);
+    var age: [16]u8 = undefined;
+    const since = sheets.ago(&age, item.since, app.epoch);
+    const stage = lines.print("{s}{s}{s}", .{ item.stage orelse item.state, if (since.len > 0) " · " else "", since });
+    var said: [64]u8 = undefined;
+    const wait = if (item.stalled) |why| lines.print("stalled · {s}", .{why}) else if (item.waiting_on) |on| lines.print("{s}", .{on.say(&said)}) else "";
+    win_detail.fill(app, lines, .{ .ticket = item.ticket, .title = item.name(), .wait = wait, .stage = stage }, ww, @intCast(titleRoom(app, item, ww).x));
 }
 
 pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, at: usize, y: u16, x0: usize, ww: usize, lit: bool) !void {
@@ -68,7 +75,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             const chip_x = x0 + ww -| (chip_w + 1);
             const title_x = x0 + 5 + cellCount(id);
             if (chip_x > title_x + 4) _ = try bench.chipInk(w, r, chip_x, y, label, lead, if (item.stalled != null) r.on_accent else r.text, item.stalled != null);
-            const name = if (at + 1 < sheet.n and sheet.rows[at + 1].kind == .wrap) draw.wrapHead(item.name(), sheet.rows[at + 1].text) else item.name();
+            const name = item.name();
             try sayCut(w, title_x, y, name, titleRoom(app, item, ww).room, if (row.dim) r.dim else r.text, bg, false);
         },
         .other => {

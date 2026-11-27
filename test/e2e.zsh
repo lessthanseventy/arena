@@ -842,7 +842,6 @@ $bin -L $in plan 7
 see "no goal"
 : >$tmp/babylon
 key ' '
-key ' '
 check "a ticket's modal opened from a no goal row shows the question and its options by number" see '2 blue'
 key 2
 checked() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == 'answer 5 2' ]] }
@@ -850,13 +849,11 @@ check "and a number answers it through babylon" await checked
 check "and closes it" gone '2 blue'
 touch $tmp/refuse
 key ' '
-key ' '
 key 1
 refused() { [[ -f $tmp/notified && $(<$tmp/notified) == *'babylon: no session to answer'* ]] }
 check "and an answer babylon refuses says why" await refused
 rm $tmp/refuse
 rowof() { screen | grep -n -m1 -- "$1" | cut -d: -f1 }
-key ' '
 key ' '
 check "space on a row and o show the picked ticket's whole ticket, as babylon tells it" see 'the whole of it'
 check "with its close button in the foot" see 'q close'
@@ -866,14 +863,12 @@ check "and j scrolls it no further than its last line" see 'the whole of it'
 key Escape
 check "Escape puts it away" gone 'the whole of it'
 key ' '
-key ' '
 see 'the whole of it'
 key q
 check "q closes it too" gone 'the whole of it'
 nofile() { [[ ! -e $tmp/run/babylon/detail-7.txt ]] }
 check "leaving no file of it behind" await nofile
 close_at() { local l=$(settled | grep -m1 "q close"); print $(( ${#${l%%q close*}} + 1 )) $(settled | grep -n -m1 "q close" | cut -d: -f1) }
-key ' '
 key ' '
 see 'the whole of it'
 mouse 0 ${(z)$(close_at)} M
@@ -888,8 +883,7 @@ mouse 0 70 39 M
 check "and a click outside it closes it" gone 'the whole of it'
 $bin -L $in plan 7
 check "arena plan and a ticket's id, run elsewhere, opens Plan with the pick on it" see 'no goal'
-key ' '
-check "so that space opens its row" see '⏎ start'
+check "so that its row is open in place" see '⏎ start'
 key ' '
 see 'the whole of it'
 arena_pid=$(pgrep -x -P $(outer display -p -t o '#{pane_pid}') arena)
@@ -1401,12 +1395,11 @@ mouse 0 $((c + 1)) $r m
 check "a second click does" await eval '(( $(auto_offs) > offs ))'
 cp $tmp/board.plan $tmp/run/babylon/board.json
 : >$tmp/babylon
+check "the picked row is open in place, with the card's buttons under it" await shows 'space open +e edit'
 key -l ' '
-check "space opens the row in place, with the card's buttons under it" await shows 'space open +e edit'
-key -l ' '
-check "and space on the open row closes it for its modal" see 'q close'
+check "and space on it opens its modal" see 'q close'
 key Escape
-check "which Escape puts away, the row closed" gone 'space open +e edit'
+check "which Escape puts away, the row staying open" gone 'q close'
 check "the pick starts on the first window's row" see '▌▌. #701 First building'
 key /
 key -l Light

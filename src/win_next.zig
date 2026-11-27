@@ -6,6 +6,7 @@ const app_mod = @import("app.zig");
 const tickets = @import("board.zig");
 const sheets = @import("plan.zig");
 const draw = @import("draw.zig");
+const win_detail = @import("win_detail.zig");
 const anyKey = app_mod.anyKey;
 const App = app_mod.App;
 const Writer = std.Io.Writer;
@@ -33,10 +34,14 @@ pub fn titleRoom(item: tickets.Next, ww: usize) struct { x: usize, room: usize }
     return .{ .x = title_x, .room = chip_x -| title_x -| 1 };
 }
 
-/// What of a next row's name goes on a second line, in a window `ww` cells wide.
-pub fn wrapRest(app: *const App, row: sheets.Row, ww: usize) ?[]const u8 {
+/// The block under an opened next row, in a window `ww` cells wide: its why, what it waits on and
+/// its place in next.
+pub fn detail(app: *const App, row: sheets.Row, ww: usize, lines: *sheets.Lines) void {
     const item = app.board.?.plan().?.next[row.item];
-    return draw.wrapRest(item.name(), titleRoom(item, ww).room);
+    var age: [16]u8 = undefined;
+    const filed = sheets.ago(&age, if (app.cardById(item.ticket)) |card| card.inserted_at else null, app.epoch);
+    const stage = lines.print("todo{s} · next {d}{s}{s}", .{ if (item.pinned()) " · pinned" else "", row.item + 1, if (filed.len > 0) " · filed " else "", filed });
+    win_detail.fill(app, lines, .{ .ticket = item.ticket, .title = item.name(), .why = item.why, .wait = win_detail.waitWords(lines, item.waits_on), .stage = stage }, ww, @intCast(titleRoom(item, ww).x));
 }
 
 pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, at: usize, y: u16, x0: usize, ww: usize, lit: bool) !void {
@@ -65,8 +70,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             const title_x = x0 + 7 + cellCount(id);
 
             _ = try bench.chipInk(w, r, chip_x, y, label, if (first == null) r.landed else r.dim, if (first == null) r.text else r.dim, false);
-            const name = if (at + 1 < sheet.n and sheet.rows[at + 1].kind == .wrap) draw.wrapHead(item.name(), sheet.rows[at + 1].text) else item.name();
-            try sayCut(w, title_x, y, name, titleRoom(item, ww).room, if (row.dim) r.dim else r.text, bg, false);
+            try sayCut(w, title_x, y, item.name(), titleRoom(item, ww).room, if (row.dim) r.dim else r.text, bg, false);
         },
         else => {},
     }

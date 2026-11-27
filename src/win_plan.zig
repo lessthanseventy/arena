@@ -110,7 +110,7 @@ pub fn planButtonClick(app: *App, sheet: *const sheets.Sheet, at: usize, m: keys
     for (planButtons(app, sheet, at, &buttons)) |button| {
         if (m.y != button.y or m.x < button.x or m.x >= button.x + button.w) continue;
         var from = at - 1;
-        while (sheet.rows[from].kind == .why or sheet.rows[from].kind == .wrap) from -= 1;
+        while (sheet.rows[from].kind == .detail) from -= 1;
         const owner = sheet.rows[from];
         app.home.?.plan_pick = owner.pick orelse return;
         return app.act(button.action);
@@ -186,18 +186,20 @@ pub fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.
     switch (row.kind) {
         .blank => {},
         .buttons => {
-            try bench.fill(w, x0, y, ww, r.panel);
+            try bench.fill(w, x0, y, ww, r.raised);
             var buttons: [12]PlanButton = undefined;
             for (planButtons(app, sheet, at, &buttons), 0..) |button, i| {
                 _ = try bench.button(w, r, button.x, button.y, button.key, button.word, i == 0, null);
             }
         },
-        .wrap => {
-            const picked_owner = lit and at > 0 and app.planRowLit(sheet.rows[at - 1]);
-            const under = if (picked_owner) r.raised else r.panel;
+        .detail => {
+            const under = if (lit) r.raised else r.panel;
             try bench.fill(w, x0, y, ww, under);
-            if (picked_owner) try bench.say(w, x0, y, "▌", mark, under, true);
-            try draw.sayCut(w, x0 + row.part, y, row.text, ww -| row.part -| 1, r.text, under, false);
+            if (lit) try bench.say(w, x0, y, "▌", mark, under, true);
+            const label = row.text[0..@min(row.tail_at, row.text.len)];
+            const at_x = x0 + row.part;
+            if (label.len > 0) try bench.say(w, at_x, y, label, r.dim, under, false);
+            try draw.sayCut(w, at_x + cellCount(label), y, row.text[label.len..], ww -| row.part -| cellCount(label) -| 1, r.text, under, false);
         },
         .head => {
             try bench.fill(w, x0, y, ww, r.panel);

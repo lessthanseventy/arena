@@ -675,8 +675,6 @@ pub const App = struct {
     /// The goals whose tickets Planning folds away, for the session.
     goals_shut: [16]u32 = @splat(0),
     goals_shut_n: usize = 0,
-    /// The ticket open in each plan window, kept in the folds file as `open:<window>:<ticket>`.
-    plan_open: sheets.Open = .initFill(0),
     folds_path: ?[]const u8 = null,
     /// Bytes for the terminal arena runs in, written inside the next frame.
     out: std.ArrayList(u8) = .empty,
@@ -3513,15 +3511,12 @@ pub const App = struct {
             if (std.mem.startsWith(u8, line, window_fold)) {
                 continue;
             } else if (std.mem.startsWith(u8, line, plan_opened)) {
-                const rest = line[plan_opened.len..];
-                const colon = std.mem.indexOfScalar(u8, rest, ':') orelse continue;
-                const win = std.meta.stringToEnum(sheets.Window, rest[0..colon]) orelse continue;
-                app.plan_open.set(win, std.fmt.parseInt(u32, rest[colon + 1 ..], 10) catch continue);
+                continue;
             } else app.setFold(line, true);
         }
     }
 
-    /// A `plan:<window>` line names no fold any more, and is read past.
+    /// A `plan:<window>` or `open:<window>:<ticket>` line names no fold any more, and is read past.
     const window_fold = "plan:";
     const plan_opened = "open:";
 
@@ -3530,8 +3525,6 @@ pub const App = struct {
         var data: Writer.Allocating = .init(app.gpa);
         defer data.deinit();
         for (0..app.fold_n) |i| try data.writer.print("{s}\n", .{app.folds[i][0..app.fold_lens[i]]});
-        var opened = app.plan_open.iterator();
-        while (opened.next()) |entry| if (entry.value.* != 0) try data.writer.print(plan_opened ++ "{s}:{d}\n", .{ @tagName(entry.key), entry.value.* });
         if (std.fs.path.dirname(path)) |dir| std.Io.Dir.cwd().createDirPath(app.io, dir) catch return;
         std.Io.Dir.cwd().writeFile(app.io, .{ .sub_path = path, .data = data.written() }) catch {};
     }
@@ -3786,48 +3779,31 @@ pub const App = struct {
         sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, view.unfolded, app.oneColumn(), app.workbench(), app.planSee(&repos));
         app.narrowPlan(sheet);
         if (app.workbench()) {
-            sheet.withWhyOnPick(app);
-            sheet.withButtons(app.plan_open);
             var others: [max_others]Agent = undefined;
             sheet.withOthers(app.otherClaudes(&others).len, app.findText());
-            sheet.withWraps(Wraps{ .app = app });
+            sheet.withOpen(Opener{ .app = app });
         }
         return true;
     }
 
-    /// Where a title wraps onto a second line: in a window with rows to spare.
-    const Wraps = struct {
+    /// The picked ticket row opens in place, with the lines its window gives it.
+    const Opener = struct {
         app: *const App,
 
-        fn width(c: Wraps, win: sheets.Window) usize {
-            return @as(usize, c.app.planRect(win).w) -| 3;
+        pub fn opens(c: Opener, row: sheets.Row) bool {
+            return (row.kind == .landed or (opensInPlace(&row) and row.kind != .need)) and c.app.planRowLit(row);
         }
 
-        pub fn spare(c: Wraps, win: sheets.Window, rows: usize) usize {
-            return switch (win) {
-                .now, .next, .landed => (@as(usize, c.app.planRect(win).h) -| sheets.window_chrome) -| rows,
-                else => 0,
-            };
-        }
-
-        pub fn rest(c: Wraps, row: sheets.Row) ?[]const u8 {
-            const ww = c.width(row.win);
-            return switch (row.kind) {
-                .now => win_now.wrapRest(c.app, row, ww),
-                .next => win_next.wrapRest(c.app, row, ww),
-                .landed => win_landed.wrapRest(c.app, row, ww),
-                else => null,
-            };
-        }
-
-        pub fn indent(c: Wraps, row: sheets.Row) u8 {
-            const ww = c.width(row.win);
-            const b = c.app.board.?.plan().?;
-            return @intCast(switch (row.kind) {
-                .now => win_now.titleRoom(c.app, b.now[row.item], ww).x,
-                .next => win_next.titleRoom(b.next[row.item], ww).x,
-                else => win_landed.titleRoom(c.app, row.ticket.?, ww).x,
-            });
+        pub fn detail(c: Opener, row: sheets.Row, lines: *sheets.Lines) void {
+            const ww = @as(usize, c.app.planRect(row.win).w) -| 3;
+            switch (row.kind) {
+                .now => win_now.detail(c.app, row, ww, lines),
+                .next => win_next.detail(c.app, row, ww, lines),
+                .landed => win_landed.detail(c.app, row, ww, lines),
+                .todo => win_unplanned.detail(c.app, row, ww, lines),
+                .backlog => win_backlog.detail(c.app, row, ww, lines),
+                else => {},
+            }
         }
     };
 
@@ -3917,16 +3893,7 @@ pub const App = struct {
         };
     }
 
-    /// Ticket row `row` opened, or closed when it is the open one of its window; opening one
-    /// closes the last.
-    fn togglePlanOpen(app: *App, row: *const sheets.Row) !void {
-        const id = row.ticket orelse return;
-        app.plan_open.set(row.win, if (app.plan_open.get(row.win) == id) 0 else id);
-        app.dirty = true;
-        try app.saveFolds();
-    }
-
-    /// Whether a click or space on `row` opens it in place: the rows that are one ticket.
+    /// Whether `row` opens in place when it is picked: the rows that are one ticket.
     fn opensInPlace(row: *const sheets.Row) bool {
         return row.ticket != null and (row.kind == .need or row.kind == .now or row.kind == .next or row.kind == .todo or row.kind == .backlog);
     }
@@ -3946,7 +3913,6 @@ pub const App = struct {
         var repos: [max_repos][]const u8 = undefined;
         sheet.build(b.plan().?, b, app.boardW() -| 1, app.epoch, app.home.?.unfolded, true, app.workbench(), app.planSee(&repos));
         app.narrowPlan(&sheet);
-        sheet.withButtons(app.plan_open);
         var others: [max_others]Agent = undefined;
         sheet.withOthers(app.otherClaudes(&others).len, app.findText());
         for (std.enums.values(sheets.Window)) |win| rows.set(win, sheet.span(win).len);
@@ -3995,7 +3961,9 @@ pub const App = struct {
         if (sheet.rows[at].win != win) return pin;
         const span = sheet.span(win);
         if (at - span.start < pin) return pin;
-        return pin + sheets.windowTop(at - span.start - pin, span.len -| pin, body -| pin, 2);
+        var below: usize = 0;
+        while (at + 1 + below < sheet.n and (sheet.rows[at + 1 + below].kind == .detail or sheet.rows[at + 1 + below].kind == .buttons)) below += 1;
+        return pin + sheets.windowTop(at - span.start - pin, span.len -| pin, body -| pin, below);
     }
 
     /// The rows a window keeps on its first lines whatever it scrolls to: not planned's chips.
@@ -4139,11 +4107,6 @@ pub const App = struct {
         if (is(key, &.{ "\r", " " })) {
             const row = sheet.picked(view.plan_pick) orelse return;
             if (row.kind == .need) return win_move.open(app, row);
-            if (is(key, &.{" "}) and opensInPlace(row)) {
-                const open = app.plan_open.get(row.win) == row.ticket;
-                try app.togglePlanOpen(row);
-                if (!open) return;
-            }
             return app.planAct(row, key);
         }
         if (is(key, &.{ "\x1b", "q" })) return app.closeBoard();
@@ -4264,11 +4227,9 @@ pub const App = struct {
         } else if (row.kind == .goal_ticket) {
             app.drag = .{ .ticket_row = .{ .id = row.ticket orelse return, .opens = picked } };
         } else if (row.kind == .next) {
-            if (view.screen == .planning) win_next.nextPress(app, &sheet, at) else if (picked) try app.planAct(&row, "\r") else try app.togglePlanOpen(&row);
+            if (view.screen == .planning) win_next.nextPress(app, &sheet, at) else if (picked) try app.planAct(&row, "\r");
         } else if (row.kind == .need) {
             try win_move.open(app, &row);
-        } else if (opensInPlace(&row)) {
-            try app.togglePlanOpen(&row);
         } else if (picked) try app.planAct(&row, "\r");
     }
 
@@ -4311,7 +4272,7 @@ pub const App = struct {
             const at = hit.row orelse return;
             const here = &sheet.rows[at];
             if (here.ticket != row.id) return;
-            if (opensInPlace(here)) try app.togglePlanOpen(here) else if (row.opens) try app.planAct(here, "\r");
+            if (!opensInPlace(here) and row.opens) try app.planAct(here, "\r");
             return;
         }
         if (try win_into.drop(app, &sheet, hit, row.id)) return;
@@ -4354,10 +4315,7 @@ pub const App = struct {
             return;
         }
         const to = nextPlace(&sheet, at);
-        if (to == row.from) {
-            if (row.opens and !row.moved) try app.togglePlanOpen(&sheet.rows[at]);
-            return;
-        }
+        if (to == row.from) return;
         if (row.from >= app.board.?.next().len) return;
         const view = &app.home.?;
         view.plan_pick = sheet.rows[at].pick orelse return;
@@ -9934,7 +9892,9 @@ test "Plan's windows never fold: z, Z and a click on a title leave every window 
     try std.testing.expect(app.planSheet(&sheet));
     try eq(@as(usize, 1), view.plan_pick);
     try eq(sheets.Kind.now, sheet.picked(view.plan_pick).?.kind);
-    try eq(@as(usize, 2), sheet.span(.now).len);
+    var nows: usize = 0;
+    for (sheet.rows[0..sheet.n]) |row| nows += @intFromBool(row.kind == .now);
+    try eq(@as(usize, 2), nows);
     try eq(sheets.Kind.next, sheet.rows[sheet.span(.next).start].kind);
 
     try app.planKey("f");
@@ -9952,7 +9912,7 @@ test "Plan's windows never fold: z, Z and a click on a title leave every window 
     try eq(@as(usize, 1), fresh.fold_n);
 }
 
-test "space opens a Plan ticket row in place, one to a window, with the card's own actions as its buttons; the open row loads from its file's open: line" {
+test "the picked Plan ticket row opens in place with the card's own actions as its buttons, and moving the pick moves the block; an old open: line is read past" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     app.term_w = 200;
     app.view_w = 60;
@@ -9974,8 +9934,6 @@ test "space opens a Plan ticket row in place, one to a window, with the card's o
     var sheet: sheets.Sheet = undefined;
 
     try eq(@as(u32, 1), app.pickedCard().?.id);
-    try app.planKey(" ");
-    try eq(@as(u32, 1), app.plan_open.get(.now));
     try std.testing.expect(app.planSheet(&sheet));
     const at = for (sheet.rows[0..sheet.n], 0..) |row, i| {
         if (row.kind == .buttons) break i;
@@ -9992,11 +9950,17 @@ test "space opens a Plan ticket row in place, one to a window, with the card's o
     }
 
     try app.planKey("j");
-    try app.planKey(" ");
-    try eq(@as(u32, 2), app.plan_open.get(.now));
+    try std.testing.expect(app.planSheet(&sheet));
+    var buttons_rows: usize = 0;
+    for (sheet.rows[0..sheet.n]) |row| {
+        if (row.kind != .buttons) continue;
+        buttons_rows += 1;
+        try eq(@as(u32, 2), row.ticket.?);
+    }
+    try eq(@as(usize, 1), buttons_rows);
 
     app.loadFolds("open:now:7\nopen:nowhere:3\n");
-    try eq(@as(u32, 7), app.plan_open.get(.now));
+    try eq(@as(usize, 0), app.fold_n);
 }
 
 test "a session's repo is where its Claudes' panes are, a worktree's included, never its name" {

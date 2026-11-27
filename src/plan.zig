@@ -19,7 +19,7 @@ const ideas_shown = 3;
 /// The bit of `unfolded` that holds the ideas open.
 pub const ideas_fold: u3 = 0;
 
-pub const Kind = enum { head, blank, other, need, now, next, why, more, goals_more, goal, goal_ticket, landed, unplanned, chips, todo, backlog, focal, drove, idea, ideas_more, note, buttons, wrap };
+pub const Kind = enum { head, blank, other, need, now, next, why, more, goals_more, goal, goal_ticket, landed, unplanned, chips, todo, backlog, focal, drove, idea, ideas_more, note, buttons, detail };
 pub const Style = enum { normal, dim, heading, attention };
 
 /// The plan is two screens: Doing, what needs the human and what is moving, and Planning, where
@@ -57,8 +57,49 @@ pub const Window = enum {
     }
 };
 
-/// The ticket open in each window, 0 for none: one at a time.
-pub const Open = std.EnumArray(Window, u32);
+/// The most detail lines an opened row holds.
+pub const max_detail = 24;
+
+/// A line of an opened row's block: its text, where its label ends (the label is drawn dim) and
+/// how many cells in it starts.
+pub const Line = struct { text: []const u8 = "", label: usize = 0, indent: u8 = 0 };
+
+/// The detail lines of one opened row, which a window's `detail` fills.
+pub const Lines = struct {
+    items: [max_detail]Line = undefined,
+    n: usize = 0,
+    buf: [2048]u8 = undefined,
+    used: usize = 0,
+
+    pub fn add(l: *Lines, line: Line) void {
+        if (l.n == l.items.len) return;
+        l.items[l.n] = line;
+        l.n += 1;
+    }
+
+    /// `fmt` printed into the lines' own space.
+    pub fn print(l: *Lines, comptime fmt: []const u8, args: anytype) []const u8 {
+        const out = std.fmt.bufPrint(l.buf[l.used..], fmt, args) catch return "";
+        const start = l.used;
+        l.used += out.len;
+        return l.buf[start..l.used];
+    }
+
+    /// `text` broken at words into lines of `room` cells, each `indent` cells in.
+    pub fn wrap(l: *Lines, text: []const u8, room: usize, indent: u8) void {
+        var rest = text;
+        while (rest.len > 0) {
+            const part = text_mod.breakLine(rest, room);
+            l.add(.{ .text = part.line, .indent = indent });
+            rest = part.rest;
+        }
+    }
+
+    /// `label` then the value `fmt` prints, the values lined up.
+    pub fn field(l: *Lines, indent: u8, label: []const u8, comptime fmt: []const u8, args: anytype) void {
+        l.add(.{ .text = l.print("{s: <9}" ++ fmt, .{label} ++ args), .label = 9, .indent = indent });
+    }
+};
 
 pub const Rect = struct { x: u16, y: u16, w: u16, h: u16 };
 
@@ -388,84 +429,26 @@ pub const Sheet = struct {
         return .{ .start = start, .len = len };
     }
 
-    /// Next's one line a row: a why stays only under the next row `lit` says is picked.
-    pub fn withWhyOnPick(s: *Sheet, lit: anytype) void {
-        var out: usize = 0;
-        for (0..s.n) |i| {
-            const row = s.rows[i];
-            if (row.kind == .why and out > 0 and s.rows[out - 1].kind == .next and !lit.planRowLit(s.rows[out - 1])) continue;
-            s.rows[out] = row;
-            out += 1;
-        }
-        s.n = out;
-    }
-
-    /// A row of the card's buttons under each ticket row that is open in its window, after the
-    /// why a next row has; it is no pick, so the picks stay where they were.
-    pub fn withButtons(s: *Sheet, open: Open) void {
-        var after: [max_rows]u32 = @splat(0);
-        var extra: usize = 0;
-        for (s.rows[0..s.n], 0..) |row, i| {
-            const owner = if (row.kind == .why and i > 0 and s.rows[i - 1].kind == .next) s.rows[i - 1] else row;
-            if (owner.kind != .now and owner.kind != .next and owner.kind != .todo and owner.kind != .backlog) continue;
-            const ticket = owner.ticket orelse continue;
-            if (open.get(owner.win) != ticket) continue;
-            const why_follows = owner.kind == .next and row.kind != .why and i + 1 < s.n and s.rows[i + 1].kind == .why;
-            if (why_follows) continue;
-            after[i] = ticket;
-            extra += 1;
-        }
-        if (extra == 0 or s.n + extra > max_rows) return;
-        var j = s.n + extra;
-        var i = s.n;
-        while (i > 0) {
-            i -= 1;
-            if (after[i] != 0) {
-                j -= 1;
-                s.rows[j] = .{ .kind = .buttons, .ticket = after[i], .win = s.rows[i].win };
+    /// The picked ticket row opens in place: under it the detail lines `ctx.detail` gives for it,
+    /// then a row of the card's keys as the block's last row. `ctx.opens` says which rows open. It
+    /// is no pick, so the picks stay where they were.
+    pub fn withOpen(s: *Sheet, ctx: anytype) void {
+        var i: usize = 0;
+        while (i < s.n) : (i += 1) {
+            const owner = s.rows[i];
+            if (owner.pick == null or owner.ticket == null or !ctx.opens(owner)) continue;
+            var lines: Lines = .{};
+            ctx.detail(owner, &lines);
+            const extra = lines.n + 1;
+            if (s.n + extra > max_rows) return;
+            std.mem.copyBackwards(Row, s.rows[i + 1 + extra .. s.n + extra], s.rows[i + 1 .. s.n]);
+            for (lines.items[0..lines.n], i + 1..) |line, at| {
+                s.rows[at] = .{ .kind = .detail, .ticket = owner.ticket, .item = owner.item, .win = owner.win, .text = s.print("{s}", .{line.text}), .tail_at = line.label, .part = line.indent };
             }
-            j -= 1;
-            s.rows[j] = s.rows[i];
+            s.rows[i + extra] = .{ .kind = .buttons, .ticket = owner.ticket, .win = owner.win };
+            s.n += extra;
+            i += extra;
         }
-        s.n += extra;
-    }
-
-    /// A second line under each ticket row whose name `ctx.rest` says does not fit its line, while
-    /// its window has spare rows (`ctx.spare`): the rest of the name, indented to start under it
-    /// (`ctx.indent`). A window's spare is what its body has over the rows it holds without a
-    /// pick's why or card buttons, so picking never takes a wrap away. It is no pick,
-    /// so the picks stay where they were.
-    pub fn withWraps(s: *Sheet, ctx: anytype) void {
-        var spare = Rows.initFill(0);
-        var base = Rows.initFill(0);
-        for (s.rows[0..s.n]) |row| switch (row.kind) {
-            .why, .buttons, .wrap => {},
-            else => base.set(row.win, base.get(row.win) + 1),
-        };
-        for (std.enums.values(Window)) |win| spare.set(win, ctx.spare(win, base.get(win)));
-        var rest: [max_rows]?[]const u8 = @splat(null);
-        var extra: usize = 0;
-        for (s.rows[0..s.n], 0..) |row, i| {
-            if (row.pick == null or spare.get(row.win) == 0) continue;
-            rest[i] = ctx.rest(row) orelse continue;
-            spare.set(row.win, spare.get(row.win) - 1);
-            extra += 1;
-        }
-        if (extra == 0 or s.n + extra > max_rows) return;
-        var j = s.n + extra;
-        var i = s.n;
-        while (i > 0) {
-            i -= 1;
-            j -= 1;
-            s.rows[j] = s.rows[i];
-            if (rest[i]) |tail| {
-                const owner = s.rows[j];
-                s.rows[j] = .{ .kind = .wrap, .ticket = owner.ticket, .item = owner.item, .win = owner.win, .text = tail, .part = ctx.indent(owner) };
-                j -= 1;
-                s.rows[j] = owner;
-            }
-        }
-        s.n += extra;
     }
 
     /// A rule `other Claudes N` and a pick for each of the `n` Claudes with no ticket, at the foot
@@ -794,7 +777,6 @@ pub const Sheet = struct {
         for (given.next[0..shown], 1..) |item, place_n| {
             if (s.bench) {
                 s.add(.{ .kind = .next, .pick = 0, .ticket = item.ticket, .item = place_n - 1 });
-                if (item.why.len > 0 and !s.narrow) s.add(.{ .kind = .why, .style = .dim, .text = s.clipped(width, item.why) });
                 continue;
             }
             const right = s.waits(item.waits_on);

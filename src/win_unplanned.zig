@@ -7,6 +7,7 @@ const tickets = @import("board.zig");
 const sheets = @import("plan.zig");
 const draw = @import("draw.zig");
 const keys = @import("keys.zig");
+const win_detail = @import("win_detail.zig");
 const anyKey = app_mod.anyKey;
 const App = app_mod.App;
 const Writer = std.Io.Writer;
@@ -84,6 +85,20 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
         },
         else => {},
     }
+}
+
+/// The block under an opened todo row of no goal, in a window `ww` cells wide: its priority, what
+/// it waits on and its place in next.
+pub fn detail(app: *const App, row: sheets.Row, ww: usize, lines: *sheets.Lines) void {
+    const id = row.ticket orelse return;
+    const card = app.cardById(id) orelse return;
+    var age: [16]u8 = undefined;
+    const filed = sheets.ago(&age, card.inserted_at, app.epoch);
+    var place: [16]u8 = undefined;
+    const queued = if (sheets.nextPlace(app.board.?.plan().?, id)) |at| std.fmt.bufPrint(&place, " · next {d}", .{at}) catch "" else "";
+    const stage = lines.print("todo · {s}{s}{s}{s}", .{ card.priority, queued, if (filed.len > 0) " · filed " else "", filed });
+    const wait = if (card.blocked_by.len > 0) lines.print("waits #{d}", .{card.blocked_by[0]}) else "";
+    win_detail.fill(app, lines, .{ .ticket = id, .title = card.title, .wait = wait, .stage = stage }, ww, @intCast(5 + cellCount(std.fmt.bufPrint(&place, "#{d}", .{id}) catch "")));
 }
 
 /// Enter on a row of not planned: a chip's repo toggled for the chips, and a todo row's ticket

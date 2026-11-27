@@ -5,6 +5,7 @@ const app_mod = @import("app.zig");
 const sheets = @import("plan.zig");
 const draw = @import("draw.zig");
 const menu = @import("menu.zig");
+const win_detail = @import("win_detail.zig");
 const anyKey = app_mod.anyKey;
 const captured = app_mod.captured;
 const App = app_mod.App;
@@ -13,6 +14,17 @@ const clip = draw.clip;
 const sayCut = draw.sayCut;
 const cellCount = draw.cellCount;
 const repoHue = draw.repoHue;
+
+/// The block under an opened backlog row, in a window `ww` cells wide: its priority and age.
+pub fn detail(app: *const App, row: sheets.Row, ww: usize, lines: *sheets.Lines) void {
+    const id = row.ticket orelse return;
+    const card = app.cardById(id) orelse return;
+    var age: [16]u8 = undefined;
+    const filed = sheets.ago(&age, card.inserted_at, app.epoch);
+    const stage = lines.print("backlog · {s}{s}{s}", .{ card.priority, if (filed.len > 0) " · filed " else "", filed });
+    var idb: [16]u8 = undefined;
+    win_detail.fill(app, lines, .{ .ticket = id, .title = card.title, .stage = stage }, ww, @intCast(5 + cellCount(std.fmt.bufPrint(&idb, "#{d}", .{id}) catch "")));
+}
 
 pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, at: usize, y: u16, x0: usize, ww: usize, lit: bool) !void {
     const given = app.board.?.plan().?;
