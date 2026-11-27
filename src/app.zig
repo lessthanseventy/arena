@@ -5255,6 +5255,13 @@ pub const App = struct {
         return (if (untried) pickRoom(rect_w) else inner) -| 1;
     }
 
+    /// A card's `its Claude:` line, unwrapped: its state, how long ago and its last words.
+    pub fn claudeSaid(app: *const App, buf: []u8, win: *const Window) []const u8 {
+        var ago_buf: [8]u8 = undefined;
+        const state = if (win.claude == .none) "" else @tagName(win.claude);
+        return std.fmt.bufPrint(buf, "its Claude: {s} {s} \u{b7} {s}", .{ state, draw.ago(&ago_buf, app.epoch, win.since), win.detail() }) catch "its Claude";
+    }
+
     /// The rows of the card's foot an `its Claude:` line may take: what the head and the note leave
     /// of `total`, bar one for the body.
     pub fn claudeLeft(total: usize, note_rows: usize, head_n: usize) usize {
@@ -5558,8 +5565,22 @@ pub const App = struct {
                 var lines = DetailLines.init(card.session_note, inner);
                 while (lines.next()) |_| note_rows += 1;
             }
-            const claude: usize = if (app.claudeOf(card) != null) 3 else 0;
-            squeeze = .{ .rows = rect.h -| 4 -| claude -| note_rows, .pick = pick, .rect_w = rect.w };
+            const ask_first = if (app.home) |view| view.ask_first else false;
+            var after: usize = @intFromBool(sheetShown(card, ask_first) and card.@"try" != null);
+            if (sheetShown(card, ask_first)) {
+                var id: [24]u8 = undefined;
+                const refusal = app.refusalOf(std.fmt.bufPrint(&id, "try:{d}", .{card.id}) catch "") orelse "";
+                if (refusal.len > 0) after += std.mem.count(u8, refusal, "\n") + 1;
+            }
+            var claude: usize = 0;
+            if (app.claudeOf(card)) |win| {
+                var said: [320]u8 = undefined;
+                var lines = DetailLines.init(app.claudeSaid(&said, win), inner);
+                while (lines.next()) |_| claude += 1;
+                claude = @min(claude, 3);
+                after += @min(win.subs(), max_sub_rows) + @intFromBool(win.text(.background).len > 0);
+            }
+            squeeze = .{ .rows = rect.h -| 4 -| claude -| note_rows -| after -| 1, .pick = pick, .rect_w = rect.w };
         }
         cardHeadOpen(card, inner, app.epoch, words, if (app.home) |view| view.details else false, if (app.home) |view| view.ask_first else false, squeeze, head);
         if (!app.sheeted(card)) return;
@@ -5638,7 +5659,7 @@ pub const App = struct {
                 out[1] = .{ .action = .reopen_no, .key = "n", .label = "keep done", .x = x + yes.width() + 1, .y = foot };
                 return out[0..2];
             }
-            var head: CardHead = undefined;
+            var head: App.CardHead = undefined;
             const words = app.askWords(card);
             app.modalHead(card, detailWidth(app.columnRoom()).inner, words != null, &head);
             if (app.claudeOf(card)) |win| {
@@ -11893,4 +11914,89 @@ test "an its Claude line leaves the head's rows and one of the body" {
     try std.testing.expectEqual(@as(usize, 1), App.claudeLeft(12, 0, 10));
     try std.testing.expectEqual(@as(usize, 0), App.claudeLeft(11, 0, 10));
     try std.testing.expectEqual(@as(usize, 0), App.claudeLeft(12, 2, 10));
+}
+
+test "on a full to-try card the squeezed checks leave its Claude's long line its three rows, the details row and a body row" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 140;
+    app.view_w = 140;
+    app.view_h = 30;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":4,"repo":"tlon","title":"d","status":"try","claimed_by":"%12","try":{"changed":"The lights come on."},
+        \\"checks":[{"n":1,"text":"On Telegram ask what is my money situation like this check then how much did I spend on food and on rent and on the car last month, then what the rent will be next year, whether the gas bill went up since spring, how much is left for the holidays and what to cut first","result":null},
+        \\{"n":2,"text":"On Telegram ask what is my money situation like this check then how much did I spend on food and on rent and on the car last month, then what the rent will be next year, whether the gas bill went up since spring, how much is left for the holidays and what to cut first","result":null},
+        \\{"n":3,"text":"On Telegram ask what is my money situation like this check then how much did I spend on food and on rent and on the car last month, then what the rent will be next year, whether the gas bill went up since spring, how much is left for the holidays and what to cut first","result":null},
+        \\{"n":4,"text":"On Telegram ask what is my money situation like this check then how much did I spend on food and on rent and on the car last month, then what the rent will be next year, whether the gas bill went up since spring, how much is left for the holidays and what to cut first","result":null},
+        \\{"n":5,"text":"On Telegram ask what is my money situation like this check then how much did I spend on food and on rent and on the car last month, then what the rent will be next year, whether the gas bill went up since spring, how much is left for the holidays and what to cut first","result":null}]}]}
+    );
+    defer app.board.?.deinit();
+    const pane = try Pane.create(&app, 12, 80, 24);
+    defer pane.destroy(std.testing.allocator);
+    var win: Window = .{ .id = 7, .name = @constCast("w"), .claude = .done, .agent_pane = 12, .info = @constCast("\t\t\t1340 is installed. Restart Asterion and then ask it what the money situation is like this check, and how much was spent on food in the last month, and so on and on and on\t\t\tlint run\x1fcheck deps") };
+    defer win.panes.deinit(std.testing.allocator);
+    try win.panes.append(std.testing.allocator, pane);
+    var s: Session = .{ .id = 1, .name = @constCast("s") };
+    var wins = [_]*Window{&win};
+    s.wins = .fromOwnedSlice(&wins);
+    var sessions = [_]*Session{&s};
+    app.sessions = .fromOwnedSlice(&sessions);
+    app.current = 1;
+    app.home = .{ .detail = 4, .check_pick = 3 };
+
+    const card = app.modalCard().?;
+    const inner = detailWidth(app.columnRoom()).inner;
+    var head: App.CardHead = undefined;
+    app.modalHead(card, inner, false, &head);
+    App.claudeHead(app.claudeOf(card).?, &head);
+    var per = [5]usize{ 0, 0, 0, 0, 0 };
+    for (head.kinds[0..head.n], head.of[0..head.n]) |kind, of| if (kind == .check) {
+        per[of - 1] += 1;
+    };
+    try std.testing.expect(per[2] > 2);
+    try std.testing.expectEqual(@as(usize, 1), per[0]);
+    try std.testing.expect(head.fold != null);
+    const rect = app.modalRect().?;
+    try std.testing.expectEqual(@as(usize, 3), App.claudeLeft(rect.h - 4, 0, head.n));
+}
+
+test "a wrapped untried check's pick, y and n buttons sit on its first row and none on the rows it runs on to" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = undefined };
+    app.term_w = 140;
+    app.view_w = 140;
+    app.view_h = 30;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":4,"repo":"tlon","title":"d","status":"try","try":{"changed":"The lights come on."},
+        \\"checks":[{"n":1,"text":"short","result":null},
+        \\{"n":2,"text":"On Telegram ask what is my money situation like this check then how much did I spend on food and on rent and on the car last month","result":null}]}]}
+    );
+    defer app.board.?.deinit();
+    app.home = .{ .detail = 4, .check_pick = 2 };
+
+    const card = app.modalCard().?;
+    var head: App.CardHead = undefined;
+    app.modalHead(card, detailWidth(app.columnRoom()).inner, false, &head);
+    var first: ?usize = null;
+    var rows: usize = 0;
+    for (head.of[0..head.n], head.more[0..head.n], 0..) |of, more, line| if (of == 2) {
+        rows += 1;
+        if (!more and first == null) first = line;
+    };
+    try std.testing.expect(rows > 1);
+    const y = app.modalRect().?.y + 1 + @as(u16, @intCast(first.?));
+    var buttons: [48]App.ModalButton = undefined;
+    var seen: usize = 0;
+    for (app.modalButtons(&buttons)) |b| switch (b.action) {
+        .pick, .row_ok, .row_no => |pos| if (pos == 2) {
+            try std.testing.expectEqual(y, b.y);
+            seen += 1;
+        },
+        else => {},
+    };
+    try std.testing.expectEqual(@as(usize, 3), seen);
 }

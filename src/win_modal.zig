@@ -153,7 +153,7 @@ pub fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
     if (win) |it| App.claudeHead(it, &head);
     var told: [320]u8 = undefined;
     var told_rows: ClaudeRows = .{};
-    if (win) |it| claudeRows(&told_rows, claudeSaid(&told, app, it), inner, App.claudeLeft(bottom - top - 2, note_rows, head.n));
+    if (win) |it| claudeRows(&told_rows, app.claudeSaid(&told, it), inner, App.claudeLeft(bottom - top - 2, note_rows, head.n));
     const claude_rows: u16 = @intCast(told_rows.n);
     const text_end = bottom - note_rows - claude_rows;
 
@@ -358,12 +358,6 @@ const ClaudeRows = struct {
     ended: [512]u8 = undefined,
 };
 
-fn claudeSaid(buf: []u8, app: *const App, win: *const app_mod.Window) []const u8 {
-    var ago_buf: [8]u8 = undefined;
-    const state = if (win.claude == .none) "" else @tagName(win.claude);
-    return std.fmt.bufPrint(buf, "its Claude: {s} {s} \u{b7} {s}", .{ state, ago(&ago_buf, app.epoch, win.since), win.detail() }) catch "its Claude";
-}
-
 fn claudeRows(out: *ClaudeRows, said: []const u8, inner: usize, max: usize) void {
     if (max == 0) return;
     var it = app_mod.DetailLines.init(said, inner);
@@ -405,7 +399,7 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
     const win = if (card) |it| app.claudeOf(it) else null;
     var told: [320]u8 = undefined;
     var told_rows: ClaudeRows = .{};
-    if (win) |it| claudeRows(&told_rows, claudeSaid(&told, app, it), inner, App.claudeLeft(foot - rect.y - 3, note_rows, head.n));
+    if (win) |it| claudeRows(&told_rows, app.claudeSaid(&told, it), inner, App.claudeLeft(foot - rect.y - 3, note_rows, head.n));
     const claude_rows: u16 = @intCast(told_rows.n);
     const text_end = foot - 1 - note_rows - claude_rows;
 
