@@ -328,6 +328,8 @@ pub const Session = struct {
     placed: bool = false,
     /// Columns take the whole view, with no neighbour peeking.
     full: bool = false,
+    /// Made by `columnRun` for the middle column's command: off the lists like the gate.
+    column: bool = false,
 
     /// babylon's own session, where its pipeline runs gates: kept last, off the lists and the
     /// agents, and reached from the board.
@@ -357,7 +359,7 @@ pub const Session = struct {
     }
 
     pub fn unlisted(s: *const Session) bool {
-        return s.gate() or s.orchestrator();
+        return s.gate() or s.orchestrator() or s.column;
     }
 
     pub fn focused(s: *const Session) ?*Window {
@@ -2660,6 +2662,9 @@ pub const App = struct {
             };
             app.gpa.free(s.name);
             s.name = try app.gpa.dupe(u8, rest[name + 1 ..]);
+            if (app.column_want) |want| if (want.session == id) {
+                s.column = true;
+            };
             try app.sessions.append(app.gpa, s);
         }
         for (old.items) |s| app.destroySession(s);
@@ -3630,6 +3635,7 @@ pub const App = struct {
         }
         const taken = want.*;
         app.column_want = null;
+        if (app.paneWindow(taken.pane)) |at| at.session.column = true;
         try app.openClaude(taken.pane);
         app.column_own = if (taken.keep) null else taken.session;
     }
@@ -7827,6 +7833,20 @@ test "the session to go back to is forgotten once it, or the orchestrator's, is 
     try eq(.orchestrator, app.home.?.focus);
 }
 
+test "the session made for the column stays out of the switcher's list, wanted or taken" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    defer app.deinit();
+    const eq = std.testing.expectEqual;
+    try app.onSessions("$1 0 work\n");
+    app.columnStarted(true, "%7 $5\n");
+    try app.onSessions("$1 0 work\n$5 1 3\n");
+    try eq(@as(usize, 1), app.listedSessions());
+    try eq(@as(usize, 2), app.sessions.items.len);
+    app.column_want = null;
+    try app.onSessions("$1 0 work\n$5 1 3\n");
+    try eq(@as(usize, 1), app.listedSessions());
+}
+
 test "home: the board with the orchestrator's column focused, its own keys while no window is in it" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     defer app.deinit();
@@ -10204,8 +10224,13 @@ test "a click on not planned's + new button opens the new ticket window, and a w
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon new") != null);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "new-window") == null);
 
+    app.term_w = 60;
+    app.view_w = 60;
+    try std.testing.expect(app.newHead() != null);
     app.term_w = 30;
     app.view_w = 30;
+    try std.testing.expect(app.newHead() == null);
+    app.home = null;
     try std.testing.expect(app.newHead() == null);
 }
 
