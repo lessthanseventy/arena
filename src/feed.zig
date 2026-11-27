@@ -508,6 +508,27 @@ test "with nothing that needs the human, the feed is one dim line" {
     try std.testing.expectEqual(Kind.quiet, f.line(0).kind);
 }
 
+test "an orchestrator's text suggestion is not drawn in the feed, and an item suggestion is its ordinary need" {
+    var b = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"needs_you":[
+        \\{"id":"ask:1","kind":"ask","ticket":1,"repo":"arena","text":"#1 asks: A?",
+        \\ "actions":[{"key":"1","label":"A","argv":["babylon","answer","1","1"]}]},
+        \\{"id":"ask:2","kind":"ask","ticket":2,"repo":"arena","text":"#2 asks: B?",
+        \\ "actions":[{"key":"1","label":"B","argv":["babylon","answer","2","1"]}]}],
+        \\"suggestions":[
+        \\{"id":"suggestion:1","kind":"text","text":"rebase #7 onto main","ticket":null,"actions":[]},
+        \\{"id":"suggestion:2","kind":"item","text":"#2 asks: B?","ticket":2,"actions":[]}]}
+    );
+    defer b.deinit();
+    var f: Feed = undefined;
+    build(&f, &b, &.{}, 56, 40, now);
+    var out: [64][]const u8 = undefined;
+    const move = [_][]const u8{ "▲ your move 2", "#2 asks: B?", "1 B", "#1 asks: A?", "1 A" };
+    const got = texts(&f, &out);
+    try std.testing.expectEqual(move.len, got.len);
+    for (move, got) |w, g| try std.testing.expectEqualStrings(w, g);
+}
+
 test "the pick goes through Your move's items, where each is drawn" {
     var b = try tickets.Board.parse(std.testing.allocator, sample);
     defer b.deinit();
