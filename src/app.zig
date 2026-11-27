@@ -388,8 +388,9 @@ pub const HomeView = struct {
     /// The session the human was in when arena went to the orchestrator's to have its window
     /// live beside the board: gone back to when the board closes or the side is folded.
     back: ?u32 = null,
-    /// The Claudes the picked card can be given to shown over the board, and the one picked.
+    /// The Claudes ticket `giving_ticket` can be given to shown over the board, and the one picked.
     giving: ?usize = null,
+    giving_ticket: u32 = 0,
     /// The ticket asking `into which goal?` in the middle column, and the place picked.
     into: ?u32 = null,
     into_pick: usize = 0,
@@ -5186,9 +5187,12 @@ pub const App = struct {
         var have: [12]CardAction = undefined;
         if (std.mem.indexOfScalar(CardAction, cardActions(card, &have), action) == null) return;
         switch (action) {
-            .go => if (card.proposal) |proposal| try app.settleProposal("go", proposal.id) else try app.goCard(),
+            .go => if (card.proposal) |proposal| try app.settleProposal("go", proposal.id) else try app.goCard(card),
             .no => if (card.proposal) |proposal| try app.settleProposal("no", proposal.id),
-            .give => view.giving = 0,
+            .give => {
+                view.giving = 0;
+                view.giving_ticket = card.id;
+            },
             .edit => try app.ticketWindow("babylon edit {d}", .{card.id}),
             .priority => {
                 const eql = std.mem.eql;
@@ -5214,8 +5218,7 @@ pub const App = struct {
 
     /// Goes to the Claude holding the card picked, closing home; with none, starts one on a free
     /// card, babylon refusing what it will not start and saying why.
-    fn goCard(app: *App) !void {
-        const card = app.pickedCard() orelse return;
+    fn goCard(app: *App, card: *const tickets.Card) !void {
         const pane = card.holder() orelse {
             if (!givable(card)) return;
             var id_buf: [12]u8 = undefined;
@@ -6137,10 +6140,9 @@ pub const App = struct {
         if (anyKey(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.giving = picked -| 1;
         const to = if (anyKey(key, &.{"\r"})) picked else if (key.len == 1 and key[0] >= '1' and key[0] <= '9') key[0] - '1' else return;
         if (to >= n) return;
-        const card = app.pickedCard() orelse return;
         // babylon's refusal (that Claude is mid-turn, the card was claimed meanwhile) is said
         try app.send(.ignore, "run-shell -b \"out=\\$(babylon give {d} %{d} 2>&1) || " ++
-            "{{ command -v notify-send >/dev/null && notify-send -a arena -- \\\"\\$out\\\"; }}\"", .{ card.id, found[to].win.agent_pane });
+            "{{ command -v notify-send >/dev/null && notify-send -a arena -- \\\"\\$out\\\"; }}\"", .{ view.giving_ticket, found[to].win.agent_pane });
         view.giving = null;
     }
 
@@ -9642,6 +9644,95 @@ test "⏎ on a draft's row on Plan opens the draft modal, and e edits the step p
     var got: [1024]u8 = undefined;
     const len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon edit 833") != null);
+}
+
+const sendback_board =
+    \\{"tickets":[{"id":12,"repo":"arena","title":"Free after a send-back","status":"todo","stage":"failed"}],
+    \\"needs_you":[{"id":"sendback:12","kind":"sendback","ticket":12,"repo":"arena","text":"✗ #12 arena  sent back, free: red",
+    \\ "actions":[{"key":"G","label":"give","argv":null,"needs":"pick"},{"key":"⏎","label":"start","argv":null,"needs":"surface"}]}]
+;
+
+/// An app on `sendback_board`, its Your move in the feed, or with `plan`, as rows of the plan.
+fn sendbackApp(sent: std.Io.File, plan: bool) !App {
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 40;
+    app.board = try tickets.Board.parse(std.testing.allocator, if (plan) sendback_board ++ ",\"plan\":{}}" else sendback_board ++ "}");
+    if (!plan) {
+        app.home = .{ .focus = .orchestrator };
+        return app;
+    }
+    app.roles = @import("parts.zig").roles();
+    app.home = .{ .focus = .plan };
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    app.home.?.plan_pick = for (0..sheet.picks) |i| {
+        if (sheet.picked(i).?.kind == .need) break i;
+    } else return error.NoNeedRow;
+    return app;
+}
+
+test "a sent-back item's ⏎ start runs babylon start, from the feed and from its Your move row" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try sendbackApp(sent, false);
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    try std.testing.expect(try win_feed.press(&app, "\r"));
+    var got: [1024]u8 = undefined;
+    var len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'start' '12'") != null);
+
+    const before = len;
+    var planned = try sendbackApp(sent, true);
+    defer planned.pending.deinit(std.testing.allocator);
+    defer planned.board.?.deinit();
+    try planned.planKey("\r");
+    len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[before..len], "'babylon' 'start' '12'") != null);
+}
+
+test "a sent-back item's G give opens the picker of running Claudes, from the feed and from its row" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try sendbackApp(sent, false);
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    try std.testing.expect(try win_feed.press(&app, "G"));
+    try std.testing.expectEqual(@as(?usize, 0), app.home.?.giving);
+    try std.testing.expectEqual(@as(u32, 12), app.home.?.giving_ticket);
+
+    var planned = try sendbackApp(sent, true);
+    defer planned.pending.deinit(std.testing.allocator);
+    defer planned.board.?.deinit();
+    try planned.planKey("G");
+    try std.testing.expectEqual(@as(?usize, 0), planned.home.?.giving);
+    try std.testing.expectEqual(@as(u32, 12), planned.home.?.giving_ticket);
+}
+
+test "the card a sent-back item opens starts its ticket on ⏎ and gives it on G, the plan's pick on the item's row" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try sendbackApp(sent, true);
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    app.home.?.detail = 12;
+    try app.homeKey("\r");
+    var got: [1024]u8 = undefined;
+    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'start' '12'") != null);
+
+    app.home.?.detail = 12;
+    try app.homeKey("G");
+    try std.testing.expectEqual(@as(?usize, 0), app.home.?.giving);
+    try std.testing.expectEqual(@as(u32, 12), app.home.?.giving_ticket);
 }
 
 test "an item of any kind runs its action's argv: ⏎ on a digest with no ticket and no repo" {

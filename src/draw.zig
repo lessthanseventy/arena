@@ -1790,10 +1790,10 @@ fn columnOpen(app: *const App, view: app_mod.HomeView) bool {
 
 /// The boxes opened from Plan, over it or, where it has no room beside them, in its place.
 fn planBoxes(app: *App, w: *Writer, view: app_mod.HomeView) !void {
-    if (view.giving) |picked| if (app.pickedCard()) |card| {
+    if (view.giving) |picked| {
         app.grab.cover();
-        try win_modal.giveBox(app, w, card.id, picked);
-    };
+        try win_modal.giveBox(app, w, view.giving_ticket, picked);
+    }
     if (view.into != null) {
         app.grab.cover();
         try win_into.paint(app, w);
@@ -2696,6 +2696,33 @@ fn epicApp(roles: bool, view_h: u16, width: u16) !App {
     app.home = .{};
     app.side_folded = true;
     return app;
+}
+
+test "G on a sent-back item draws the give box for its ticket while the plan's pick is the item's row" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":12,"repo":"arena","title":"Free after a send-back","status":"todo","stage":"failed"}],
+        \\"needs_you":[{"id":"sendback:12","kind":"sendback","ticket":12,"repo":"arena","text":"✗ #12 arena  sent back, free: red",
+        \\ "actions":[{"key":"G","label":"give","argv":null,"needs":"pick"},{"key":"⏎","label":"start","argv":null,"needs":"surface"}]}],
+        \\"plan":{}}
+    );
+    defer board.deinit();
+    var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
+    app.view_h = 31;
+    app.roles = bench.roles();
+    app.home = .{ .alone = false, .focus = .plan, .giving = 0, .giving_ticket = 12 };
+    app.side_folded = true;
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    app.home.?.plan_pick = for (0..sheet.picks) |i| {
+        if (sheet.picked(i).?.kind == .need) break i;
+    } else return error.NoNeedRow;
+    try std.testing.expect(app.pickedCard() == null);
+    var buf: [65536]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try planView(&app, &out, app.home.?);
+    try std.testing.expect(std.mem.indexOf(u8, out.buffered(), "give #12 to") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.buffered(), "no Claude is running") != null);
 }
 
 test "Home in Workbench's look: the focal goal is the one with a step building, and Planning's goal row has its bar in its repo's hue" {

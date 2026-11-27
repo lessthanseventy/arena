@@ -178,6 +178,7 @@ pub fn act(app: *App, item: feed.Item, key: []const u8) !bool {
     if (std.mem.eql(u8, needs, "pick")) {
         app.pickPlan(ticket);
         app.home.?.giving = 0;
+        app.home.?.giving_ticket = ticket;
         app.dirty = true;
     }
     return true;

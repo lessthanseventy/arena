@@ -1680,6 +1680,17 @@ digest_prefix=${digest_line%%⏎ seen*}
 mouse 0 $((${#digest_prefix} + 2)) $digest_row M
 mouse 0 $((${#digest_prefix} + 2)) $digest_row m
 check "and a click on its seen does the same" await last 'digest ok'
+# a sent-back item's start and give carry no argv: arena builds them
+print -r -- '{"tickets":[{"id":12,"repo":"arena","title":"Free after a send-back","kind":"ticket","status":"todo","stage":"failed","priority":"med","blocked_by":[]}],"needs_you":[{"id":"sendback:12","kind":"sendback","ticket":12,"repo":"arena","text":"✗ #12 arena  sent back, free: red","actions":[{"key":"G","label":"give","argv":null,"needs":"pick"},{"key":"⏎","label":"start","argv":null,"needs":"surface"}]}]}' | addplan
+key ']'
+see 'G give   ⏎ start'
+: >$tmp/babylon
+key Enter
+check "⏎ on a sent-back item runs babylon start on its ticket" await last 'start 12'
+key G
+check "and G opens the give box for its ticket" see 'give #12 to'
+key Escape
+gone 'give #12 to'
 # a ticket to try is a tile with a row for each check, and y on each check settles it: the tile leaves
 trying() {
   local one=${1:-null} two=${2:-null}
