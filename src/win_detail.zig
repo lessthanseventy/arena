@@ -7,7 +7,7 @@ const sheets = @import("plan.zig");
 const App = app_mod.App;
 
 /// What a window knows of its row that the card does not: next's why and what it waits on, the
-/// stage line, in `words` and `wait` when it has them.
+/// stage line, each empty when it has none.
 pub const Window = struct {
     ticket: u32,
     title: []const u8,

@@ -3127,7 +3127,8 @@ test "an opened row at a window's foot scrolls the window so its keys are in vie
         \\"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
     );
     defer board.deinit();
-    var app = wrapApp(&board, 60);
+    // 34 rows leave next a body of 6: its 5 rows and the 5-row block do not fit unscrolled
+    var app = wrapApp(&board, 34);
     defer app.grab.deinit(std.testing.allocator);
     var sheet: sheets.Sheet = undefined;
     const first = app.planRect(.next);
@@ -3143,6 +3144,7 @@ test "an opened row at a window's foot scrolls the window so its keys are in vie
         if (row.kind == .buttons) keys_at = i;
     }
     try std.testing.expect(keys_at > 0);
+    try std.testing.expect(top > 0);
     try std.testing.expect(keys_at >= top and keys_at < top + body);
 }
 
