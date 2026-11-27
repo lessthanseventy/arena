@@ -4225,3 +4225,26 @@ test "Your move marks the item the orchestrator points at ◆ orch once and draw
     try std.testing.expectEqual(@as(usize, 0), win_foot.count(&app));
     app.board = was;
 }
+
+test "a card opened on a backlog epic with a three-paragraph body draws the first paragraph's words" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"backlog":[{"id":1193,"repo":"arena","kind":"epic","title":"Lead with goals","status":"backlog","priority":"med","blocked_by":[]}],
+        \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer board.deinit();
+    var app = homeApp(&board);
+    defer app.grab.deinit(std.testing.allocator);
+    defer app.detail.deinit(std.testing.allocator);
+    app.view_w = 60;
+    app.view_h = 30;
+    app.roles = bench.roles();
+    app.home = .{ .focus = .plan, .detail = 1193 };
+    try app.detail.appendSlice(std.testing.allocator, "#1193 Lead with goals\nno repo \u{b7} backlog \u{b7} med\n\nStep back: put the meta first.\n\nSecond paragraph words.\n\nThird paragraph words.\n");
+    var buf: [1 << 18]u8 = undefined;
+    var out: Writer = .fixed(&buf);
+    try planView(&app, &out, app.home.?);
+    var line: [1024]u8 = undefined;
+    var seen = false;
+    for (0..app.view_h) |y| seen = seen or std.mem.indexOf(u8, try screenRow(out.buffered(), app.term_w, y, &line), "Step back: put the meta first.") != null;
+    try std.testing.expect(seen);
+}

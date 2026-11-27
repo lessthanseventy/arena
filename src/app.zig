@@ -4169,6 +4169,11 @@ pub const App = struct {
         view.plan_pick = pick;
         if (row.kind == .goal and m.x >= app.planRect(row.win).x + 3 and m.x < app.planRect(row.win).x + 5) return win_goals.fold(app, row.ticket.?);
         if (row.kind == .chips) return win_unplanned.chipClick(app, m);
+        const kept_idea = row.kind == .idea and sheets.Sheet.ideaState(app.board.?.plan().?.ideas[row.item]) == .idea;
+        if (!picked and (row.kind == .backlog or kept_idea)) {
+            _ = try app.openDetail(row.ticket orelse return);
+            return;
+        }
         if (row.kind == .todo) {
             win_unplanned.todoPress(app, row);
         } else if (row.kind == .goal_ticket) {
@@ -4179,8 +4184,6 @@ pub const App = struct {
             try win_move.open(app, &row);
         } else if (opensInPlace(&row)) {
             try app.togglePlanOpen(&row);
-        } else if (picked and row.kind == .idea and sheets.Sheet.ideaState(app.board.?.plan().?.ideas[row.item]) == .idea) {
-            _ = try app.openDetail(row.ticket orelse return);
         } else if (picked) try app.planAct(&row, "\r");
     }
 
@@ -8480,13 +8483,13 @@ test "the plan's pick lights its ticket's Your move item dim in the feed, and th
     try eq(@as(usize, 1), view.plan_pick);
 }
 
-test "a click on a picked idea opens its card, with the body babylon wrote; ⏎ still plans it" {
+test "a click on a kept idea opens its card" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
     defer sent.close(std.testing.io);
     var app = try tryApp(sent,
-        \\{"tickets":[],"plan":{"ideas":[{"epic":829,"title":"garden","state":"idea"}]}}
+        \\{"tickets":[],"plan":{"ideas":[{"epic":828,"title":"first","state":"idea"},{"epic":829,"title":"garden","state":"idea"}]}}
     );
     defer app.pending.deinit(std.testing.allocator);
     defer app.detail.deinit(std.testing.allocator);
@@ -8496,8 +8499,7 @@ test "a click on a picked idea opens its card, with the body babylon wrote; ⏎ 
     var sheet: sheets.Sheet = undefined;
     try std.testing.expect(app.planSheet(&sheet));
     var at: usize = 0;
-    while (sheet.rows[at].kind != .idea) at += 1;
-    app.home.?.plan_pick = sheet.rows[at].pick.?;
+    while (sheet.rows[at].kind != .idea or sheet.rows[at].ticket.? != 829) at += 1;
     try app.planClick(.{ .code = 0, .x = 3, .y = @intCast(2 + at), .release = false });
     try std.testing.expectEqual(@as(?u32, 829), app.home.?.detail);
 }
