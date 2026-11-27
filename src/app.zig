@@ -11153,19 +11153,31 @@ test "a stalled ticket is a stuck item in Needs you with ⏎ open pane, and it g
 }
 
 test "a picked project narrows new tickets to its home repo" {
-    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
-    app.board = try tickets.Board.parse(std.testing.allocator,
-        \\{"tickets":[],"projects":[{"name":"Tlon","repos":["tlon"]},{"name":"Ficciones","home":"/home/a/menard","repos":["arena","menard"]},{"name":"Pair","repos":["x","y"]}]}
-    );
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = undefined;
+    try movesApp(&app, sent, .planning);
+    defer app.pending.deinit(std.testing.allocator);
     defer app.board.?.deinit();
-    app.home = .{ .focus = .plan };
+    app.board.?.deinit();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"projects":[{"name":"Tlon","repos":["tlon"]},{"name":"Ficciones","home":"/home/a/menard","repos":["arena","menard"]},{"name":"Pair","repos":["x","y"]},{"name":"Empty","repos":[]}]}
+    );
     const eq = std.testing.expectEqual;
+    var got: [4096]u8 = undefined;
     try eq(@as(?[]const u8, null), app.planRepo());
+    try eq(@as(usize, 3), app.scopeCount());
     app.home.?.plan_repo = 1;
     try std.testing.expectEqualStrings("tlon", app.planRepo().?);
+    try app.newTicket();
+    try expectSent(sent, &got, "babylon new --repo tlon ||");
     app.home.?.plan_repo = 2;
     try std.testing.expectEqualStrings("menard", app.planRepo().?);
     try eq(@as(usize, 2), app.planScope().len);
+    try app.newTicket();
+    try expectSent(sent, &got, "babylon new --repo menard ||");
     app.home.?.plan_repo = 3;
     try std.testing.expectEqualStrings("x", app.planRepo().?);
 }

@@ -549,6 +549,13 @@ pub const Board = struct {
                 overlap.files = files;
             }
         }
+        var made: usize = 0;
+        for (parsed.value.projects) |project| {
+            if (project.repos.len == 0) continue;
+            parsed.value.projects[made] = project;
+            made += 1;
+        }
+        parsed.value.projects = parsed.value.projects[0..made];
         if (parsed.value.plan) |*given| {
             const today = &given.landed_today;
             var kept_ids: usize = 0;
@@ -835,7 +842,8 @@ pub const Board = struct {
         return if (b.parsed.value.plan) |given| given.next else &.{};
     }
 
-    /// The projects babylon has made, in its order.
+    /// The projects babylon has made, in its order; one with no repo has nothing to narrow to, so
+    /// is left out.
     pub fn projects(b: *const Board) []const Project {
         return b.parsed.value.projects;
     }
@@ -1026,7 +1034,7 @@ test "a project's goal and settings are read, and its auto word is held, auto or
     try std.testing.expectEqual(@as(u32, 4), ps[0].goal.?.total);
     try std.testing.expectEqualStrings("‖ held", ps[0].autoWord(false));
     try std.testing.expectEqualStrings("○ manual", ps[1].autoWord(true));
-    try std.testing.expectEqualStrings("◐ auto", ps[2].autoWord(true));
+    try std.testing.expectEqual(@as(usize, 2), ps.len);
     try std.testing.expect(b.inProject(1, "y") and !b.inProject(1, "x"));
 }
 

@@ -1650,7 +1650,8 @@ pub fn planAutoSwitch(app: *const App) ?struct { x: u16, w: u16 } {
     return .{ .x = @as(u16, @intCast(head.xOf(head_auto))), .w = @intCast(cellCount(head.pieces[head_auto].text)) };
 }
 
-/// The repo filter in the plan's head: `every` and each repo, the one the plan is narrowed to lit.
+/// The picker in the plan's head: `all` and each project (`every` and each repo when there is
+/// none), the one the plan is narrowed to in `[ ]`.
 fn repoTabs(app: *App, w: *Writer, view: app_mod.HomeView) !void {
     var slots: [33]App.RepoTab = undefined;
     const found = app.planRepoTabs(&slots);
@@ -1667,7 +1668,7 @@ fn repoTabs(app: *App, w: *Writer, view: app_mod.HomeView) !void {
         try w.writeAll(if (lit) "]" else " ");
         if (i + 1 < found.n) {
             try pen.set(w, ink(app, "dim", 8), null);
-            try w.writeAll("·");
+            try w.writeAll(" · ");
         }
     }
     try pen.set(w, .{}, null);

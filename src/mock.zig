@@ -1414,7 +1414,7 @@ fn planHead(sc: *Scene, screen: Screen) void {
         x += c.print(x, 0, word, .{ .fg = if (on) s.on_accent else s.dim, .bg = if (on) s.accent else s.raised, .bold = on }, 12) + 1;
     }
     x += 2;
-    const picker = if (sc.board.projects().len > 0) "all · Ficciones · asterion   / find" else "every · arena · babylon · tlon · …   / find";
+    const picker = if (sc.board.projects().len > 0) "[all      ] ·  Ficciones  ·  asterion    / find" else "every · arena · babylon · tlon · …   / find";
     x += c.print(x, 0, picker, .{ .fg = s.dim, .bg = s.raised }, 60);
     const plan = sc.board.plan().?;
     const tail = sc.fmt("◐ auto 4/6   ◆ orch working 12s   ✓ {d} today   ▲ {d}   ≡", .{ plan.landed_today.count, sc.board.needsYou().len });
