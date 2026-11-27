@@ -132,11 +132,13 @@ pub const Grab = struct {
 
     /// The frame drew `text` from cell (`x`, `y`). `dropped` is set for a row that runs on from
     /// the one above, with the number of spaces the wrap took out between them.
-    pub fn row(g: *Grab, gpa: std.mem.Allocator, x: u16, y: u16, text: []const u8, dropped: ?usize) !void {
+    pub fn row(g: *Grab, gpa: std.mem.Allocator, x: u16, y: u16, line: []const u8, dropped: ?usize) !void {
+        // a run-on row's indent is layout, not text: the copy joins it by the break's own spaces
+        const text = if (dropped != null) std.mem.trimStart(u8, line, " ") else line;
         if (text.len == 0) return;
         try g.rows.append(gpa, .{
             .pane = g.cur,
-            .x = x,
+            .x = x + @as(u16, @intCast(line.len - text.len)),
             .y = y,
             .at = @intCast(g.bytes.items.len),
             .len = @intCast(text.len),

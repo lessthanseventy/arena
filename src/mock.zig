@@ -616,14 +616,14 @@ const Scene = struct {
                 _ = sc.c.print(x, y + row, rest, ink, w);
                 return row + 1;
             }
-            const head = text_mod.clip(rest, w);
-            const cut = std.mem.lastIndexOfScalar(u8, head, ' ') orelse head.len;
             if (row + 1 == rows) {
-                _ = sc.c.print(x, y + row, rest, ink, w);
+                var buf: [256]u8 = undefined;
+                _ = sc.c.print(x, y + row, text_mod.cut(&buf, rest, w), ink, w);
                 return row + 1;
             }
-            _ = sc.c.print(x, y + row, rest[0..cut], ink, w);
-            rest = std.mem.trimStart(u8, rest[cut..], " ");
+            const broken = text_mod.breakLine(rest, w);
+            _ = sc.c.print(x, y + row, broken.line, ink, w);
+            rest = broken.rest;
         }
         return row;
     }

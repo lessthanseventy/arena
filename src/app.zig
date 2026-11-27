@@ -1,6 +1,7 @@
 const std = @import("std");
 const vt = @import("ghostty-vt");
 const control = @import("control.zig");
+const text_mod = @import("text.zig");
 const layout = @import("layout.zig");
 const keys = @import("keys.zig");
 const menu = @import("menu.zig");
@@ -5063,8 +5064,11 @@ pub const App = struct {
             var it = DetailLines.init(text, inner);
             var n: usize = 0;
             while (it.next()) |line| : (n += 1) {
-                if (n == rows or head.n == head.lines.len) return;
-                head.lines[head.n] = line;
+                if (n == rows or head.n == head.lines.len or head.used + line.len > head.buf.len) return;
+                const slot = head.buf[head.used..][0..line.len];
+                @memcpy(slot, line);
+                head.used += line.len;
+                head.lines[head.n] = slot;
                 head.kinds[head.n] = kind;
                 head.joins[head.n] = it.dropped;
                 head.n += 1;
@@ -7466,12 +7470,8 @@ pub fn detailWidth(view_w: u16) struct { box: u16, inner: u16 } {
 /// A card's title on two rows of `width`: the first cut at its last space that fits, the second
 /// the rest, for the drawing to cut.
 pub fn titleLines(title: []const u8, width: usize) [2][]const u8 {
-    var it = std.unicode.Utf8View.initUnchecked(title).iterator();
-    var n: usize = 0;
-    while (n < width) : (n += 1) _ = it.nextCodepointSlice() orelse return .{ title, "" };
-    if (it.i == title.len) return .{ title, "" };
-    const cut = if (title[it.i] == ' ') it.i else std.mem.lastIndexOfScalar(u8, title[0..it.i], ' ') orelse it.i;
-    return .{ std.mem.trimEnd(u8, title[0..cut], " "), std.mem.trimStart(u8, title[cut..], " ") };
+    const broken = text_mod.breakLine(title, width);
+    return .{ broken.line, broken.rest };
 }
 
 /// A title wrapped to `width` characters a line at a time, cut at spaces where it can.
@@ -7492,8 +7492,9 @@ pub const TitleLines = struct {
     }
 };
 
-/// A card's detail as the box shows it: each of its lines cut to `inner` characters and run on
-/// under one another, the space at a cut dropped.
+/// A card's detail as the box shows it: each of its lines broken to `inner` cells at words and
+/// run on under one another, under the text of a numbered or bulleted one, the space at a break
+/// dropped. A line returned lasts until the next.
 pub const DetailLines = struct {
     lines: std.mem.SplitIterator(u8, .scalar),
     rest: ?[]const u8 = null,
@@ -7502,6 +7503,8 @@ pub const DetailLines = struct {
     /// took out between them.
     dropped: ?usize = null,
     gap: usize = 0,
+    indent: usize = 0,
+    buf: [256]u8 = undefined,
 
     pub fn init(text: []const u8, inner: usize) DetailLines {
         return .{ .lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, text, "\n"), '\n'), .inner = inner };
@@ -7509,15 +7512,23 @@ pub const DetailLines = struct {
 
     pub fn next(it: *DetailLines) ?[]const u8 {
         it.dropped = if (it.rest != null) it.gap else null;
-        const rest = it.rest orelse it.lines.next() orelse return null;
-        var cut = std.unicode.Utf8View.initUnchecked(rest).iterator();
-        var n: usize = 0;
-        while (n < it.inner) : (n += 1) _ = cut.nextCodepointSlice() orelse break;
-        const line = rest[0..cut.i];
-        const after = std.mem.trimStart(u8, rest[cut.i..], " ");
-        it.gap = rest.len - cut.i - after.len;
-        it.rest = if (after.len > 0 and line.len > 0) after else null;
-        return line;
+        var margin: usize = 0;
+        const text = if (it.rest) |rest| blk: {
+            margin = it.indent;
+            break :blk rest;
+        } else blk: {
+            const line = it.lines.next() orelse return null;
+            const hung = text_mod.hang(line);
+            it.indent = if (hung * 2 < it.inner) hung else 0;
+            break :blk line;
+        };
+        const broken = text_mod.breakLine(text, it.inner -| margin);
+        it.gap = broken.gap;
+        it.rest = if (broken.rest.len > 0) broken.rest else null;
+        if (margin == 0 or margin + broken.line.len > it.buf.len) return broken.line;
+        @memset(it.buf[0..margin], ' ');
+        @memcpy(it.buf[margin..][0..broken.line.len], broken.line);
+        return it.buf[0 .. margin + broken.line.len];
     }
 };
 
@@ -8107,11 +8118,24 @@ test "a card's modal runs a long title on over as many lines as it takes, none o
     try std.testing.expect(std.mem.endsWith(u8, last, "kappa lambda"));
 }
 
-test "a card's detail runs its long lines on, cut at the box's width" {
+test "a card's detail runs its long lines on, broken at words within the box's width" {
     var lines = DetailLines.init("#3 Title\n\none two three four\n", 8);
-    const want = [_][]const u8{ "#3 Title", "", "one two ", "three fo", "ur" };
+    const want = [_][]const u8{ "#3 Title", "", "one two", "three", "four" };
     for (want) |line| try std.testing.expectEqualStrings(line, lines.next().?);
     try std.testing.expectEqual(null, lines.next());
+}
+
+test "a numbered step's second line sits under its text, and a long word is split" {
+    var lines = DetailLines.init("1. right and wrong, then y/n\nabcdefghijkl", 16);
+    try std.testing.expectEqualStrings("1. right and", lines.next().?);
+    try std.testing.expectEqual(@as(?usize, null), lines.dropped);
+    try std.testing.expectEqualStrings("   wrong, then", lines.next().?);
+    try std.testing.expectEqual(@as(?usize, 1), lines.dropped);
+    try std.testing.expectEqualStrings("   y/n", lines.next().?);
+    try std.testing.expectEqualStrings("abcdefghijkl", lines.next().?);
+    var narrow = DetailLines.init("abcdefghijkl", 5);
+    try std.testing.expectEqualStrings("abcde", narrow.next().?);
+    try std.testing.expectEqualStrings("fghij", narrow.next().?);
 }
 
 test "an Esc read with keys after it is a key of its own, and an arrow is three bytes" {
@@ -9148,7 +9172,7 @@ test "a selection in the modal drops on the j key, and when j scrolls the text u
     app.home = .{ .detail = 7 };
     var body: std.ArrayList(u8) = .empty;
     defer body.deinit(std.testing.allocator);
-    for (0..200) |n| try body.print(std.testing.allocator, "word{d} ", .{n});
+    for (0..200) |n| try body.print(std.testing.allocator, "{d}word ", .{n});
     try app.detail.appendSlice(std.testing.allocator, body.items);
 
     // the key itself drops it, with no frame drawn in between

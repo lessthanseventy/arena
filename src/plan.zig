@@ -617,21 +617,17 @@ pub const Sheet = struct {
     fn spread(s: *Sheet, width: usize, left: []const u8, right: []const u8) struct { text: []const u8, tail_at: usize } {
         const right_w = text_mod.cells(right);
         const room = width -| right_w -| 1;
-        var shown = left;
-        var cut = false;
-        if (text_mod.cells(left) > room) {
-            shown = text_mod.clip(left, room -| 1);
-            cut = true;
-        }
-        const ellipsis: []const u8 = if (cut) "…" else "";
-        const pad = width -| text_mod.cells(shown) -| @intFromBool(cut) -| right_w;
-        const text = s.print("{s}{s}{s}{s}", .{ shown, ellipsis, spaces(pad), right });
-        return .{ .text = text, .tail_at = shown.len + ellipsis.len + pad };
+        var buf: [256]u8 = undefined;
+        const shown = text_mod.cut(&buf, left, room);
+        const pad = width -| text_mod.cells(shown) -| right_w;
+        const text = s.print("{s}{s}{s}", .{ shown, spaces(pad), right });
+        return .{ .text = text, .tail_at = shown.len + pad };
     }
 
     fn clipped(s: *Sheet, width: usize, line: []const u8) []const u8 {
-        if (text_mod.cells(line) <= width) return line;
-        return s.print("{s}…", .{text_mod.clip(line, width -| 1)});
+        var buf: [256]u8 = undefined;
+        const shown = text_mod.cut(&buf, line, width);
+        return if (shown.ptr == line.ptr) line else s.print("{s}", .{shown});
     }
 
     /// The plan as rows `width` cells wide, `epoch` the time now, the stages in `unfolded` shown

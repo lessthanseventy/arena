@@ -137,7 +137,8 @@ pub fn window(w: *Writer, r: Roles, x: usize, y: usize, width: usize, h: usize, 
     }
     var nbuf: [20]u8 = undefined;
     const tally = if (count) |n| std.fmt.bufPrint(&nbuf, " │ {d}", .{n}) catch "" else "";
-    const named = text_mod.clip(title, width -| (7 + text_mod.cells(tally)));
+    var named_buf: [256]u8 = undefined;
+    const named = text_mod.cut(&named_buf, title, width -| (7 + text_mod.cells(tally)));
     try moveTo(w, x, y);
     try paint(w, edge, r.panel, false);
     try w.writeAll("┌─ ");
@@ -175,7 +176,8 @@ pub fn titleBar(w: *Writer, r: Roles, x: usize, y: usize, width: usize, name: []
     try paint(w, if (focused) r.accent else r.dim, face, false);
     try w.writeAll("◆ ");
     try paint(w, if (focused) r.text else r.dim, face, true);
-    const named = text_mod.clip(name, width -| 4);
+    var named_buf: [256]u8 = undefined;
+    const named = text_mod.cut(&named_buf, name, width -| 4);
     try w.writeAll(named);
     const from = x + 3 + text_mod.cells(named) + 1;
     if (focused and from < x + width) {

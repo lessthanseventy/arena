@@ -1,4 +1,5 @@
 const std = @import("std");
+const text_mod = @import("text.zig");
 const vt = @import("ghostty-vt");
 const layout = @import("layout.zig");
 const menu = @import("menu.zig");
@@ -415,11 +416,10 @@ pub fn agentGlyph(app: *const App, win: *const Window) u21 {
 /// `text` in exactly `width` cells: cut with an ellipsis, or padded.
 pub fn fitted(w: *Writer, text: []const u8, width: usize) !void {
     if (width == 0) return;
-    const cut = cellCount(text) > width;
-    const shown = clip(text, if (cut) width - 1 else width);
+    var buf: [512]u8 = undefined;
+    const shown = text_mod.cut(&buf, text, width);
     try w.writeAll(shown);
-    if (cut) try w.writeAll("…");
-    for (cellCount(shown) + @intFromBool(cut)..width) |_| try w.writeAll(" ");
+    for (cellCount(shown)..width) |_| try w.writeAll(" ");
 }
 
 const spinner = [_]u21{ '◐', '◓', '◑', '◒' };
@@ -507,16 +507,7 @@ pub fn clip(text: []const u8, max: usize) []const u8 {
 /// `text` in `max` cells: whole when it fits, else cut at a word boundary within six cells of the
 /// end when there is one, and ended with `…`. `buf` holds the result.
 pub fn clipMark(buf: []u8, text: []const u8, max: usize) []const u8 {
-    if (cellCount(text) <= max) return text;
-    if (max == 0) return "";
-    var head = clip(text, max - 1);
-    const tail = lastCells(head, 6);
-    if (std.mem.lastIndexOfScalar(u8, tail, ' ')) |sp| {
-        const at = head.len - tail.len + sp;
-        if (at > 0) head = head[0..at];
-    }
-    head = std.mem.trimEnd(u8, head, " ");
-    return std.fmt.bufPrint(buf, "{s}…", .{head}) catch head;
+    return text_mod.cut(buf, text, max);
 }
 
 /// What of `name` goes on a second line when it does not fit `room` cells: the words after the
@@ -552,6 +543,7 @@ pub fn goalBar(w: *Writer, r: theme.Roles, x: usize, y: usize, room: usize, goal
     if (tail.len > 0) try bench.say(w, x + 1 + bar_w + cellCount(label) + 2, y, tail, tail_ink, face, false);
 }
 
+/// The last `max` characters of `text`.
 /// The last `max` characters of `text`.
 fn lastCells(text: []const u8, max: usize) []const u8 {
     var n = cellCount(text);
@@ -943,7 +935,7 @@ fn benchFind(app: *const App, w: *Writer, r: theme.Roles, x: usize, text: []cons
     const hinted = lead + cellCount(text) + cellCount(hint) <= room;
     const left = room -| lead -| (if (hinted) cellCount(hint) else 0);
     var cut: [204]u8 = undefined;
-    const shown = if (cellCount(text) <= left) text else (std.fmt.bufPrint(&cut, "{s}…", .{clip(text, left -| 1)}) catch text);
+    const shown = text_mod.cut(&cut, text, left);
     try bench.fill(w, x, 0, room, r.raised);
     if (room < lead) return null;
     try bench.say(w, x, 0, "/ ", r.accent, r.raised, true);
@@ -3022,7 +3014,7 @@ test "a title too long for its slot is cut at a word boundary and ends in …, a
     var buf: [64]u8 = undefined;
     try std.testing.expectEqualStrings("only your move", clipMark(&buf, "only your move", 14));
     try std.testing.expectEqualStrings("only your…", clipMark(&buf, "only your move is shown", 13));
-    try std.testing.expectEqualStrings("Portable: transpor…", clipMark(&buf, "Portable: transportation", 19));
+    try std.testing.expectEqualStrings("Portable:…", clipMark(&buf, "Portable: transportation", 19));
     try std.testing.expectEqualStrings("é…", clipMark(&buf, "éééé", 2));
 }
 

@@ -120,25 +120,11 @@ test "an empty field plans and keeps nothing, and a running command takes only a
 /// `out`; as many lines as fit. The count.
 pub fn wrap(text: []const u8, width: usize, out: [][]const u8) usize {
     var n: usize = 0;
-    var start: usize = 0;
-    while (start < text.len and n < out.len) {
-        var i = start;
-        var count: usize = 0;
-        var space: ?usize = null;
-        while (i < text.len and count < width) : (count += 1) {
-            if (text[i] == ' ') space = i;
-            i += std.unicode.utf8ByteSequenceLength(text[i]) catch 1;
-        }
-        i = @min(i, text.len);
-        if (i < text.len and text[i] != ' ') if (space) |at| if (at > start) {
-            out[n] = text[start..at];
-            n += 1;
-            start = at + 1;
-            continue;
-        };
-        out[n] = text[start..i];
-        n += 1;
-        start = if (i < text.len and text[i] == ' ') i + 1 else i;
+    var rest = text;
+    while (rest.len > 0 and n < out.len) : (n += 1) {
+        const broken = @import("text.zig").breakLine(rest, width);
+        out[n] = broken.line;
+        rest = broken.rest;
     }
     return n;
 }

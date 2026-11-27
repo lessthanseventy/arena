@@ -2,6 +2,7 @@
 //! else; the tickets in flight are Plan's.
 const std = @import("std");
 const tickets = @import("board.zig");
+const text_mod = @import("text.zig");
 const Card = tickets.Card;
 const runcheck = @import("runcheck.zig");
 
@@ -281,21 +282,8 @@ fn openSteps(need: tickets.Need) usize {
 /// The rows of `text` in `cells` cells, cut at spaces, at most `rows` of them, the last ending in
 /// `…` when it holds no more: the first row and what is left.
 fn wrapRow(text: []const u8, cells: usize, last: bool) struct { row: []const u8, rest: []const u8 } {
-    if (cellCount(text) <= cells) return .{ .row = text, .rest = "" };
-    var end: usize = 0;
-    var seen: usize = 0;
-    var space: ?usize = null;
-    var at: usize = 0;
-    while (at < text.len) {
-        const len = std.unicode.utf8ByteSequenceLength(text[at]) catch 1;
-        if (seen == cells) break;
-        if (text[at] == ' ') space = at;
-        at += len;
-        seen += 1;
-        end = at;
-    }
-    const cut = if (last) end else space orelse end;
-    return .{ .row = std.mem.trimEnd(u8, text[0..cut], " "), .rest = std.mem.trimStart(u8, text[cut..], " ") };
+    const broken = text_mod.breakLine(text, if (last and cellCount(text) > cells) cells -| 1 else cells);
+    return .{ .row = broken.line, .rest = broken.rest };
 }
 
 /// A to-try need as a tile: its title and age, the machine's line, and a row for each check,
