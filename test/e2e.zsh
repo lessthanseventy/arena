@@ -1520,6 +1520,7 @@ planless='"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newes
 addplan() { local j=$(cat); print -r -- "${j%\}},$planless}" >$tmp/run/babylon/board.json }
 print -r -- '{"tickets":[],"needs_you":[{"id":"ask:6","kind":"ask","ticket":307,"repo":"tlon","text":"#307 tlon  asks: Which?","doc":null,"actions":[{"key":"1","label":"One","argv":["babylon","answer","6","1"]}]}]}' | addplan
 key ']'
+await orch_lit
 see '#307 tlon  asks: Which\?'
 key o
 zselect -t 100
