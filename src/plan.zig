@@ -213,6 +213,12 @@ test "each window of a column starts one blank row below the one above, at both 
                         if (below == null or b.y < below.?.y) below = b;
                     }
                     if (below) |b| try std.testing.expectEqual(a.y + a.h + gap, b.y);
+                    // a window is drawn one cell narrower than its rect, so side by side a column is blank
+                    for (std.enums.values(Window)) |other| {
+                        const b = slot(other, screen, size[0], size[1], stack, rows);
+                        if (b.h == 0 or b.x <= a.x or b.y >= a.y + a.h or a.y >= b.y + b.h) continue;
+                        try std.testing.expect(a.x + a.w - 1 < b.x);
+                    }
                 }
             }
         }

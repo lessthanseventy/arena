@@ -3531,6 +3531,9 @@ test "Plan's rows start with a ▌ in their repo's colour, and a goal's card has
         try eq(@as(u21, '▌'), mark.cp);
         try eq(r.repo[hue], mark.fg);
     }
+    const name = try bench.probe(planning.buffered(), goals.x + 8, goals.y + 1);
+    try eq(@as(u21, 'g'), name.cp);
+    try eq(r.accent, name.fg);
 }
 
 test "an in-flight row with a Claude has no second line for its session, window and pane" {

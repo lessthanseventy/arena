@@ -562,7 +562,7 @@ const Scene = struct {
                 sc.c.fill(x, y, w, h, s.panel);
                 sc.c.fill(x, y, w, 1, if (focused) s.raised else s.tile);
                 sc.c.put(x + 1, y, '◆', .{ .fg = if (focused) s.accent else s.dim });
-                const n = sc.c.print(x + 3, y, title, .{ .fg = if (focused) s.text else s.dim, .bold = true }, w - 6);
+                const n = sc.c.print(x + 3, y, title, .{ .fg = s.accent, .bold = true }, w - 6);
                 if (count) |k| _ = sc.badge(x + 4 + n, y, k, s.dim);
                 if (focused) for (x + 6 + n + 4..x + w - 4) |xx| sc.c.put(xx, y, '═', .{ .fg = s.accent.mix(s.raised, 0.5) });
                 _ = sc.c.print(x + w - 3, y, "▫", .{ .fg = s.dim }, 1);
@@ -1026,7 +1026,6 @@ fn home(sc: *Scene, focused: bool) void {
             const what = if (wo.ticket) |t| sc.fmt("\u{f0c1} waits #{d}", .{t}) else sc.fmt("\u{f0c1} lane · #{d}", .{wo.until.?});
             _ = sc.chip(x0 + lw - 16, ly, what, s.dim, false);
         } else _ = sc.chip(x0 + lw - 16, ly, "ready", s.landed, false);
-        if (item.pinned()) _ = c.print(x0 + lw - 3, ly, "\u{f08d}", .{ .fg = s.accent }, 1);
         _ = c.print(at, ly + 1, item.why, .{ .fg = s.dim, .italic = true }, lw - (at - x0) - 4);
         if (picked and s.dir == .neon) {
             for (ly..ly + 2) |yy| c.put(x0 + 1, yy, '█', .{ .fg = s.accent });
@@ -1491,7 +1490,7 @@ fn doing(sc: *Scene) void {
         ticketRow(sc, 2, fy, left - 3, item.ticket, sc.fmt("{s} {s} {s}", .{ stateGlyph(state), if (stalled) "stalled" else state, sc.ago(item.since) }), if (stalled) s.failed else s.stateInk(state), false);
         fy += 1;
     }
-    nextWindow(sc, 1, y + flight_h + 1, left - 1, rows - flight_h - 1, false);
+    nextWindow(sc, 1, y + flight_h + 2, left - 1, rows - flight_h - 2, false);
 
     const lx = left + 1;
     var ly = sc.panel(lx, y, w - left, rows, "landed", plan.landed_today.count, false);
@@ -1530,7 +1529,7 @@ fn planning(sc: *Scene) void {
         const bw: usize = 16;
         const label = sc.fmt("{d}/{d}  {d}%", .{ goal.landed, goal.total, goal.landed * 100 / goal.total });
         const bx = gx + gw - bw - text_mod.cells(label) - 3;
-        _ = c.print(at, gy, goal.title, .{ .fg = s.text, .bold = true, .bg = row_bg }, bx -| at -| 12);
+        _ = c.print(at, gy, goal.title, .{ .fg = s.accent, .bold = true, .bg = row_bg }, bx -| at -| 12);
         if (i == 0) _ = c.print(bx - 10, gy, "◆ driving", .{ .fg = s.repoInk(repo), .bg = row_bg }, 9);
         sc.bar(bx, gy, bw, goal.landed, goal.total, s.repoInk(repo));
         _ = c.print(bx + bw + 1, gy, label, .{ .fg = s.dim, .bg = row_bg }, 14);
@@ -1545,8 +1544,8 @@ fn planning(sc: *Scene) void {
         }
     }
 
-    const no_y = 2 + goals_h + 1;
-    var ny = sc.panel(1, no_y, left - 1, rows - goals_h - 1, "no goal", plan.not_planned.count, false);
+    const no_y = 2 + goals_h + 2;
+    var ny = sc.panel(1, no_y, left - 1, rows - goals_h - 2, "no goal", plan.not_planned.count, false);
     var npx: usize = 3;
     var by_repo = plan.not_planned.by_repo.map.iterator();
     while (by_repo.next()) |entry| {
@@ -1555,12 +1554,12 @@ fn planning(sc: *Scene) void {
     ny += 1;
     var shown: usize = 0;
     for (sc.board.cards()) |card| {
-        if (ny + 1 >= no_y + rows - goals_h - 1) break;
+        if (ny + 1 >= no_y + rows - goals_h - 2) break;
         if (card.status != .todo or card.isEpic() or card.epic_id != null) continue;
         const place = for (plan.next, 1..) |item, k| {
             if (item.ticket == card.id) break k;
         } else 0;
-        ticketRow(sc, 2, ny, left - 3, card.id, if (place > 0) sc.fmt("next {d}", .{place}) else card.priority, s.dim, false);
+        ticketRow(sc, 2, ny, left - 3, card.id, if (place > 0) sc.fmt("next {d}", .{place}) else "", s.dim, false);
         ny += 1;
         shown += 1;
     }
@@ -1568,7 +1567,7 @@ fn planning(sc: *Scene) void {
     const rx = left + 1;
     const next_h = rows * 4 / 10;
     nextWindow(sc, rx, 2, w - left, next_h, false);
-    var by = sc.panel(rx, 2 + next_h + 1, w - left, rows - next_h - 1, "backlog", sc.board.backlog().len, false);
+    var by = sc.panel(rx, 2 + next_h + 2, w - left, rows - next_h - 2, "backlog", sc.board.backlog().len, false);
     for (sc.board.backlog()) |card| {
         if (by + 1 >= 2 + rows) break;
         if (card.isEpic()) continue;
