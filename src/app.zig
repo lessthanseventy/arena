@@ -5238,6 +5238,29 @@ pub const App = struct {
 
     const blank: [200]u8 = @splat(' ');
 
+    /// The cells of an untried check's `y` and `n` buttons and the gap between them.
+    fn pairWidth() usize {
+        const ok: ModalButton = .{ .action = .{ .row_ok = 0 }, .key = "y", .label = "", .x = 0, .y = 0 };
+        return ok.width() + 1 + ok.width();
+    }
+
+    /// The cells of a check's first row the pick button leaves for its text, in a modal `rect_w` wide.
+    fn pickRoom(rect_w: usize) usize {
+        return rect_w -| 4 -| pairWidth() -| 4;
+    }
+
+    /// The cells a check's rows are drawn in, the `▸` of the lit one counted: the pick button's text
+    /// room while it has `y`/`n` after it, else the whole `inner`.
+    fn checkRoom(rect_w: usize, inner: usize, untried: bool) usize {
+        return (if (untried) pickRoom(rect_w) else inner) -| 1;
+    }
+
+    /// The rows of the card's foot an `its Claude:` line may take: what the head and the note leave
+    /// of `total`, bar one for the body.
+    pub fn claudeLeft(total: usize, note_rows: usize, head_n: usize) usize {
+        return @min(3, total -| note_rows -| head_n -| 1);
+    }
+
     /// A button of the modal frame, where it is drawn and clicked: 0-based. It reads ` key label `.
     pub const ModalButton = struct {
         action: ModalAction,
@@ -5299,7 +5322,7 @@ pub const App = struct {
         subs_n: usize = 0,
 
         /// The rows the checks may wrap into, and the check that is never cut.
-        pub const Fit = struct { rows: usize, pick: ?usize };
+        pub const Fit = struct { rows: usize, pick: ?usize, rect_w: usize };
 
         const max_check_rows = 12;
         const blanks: [8]u8 = @splat(' ');
@@ -5311,11 +5334,11 @@ pub const App = struct {
             var wanted: [cap]usize = @splat(1);
             var prefix: [cap]usize = @splat(0);
             var width: [cap]usize = @splat(inner);
-            if (squeeze != null) for (checks[0..@min(checks.len, cap)], 0..) |check, i| {
+            if (squeeze) |f| for (checks[0..@min(checks.len, cap)], 0..) |check, i| {
                 var lead: [16]u8 = undefined;
                 prefix[i] = cellCount(std.fmt.bufPrint(&lead, "x {d} ", .{check.n}) catch "");
-                const buttons: usize = if (kind == .check and check.result == null) 10 else 0;
-                width[i] = inner -| prefix[i] -| buttons;
+                const room = if (kind == .check) App.checkRoom(f.rect_w, inner, check.result == null) else inner;
+                width[i] = room -| prefix[i];
                 var lines = DetailLines.init(check.text, @max(width[i], 1));
                 var n: usize = 0;
                 while (lines.next()) |_| n += 1;
@@ -5510,7 +5533,7 @@ pub const App = struct {
                 head.add(.dim, "", .{});
                 head.add(.heading, "Checks", .{});
             }
-            head.checkLines(.mark, card.checks, inner, if (squeeze) |f| .{ .rows = f.rows, .pick = null } else null);
+            head.checkLines(.mark, card.checks, inner, if (squeeze) |f| .{ .rows = f.rows, .pick = null, .rect_w = f.rect_w } else null);
         }
     }
 
@@ -5530,7 +5553,13 @@ pub const App = struct {
         var squeeze: ?CardHead.Fit = null;
         if (app.modalRect()) |rect| {
             const pick: ?usize = if (app.home) |view| (if (card.checks.len > 0) @min(@max(view.check_pick, 1), card.checks.len) - 1 else null) else null;
-            squeeze = .{ .rows = rect.h -| 6, .pick = pick };
+            var note_rows: usize = 0;
+            if (card.status == .done) {
+                var lines = DetailLines.init(card.session_note, inner);
+                while (lines.next()) |_| note_rows += 1;
+            }
+            const claude: usize = if (app.claudeOf(card) != null) 3 else 0;
+            squeeze = .{ .rows = rect.h -| 4 -| claude -| note_rows, .pick = pick, .rect_w = rect.w };
         }
         cardHeadOpen(card, inner, app.epoch, words, if (app.home) |view| view.details else false, if (app.home) |view| view.ask_first else false, squeeze, head);
         if (!app.sheeted(card)) return;
@@ -5769,7 +5798,7 @@ pub const App = struct {
                 const pair = ok.width() + 1 + no.width();
                 if (room < pair + 8) break;
                 const left = rect.x + 2 + @as(u16, @intCast(room)) - pair;
-                out[n] = .{ .action = .{ .pick = pos8 }, .key = "", .label = blank[0 .. left - 1 - (rect.x + 2) - 3], .x = rect.x + 2, .y = y };
+                out[n] = .{ .action = .{ .pick = pos8 }, .key = "", .label = blank[0..pickRoom(rect.w)], .x = rect.x + 2, .y = y };
                 out[n + 1] = ok;
                 out[n + 1].x = left;
                 out[n + 2] = no;
@@ -11819,19 +11848,23 @@ test "a check longer than the card is wide wraps to its whole text, its continua
         .{ .n = 2, .text = "short", .result = null },
     };
     var head: App.CardHead = .{};
-    head.checkLines(.check, &checks, 40, .{ .rows = 20, .pick = 0 });
+    head.checkLines(.check, &checks, 40, .{ .rows = 20, .pick = 0, .rect_w = 44 });
     try std.testing.expect(head.n > 2);
     try std.testing.expect(std.mem.startsWith(u8, head.lines[0], "\u{25cb} 1 On Telegram"));
     try std.testing.expect(!head.more[0] and head.more[1]);
     try std.testing.expect(std.mem.startsWith(u8, head.lines[1], "    "));
     try std.testing.expectEqual(@as(u8, 2), head.of[head.n - 1]);
     var words: usize = 0;
-    for (head.lines[0 .. head.n - 1]) |line| for (0..line.len) |i| {
-        if (line[i] != ' ' and (i == 0 or line[i - 1] == ' ')) words += 1;
+    for (head.lines[0..head.n], head.of[0..head.n]) |line, of| if (of == 1) {
+        var split = std.mem.tokenizeScalar(u8, line, ' ');
+        while (split.next()) |_| words += 1;
     };
-    // "○ 1" leads the first line: 3 words of its own, then the 19 of the text
-    try std.testing.expect(words >= 19);
-    for (head.lines[0 .. head.n - 1]) |line| try std.testing.expect(cellCount(line) <= 40 - 10);
+    // "○" and "1" lead the first line, then the 19 words of the text
+    try std.testing.expectEqual(@as(usize, 21), words);
+    // each row fits the room it is drawn in, the pick's `▸` counted
+    for (head.lines[0..head.n], head.of[0..head.n]) |line, of| if (of == 1) {
+        try std.testing.expect(cellCount(line) <= App.checkRoom(44, 40, true));
+    };
 }
 
 test "a card with no room for every wrapped check keeps the picked one whole and the farthest on one line" {
@@ -11842,7 +11875,7 @@ test "a card with no room for every wrapped check keeps the picked one whole and
         .{ .n = 3, .text = long, .result = null },
     };
     var head: App.CardHead = .{};
-    head.checkLines(.check, &checks, 30, .{ .rows = 8, .pick = 1 });
+    head.checkLines(.check, &checks, 30, .{ .rows = 8, .pick = 1, .rect_w = 34 });
     var per = [3]usize{ 0, 0, 0 };
     for (head.of[0..head.n]) |of| per[of - 1] += 1;
     try std.testing.expect(per[1] > 2);
@@ -11853,4 +11886,11 @@ test "a card with no room for every wrapped check keeps the picked one whole and
         whole = true;
     };
     try std.testing.expect(whole);
+}
+
+test "an its Claude line leaves the head's rows and one of the body" {
+    try std.testing.expectEqual(@as(usize, 3), App.claudeLeft(20, 0, 10));
+    try std.testing.expectEqual(@as(usize, 1), App.claudeLeft(12, 0, 10));
+    try std.testing.expectEqual(@as(usize, 0), App.claudeLeft(11, 0, 10));
+    try std.testing.expectEqual(@as(usize, 0), App.claudeLeft(12, 2, 10));
 }

@@ -153,8 +153,8 @@ pub fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
     if (win) |it| App.claudeHead(it, &head);
     var told: [320]u8 = undefined;
     var told_rows: ClaudeRows = .{};
-    if (win) |it| claudeRows(&told_rows, claudeSaid(&told, app, it), inner);
-    const claude_rows: u16 = if (win != null and bottom - top - 2 > note_rows + head.n + 1) @intCast(told_rows.n) else 0;
+    if (win) |it| claudeRows(&told_rows, claudeSaid(&told, app, it), inner, App.claudeLeft(bottom - top - 2, note_rows, head.n));
+    const claude_rows: u16 = @intCast(told_rows.n);
     const text_end = bottom - note_rows - claude_rows;
 
     var y = top + 1;
@@ -364,16 +364,17 @@ fn claudeSaid(buf: []u8, app: *const App, win: *const app_mod.Window) []const u8
     return std.fmt.bufPrint(buf, "its Claude: {s} {s} \u{b7} {s}", .{ state, ago(&ago_buf, app.epoch, win.since), win.detail() }) catch "its Claude";
 }
 
-fn claudeRows(out: *ClaudeRows, said: []const u8, inner: usize) void {
+fn claudeRows(out: *ClaudeRows, said: []const u8, inner: usize, max: usize) void {
+    if (max == 0) return;
     var it = app_mod.DetailLines.init(said, inner);
     while (it.next()) |line| {
-        if (out.n < 3) {
+        if (out.n < max) {
             out.lines[out.n] = line;
             out.n += 1;
             continue;
         }
-        const tail = std.fmt.bufPrint(&out.last, "{s}\u{2026}", .{out.lines[2]}) catch return;
-        out.lines[2] = draw.clipMark(&out.ended, tail, inner);
+        const tail = std.fmt.bufPrint(&out.last, "{s}\u{2026}", .{out.lines[max - 1]}) catch return;
+        out.lines[max - 1] = draw.clipMark(&out.ended, tail, inner);
         return;
     }
 }
@@ -404,8 +405,8 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
     const win = if (card) |it| app.claudeOf(it) else null;
     var told: [320]u8 = undefined;
     var told_rows: ClaudeRows = .{};
-    if (win) |it| claudeRows(&told_rows, claudeSaid(&told, app, it), inner);
-    const claude_rows: u16 = if (win != null and foot - rect.y - 3 > note_rows + head.n + 1) @intCast(told_rows.n) else 0;
+    if (win) |it| claudeRows(&told_rows, claudeSaid(&told, app, it), inner, App.claudeLeft(foot - rect.y - 3, note_rows, head.n));
+    const claude_rows: u16 = @intCast(told_rows.n);
     const text_end = foot - 1 - note_rows - claude_rows;
 
     var buttons: [48]App.ModalButton = undefined;
@@ -771,11 +772,18 @@ pub fn giveBox(app: *App, w: *Writer, id: u32, picked: usize) !void {
 test "a long its Claude line takes three rows and then ends in an ellipsis" {
     var rows: ClaudeRows = .{};
     const said = "its Claude: done 23m \u{b7} 1340 is installed. Restart Asterion and then ask it what the money situation is like this check, and how much was spent on food in the last month, and so on and on";
-    claudeRows(&rows, said, 30);
+    claudeRows(&rows, said, 30, 3);
     try std.testing.expectEqual(@as(usize, 3), rows.n);
     try std.testing.expect(std.mem.endsWith(u8, rows.lines[2], "\u{2026}"));
     try std.testing.expect(std.mem.startsWith(u8, rows.lines[0], "its Claude: done"));
     var short: ClaudeRows = .{};
-    claudeRows(&short, "its Claude: done 1m \u{b7} ok", 30);
+    claudeRows(&short, "its Claude: done 1m \u{b7} ok", 30, 3);
     try std.testing.expectEqual(@as(usize, 1), short.n);
+    var tight: ClaudeRows = .{};
+    claudeRows(&tight, said, 30, 1);
+    try std.testing.expectEqual(@as(usize, 1), tight.n);
+    try std.testing.expect(std.mem.endsWith(u8, tight.lines[0], "\u{2026}"));
+    var none: ClaudeRows = .{};
+    claudeRows(&none, said, 30, 0);
+    try std.testing.expectEqual(@as(usize, 0), none.n);
 }
