@@ -128,30 +128,71 @@ check() {
 
 # the checks read sh's own prompt, not one handed down
 unset PS1
-inner new-session -d -s alpha -n one -x 100 -y 30 sh
-inner_pid=$(inner display -p '#{pid}')
-inner set -g default-command sh
-inner new-window -t alpha -n two sh
-inner new-window -t alpha -n three sh
-inner new-session -d -s beta -n solo sh
-inner select-window -t alpha:one
+start_world() {
+  inner new-session -d -s alpha -n one -x 100 -y 30 sh
+  inner_pid=$(inner display -p '#{pid}')
+  inner set -g default-command sh
+  inner new-window -t alpha -n two sh
+  inner new-window -t alpha -n three sh
+  inner new-session -d -s beta -n solo sh
+  inner select-window -t alpha:one
 
-# An empty HOME: no machine palette, so colours are the fallback ones. No motion: no slides to wait out.
-outer new-session -d -s o -x 121 -y 24 \
-  "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 ARENA_LOOK_MS=2000 $bin -L $in alpha 2>$tmp/err; echo EXIT \$?; cat"
-outer set -s set-clipboard on
-# o is restarted below: with o its only session, the server would exit, and a new-session close
-# behind can land on it as it goes and be lost with it
-outer set -s exit-empty off
-outer_pid=$(outer display -p '#{pid}')
-# what arena writes, for what a picture of the screen does not show
-outer pipe-pane -t o "cat >$tmp/raw"
+  # An empty HOME: no machine palette, so colours are the fallback ones. No motion: no slides to wait out.
+  outer new-session -d -s o -x 121 -y 24 \
+    "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 ARENA_LOOK_MS=2000 $bin -L $in alpha 2>$tmp/err; echo EXIT \$?; cat"
+  outer set -s set-clipboard on
+  # o is restarted below: with o its only session, the server would exit, and a new-session close
+  # behind can land on it as it goes and be lost with it
+  outer set -s exit-empty off
+  outer_pid=$(outer display -p '#{pid}')
+  # what arena writes, for what a picture of the screen does not show
+  outer pipe-pane -t o "cat >$tmp/raw"
+}
+start_world
 
-check "the strip shows, its first column at the screen's left edge" see '^╭─ 1 one '
+# what sections share
 dots() { local s=$(screen); [[ $(sed -n 23p <<<$s) == *[╰╯]* && $(sed -n 24p <<<$s) =~ "[^ ]+ +$1 │ s go to  ≡" ]] }
-check "a row of its own under the strip has a dot per window, centred on it" await dots '●○○'
+typed() { [[ $(screen | grep -c -- "$1") -ge $2 ]] }
+mousing() { [[ $(inner display -p -t $1 '#{mouse_standard_flag}') == 1 ]] }
+current() { [[ $(inner display -p -t alpha '#{window_name}') == $1 ]] }
+windows() { [[ $(inner list-windows -t $1 -F '#{window_name}' | tr '\n' ' ') == "$2 " ]] }
+order() { [[ $(inner list-sessions -F '#{@arena_order}#{session_name}' | sort | tr -d '\n') == $1 ]] }
+sessions() { [[ $(inner list-sessions | wc -l) -eq $1 ]] }
+panes() { [[ $(inner list-panes -t alpha:two | wc -l) -eq $1 ]] }
+claude() { print -r -- ${3:-'{}'} | TMUX="$(inner display -p '#{socket_path}'),0,0" TMUX_PANE=$1 sh $root/hooks/claude-state.sh $2 }
+at() { [[ $(inner list-clients -F '#{session_name}:#{window_name}') == $1 ]] }
+
 # the column, from 1, where $1 starts on the screen's last row
 col() { local l=$(settled | sed -n 24p); local pre=${l%%$1*}; print $(( ${#pre} + 1 )) }
+# E2E_ONLY=<regex> runs the sections whose name matches. A section runs on the world a whole run
+# leaves it, so one that follows a section left out starts on a fresh one.
+sections_run=0
+prev_ran=0
+fresh() {
+  [[ -n $outer_pid ]] && kill $outer_pid 2>/dev/null
+  outer kill-server 2>/dev/null
+  [[ -n $inner_pid ]] && kill $inner_pid 2>/dev/null
+  inner kill-server 2>/dev/null
+  [[ -n $sizer ]] && exec {sizer}>&-
+  rm -rf $tmp/run $tmp/raw $tmp/err $tmp/babylon $tmp/notified $tmp/refuse $tmp/refuse-start \
+    $tmp/refuse-next $tmp/chatty $tmp/comments $tmp/meatcheck $tmp/git $tmp/asked $tmp/asked-pane $tmp/sizer $tmp/.config
+  start_world
+}
+section() {
+  if [[ -n $E2E_ONLY && ! $1 =~ $E2E_ONLY ]]; then
+    prev_ran=0
+    return 1
+  fi
+  ((sections_run > 0 && ! prev_ran)) && fresh
+  # arena's start asks the terminal a few things; a key sent while they are answered is lost
+  ((prev_ran)) || { poll shows '╭─'; zselect -t 300 }
+  sections_run=$((sections_run + 1))
+  prev_ran=1
+}
+
+if section strip; then
+check "the strip shows, its first column at the screen's left edge" see '^╭─ 1 one '
+check "a row of its own under the strip has a dot per window, centred on it" await dots '●○○'
 mouse 35 100 24 M
 check "the pointer on it has each window's number and name in place of its dot" see '^ +1 one +2 two +3 three *$'
 x=$(col '2 two')
@@ -186,7 +227,6 @@ mouse 35 60 10 M
 await dots '●○○'
 
 # insert and normal: every key of a sentence is the pane's, or none is
-typed() { [[ $(screen | grep -c -- "$1") -ge $2 ]] }
 key -l 'echo jhklqnb'
 key Enter
 check "in insert a sentence with j h k l q n b reaches the pane whole" await typed 'jhklqnb' 2
@@ -244,6 +284,8 @@ key -l k
 await shows '^╭─ 1 one '
 key -l i
 
+fi
+if section pictures; then
 # A tmux with the pixels patch gives arena's terminal cells of 9x19 pixels, as a real one has.
 mkfifo $tmp/sizer
 outer -C attach -t o <$tmp/sizer >/dev/null 2>&1 &
@@ -301,7 +343,6 @@ inner send-keys -t alpha:two clear Enter
 print -rn -- $'\e[?1000h\e[?1016h' >$tmp/pixels
 inner send-keys -t alpha:one "stty -echo -icanon; cat $tmp/pixels; head -c 11 | od -c; printf '\\033[?1016l\\033[?1000l'; stty sane" Enter
 await shows '^╭─ 1 one '
-mousing() { [[ $(inner display -p -t $1 '#{mouse_standard_flag}') == 1 ]] }
 await mousing alpha:one
 # the pane's third column, second row: its frame starts at the title's corner
 at=$(( $(settled | awk 'NR == 1 { print index($0, "╭─ 1 one") }') + 3 ))
@@ -315,6 +356,8 @@ check "a click reaches a program that asked for pixels in pixels" await clicked
 mouse 0 $at 3 m
 inner send-keys -t alpha:one clear Enter
 
+fi
+if section "mouse clicks and paste"; then
 print -rn -- $'\e[?1000h\e[?1006h' >$tmp/clicks
 inner send-keys -t alpha:two "stty -echo -icanon; cat $tmp/clicks; timeout 2 cat -v; printf '\\033[?1006l\\033[?1000l'; stty sane" Enter
 await mousing alpha:two
@@ -324,7 +367,6 @@ check "window two's title is on the top line, to click under" await titled
 two=$((two + 3))
 mouse 0 $two 6 M
 mouse 0 $two 6 m
-current() { [[ $(inner display -p -t alpha '#{window_name}') == $1 ]] }
 check "the click on window two makes it the current window" await current two
 check "and the strip comes to rest on it" await dots '○●○'
 zselect -t 50
@@ -364,6 +406,8 @@ inner send-keys -t alpha:two clear Enter
 key M-h
 see '^╭─ 1 one '
 
+fi
+if section windows; then
 wide() { [[ $(inner display -p -t alpha:one '#{window_width} #{@arena_width}') == $1 ]] }
 # a ; that ends an argument ends the command for tmux, unless escaped
 key -l $'\e\\;'
@@ -372,7 +416,6 @@ check "and tmux has it that wide, and keeps the width" await wide '81 69'
 key "M-'"
 check "Alt+' makes it wider" see '╭─ 1 one ─{86}╮'
 
-windows() { [[ $(inner list-windows -t $1 -F '#{window_name}' | tr '\n' ' ') == "$2 " ]] }
 mouse 0 4 1 M
 mouse 32 111 1 M
 mouse 32 113 1 M
@@ -430,13 +473,11 @@ check "a pane showing lines like tmux's own replies is drawn whole" see '│%beg
 key M-k
 see '╭─ 2 two '
 
-order() { [[ $(inner list-sessions -F '#{@arena_order}#{session_name}' | sort | tr -d '\n') == $1 ]] }
 key M-J
 check "Alt+J moves the session down, and its place is kept in tmux" await order 1beta2alpha
 key M-K
 check "Alt+K moves it up" await order 1alpha2beta
 
-sessions() { [[ $(inner list-sessions | wc -l) -eq $1 ]] }
 normal; key -l s
 see '→ Go to'
 key -l jj
@@ -457,7 +498,6 @@ check "normal m opens the menu" see 'New window +n'
 key Escape
 check "Escape closes it" gone 'New window +n'
 
-panes() { [[ $(inner list-panes -t alpha:two | wc -l) -eq $1 ]] }
 normal; key m
 key v
 check "the menu splits the pane" await panes 2
@@ -519,8 +559,12 @@ check "a step back from the last column lands where tmux puts it" see ' Y│$'
 normal; key k
 key -l i
 
+fi
+if section hook; then
+windows alpha "one two three" && inner rename-window -t alpha:two renamed
+dots '●○○' && key M-l
+await dots '○●○'
 # arena's Claude Code hook, as Claude Code runs it in a pane of the session: event, then its JSON
-claude() { print -r -- ${3:-'{}'} | TMUX="$(inner display -p '#{socket_path}'),0,0" TMUX_PANE=$1 sh $root/hooks/claude-state.sh $2 }
 inner send-keys -t alpha:one 'echo news' Enter
 zselect -t 250
 check "output alone marks no window" await dots '○●○'
@@ -650,7 +694,6 @@ check "on no branch, detached and its commit" is_opt branch "detached $(git -C $
 said end
 check "the end takes the title and its count off too" await [ -z "$(inner show -p -t alpha:one | grep arena_claude)" ]
 
-at() { [[ $(inner list-clients -F '#{session_name}:#{window_name}') == $1 ]] }
 in_view_cleared() { [[ -z $(inner show -pqv -t alpha:renamed @arena_claude) ]] }
 claude alpha:renamed prompt
 claude alpha:three waiting '{"message": "Claude needs your permission to use Bash"}'
@@ -696,6 +739,10 @@ await dots '●○▲'
 key M-n
 check "from a window not listed, Alt+n goes to the first" await at alpha:three
 
+fi
+if section popup; then
+claude alpha:three waiting '{"message": "Claude needs your permission to use Bash"}'
+at alpha:three || { zselect -t 500; key M-n; await at alpha:three }
 # the popup: a Claude's pane in another session, read-only, over the strip
 inner send-keys -t alpha:three 'echo three-pane-line' Enter
 shows '^NORMAL' || key C-Space
@@ -747,6 +794,13 @@ check "the popup stays open" shows '╭─ .* solo'
 key -l q
 rm -f $tmp/run/babylon/board.json
 zselect -t 300
+fi
+if section question; then
+claude alpha:three waiting '{"message": "Claude needs your permission to use Bash"}'
+at alpha:three || { zselect -t 500; key M-n; await at alpha:three }
+normal
+key -l j
+await at beta:solo
 # Claude Code's own question, on the screen
 inner send-keys -t alpha:three "printf 'Do you want to proceed?\n❯ 1. Yes\n  2. No\n'" Enter
 key -l k
@@ -809,6 +863,8 @@ key 'exit' Enter
 check "a session ending moves arena to one that is left" see '╭─ 3 three '
 check "and the session is gone" await sessions 1
 
+fi
+if section plan; then
 # Plan drives what the board drove: the tickets, their modals, the keys on a row, the orchestrator's column beside it.
 # Workbench's look (a palette) gives Plan its windows and rows for no goal; the plain look keeps what the typing
 # races need, the column's lit state.
@@ -1236,14 +1292,18 @@ check "and Escape closes it again" gone 'in flight [0-9]'
 rowof() { settled | grep -n -m1 -F -- "$1" | cut -d: -f1 }
 colof() { local l=$(settled | sed -n $1p); [[ $l == *"$2"* ]] || return 1; local p=${l%%"$2"*}; print $(( ${#p} + 1 )) }
 # the column of the first │ at or after column $2 of row $1
-barof() { local l=$(settled | sed -n $1p); local p=${${l[$2,-1]}%%│*}; print $(( $2 + ${#p} )) }
+barof() { local l=$(settled | sed -n $1p); local rest=${l[$2,-1]}; local p=${rest%%│*}; print $(( $2 + ${#p} )) }
 park() { mouse 35 80 18 M }
 inner new-session -d -s orchestrator -n orch sh
 inner select-window -t alpha:one
 inner split-window -h -t alpha:one sh
 await eval '[[ $(inner list-panes -t alpha:one | wc -l) == 2 ]]'
 zselect -t 50
+shows '^╭─ 1 one' || { key M-h; see '^╭─ 1 one' }
+await eval '(( $(settled | sed -n 2p | grep -o "│sh-" | wc -l) >= 2 ))'
 divide=$(barof 5 $(( $(colof 1 '╭─ 1 one') + 1 )))
+park
+zselect -t 50
 mouse 35 $divide 5 M
 shaped() { [[ $(<$tmp/raw) == *$'\e]22;ew-resize'* ]] }
 await shaped
@@ -1338,6 +1398,7 @@ key x
 check "x takes it out of next on Planning, through babylon" await last 'next 7 --drop'
 key Tab
 : >$tmp/babylon
+
 # Workbench's plan is seven windows, each in a slot the screen's size gives it, and none folds:
 # each keeps its rows and its place
 cp $tmp/run/babylon/board.json $tmp/board.slots
@@ -1435,6 +1496,7 @@ key p
 check "p on a now row raises its priority through babylon" await last 'update 701 --priority high'
 key e
 check "e on a now row edits its ticket" await last 'edit 701'
+
 normal
 key b
 key Tab
@@ -1469,7 +1531,9 @@ zselect -t 500
 key Escape
 normal
 key b
+see '╭─ 1 one'
 key b
+see '◆ needs you'
 cp $tmp/run/babylon/board.json $tmp/board.foot
 foot_json=$(<$tmp/board.foot)
 foot_json=${foot_json/'{"tickets":['/'{"tickets":[{"id":934,"repo":"arena","title":"Foot","kind":"ticket","status":"try","stage":"landed","priority":"med","blocked_by":[],"checks":[{"n":1,"text":"the row says which of the two is which","result":null}]},'}
@@ -1795,6 +1859,8 @@ gone 'in flight [0-9]'
 key M-q
 check "and leaves as any other" see 'EXIT 0'
 
+fi
+if section update; then
 # a new build installed under a running arena: it runs again in place, where it was
 mkdir -p $tmp/run/babylon $tmp/run/arena
 print -r -- '{"tickets":[{"id":7,"repo":"arena","title":"Lights","kind":"ticket","status":"todo","priority":"med","blocked_by":[]},'\
@@ -1828,6 +1894,8 @@ key M-q
 check "and it leaves as any other" see 'EXIT 0'
 check "with nothing said on its error stream" test ! -s $tmp/update-err
 
+fi
+if section crash; then
 # a crash gives the terminal back as a quit does: no mouse reports typed into the shell
 outer new-session -d -s p -x 100 -y 24 \
   "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 ARENA_TEST_PANIC=1 $bin -L $in alpha 2>$tmp/panic-err; echo EXIT \$?; cat"
@@ -1837,8 +1905,10 @@ modes() { [[ $(outer display -p -t p '#{mouse_any_flag}#{mouse_all_flag}#{mouse_
 check "and leaves mouse reporting off, the alternate screen left and the cursor shown" await modes
 check "and says why" grep -q ARENA_TEST_PANIC $tmp/panic-err
 
+fi
+if section inflight; then
 # an in-flight row on the plan has one state word and no workspace line, and Enter on it goes to its Claude
-mkdir -p $tmp/.config/ficciones/theme
+mkdir -p $tmp/run/babylon $tmp/.config/ficciones/theme
 for name in AMBER VIOLET AMBERDIM EMBERDIM INK DIM GREY SURFACE0 SURFACE2 SURFACE3 SURFACE4 BG CYAN MOSS PINK RED; do print -r -- "PALETTE_$name=#808080"; done >$tmp/.config/ficciones/theme/palette.sh
 held_pane=$(inner list-panes -s -t alpha -F '#{pane_id}' | sed -n 2p)
 held_index=$(inner display -p -t $held_pane '#{window_index}')
@@ -1852,4 +1922,10 @@ inner select-window -t alpha:one
 key Enter
 check "and Enter on it opens that pane in the middle column" await shows 'NORMAL  i type   d changes   esc back'
 
+fi
+
+if ((sections_run == 0)); then
+  print "FAIL  E2E_ONLY=$E2E_ONLY matched no section"
+  fails=$((fails + 1))
+fi
 exit $((fails > 0))

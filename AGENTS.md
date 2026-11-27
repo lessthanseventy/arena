@@ -10,5 +10,9 @@ never `mise run e2e` in the shell: it runs the same task with the same process-g
 
 A change to what arena draws, or to its keys, updates the e2e steps that assert the old behaviour,
 and says so in the commit. While working, run the e2e steps of what you changed if you need them
-(`menard run e2e`, menard 0.8.22 or later). Do not run the whole e2e before `submit_ticket`:
+(`E2E_ONLY=<regex> mise run e2e`, the one way to run it by hand): only the
+sections of `test/e2e.zsh` whose name matches run (`section NAME` opens one; `E2E_ONLY=click` is
+the mouse one), each on a fresh world when the one before it was left out. A pattern matching no
+section fails. A step that needs state another section leaves sets it up at its section's head.
+Do not run the whole e2e before `submit_ticket`:
 babylon's gate (`mise run check`) runs it once.
