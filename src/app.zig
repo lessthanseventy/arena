@@ -10963,7 +10963,7 @@ test "a Claude waiting in its pane is a Your move item after babylon's, ⏎ show
     try std.testing.expectEqual(@as(usize, 1), app.board.?.needsYou().len);
 }
 
-test "a stalled ticket is a stuck item in Needs you, ⏎ on it goes to its pane, and it goes when the ticket is not stalled" {
+test "a stalled ticket is a stuck item in Needs you with ⏎ open pane, and it goes when the ticket is not stalled" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });

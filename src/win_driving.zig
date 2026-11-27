@@ -27,7 +27,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
     switch (row.kind) {
         .focal => {
             const goal = given.goals[row.item];
-            var head: [24]u8 = undefined;
+            var head: [32]u8 = undefined;
             const towards = std.fmt.bufPrint(&head, "heading for  #{d} ", .{goal.epic}) catch "";
             var label: [32]u8 = undefined;
             const count = std.fmt.bufPrint(&label, "{d}/{d}  {d}%", .{ goal.landed, goal.total, if (goal.total == 0) 0 else goal.landed * 100 / goal.total }) catch "";
