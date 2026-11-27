@@ -2517,6 +2517,7 @@ pub const App = struct {
             .window_selected => app.want_list = true,
             .session_changed => |id| app.onSessionChanged(id),
             .card => |id| try app.showPlan(id),
+            .planning => |id| try app.showPlanning(id),
             .pane => |id| try app.showPane(id),
             .holder => |id| try app.showHolder(id),
             .inbox => try app.showInbox(),
@@ -3135,6 +3136,16 @@ pub const App = struct {
     /// line and the repo filter are cleared, and a window folded over the ticket is opened. A
     /// ticket the plan shows in no window opens its detail instead; with no plan, home says why.
     pub fn showPlan(app: *App, id: u32) !void {
+        try app.openPlan(null, id);
+    }
+
+    /// Home's Planning screen, what `arena planning [<id>]` asks for: opened as `showPlan` opens
+    /// the plan, with the pick on ticket `id` when given.
+    pub fn showPlanning(app: *App, id: ?u32) !void {
+        try app.openPlan(.planning, id);
+    }
+
+    fn openPlan(app: *App, screen: ?sheets.Screen, id: ?u32) !void {
         if (!app.hasPlan()) return app.goHome();
         app.menu = null;
         app.prompt = null;
@@ -3152,7 +3163,10 @@ pub const App = struct {
         view.plan_repo = 0;
         view.alone = false;
         view.focus = .plan;
-        if (!try app.pickPlanTicket(id)) _ = try app.openDetail(id);
+        if (screen) |s| app.showScreen(s);
+        if (id) |n| if (!try app.pickPlanTicket(n)) {
+            _ = try app.openDetail(n);
+        };
         app.reflow();
         try app.toSide();
     }
@@ -10380,6 +10394,35 @@ test "arena plan N opens the shut repo chip that holds N" {
     app.setFold("tlon", true);
     try app.showPlan(5);
     try std.testing.expect(!app.folded("tlon"));
+    try std.testing.expect(app.planSheet(&sheet));
+    try std.testing.expectEqual(@as(u32, 5), sheet.picked(app.home.?.plan_pick).?.ticket.?);
+}
+
+test "arena planning [N] opens Planning, with the pick on N when given" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 300;
+    app.view_w = 200;
+    app.view_h = 40;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":5,"repo":"tlon","title":"Lights","status":"todo","priority":"med","blocked_by":[]}],
+        \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},
+        \\"not_planned":{"count":1,"follow_ups":0,"by_repo":{"tlon":1}}}}
+    );
+    defer app.board.?.deinit();
+    app.home = .{ .focus = .plan };
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expectEqual(sheets.Screen.doing, app.home.?.screen);
+    try app.showPlanning(null);
+    try std.testing.expectEqual(sheets.Screen.planning, app.home.?.screen);
+    app.showScreen(.doing);
+    try app.showPlanning(5);
+    try std.testing.expectEqual(sheets.Screen.planning, app.home.?.screen);
     try std.testing.expect(app.planSheet(&sheet));
     try std.testing.expectEqual(@as(u32, 5), sheet.picked(app.home.?.plan_pick).?.ticket.?);
 }

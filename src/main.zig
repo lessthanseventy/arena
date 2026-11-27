@@ -268,11 +268,12 @@ const usage =
     \\       arena --version
     \\       arena [-L socket] plan <ticket>          the plan with its pick on that ticket
     \\       arena [-L socket] board <ticket>         the same: board is its old name
+    \\       arena [-L socket] planning [ticket]      the Planning screen, with its pick on that ticket
     \\       arena [-L socket] show <%pane|#ticket>   that pane, or the Claude holding that ticket, in front
     \\       arena [-L socket] inbox                  home, with what needs you
     \\
-    \\plan, board, show and inbox tell the arena that is running; with none, plan starts one,
-    \\and show and inbox exit 3.
+    \\plan, board, planning, show and inbox tell the arena that is running; with none, plan and
+    \\planning start one, and show and inbox exit 3.
     \\
 ;
 
@@ -286,12 +287,13 @@ fn showTarget(target: []const u8) bool {
 
 /// Whether `arg` is one of arena's verbs, which are reserved: never a session's name.
 fn isVerb(arg: []const u8) bool {
-    return std.mem.eql(u8, arg, "plan") or std.mem.eql(u8, arg, "board") or std.mem.eql(u8, arg, "show") or std.mem.eql(u8, arg, "inbox");
+    return std.mem.eql(u8, arg, "plan") or std.mem.eql(u8, arg, "board") or std.mem.eql(u8, arg, "planning") or std.mem.eql(u8, arg, "show") or std.mem.eql(u8, arg, "inbox");
 }
 
 /// Whether `verb` is given what it takes as its next argument, `next` (null at the end).
 fn verbArgOk(verb: []const u8, next: ?[]const u8) bool {
     if (std.mem.eql(u8, verb, "inbox")) return next == null;
+    if (std.mem.eql(u8, verb, "planning")) return next == null or ticketId(next.?) != null;
     const arg = next orelse return false;
     if (std.mem.eql(u8, verb, "plan") or std.mem.eql(u8, verb, "board")) return ticketId(arg) != null;
     return showTarget(arg);
@@ -310,6 +312,7 @@ test showTarget {
 test isVerb {
     try std.testing.expect(isVerb("plan"));
     try std.testing.expect(isVerb("board"));
+    try std.testing.expect(isVerb("planning"));
     try std.testing.expect(isVerb("show"));
     try std.testing.expect(isVerb("inbox"));
     try std.testing.expect(!isVerb("-h"));
@@ -319,6 +322,9 @@ test isVerb {
 test verbArgOk {
     try std.testing.expect(verbArgOk("inbox", null));
     try std.testing.expect(!verbArgOk("inbox", "foo"));
+    try std.testing.expect(verbArgOk("planning", null));
+    try std.testing.expect(verbArgOk("planning", "12"));
+    try std.testing.expect(!verbArgOk("planning", "foo"));
     try std.testing.expect(verbArgOk("plan", "12"));
     try std.testing.expect(!verbArgOk("plan", null));
     try std.testing.expect(verbArgOk("board", "12"));
@@ -372,6 +378,7 @@ fn run(init: std.process.Init, exe: ?[]const u8) !Ended {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     var session: ?[]const u8 = null;
     var card: ?u32 = null;
+    var planning = false;
     var door: ?[]const u8 = null;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -393,6 +400,12 @@ fn run(init: std.process.Init, exe: ?[]const u8) !Ended {
             if (std.mem.eql(u8, args[i], "plan") or std.mem.eql(u8, args[i], "board")) {
                 card = ticketId(next.?);
                 i += 1;
+            } else if (std.mem.eql(u8, args[i], "planning")) {
+                planning = true;
+                if (next) |n| {
+                    card = ticketId(n);
+                    i += 1;
+                }
             } else if (std.mem.eql(u8, args[i], "show")) {
                 door = try std.fmt.allocPrint(init.arena.allocator(), control.show_message ++ "{s}", .{next.?});
                 i += 1;
@@ -404,7 +417,14 @@ fn run(init: std.process.Init, exe: ?[]const u8) !Ended {
         try std.Io.File.stderr().writeStreamingAll(io, "arena: none is running there\n");
         std.process.exit(no_arena);
     }
-    if (card) |id| {
+    if (planning) {
+        const message = if (card) |id|
+            try std.fmt.allocPrint(gpa, control.planning_message ++ " {d}", .{id})
+        else
+            try gpa.dupe(u8, control.planning_message);
+        defer gpa.free(message);
+        if (try tell(init, argv.items, message)) return .shown;
+    } else if (card) |id| {
         const message = try std.fmt.allocPrint(gpa, control.card_message ++ "{d}", .{id});
         defer gpa.free(message);
         if (try tell(init, argv.items, message)) return .shown;
@@ -447,7 +467,7 @@ fn run(init: std.process.Init, exe: ?[]const u8) !Ended {
     // are other sessions that is no reason to leave: arena attaches again, to the most recent.
     var shown = false;
     // with no session named, arena opens home
-    var open: Open = if (card) |id| .{ .card = id } else if (session == null) .home else .as_is;
+    var open: Open = if (planning) .{ .planning = card } else if (card) |id| .{ .card = id } else if (session == null) .home else .as_is;
     // an arena that replaced itself opens where the one before it left off, and says so once
     const arrival = update.arrive(init);
     if (arrival.kept) |was| open = .{ .kept = was };
@@ -487,7 +507,7 @@ const Outcome = enum { left, lost, never, update };
 
 /// What a client opens once tmux's sessions are known: as tmux shows it, the board on a ticket,
 /// home, or home as the client before it left it.
-const Open = union(enum) { as_is, card: u32, home, kept: App.Kept };
+const Open = union(enum) { as_is, card: u32, planning: ?u32, home, kept: App.Kept };
 
 /// One tmux client's life: until the user leaves (`left`) or tmux ends it, after showing a
 /// session (`lost`) or before (`never`). With `card`, the board opens on that ticket once
@@ -584,6 +604,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
             switch (open_wanted) {
                 .as_is => {},
                 .card => |id| try app.showPlan(id),
+                .planning => |id| try app.showPlanning(id),
                 .home => try app.goHome(),
                 .kept => |was| try app.restore(was),
             }

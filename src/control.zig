@@ -19,6 +19,8 @@ pub const Event = union(enum) {
     session_changed: u32,
     /// `arena plan <id>` run elsewhere asks this arena for the plan with its pick on that ticket.
     card: u32,
+    /// `arena planning [<id>]` asks for the Planning screen, with the pick on that ticket if given.
+    planning: ?u32,
     /// `arena show %<id>` run elsewhere asks this arena to put that pane in front.
     pane: u32,
     /// `arena show #<id>` asks for the pane of the Claude holding that ticket.
@@ -32,13 +34,14 @@ pub const Event = union(enum) {
 /// What `arena plan <id>` has tmux say to a running arena, the id after it: display-message
 /// to a control client comes to it as a `%message` line.
 pub const card_message = "arena plan ";
+pub const planning_message = "arena planning";
 pub const show_message = "arena show ";
 pub const inbox_message = "arena inbox";
 
 /// Whether `line` is what `arena plan`, `show` or `inbox` had tmux say to a running arena.
 pub fn told(line: []const u8) bool {
     return switch (parse(line, null)) {
-        .card, .pane, .holder, .inbox => true,
+        .card, .planning, .pane, .holder, .inbox => true,
         else => false,
     };
 }
@@ -88,6 +91,11 @@ pub fn parse(line: []const u8, open: ?[]const u8) Event {
         };
     }
     if (std.mem.eql(u8, line, "%message " ++ inbox_message)) return .inbox;
+    if (std.mem.eql(u8, line, "%message " ++ planning_message)) return .{ .planning = null };
+    if (std.mem.startsWith(u8, line, "%message " ++ planning_message ++ " ")) {
+        const id = std.fmt.parseInt(u32, line["%message ".len + planning_message.len + 1 ..], 10) catch return .other;
+        return .{ .planning = id };
+    }
     if (sessionId(line, "%session-changed $")) |id| return .{ .session_changed = id };
     if (sessionId(line, "%session-window-changed $")) |id| return .{ .window_selected = id };
     for (changes) |prefix| {
@@ -167,6 +175,15 @@ test "a message to show says which pane or whose ticket's, and the inbox is aske
     try std.testing.expectEqual(Event.other, parse("%message arena show 290", null));
     try std.testing.expectEqual(Event.other, parse("%message arena show %x", null));
     try std.testing.expectEqual(Event.inbox, parse("%message arena inbox", null));
+}
+
+test "a message for Planning says which ticket, or none" {
+    try std.testing.expectEqual(@as(?u32, null), parse("%message arena planning", null).planning);
+    try std.testing.expectEqual(@as(?u32, 12), parse("%message arena planning 12", null).planning);
+    try std.testing.expectEqual(Event.other, parse("%message arena planning x", null));
+    try std.testing.expectEqual(Event.other, parse("%message arena plannings", null));
+    try std.testing.expectEqual(@as(u32, 12), parse("%message arena plan 12", null).card);
+    try std.testing.expect(told("%message arena planning 12"));
 }
 
 test "what arena board, show and inbox say is told apart from tmux's own lines" {
