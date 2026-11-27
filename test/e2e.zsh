@@ -1797,7 +1797,7 @@ modes() { [[ $(outer display -p -t p '#{mouse_any_flag}#{mouse_all_flag}#{mouse_
 check "and leaves mouse reporting off, the alternate screen left and the cursor shown" await modes
 check "and says why" grep -q ARENA_TEST_PANIC $tmp/panic-err
 
-# a held row on the plan says which session, window and pane holds its Claude, and a click on it goes there
+# an in-flight row on the plan has one state word and no workspace line, and Enter on it goes to its Claude
 mkdir -p $tmp/.config/ficciones/theme
 for name in AMBER VIOLET AMBERDIM EMBERDIM INK DIM GREY SURFACE0 SURFACE2 SURFACE3 SURFACE4 BG CYAN MOSS PINK RED; do print -r -- "PALETTE_$name=#808080"; done >$tmp/.config/ficciones/theme/palette.sh
 held_pane=$(inner list-panes -s -t alpha -F '#{pane_id}' | sed -n 2p)
@@ -1806,12 +1806,10 @@ print -r -- '{"tickets":[{"id":701,"repo":"arena","title":"Held building","kind"
 outer kill-session -t o
 outer new-session -d -s o -x 121 -y 24 \
   "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 $bin -L $in 2>$tmp/err; echo EXIT \$?; cat"
-check "a held row's chip reads its session, window and pane" see "alpha:$held_index · $held_pane"
+check "an in-flight row shows its ticket" see "Held building"
+check "and no session, window and pane line under it" eval '! settled | grep -q "alpha:$held_index · $held_pane"'
 inner select-window -t alpha:one
-see "alpha:$held_index · $held_pane"
-chip=$(spot "alpha:$held_index · $held_pane")
-mouse 0 ${(z)chip} M
-mouse 0 ${(z)chip} m
-check "and a click on it opens that pane in the middle column" await shows 'NORMAL  i type   d changes   esc back'
+key Enter
+check "and Enter on it opens that pane in the middle column" await shows 'NORMAL  i type   d changes   esc back'
 
 exit $((fails > 0))
