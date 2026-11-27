@@ -874,7 +874,6 @@ see 'the whole of it'
 mouse 0 ${(z)$(close_at)} M
 check "a click on the modal's close button puts it away" gone 'the whole of it'
 key ' '
-key ' '
 see 'the whole of it'
 foot_at=(${(z)$(close_at)})
 mouse 0 $(( foot_at[1] - 20 )) $(( foot_at[2] - 3 )) M
@@ -1088,7 +1087,6 @@ check "e on a no goal row edits it in the middle column" await last 'edit 7'
 zselect -t 500
 key Escape
 plan_at 8
-key ' '
 key ' '
 check "a modal opened from an in flight row shows its body" see 'the whole of it'
 check "and its holder's state" see 'its Claude: '
@@ -1693,7 +1691,6 @@ nowplan $now ',"handed_off_from":"%407","handed_off_at":"'$now'"'
 zselect -t 150
 plan_at 920
 key ' '
-key ' '
 check "a row handed off from a pane says so in its modal" await shows 'handed off from %407'
 check "whose foot has H for asking its Claude to hand off" see 'H hand off'
 key H
@@ -1709,7 +1706,6 @@ zselect -t 300
 $bin -L $in plan 920
 see '#922 Third'
 key ' '
-key ' '
 check "a ticket with an open ask: its modal opened from a row lists every option, a row each" see '3 gamma'
 check "and ⏎ in its foot is labelled for answering the lit option" see '⏎ answer 1'
 : >$tmp/babylon
@@ -1719,7 +1715,6 @@ check "and puts the modal away" gone '3 gamma'
 $bin -L $in plan 921
 see '#922 Third'
 key ' '
-key ' '
 await shows '3 gamma'
 : >$tmp/babylon
 gamma_row=$(screen | grep -n -m1 -E '3 gamma' | cut -d: -f1)
@@ -1727,7 +1722,6 @@ mouse 0 $(( $(colof $gamma_row '3 gamma') + 1 )) $gamma_row M
 check "a click on an option answers it" await last 'answer 7 3'
 $bin -L $in plan 922
 see '#922 Third'
-key ' '
 key ' '
 await shows '3 gamma'
 : >$tmp/babylon
