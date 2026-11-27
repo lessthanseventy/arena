@@ -2104,7 +2104,7 @@ const plan_keys = [_][2][]const u8{
     .{ "c g o A u", "the Claudes list, the gate, the orchestrator, babylon's auto mode, the repos and what they have to push" },
     .{ "`", "fold the orchestrator's column, or unfold" },
     .{ "esc, q", "close home" },
-    .{ "◐ ◒ » ◇", "building, in the pipeline, queued, stalled" },
+    .{ "◐ ◒ » ◇ –", "building, in the pipeline, queued, stalled, closed" },
 };
 
 /// The plan's keys, boxed over its middle until the next key.

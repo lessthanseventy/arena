@@ -365,6 +365,7 @@ landed, and so it holds the four options the human was shown:
 5. next, in next's order, each with its wait word.
 
 **State words**, each with its glyph so none is said by colour alone (principle 12): `✓ landed`,
+`– closed` (dim; a ticket closed with nothing landed, sorted after the open steps),
 `◒ landing`, `◒ reviewing`, `◒ verifying`, `» queued 1st`, `◐ building`, `◇ stuck`, `· up next`.
 
 **Wait words** come from babylon's `held` on each next row (#1206, #1191): `ready`, `after #N`

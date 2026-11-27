@@ -867,10 +867,11 @@ pub const Sheet = struct {
             const shut = std.mem.indexOfScalar(u32, see.goals_shut, goal.epic) != null;
             s.add(.{ .kind = .goal, .pick = 0, .ticket = goal.epic, .item = i, .part = @intFromBool(shut) });
             if (shut) continue;
-            for (goal.steps, 0..) |step, at| {
+            for ([_]bool{ false, true }) |closed| for (goal.steps, 0..) |step, at| {
                 if (std.mem.eql(u8, step.state, "landed")) continue;
+                if (std.mem.eql(u8, step.state, "closed") != closed) continue;
                 s.add(.{ .kind = .goal_ticket, .pick = 0, .ticket = step.ticket, .item = i, .count = at });
-            }
+            };
         };
     }
 
@@ -945,6 +946,7 @@ pub const Sheet = struct {
             .{ "to_try", "▲" },
             .{ "failed", "✗" },
             .{ "sent_back", "✗" },
+            .{ "closed", "–" },
         };
         for (marks) |pair| if (std.mem.eql(u8, state, pair[0])) return pair[1];
         return "○";
@@ -1421,4 +1423,18 @@ test "Planning lists each open goal's tickets under it, the one driven first, an
     s.build(b.plan().?, &b, 100, 0, 0, false, true, .{ .screen = .planning, .goals_shut = &shut });
     try std.testing.expectEqual(@as(usize, 3), s.span(.goals).len);
     try std.testing.expectEqual(@as(u8, 1), s.rows[s.span(.goals).start].part);
+}
+
+test "a goal's closed step is listed after its open ones" {
+    var b = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"plan":{"driving":8,"next":[],
+        \\"goals":[{"epic":8,"title":"g","total":3,"landed":0,"steps":[{"ticket":1,"state":"closed"},{"ticket":2,"state":"todo"},{"ticket":3,"state":"building"}]}]}}
+    );
+    defer b.deinit();
+    var s: Sheet = undefined;
+    s.build(b.plan().?, &b, 100, 0, 0, false, true, .{ .screen = .planning });
+    const win = s.span(.goals);
+    const want = [_]u32{ 8, 2, 3, 1 };
+    try std.testing.expectEqual(want.len, win.len);
+    for (want, s.rows[win.start..][0..want.len]) |id, row| try std.testing.expectEqual(@as(?u32, id), row.ticket);
 }

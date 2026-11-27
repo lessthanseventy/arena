@@ -75,13 +75,14 @@ fn stateWords(buf: []u8, step: tickets.Step) struct { text: []const u8, attentio
     for (step.waits_on) |wait| if (wait.ticket) |on| {
         return .{ .text = std.fmt.bufPrint(buf, "○ ← #{d}", .{on}) catch "", .attention = false };
     };
-    const word = switch (std.meta.stringToEnum(enum { building, landing, reviewing, verifying, to_try, failed, sent_back, other }, step.state) orelse .other) {
+    const word = switch (std.meta.stringToEnum(enum { building, landing, reviewing, verifying, to_try, failed, sent_back, closed, other }, step.state) orelse .other) {
         .building => "building",
         .landing => "landing",
         .reviewing => "reviewing",
         .verifying => "verifying",
         .to_try => "to try",
         .failed, .sent_back => "sent back",
+        .closed => "closed",
         .other => "",
     };
     if (word.len == 0) return .{ .text = "○ todo", .attention = false };
@@ -150,4 +151,13 @@ pub fn fold(app: *App, epic: u32) void {
         app.goals_shut_n += 1;
     }
     app.dirty = true;
+}
+
+test "a closed step reads – closed, dim, and is not a todo" {
+    var buf: [64]u8 = undefined;
+    const closed = stateWords(&buf, .{ .ticket = 1, .state = "closed" });
+    try std.testing.expectEqualStrings("– closed", closed.text);
+    try std.testing.expect(!closed.attention);
+    const todo = stateWords(&buf, .{ .ticket = 2, .state = "todo" });
+    try std.testing.expectEqualStrings("○ todo", todo.text);
 }
