@@ -1599,6 +1599,30 @@ key y
 check "and then the next, the pick having moved on" await last 'tried 931 2 ok'
 print -r -- '{"tickets":[],"needs_you":[]}' | addplan
 check "a ticket tried on every check leaves Your move" gone '── to try'
+# one ticket with an open ask and a try: each row opens its own item
+both() {
+  local ask=${1:+',"ask":{"id":11,"question":"When to reboot?","options":["alpha","beta"]}'}
+  local items='{"id":"try:935","kind":"try","ticket":935,"repo":"arena","text":"#935 arena  Both","since":"2026-11-24T10:00:00Z","machine":"gate ✓","steps":[{"n":1,"text":"the flood is gone","result":null,"actions":[{"key":"y","label":"✓","argv":["babylon","tried","935","1","ok"]},{"key":"n","label":"✗","argv":["babylon","tried","935","1","no"],"needs":"words"}]}],"actions":[{"key":"x","label":"close untried","argv":["babylon","tried","935","skip"]}]}'
+  [[ -n $1 ]] && items='{"id":"ask:11","kind":"ask","ticket":935,"repo":"arena","text":"#935 arena  asks: When to reboot?","since":"2026-11-24T10:00:00Z","actions":[{"key":"1","label":"alpha","argv":["babylon","answer","11","1"]},{"key":"2","label":"beta","argv":["babylon","answer","11","2"]}]},'$items
+  print -r -- '{"tickets":[{"id":935,"repo":"arena","title":"Both","kind":"ticket","status":"try","stage":"landed","priority":"med","blocked_by":[],"checks":[{"n":1,"text":"the flood is gone","result":null}],"try":{"changed":"The flood stops.","steps":["Look"],"right":"quiet","wrong":"loud"}'$ask'}],"needs_you":['$items']}' | addplan
+}
+outer resize-window -t o -x 121 -y 40
+key o
+gone 'o close'
+both ask
+key ']'
+see 'asks: When to reboot'
+key Enter
+check "a ticket's ask row opens its question and options, not its try sheet" await shows '2 beta'
+check "with no try sheet beside them" gone 'TRY IT'
+: >$tmp/babylon
+key 1
+check "1 answers the ask, through babylon" await last 'answer 11 1'
+both
+gone 'asks: When to reboot'
+check "and the try row stays in Your move" await shows '── to try'
+print -r -- '{"tickets":[],"needs_you":[]}' | addplan
+gone '── to try'
 # a check to look at the diff: o opens meatcheck on the landed range; its comments come back as the ✗, none as ✓
 looking() {
   print -r -- '{"tickets":[],"needs_you":[{"id":"try:932","kind":"try","ticket":932,"repo":"arena","text":"#932 arena  Doors","since":"2026-11-24T10:00:00Z","machine":"gate ✓","steps":['\

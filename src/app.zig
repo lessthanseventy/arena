@@ -394,6 +394,8 @@ pub const HomeView = struct {
     /// A landed ticket's body is unfolded: it is one `space` away behind its checks.
     body_open: bool = false,
 
+    /// The modal shows its ticket's open ask, not its try sheet: the ticket's ask row opened it.
+    ask_first: bool = false,
     /// The option of the modal's open ask that ⏎ answers, from 1.
     ask_pick: u8 = 1,
     /// The check of the modal's to-try ticket that `y` and `n` act on, from 1.
@@ -3236,6 +3238,13 @@ pub const App = struct {
         return app.openText(id, "detail", false);
     }
 
+    /// Ticket `id`'s detail with its open ask shown, not its try sheet.
+    pub fn openAsk(app: *App, id: u32) !bool {
+        if (!try app.openText(id, "detail", false)) return false;
+        app.home.?.ask_first = true;
+        return true;
+    }
+
     /// Ticket `id`'s gate run, the run in progress's when it has one, in the modal frame.
     pub fn openGate(app: *App, id: u32) !void {
         _ = try app.openText(id, "gate", true);
@@ -3261,6 +3270,7 @@ pub const App = struct {
         view.item_open = false;
         view.detail_scroll = 0;
         view.body_open = false;
+        view.ask_first = false;
         view.ask_pick = 1;
         view.check_pick = if (app.ticketCard(id)) |card| openFrom(card, 1, true) orelse 1 else 1;
         view.details = false;
@@ -5183,23 +5193,42 @@ pub const App = struct {
     /// Fills `head` with the card's title whole, its repo, priority, stage, holder and age, what blocks
     /// it, the question it asks with its options, and what it was sent back for.
     pub fn cardHead(card: *const tickets.Card, inner: usize, epoch: i64, words: bool, head: *CardHead) void {
-        cardHeadOpen(card, inner, epoch, words, true, head);
+        cardHeadOpen(card, inner, epoch, words, true, false, head);
+    }
+
+    /// Whether `card` shows its try sheet and checks: it is to try, and its ask was not the item
+    /// picked.
+    pub fn sheetShown(card: *const tickets.Card, ask_first: bool) bool {
+        return card.status == .@"try" and card.checks.len > 0 and !(ask_first and card.ask != null);
+    }
+
+    /// `sheetShown` for the open modal.
+    pub fn sheeted(app: *const App, card: *const tickets.Card) bool {
+        const view = app.home orelse return false;
+        return sheetShown(card, view.ask_first);
+    }
+
+    /// Whether the open modal shows the ask of ticket `id`'s card.
+    pub fn showsAsk(app: *const App, id: u32) bool {
+        const view = app.home orelse return false;
+        const card = app.cardById(id) orelse return false;
+        return card.ask != null and !sheetShown(card, view.ask_first);
     }
 
     /// `cardHead`; a to-try card with a try sheet leads with it and its checks, and `details` says
     /// whether the facts it folds under its `details` row are in.
-    fn cardHeadOpen(card: *const tickets.Card, inner: usize, epoch: i64, words: bool, details: bool, head: *CardHead) void {
+    fn cardHeadOpen(card: *const tickets.Card, inner: usize, epoch: i64, words: bool, details: bool, ask_first: bool, head: *CardHead) void {
         head.* = .{};
-        if (card.status == .@"try" and card.checks.len > 0) if (card.@"try") |sheet| {
+        if (sheetShown(card, ask_first)) if (card.@"try") |sheet| {
             sheetHead(card, sheet, inner, head);
-            checkHead(card, head);
+            checkHead(card, ask_first, head);
             head.fold = head.n;
             head.add(.fold, "", .{});
             if (details) factsHead(card, inner, epoch, words, head);
             return;
         };
         factsHead(card, inner, epoch, words, head);
-        checkHead(card, head);
+        checkHead(card, ask_first, head);
     }
 
     fn sheetHead(card: *const tickets.Card, sheet: tickets.TrySheet, inner: usize, head: *CardHead) void {
@@ -5267,8 +5296,8 @@ pub const App = struct {
         }
     }
 
-    fn checkHead(card: *const tickets.Card, head: *CardHead) void {
-        if (card.status == .@"try" and card.checks.len > 0) {
+    fn checkHead(card: *const tickets.Card, ask_first: bool, head: *CardHead) void {
+        if (sheetShown(card, ask_first)) {
             var tried: usize = 0;
             for (card.checks) |check| tried += @intFromBool(check.result != null);
             head.add(.warn, "▲ try it: {d} of {d} tried", .{ tried, card.checks.len });
@@ -5283,8 +5312,8 @@ pub const App = struct {
     /// `cardHead` for the open modal: a to-try card's rows end with what arena says of the check
     /// it ran, or asks to run.
     pub fn modalHead(app: *const App, card: *const tickets.Card, inner: usize, words: bool, head: *CardHead) void {
-        cardHeadOpen(card, inner, app.epoch, words, if (app.home) |view| view.details else false, head);
-        if (card.status != .@"try") return;
+        cardHeadOpen(card, inner, app.epoch, words, if (app.home) |view| view.details else false, if (app.home) |view| view.ask_first else false, head);
+        if (!app.sheeted(card)) return;
         var id: [24]u8 = undefined;
         const note = app.refusalOf(std.fmt.bufPrint(&id, "try:{d}", .{card.id}) catch return) orelse return;
         var rows = std.mem.splitScalar(u8, note, '\n');
@@ -5296,13 +5325,13 @@ pub const App = struct {
     /// Whether the pick of a to-try card with a sheet is on its `details` row, past its checks.
     pub fn onFold(app: *const App, card: *const tickets.Card) bool {
         const view = app.home orelse return false;
-        return card.status == .@"try" and card.@"try" != null and card.checks.len > 0 and view.check_pick > card.checks.len;
+        return app.sheeted(card) and card.@"try" != null and view.check_pick > card.checks.len;
     }
 
     /// Whether the card's body is folded away under its `details` row.
     pub fn bodyHidden(app: *const App, card: *const tickets.Card) bool {
         const view = app.home orelse return false;
-        return card.status == .@"try" and card.@"try" != null and card.checks.len > 0 and !view.details;
+        return app.sheeted(card) and card.@"try" != null and !view.details;
     }
 
     /// Check `n` of ticket `id` as its Your move item gives it, with the doc or range it opens.
@@ -5399,7 +5428,7 @@ pub const App = struct {
                 n += 1;
                 x += button.width() + 1;
             }
-            if (card.status == .@"try" and card.checks.len > 0 and !app.onFold(card)) {
+            if (app.sheeted(card) and !app.onFold(card)) {
                 if (pickedCheck(card, app.home.?.check_pick)) |check| if (app.stepOf(card.id, check.n)) |found| {
                     // a look with no doc opens its diff on `o`; with both, the diff is on `d`
                     const both = found.step.doc != null and feed.isLook(found.step);
@@ -5502,7 +5531,7 @@ pub const App = struct {
                 n += 1;
             }
         };
-        if (app.modalCard()) |card| if (card.status == .@"try" and card.checks.len > 0) if (app.checkRows(card)) |at| {
+        if (app.modalCard()) |card| if (app.sheeted(card)) if (app.checkRows(card)) |at| {
             const room = rect.w -| 4;
             for (card.checks, 1..) |check, pos| {
                 if (check.result != null) continue;
@@ -5731,7 +5760,7 @@ pub const App = struct {
         if (is(key, &.{" "}) and app.pageDown()) return;
         if (is(key, &.{ "\x1b", "q", " " })) return app.pressModal(.close);
         if (!view.gate and is(key, &.{"Y"})) if (app.modalCard()) |card| if (card.status == .done) return app.pressModal(.copy_check);
-        if (!view.gate) if (app.modalCard()) |card| if (card.status == .@"try" and card.checks.len > 0) {
+        if (!view.gate) if (app.modalCard()) |card| if (app.sheeted(card)) {
             const top = card.checks.len + @intFromBool(card.@"try" != null);
             const on_fold = app.onFold(card);
             if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) {
@@ -8491,6 +8520,61 @@ test "a backlog ticket's card with an open ask lists its options, and 1 answers 
 
     try app.modalKey("1");
     try std.testing.expectEqual(@as(?u32, null), app.home.?.detail);
+    var got: [512]u8 = undefined;
+    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon answer 9 1") != null);
+}
+
+test "a ticket with an open ask and a try sheet: the ask's row shows the ask and 1 answers it, the try row shows the sheet" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 140;
+    app.view_w = 140;
+    app.view_h = 30;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":7,"repo":"arena","title":"Lights","status":"try","stage":"landed",
+        \\"ask":{"id":9,"question":"When?","options":["now","later"]},
+        \\"checks":[{"n":1,"text":"it is told","result":null}],"try":{"changed":"The lights come on."}}],
+        \\"needs_you":[{"id":"ask:9","kind":"ask","ticket":7,"repo":"arena","text":"#7 arena  asks: When?",
+        \\"actions":[{"key":"1","label":"now","argv":["babylon","answer","9","1"]},{"key":"2","label":"later","argv":["babylon","answer","9","2"]}]},
+        \\{"id":"try:7","kind":"try","ticket":7,"repo":"arena","text":"#7 arena  try it","actions":[]}]}
+    );
+    defer app.board.?.deinit();
+    const eq = std.testing.expectEqual;
+    const ask_row: sheets.Row = .{ .kind = .need, .item = 0, .ticket = 7 };
+    const try_row: sheets.Row = .{ .kind = .need, .item = 1, .ticket = 7 };
+
+    var buttons: [16]App.ModalButton = undefined;
+    app.home = .{ .detail = 7 };
+    try std.testing.expect(!win_move.isOpen(&app, ask_row));
+    try std.testing.expect(win_move.isOpen(&app, try_row));
+    var tried: usize = 0;
+    var options: usize = 0;
+    for (app.modalButtons(&buttons)) |b| {
+        tried += @intFromBool(b.action == .tried_ok);
+        options += @intFromBool(b.action == .option);
+    }
+    try eq(@as(usize, 1), tried);
+    try eq(@as(usize, 0), options);
+
+    app.home = .{ .detail = 7, .ask_first = true };
+    try std.testing.expect(win_move.isOpen(&app, ask_row));
+    try std.testing.expect(!win_move.isOpen(&app, try_row));
+    tried = 0;
+    options = 0;
+    for (app.modalButtons(&buttons)) |b| {
+        tried += @intFromBool(b.action == .tried_ok);
+        options += @intFromBool(b.action == .option and !std.mem.eql(u8, b.key, "⏎"));
+    }
+    try eq(@as(usize, 0), tried);
+    try eq(@as(usize, 2), options);
+
+    try app.modalKey("1");
     var got: [512]u8 = undefined;
     const len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon answer 9 1") != null);

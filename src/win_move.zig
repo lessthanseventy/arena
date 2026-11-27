@@ -64,7 +64,8 @@ pub fn isDrive(need: tickets.Need) bool {
 pub fn isOpen(app: *const App, row: sheets.Row) bool {
     const view = app.home orelse return false;
     const id = row.ticket orelse return row.kind == .need and app.itemNeed() == row.item;
-    return view.detail == id and !view.gate;
+    if (view.detail != id or view.gate) return false;
+    return std.mem.eql(u8, app.board.?.needsYou()[row.item].kind, "ask") == app.showsAsk(id);
 }
 
 fn isSendBack(need: tickets.Need) bool {
@@ -97,7 +98,8 @@ pub fn open(app: *App, row: *const sheets.Row) !void {
         _ = try win_feed.act(app, itemOf(need, row.item, null), " ");
         return;
     }
-    if (row.ticket) |id| _ = try app.openDetail(id) else try app.openItem(row.item);
+    const ticket = row.ticket orelse return app.openItem(row.item);
+    _ = if (std.mem.eql(u8, need.kind, "ask")) try app.openAsk(ticket) else try app.openDetail(ticket);
 }
 
 /// The Your move item of ticket `id` whose buttons its card carries: the first that is not an
