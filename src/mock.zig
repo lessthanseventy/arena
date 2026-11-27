@@ -799,7 +799,7 @@ fn footBar(sc: *Scene, screen: Screen) void {
         .popup => &.{ .{ "1-3", "answer" }, .{ "⏎", "go to its Claude" }, .{ "G", "give" }, .{ "e", "edit" }, .{ "j k", "scroll" }, .{ "q", "close" } },
         .orch => &.{ .{ "1-3", "answer" }, .{ "c", "in words" }, .{ "⏎", "go" }, .{ "x", "no" }, .{ "j k", "pick" }, .{ "i", "tell it" }, .{ "h", "back to the plan" } },
         .alone => &.{ .{ "⏎", "go" }, .{ "1-3", "answer" }, .{ "space", "open" }, .{ "j k", "pick" }, .{ "] [", "next needing you" }, .{ "z", "fold" }, .{ "o", "overview" }, .{ "?", "keys" } },
-        .doing => &.{ .{ "⏎", "go" }, .{ "space", "open" }, .{ "H", "hand off" }, .{ "j k", "pick" }, .{ "h l", "window" }, .{ "tab", "planning" }, .{ "/", "find" }, .{ "o", "orchestrator" }, .{ "?", "keys" } },
+        .doing => &.{ .{ "⏎", "go" }, .{ "space", "open" }, .{ "H", "hand off" }, .{ "c", "Claudes" }, .{ "j k", "pick" }, .{ "h l", "window" }, .{ "tab", "planning" }, .{ "/", "find" }, .{ "o", "orchestrator" }, .{ "?", "keys" } },
         .planning => &.{ .{ "space", "open" }, .{ "a", "goal…" }, .{ "w", "next" }, .{ ">", "close" }, .{ "e", "edit" }, .{ "p", "priority" }, .{ "j k", "pick" }, .{ "h l", "window" }, .{ "+", "new" }, .{ "tab", "doing" }, .{ "/", "find" }, .{ "?", "keys" } },
         .into => &.{ .{ "⏎", "move it" }, .{ "j k", "pick" }, .{ "esc", "cancel" } },
     };
@@ -1451,8 +1451,8 @@ fn nextWindow(sc: *Scene, x: usize, y: usize, w: usize, h: usize, focused: bool)
     }
 }
 
-/// Doing: what needs the human and what is moving. Your move, the goal being driven, in flight and
-/// next on the left, landed the whole height of the right.
+/// Doing: what needs the human and what is moving. Your move, the goal being driven, then one board:
+/// landed today, the now line, what is in flight, and next.
 fn doing(sc: *Scene) void {
     const s = sc.skin;
     const c = sc.c;
@@ -1479,26 +1479,34 @@ fn doing(sc: *Scene) void {
     _ = c.print(w - 18, y, sc.fmt("{d}/{d}  {d}%", .{ goal.landed, goal.total, pct }), .{ .fg = s.text, .bg = s.tile }, 14);
     y += 2;
 
-    const left = w * 3 / 5;
     const rows = foot - y;
-    const flight_h = rows * 6 / 10;
-    var fy = sc.panel(1, y, left - 1, flight_h, "in flight", plan.now.len, false);
+    var by = sc.panel(1, y, w, rows, "board", plan.landed_today.count, false);
+    const end = y + rows;
+    var at = plan.landed_today.newest.len;
+    while (at > 0 and by + 1 < end) {
+        at -= 1;
+        const id = plan.landed_today.newest[at];
+        const cd = sc.card(id) orelse continue;
+        ticketRow(sc, 2, by, w - 2, id, sc.fmt("✓ landed {s}", .{sc.ago(cd.closed_at)}), s.landed, false);
+        by += 1;
+    }
+    if (by + 1 < end) {
+        c.fill(2, by, w - 2, 1, s.panel);
+        _ = c.print(w / 2 - 2, by, " now ", .{ .fg = s.dim, .bg = s.panel }, 5);
+        by += 1;
+    }
     for (plan.now) |item| {
-        if (fy + 1 >= y + flight_h) break;
+        if (by + 1 >= end) break;
         const stalled = item.stalled != null;
         const state = item.stage orelse item.state;
-        ticketRow(sc, 2, fy, left - 3, item.ticket, sc.fmt("{s} {s} {s}", .{ stateGlyph(state), if (stalled) "stalled" else state, sc.ago(item.since) }), if (stalled) s.failed else s.stateInk(state), false);
-        fy += 1;
+        ticketRow(sc, 2, by, w - 2, item.ticket, sc.fmt("{s} {s} {s}", .{ stateGlyph(state), if (stalled) "stuck" else state, sc.ago(item.since) }), if (stalled) s.failed else s.stateInk(state), false);
+        by += 1;
     }
-    nextWindow(sc, 1, y + flight_h + 2, left - 1, rows - flight_h - 2, false);
-
-    const lx = left + 1;
-    var ly = sc.panel(lx, y, w - left, rows, "landed", plan.landed_today.count, false);
-    for (plan.landed_today.newest) |id| {
-        if (ly + 1 >= y + rows) break;
-        const cd = sc.card(id) orelse continue;
-        ticketRow(sc, lx + 1, ly, w - left - 2, id, sc.fmt("✓ {s}", .{sc.ago(cd.closed_at)}), s.landed, false);
-        ly += 1;
+    for (plan.next) |item| {
+        if (by + 1 >= end) break;
+        const waits = item.waits_on.len > 0 and item.waits_on[0].ticket != null;
+        ticketRow(sc, 2, by, w - 2, item.ticket, if (waits) sc.fmt("· up next  after #{d}", .{item.waits_on[0].ticket.?}) else "· up next  ready", if (waits) s.dim else s.landed, false);
+        by += 1;
     }
 }
 

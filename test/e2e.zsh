@@ -832,9 +832,9 @@ outer resize-window -t o -x 200 -y 40
 zselect -t 300
 normal
 key b
-see 'in flight[^0-9]*2'
+see '2 moving'
 key M-b
-gone 'in flight[^0-9]*2'
+gone '2 moving'
 last() { [[ -f $tmp/babylon && $(tail -1 $tmp/babylon) == $1 ]] }
 outer resize-window -t o -x 200 -y 40
 zselect -t 100
@@ -964,8 +964,9 @@ check "and the fold is gone from the repo folds" await eval '! grep -qx tlon $fo
 inner set -p -t alpha:one @arena_claude_since $(date +%s)
 inner new-window -d -t alpha: -n spare sh
 inner set -p -t alpha:spare @arena_claude_since $(date +%s)
-key Tab
-see 'other Claudes 1'
+key c
+see 'no ticket 1'
+key Escape
 inner kill-window -t alpha:spare
 $bin -L $in plan 7
 zselect -t 200
@@ -1027,7 +1028,7 @@ cp $tmp/board.noauto $tmp/run/babylon/board.json
 outer resize-window -t o -x 200 -y 40
 zselect -t 200
 key Escape
-plan_up='◆ (in flight|no goal)'
+plan_up='◆ (board|no goal)'
 plan_home() { normal; key b; see "$plan_up" }
 plan_at() { $bin -L $in plan $1; see "$plan_up" }
 # column and row from one picture, taken again while it shows nothing (mid-frame): from two, a click goes out with no row
@@ -1046,7 +1047,7 @@ await eval '[[ ! -e $tmp/run/babylon/refused-start ]]'
 check "and leaves Doing on screen once babylon has started it" see "$plan_up"
 plan_at 8
 key Enter
-check "⏎ on an in flight row opens the Claude's pane in the middle column" await shows 'NORMAL  i type   d changes   esc back'
+check "⏎ on a building row opens the Claude's pane in the middle column" await shows 'NORMAL  i type   d changes   esc back'
 check "and the strip is not visited" gone '╭─ 1 one '
 key d
 check "d turns the column to its ticket's changes" await shows 'NORMAL  d pane   j k scroll   esc back'
@@ -1088,12 +1089,12 @@ zselect -t 500
 key Escape
 plan_at 8
 key ' '
-check "a modal opened from an in flight row shows its body" see 'the whole of it'
+check "a modal opened from a building row shows its body" see 'the whole of it'
 check "and its holder's state" see 'its Claude: '
 key Enter
 check "and ⏎ in it opens the Claude holding it in the middle column" await shows 'NORMAL  i type   d changes   esc back'
 key Escape
-plan_up='◆ (in flight|no goal)'
+plan_up='◆ (board|no goal)'
 plan_home() { normal; key b; see "$plan_up" }
 plan_at() { $bin -L $in plan $1; see "$plan_up" }
 in_session() { [[ $(inner list-clients -F '#{session_name}') == $1 ]] }
@@ -1106,7 +1107,7 @@ key g
 check "g on Plan shows the gate" see '╭─ 1 gate '
 plan_home
 print -r -- '{"tickets":[{"id":21,"repo":"arena","title":"Running","kind":"ticket","status":"review","priority":"med","blocked_by":[],"stage":"reviewing"},{"id":22,"repo":"arena","title":"Waiting","kind":"ticket","status":"review","priority":"med","blocked_by":[],"stage":"queued"}],"plan":{"now":[{"ticket":21,"repo":"arena","title":"Running","state":"landing","stage":"reviewing","since":"2026-11-24T10:00:00Z"},{"ticket":22,"repo":"arena","title":"Waiting","state":"landing","stage":"queued","place":1,"since":"2026-11-24T10:00:00Z"}],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}' >$tmp/run/babylon/board.json
-see '#21 Running'
+see '#21 +Running'
 plan_at 21
 key g
 check "g on Plan with a run in progress opens the gate's modal on it" see '╭─ gate · #21 '
@@ -1343,15 +1344,16 @@ cp $tmp/run/babylon/board.json $tmp/board.slots
 mkdir -p $tmp/.config/ficciones/theme
 for name in AMBER VIOLET AMBERDIM EMBERDIM INK DIM GREY SURFACE0 SURFACE2 SURFACE3 SURFACE4 BG CYAN MOSS PINK RED; do print -r -- "PALETTE_$name=#808080"; done >$tmp/.config/ficciones/theme/palette.sh
 print -r -- '{"tickets":[{"id":703,"repo":"arena","title":"Landed one","kind":"ticket","status":"done","closed_at":"2026-11-24T10:00:00Z","priority":"med","blocked_by":[]},{"id":701,"repo":"arena","title":"First building","kind":"ticket","status":"doing","priority":"med","blocked_by":[]}],"plan":{"now":[{"ticket":701,"repo":"arena","title":"First building","state":"building","since":"2026-11-24T10:00:00Z"},{"ticket":702,"repo":"arena","title":"Second landing","state":"landing","stage":"verifying","since":"2026-11-24T10:00:00Z"}],"next":[{"ticket":7,"repo":"tlon","title":"Lights","why":"","set_by":"orchestrator","waits_on":[]}],"goals":[],"landed_today":{"count":1,"newest":[703]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}' >$tmp/run/babylon/board.json
-check "in Workbench's look the plan's windows have their title bars" await shows '◆ in flight.*◆ landed'
-check "in flight holds the ticket being built" see 'First buil'
+check "in Workbench's look Doing's board has its title bar, with its tally" await shows '◆ board +│ 1 landed today · 2 moving · 1 next'
+check "the board holds the ticket being built" see 'First buil'
 check "and the pipeline's, with its stage" see 'Second lan'
-check "landed holds today's landing, a row to a ticket" see '✓ #703'
+check "and today's landing, a row to a ticket, above the now line" see '✓ landed +#703'
+check "next's row under the building ones, with what it waits for" see '· up next +#7 +Lights +tlon +ready'
 title_row() { settled | grep -n "$1" | head -1 | cut -d: -f1 }
-next_row=$(title_row '◆ next')
+next_row=$(title_row '◆ board')
 key z
-check "z folds nothing: in flight keeps its rows" see 'First buil'
-same_row() { [[ $(title_row '◆ next') == $next_row ]] }
+check "z folds nothing: the board keeps its rows" see 'First buil'
+same_row() { [[ $(title_row '◆ board') == $next_row ]] }
 check "and the window below stays on the same screen row" await same_row
 check "no window's title has a fold mark" gone '▾'
 key f
@@ -1360,15 +1362,15 @@ key q
 check "and q closes it" gone 'q close'
 check "with the window below still on its row" same_row
 title_click() { local row=$(title_row "$1"); local line=$(settled | sed -n "${row}p"); mouse 0 $(( ${#${line%%$1*}} + 3 )) $row M; mouse 0 $(( ${#${line%%$1*}} + 3 )) $row m }
-title_click '◆ in flight'
+title_click '◆ board'
 check "a click on a window's title bar leaves it open" see 'First buil'
 check "with the window below still on its row" same_row
 outer resize-window -t o -x 105 -y 40
-check "at half the screen the windows stack in one column, in flight above next" await eval '[[ -n $(title_row "◆ in flight") && -n $(title_row "◆ next") ]] && (( $(title_row "◆ in flight") < $(title_row "◆ next") ))'
+check "at half the screen the board is still one window, in the column" await eval '[[ -n $(title_row "◆ board") ]]'
 outer resize-window -t o -x 121 -y 24
 key j
-key Enter
-check "⏎ on a pipeline row opens the gate's modal for its run" await shows '✗ gate +failed'
+key g
+check "g on a pipeline row opens the gate's modal for its run" await shows '✗ gate +failed'
 key q
 key k
 : >$tmp/babylon
@@ -1393,17 +1395,17 @@ mouse 0 $((c + 1)) $r m
 check "a second click does" await eval '(( $(auto_offs) > offs ))'
 cp $tmp/board.plan $tmp/run/babylon/board.json
 : >$tmp/babylon
-check "the picked row is open in place, with the card's buttons under it" await shows 'space open +e edit'
+check "the picked row is open in place, with the card's buttons under it" await shows 'space open +< reopen'
 key -l ' '
 check "and space on it opens its modal" see 'q close'
 key Escape
 check "which Escape puts away, the row staying open" gone 'q close'
-check "the pick starts on the first window's row" see '▌▌. #701 First building'
+check "the pick starts on the board's first row, the oldest landed" see '▌ ✓ landed +#703'
 key /
 key -l Light
 key Enter
-check "/ with part of a title keeps the rows that hold it, and the pick skips the rest, a Claude with no ticket too" await shows '▌▌1 . #7 Lights'
-check "the rows that miss it stay, dimmed" see '#701 First building'
+check "/ with part of a title keeps the rows that hold it, and the pick skips the rest, a Claude with no ticket too" await shows '▌ · up next +#7 +Lights'
+check "the rows that miss it stay, dimmed" see '#701 +First building'
 key Escape
 check "and Escape clears it" gone '/ Light'
 key r
@@ -1415,10 +1417,10 @@ for round in 1 2 3 4 5; do
   zselect -t 30
 done
 check "and r past the last repo shows every one again" await shows 'Lights'
-repeat 12 key j
+repeat 12 key k
 key '<'
 check "< on a landed row opens its ticket again" await last 'update 703 --status todo'
-repeat 12 key k
+repeat 2 key j
 : >$tmp/babylon
 key p
 check "p on a now row raises its priority through babylon" await last 'update 701 --priority high'

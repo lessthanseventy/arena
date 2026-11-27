@@ -13,9 +13,10 @@ const feed = @import("feed.zig");
 const sheets = @import("plan.zig");
 const goal_mod = @import("goal.zig");
 const win_plan = @import("win_plan.zig");
-const win_landed = @import("win_landed.zig");
+
 const win_driving = @import("win_driving.zig");
 const win_now = @import("win_now.zig");
+const win_board = @import("win_board.zig");
 const win_move = @import("win_move.zig");
 const win_foot = @import("win_foot.zig");
 const win_modal = @import("win_modal.zig");
@@ -1474,15 +1475,16 @@ fn planFoot(app: *App, w: *Writer, sheet: *const sheets.Sheet, pick: usize) !voi
     try fitted(w, text, app.boardW());
 }
 
-const PlanHeadBufs = struct { auto: [48]u8, auto_pad: [64]u8, today: [32]u8, needs: [16]u8, orch: [40]u8, restart: [64]u8, unpushed: [32]u8 };
+const PlanHeadBufs = struct { auto: [48]u8, auto_pad: [64]u8, today: [32]u8, needs: [16]u8, orch: [40]u8, restart: [64]u8, unpushed: [32]u8, claudes: [24]u8 };
 
 /// The head's pieces, in order: the restart and unpushed chips, which come and go, then auto,
-/// today, Your move, the orchestrator and the menu.
+/// the Claudes, today, Your move, the orchestrator and the menu.
 const head_chip_restart = 0;
 const head_chip_unpushed = 1;
 const head_auto = 2;
-const head_orch = 5;
-const head_menu = 6;
+const head_claudes = 3;
+const head_orch = 6;
+const head_menu = 7;
 
 const auto_ask = "◐ turn off?";
 
@@ -1512,8 +1514,8 @@ test "auto's piece keeps one width asking and not" {
 /// words taking `left_w`; with less room it keeps auto and what needs the human, then auto alone.
 /// Auto says its tools slots when babylon gives them and the room is there.
 const PlanHead = struct {
-    pieces: [7]struct { text: []const u8, style: vt.Style },
-    keep: u7,
+    pieces: [8]struct { text: []const u8, style: vt.Style },
+    keep: u8,
     start: usize,
     left_w: usize,
 
@@ -1537,14 +1539,19 @@ fn planHead(app: *const App, bufs: *PlanHeadBufs) PlanHead {
     const needs_n = b.needsYou().len;
     const dim = ink(app, "dim", 8);
     const left_w = cellCount(App.plan_title) + if (app.oneColumn()) cellCount(App.orch_link) + 2 else 0;
-    var head: PlanHead = .{ .pieces = undefined, .keep = 0b1111111, .start = 0, .left_w = left_w };
-    const tries = [_]struct { tools: bool, keep: u7 }{
-        .{ .tools = true, .keep = if (app.oneColumn()) 0b1010111 else 0b1111111 },
-        .{ .tools = false, .keep = if (app.oneColumn()) 0b1010111 else 0b1111111 },
-        .{ .tools = false, .keep = 0b1010111 },
-        .{ .tools = false, .keep = 0b1010100 },
-        .{ .tools = false, .keep = 0b1000100 },
+    var head: PlanHead = .{ .pieces = undefined, .keep = 0b11111111, .start = 0, .left_w = left_w };
+    const tries = [_]struct { tools: bool, keep: u8 }{
+        .{ .tools = true, .keep = if (app.oneColumn()) 0b10101111 else 0b11111111 },
+        .{ .tools = false, .keep = if (app.oneColumn()) 0b10101111 else 0b11111111 },
+        .{ .tools = false, .keep = 0b10100111 },
+        .{ .tools = false, .keep = 0b10100100 },
+        .{ .tools = false, .keep = 0b10000100 },
     };
+    var agents: [64]App.Agent = undefined;
+    const claudes_text: []const u8 = if (app.agents(&agents) > 0)
+        std.fmt.bufPrint(&bufs.claudes, "⌸ {d} Claudes", .{app.agents(&agents)}) catch "⌸"
+    else
+        "";
     const restart_after = b.restartAfter();
     const restart_text: []const u8 = if (b.restart == null) "" else (if (restart_after.len > 0)
         std.fmt.bufPrint(&bufs.restart, "↻ restarting after {s}", .{restart_after}) catch "↻ restarting"
@@ -1567,6 +1574,7 @@ fn planHead(app: *const App, bufs: *PlanHeadBufs) PlanHead {
             .{ .text = restart_text, .style = dim },
             .{ .text = unpushed_text, .style = dim },
             .{ .text = auto, .style = if (app.auto() != null) autoOn(app) else dim },
+            .{ .text = claudes_text, .style = dim },
             .{ .text = std.fmt.bufPrint(&bufs.today, "✓ {d} today", .{given.landed_today.count}) catch "", .style = dim },
             .{ .text = std.fmt.bufPrint(&bufs.needs, "▲ {d}", .{needs_n}) catch "", .style = if (needs_n > 0) heading(app) else dim },
             .{ .text = orchPiece(app, &bufs.orch), .style = dim },
@@ -1597,7 +1605,7 @@ fn orchPiece(app: *const App, buf: []u8) []const u8 {
 }
 
 /// What Plan's head holds at column `x`: its orchestrator state or its `≡`.
-pub fn planHeadHit(app: *const App, x: u16) ?enum { orch, menu, unpushed } {
+pub fn planHeadHit(app: *const App, x: u16) ?enum { orch, menu, unpushed, claudes } {
     var bufs: PlanHeadBufs = undefined;
     const head = planHead(app, &bufs);
     if (head.start <= head.left_w) return null;
@@ -1607,6 +1615,7 @@ pub fn planHeadHit(app: *const App, x: u16) ?enum { orch, menu, unpushed } {
         const end = at + cellCount(piece.text);
         if (x >= at and x < end) return switch (i) {
             head_chip_unpushed => .unpushed,
+            head_claudes => .claudes,
             head_orch => .orch,
             head_menu => .menu,
             else => null,
@@ -1757,7 +1766,7 @@ fn planView(app: *App, w: *Writer, view: app_mod.HomeView) !void {
 /// Whether a box is open that is drawn in the middle column.
 fn columnOpen(app: *const App, view: app_mod.HomeView) bool {
     const words = if (app.prompt) |prompt| prompt.multiline() else false;
-    return words or view.claude != null or view.detail != null or view.item_open or view.repos or view.giving != null or view.into != null or view.goal_open or
+    return words or view.claudes or view.claude != null or view.detail != null or view.item_open or view.repos or view.giving != null or view.into != null or view.goal_open or
         app.autoRect() != null or app.draftRect() != null;
 }
 
@@ -1774,6 +1783,7 @@ fn planBoxes(app: *App, w: *Writer, view: app_mod.HomeView) !void {
     if (view.detail) |id| try win_modal.detailBox(app, w, id, view.detail_scroll);
     if (view.item_open) try win_modal.itemBox(app, w, view.detail_scroll);
     if (view.repos) try win_repos.paint(app, w);
+    if (view.claudes) try win_now.paint(app, w);
     if (view.claude != null) try claudeBox(app, w, view);
     if (app.autoRect() != null) app.grab.cover();
     try win_modal.autoBox(app, w);
@@ -2075,8 +2085,9 @@ pub fn benchState(app: *const App, card: *const tickets.Card, r: theme.Roles, bu
 
 const plan_keys = [_][2][]const u8{
     .{ "tab", "the other screen: Doing, or Planning" },
-    .{ "j k, arrows", "pick a row: on Doing your move, in flight, next, landed; on Planning goals, no goal, next, backlog" },
-    .{ "⏎, click it", "go: its Claude, the gate, start it, plan an idea, unfold a row, the board on it" },
+    .{ "j k, arrows", "pick a row: on Doing your move, then the board, landed above its now line; on Planning goals, no goal, next, backlog" },
+    .{ "⏎, click it", "go: building or stuck, its Claude; up next, start it; landed or in the pipeline, its card; plan an idea, unfold a row, the board on it" },
+    .{ "c, ⌸ Claudes", "the Claudes list: those on tickets, then those with none; ⏎ its pane, space its card, H hand off, esc back" },
     .{ "space", "open the row in place; on an open row, its whole ticket" },
     .{ "f", "the picked window whole, over the plan; q closes it" },
     .{ "+", "on Planning: a new ticket in the picked goal or in no goal; elsewhere a new goal, planned now or just kept" },
@@ -2088,7 +2099,8 @@ const plan_keys = [_][2][]const u8{
     .{ "B, b", "the board, and back to the plan" },
     .{ "] [", "your move, first or last" },
     .{ "l, h", "the orchestrator's column, and back" },
-    .{ "g o A u", "the gate, the orchestrator, babylon's auto mode, the repos and what they have to push" },
+    .{ "H G", "hand a building ticket off to a fresh Claude; give an up next one to a running Claude" },
+    .{ "g o A u", "the gate, or a pipeline row's gate; the orchestrator, babylon's auto mode, the repos and what they have to push" },
     .{ "`", "fold the orchestrator's column, or unfold" },
     .{ "esc, q", "close home" },
     .{ "◐ ◒ » ◇", "building, in the pipeline, queued, stalled" },
@@ -3139,12 +3151,13 @@ test "an opened row at a window's foot scrolls the window so its keys are in vie
         \\"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
     );
     defer board.deinit();
-    // 34 rows leave next a body of 6: its 5 rows and the 5-row block do not fit unscrolled
-    var app = wrapApp(&board, 34);
+    // 31 rows leave Planning's next a body of 9: its 5 rows and the block do not fit unscrolled
+    var app = wrapApp(&board, 31);
     defer app.grab.deinit(std.testing.allocator);
+    app.home.?.screen = .planning;
     var sheet: sheets.Sheet = undefined;
     const first = app.planRect(.next);
-    app.home.?.plan_pick = 4;
+    app.home.?.plan_pick = 5;
     try std.testing.expect(app.planSheet(&sheet));
     const rect = app.planRect(.next);
     try std.testing.expectEqual(first, rect);
@@ -3559,7 +3572,7 @@ test "every Plan window is a box with its ◆ title in its top border, whatever 
     }
 }
 
-test "Plan's rows start with a ▌ in their repo's colour, and a goal's card has it on every row" {
+test "Doing's board draws each row's #id in its repo's colour, and a goal's card on Planning has a ▌ in it on every row" {
     const eq = std.testing.expectEqual;
     var board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[
@@ -3588,16 +3601,13 @@ test "Plan's rows start with a ▌ in their repo's colour, and a goal's card has
     try planView(&app, &out, app.home.?);
     const drawn = out.buffered();
 
-    const now = app.planSlot(.now);
-    for (0..2) |line| {
-        const edge = try bench.probe(drawn, now.x + 2, now.y + 1 + @as(u16, @intCast(line)));
-        try eq(@as(u21, '▌'), edge.cp);
-        try eq(r.repo[line], edge.fg);
+    // the `now` line first, then the two building rows, then next's
+    const board_slot = app.planSlot(.board);
+    for ([_]usize{ 0, 1, 3 }, 2..) |hue, line| {
+        const id = try bench.probe(drawn, board_slot.x + 1 + win_board.id_x, board_slot.y + @as(u16, @intCast(line)));
+        try eq(@as(u21, '#'), id.cp);
+        try eq(r.repo[hue], id.fg);
     }
-    const next = app.planSlot(.next);
-    const edge = try bench.probe(drawn, next.x + 2, next.y + 1);
-    try eq(@as(u21, '▌'), edge.cp);
-    try eq(r.repo[3], edge.fg);
 
     // a goal's tickets, on Planning, wear the colour of their own repos
     app.home.?.screen = .planning;
@@ -3614,7 +3624,7 @@ test "Plan's rows start with a ▌ in their repo's colour, and a goal's card has
     try eq(r.accent, name.fg);
 }
 
-test "an in-flight row with a Claude has no second line for its session, window and pane" {
+test "a building row has no second line for its Claude, and opened it says on a Claude line where it runs" {
     var board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[{"id":701,"repo":"arena","status":"doing","title":"A","claimed_by":"%5"}],
         \\"plan":{"now":[{"ticket":701,"repo":"arena","title":"A","state":"building","pane":"%5"}],"next":[],"goals":[],
@@ -3642,7 +3652,9 @@ test "an in-flight row with a Claude has no second line for its session, window 
     var out: Writer = .fixed(&buf);
     try planView(&app, &out, app.home.?);
     const drawn = out.buffered();
-    try std.testing.expect(std.mem.indexOf(u8, drawn, "babylon-work:2") == null);
+    const at = std.mem.indexOf(u8, drawn, "babylon-work:2") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.lastIndexOf(u8, drawn[0..at], "Claude") != null);
+    try std.testing.expect(std.mem.indexOf(u8, drawn[at + 1 ..], "babylon-work:2") == null);
 }
 
 /// The `y`th row of `frame` drawn on a terminal `cols` wide, without its trailing spaces.
@@ -3806,11 +3818,11 @@ test "a Claude's hover card lists each subagent and its shell under its state li
     try std.testing.expect(std.mem.indexOf(u8, drawn, "2 agents") == null);
 }
 
-test "Your move with 8 items scrolls inside its five rows to the picked one" {
+test "Your move with 12 items scrolls inside its rows to the picked one" {
     var buf: [4096]u8 = undefined;
     var json: Writer = .fixed(&buf);
     try json.writeAll("{\"tickets\":[],\"needs_you\":[");
-    for (0..8) |i| try json.print("{s}{{\"id\":\"ask:{d}\",\"kind\":\"ask\",\"ticket\":{d},\"repo\":\"arena\",\"text\":\"item {d}\",\"actions\":[]}}", .{ if (i > 0) "," else "", i, 100 + i, i });
+    for (0..12) |i| try json.print("{s}{{\"id\":\"ask:{d}\",\"kind\":\"ask\",\"ticket\":{d},\"repo\":\"arena\",\"text\":\"item {d}\",\"actions\":[]}}", .{ if (i > 0) "," else "", i, 100 + i, i });
     try json.writeAll("],\"plan\":{\"now\":[],\"next\":[],\"goals\":[],\"landed_today\":{\"count\":0,\"newest\":[]},\"not_planned\":{\"count\":0,\"follow_ups\":0,\"by_repo\":{}}}}");
     var board = try tickets.Board.parse(std.testing.allocator, json.buffered());
     defer board.deinit();
@@ -3820,12 +3832,12 @@ test "Your move with 8 items scrolls inside its five rows to the picked one" {
     app.view_w = 80;
     app.view_h = 22;
     app.roles = bench.roles();
-    app.home = .{ .alone = false, .focus = .plan, .plan_pick = 7 };
+    app.home = .{ .alone = false, .focus = .plan, .plan_pick = 11 };
     var screen: [262144]u8 = undefined;
     var out: Writer = .fixed(&screen);
     try planView(&app, &out, app.home.?);
     const drawn = out.buffered();
-    try std.testing.expect(std.mem.indexOf(u8, drawn, "item 7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, drawn, "item 11") != null);
     try std.testing.expect(std.mem.indexOf(u8, drawn, "item 0") == null);
 }
 
@@ -4004,7 +4016,7 @@ test "in Planning's goals window the goals' ids start at one x and their tickets
     try std.testing.expect(!std.meta.eql(r.well, g.bgs[second][count - 1]));
 }
 
-test "driving towards is one line: the goal, then its bar and count, with nothing under it but in flight" {
+test "driving towards is one line: the goal, then its bar and count, with nothing under it but the board" {
     const eq = std.testing.expectEqual;
     var board = try tickets.Board.parse(std.testing.allocator, grid_board);
     defer board.deinit();
@@ -4014,7 +4026,7 @@ test "driving towards is one line: the goal, then its bar and count, with nothin
     const r = bench.roles();
     const driving = shot.app.planSlot(.driving);
     try eq(@as(u16, 1), driving.h);
-    try eq(driving.y + 1 + sheets.gap, shot.app.planSlot(.now).y);
+    try eq(driving.y + 1 + sheets.gap, shot.app.planSlot(.board).y);
     const title = g.find(driving.y, driving.x, driving.x + driving.w, "towards #410 menard goal").?;
     const count = g.find(driving.y, driving.x, driving.x + driving.w, "5/12  41%").?;
     try std.testing.expect(title < count);
@@ -4070,20 +4082,22 @@ test "every Plan window but driving has its ◆ title and its count in the same 
     }
 }
 
-test "a repo mark, a text line and a bar start on one column inside a window" {
+test "a state mark, an #id and a bar start on one column inside a window" {
     const eq = std.testing.expectEqual;
     var board = try tickets.Board.parse(std.testing.allocator, grid_board);
     defer board.deinit();
     var shot = try planGrid(&board, 100);
     defer shot.app.grab.deinit(std.testing.allocator);
     const g = &shot.grid;
-    const now = shot.app.planSlot(.now);
-    const flying = rowWith(g, now, "#701").?;
-    try std.testing.expect(g.cps[flying][now.x + 3] != ' ');
-    try eq(@as(u21, '▌'), g.cps[flying][now.x + 2]);
-    const landed = shot.app.planSlot(.landed);
-    const row = rowWith(g, landed, "#701").?;
-    try eq(@as(u21, '✓'), g.cps[row][landed.x + 3]);
+    const slot = shot.app.planSlot(.board);
+    const x0: usize = slot.x + 1;
+    const landed = rowWith(g, slot, "#701").?;
+    try eq(@as(u21, '✓'), g.cps[landed][x0 + 2]);
+    try eq(x0 + win_board.id_x, g.find(landed, x0, slot.x + slot.w, "#701").?);
+    var flying = landed + 1;
+    while (g.find(flying, x0, slot.x + slot.w, "#701") == null) flying += 1;
+    try eq(@as(u21, '◐'), g.cps[flying][x0 + 2]);
+    try eq(x0 + win_board.id_x, g.find(flying, x0, slot.x + slot.w, "#701").?);
     var planning = try planGridOn(&board, 100, .planning);
     defer planning.app.grab.deinit(std.testing.allocator);
     const no_goal = planning.app.planSlot(.no_goal);
@@ -4115,9 +4129,8 @@ test "every title cut to fit ends in …" {
     defer planning.app.grab.deinit(std.testing.allocator);
 
     const cut = [_]struct { win: sheets.Window, id: []const u8, whole: []const u8 }{
-        .{ .win = .now, .id = "#701", .whole = "A step that is building right now and long, with more words to push it past the edge of any window" },
+        .{ .win = .board, .id = "#701", .whole = "A step that is building right now and long, with more words to push it past the edge of any window" },
         .{ .win = .goals, .id = "#9", .whole = "A second goal with a very long title that must be cut" },
-        .{ .win = .landed, .id = "#701", .whole = "A step that is building right now and long, with more words to push it past the edge of any window" },
     };
     for (cut) |c| {
         const on = if (c.win == .goals) &planning else &shot;
@@ -4236,7 +4249,7 @@ test "with a card open, the middle column's top border is on the row of Plan's f
     try std.testing.expectEqual(app.planSlot(.move).y, app.columnRect().?.y);
 }
 
-test "a one-column Plan draws in flight with one row three rows tall" {
+test "a one-column Doing's board takes what is left under driving towards" {
     var board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[],"plan":{"now":[{"ticket":9,"repo":"arena","title":"n","state":"building"}],"next":[],"goals":[],
         \\"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
@@ -4251,7 +4264,8 @@ test "a one-column Plan draws in flight with one row three rows tall" {
     app.home = .{ .alone = false, .focus = .plan };
     app.side_folded = true;
     try std.testing.expect(app.oneColumn());
-    try std.testing.expectEqual(@as(u16, 3), app.planSlot(.now).h);
+    const slot = app.planSlot(.board);
+    try std.testing.expectEqual(@as(u16, 37), slot.y + slot.h);
 }
 
 test "Your move marks the item the orchestrator points at ◆ orch once and draws no text suggestion; the drawer's foot draws them" {

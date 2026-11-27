@@ -308,13 +308,14 @@ const usage =
     \\       arena [-L socket] planning [ticket]      the Planning screen, with its pick on that ticket
     \\       arena [-L socket] show <%pane|#ticket>   that pane, or the Claude holding that ticket, in front
     \\       arena [-L socket] inbox                  home, with what needs you
+    \\       arena [-L socket] claudes                home, with every Claude listed
     \\
-    \\plan, board, planning, show and inbox tell the arena that is running; with none, plan and
-    \\planning start one, and show and inbox exit 3.
+    \\plan, board, planning, show, inbox and claudes tell the arena that is running; with none, plan
+    \\and planning start one, and show, inbox and claudes exit 3.
     \\
 ;
 
-/// The exit status of `arena show` and `arena inbox` when no arena is running: the caller opens one.
+/// The exit status of `arena show`, `arena inbox` and `arena claudes` when no arena is running: the caller opens one.
 const no_arena = 3;
 
 /// Whether `target` names a pane (`%290`) or a ticket (`#324`).
@@ -324,12 +325,12 @@ fn showTarget(target: []const u8) bool {
 
 /// Whether `arg` is one of arena's verbs, which are reserved: never a session's name.
 fn isVerb(arg: []const u8) bool {
-    return std.mem.eql(u8, arg, "plan") or std.mem.eql(u8, arg, "board") or std.mem.eql(u8, arg, "planning") or std.mem.eql(u8, arg, "show") or std.mem.eql(u8, arg, "inbox");
+    return std.mem.eql(u8, arg, "plan") or std.mem.eql(u8, arg, "board") or std.mem.eql(u8, arg, "planning") or std.mem.eql(u8, arg, "show") or std.mem.eql(u8, arg, "inbox") or std.mem.eql(u8, arg, "claudes");
 }
 
 /// Whether `verb` is given what it takes as its next argument, `next` (null at the end).
 fn verbArgOk(verb: []const u8, next: ?[]const u8) bool {
-    if (std.mem.eql(u8, verb, "inbox")) return next == null;
+    if (std.mem.eql(u8, verb, "inbox") or std.mem.eql(u8, verb, "claudes")) return next == null;
     if (std.mem.eql(u8, verb, "planning")) return next == null or ticketId(next.?) != null;
     const arg = next orelse return false;
     if (std.mem.eql(u8, verb, "plan") or std.mem.eql(u8, verb, "board")) return ticketId(arg) != null;
@@ -478,6 +479,7 @@ test isVerb {
     try std.testing.expect(isVerb("planning"));
     try std.testing.expect(isVerb("show"));
     try std.testing.expect(isVerb("inbox"));
+    try std.testing.expect(isVerb("claudes"));
     try std.testing.expect(!isVerb("-h"));
     try std.testing.expect(!isVerb("work"));
 }
@@ -485,6 +487,8 @@ test isVerb {
 test verbArgOk {
     try std.testing.expect(verbArgOk("inbox", null));
     try std.testing.expect(!verbArgOk("inbox", "foo"));
+    try std.testing.expect(verbArgOk("claudes", null));
+    try std.testing.expect(!verbArgOk("claudes", "foo"));
     try std.testing.expect(verbArgOk("planning", null));
     try std.testing.expect(verbArgOk("planning", "12"));
     try std.testing.expect(!verbArgOk("planning", "foo"));
@@ -572,6 +576,8 @@ fn run(init: std.process.Init, exe: ?[]const u8) !Ended {
             } else if (std.mem.eql(u8, args[i], "show")) {
                 door = try std.fmt.allocPrint(init.arena.allocator(), control.show_message ++ "{s}", .{next.?});
                 i += 1;
+            } else if (std.mem.eql(u8, args[i], "claudes")) {
+                door = control.claudes_message;
             } else door = control.inbox_message;
         } else session = args[i];
     }

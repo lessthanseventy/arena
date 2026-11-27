@@ -7,6 +7,7 @@ const tickets = @import("board.zig");
 const sheets = @import("plan.zig");
 const draw = @import("draw.zig");
 const win_detail = @import("win_detail.zig");
+const win_board = @import("win_board.zig");
 const anyKey = app_mod.anyKey;
 const App = app_mod.App;
 const Writer = std.Io.Writer;
@@ -15,7 +16,7 @@ const cellCount = draw.cellCount;
 const repoHue = draw.repoHue;
 
 /// The chip of a next row: why it has not started, from babylon's `held`, else what it waits on.
-fn nextLabel(item: tickets.Next, lbuf: *[48]u8) []const u8 {
+pub fn nextLabel(item: tickets.Next, lbuf: []u8) []const u8 {
     if (item.held) |h| {
         var wbuf: [32]u8 = undefined;
         return std.fmt.bufPrint(lbuf, "{s}", .{h.word(&wbuf)}) catch "held";
@@ -45,7 +46,8 @@ pub fn detail(app: *const App, row: sheets.Row, ww: usize, lines: *sheets.Lines)
     var age: [16]u8 = undefined;
     const filed = sheets.ago(&age, if (app.cardById(item.ticket)) |card| card.inserted_at else null, app.epoch);
     const stage = lines.print("todo{s} · next {d}{s}{s}", .{ if (item.pinned()) " · pinned" else "", row.item + 1, if (filed.len > 0) " · filed " else "", filed });
-    win_detail.fill(app, lines, .{ .ticket = item.ticket, .title = item.name(), .why = item.why, .wait = win_detail.waitWords(lines, item.waits_on), .stage = stage }, ww, @intCast(titleRoom(item, ww).x));
+    const indent: u8 = if (row.win == .board) win_board.id_x else @intCast(titleRoom(item, ww).x);
+    win_detail.fill(app, lines, .{ .ticket = item.ticket, .title = item.name(), .why = item.why, .wait = win_detail.waitWords(lines, item.waits_on), .stage = stage }, ww, indent);
 }
 
 pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, at: usize, y: u16, x0: usize, ww: usize, lit: bool) !void {

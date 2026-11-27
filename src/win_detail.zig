@@ -14,6 +14,7 @@ pub const Window = struct {
     why: []const u8 = "",
     wait: []const u8 = "",
     stage: []const u8 = "",
+    claude: []const u8 = "",
 };
 
 /// The block under an opened row, `indent` cells in a window `ww` cells wide: the title wrapped, a
@@ -26,6 +27,7 @@ pub fn fill(app: *const App, lines: *sheets.Lines, row: Window, ww: usize, inden
     if (row.why.len > 0) lines.field(indent, "why", "{s}", .{row.why});
     if (row.wait.len > 0) lines.field(indent, "waits", "{s}", .{row.wait});
     if (row.stage.len > 0) lines.field(indent, "stage", "{s}", .{row.stage});
+    if (row.claude.len > 0) lines.field(indent, "Claude", "{s}", .{row.claude});
     const c = card orelse return;
     for (c.checks, 0..) |check, i| {
         const sign: []const u8 = if (check.result) |result| (if (std.mem.eql(u8, result, "ok")) "✓" else "✗") else "○";

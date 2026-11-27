@@ -8,9 +8,9 @@ const theme = @import("theme.zig");
 const bench = @import("parts.zig");
 const tickets = @import("board.zig");
 const grab_mod = @import("grab.zig");
-const win_landed = @import("win_landed.zig");
+const win_board = @import("win_board.zig");
 const win_driving = @import("win_driving.zig");
-const win_now = @import("win_now.zig");
+
 const win_move = @import("win_move.zig");
 const win_next = @import("win_next.zig");
 const win_goals = @import("win_goals.zig");
@@ -119,9 +119,8 @@ pub fn planButtonClick(app: *App, sheet: *const sheets.Sheet, at: usize, m: keys
 
 pub fn windowCount(b: *const tickets.Board, given: *const tickets.Plan, win: sheets.Window) ?usize {
     return switch (win) {
-        .driving => null,
+        .driving, .board => null,
         .move => b.needsYou().len,
-        .now => given.now.len,
         .next => given.next.len,
         .goals => given.goals.len,
         .no_goal => given.not_planned.count,
@@ -130,7 +129,6 @@ pub fn windowCount(b: *const tickets.Board, given: *const tickets.Plan, win: she
             for (b.backlog()) |*card| n += @intFromBool(!card.isEpic());
             break :blk n;
         },
-        .landed => given.landed_today.count,
     };
 }
 
@@ -157,6 +155,7 @@ pub fn benchWindow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.S
     const focused = !app.columnFocused() and (if (picked_at) |at| sheet.rows[at].win == win else false);
     try bench.window(w, r, rect.x, rect.y, ww, rect.h, win.title(), windowCount(&app.board.?, given, win), focused);
     const bar = r.panel;
+    if (win == .board) try win_board.tally(app, w, r, sheet, rect.x, rect.y, ww);
     if (whole) {
         try bench.say(w, rect.x + ww - 10, rect.y, " q close ", r.dim, bar, false);
     }
@@ -215,8 +214,8 @@ pub fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.
         },
         .need => try win_move.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .focal, .drove => {},
-        .now, .other => try win_now.paint(app, w, r, sheet, at, y, x0, ww, lit),
-        .next => try win_next.paint(app, w, r, sheet, at, y, x0, ww, lit),
+        .now, .now_line, .landed => try win_board.paint(app, w, r, sheet, at, y, x0, ww, lit),
+        .next => if (row.win == .board) try win_board.paint(app, w, r, sheet, at, y, x0, ww, lit) else try win_next.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .goal, .goal_ticket => try win_goals.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .idea, .backlog => try win_backlog.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .ideas_more => {
@@ -229,6 +228,5 @@ pub fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.
             try draw.sayCut(w, x0 + 7, y, std.mem.trim(u8, row.text, " "), room -| 5, r.dim, r.panel, false);
         },
         .unplanned, .chips, .todo => try win_unplanned.paint(app, w, r, sheet, at, y, x0, ww, lit),
-        .landed => try win_landed.paint(app, w, r, sheet, at, y, x0, ww, lit),
     }
 }

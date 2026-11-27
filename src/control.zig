@@ -27,6 +27,8 @@ pub const Event = union(enum) {
     holder: u32,
     /// `arena inbox` asks for the needs-you inbox.
     inbox,
+    /// `arena claudes` asks for the Claudes list in the middle column.
+    claudes,
     exit,
     other,
 };
@@ -37,11 +39,12 @@ pub const card_message = "arena plan ";
 pub const planning_message = "arena planning";
 pub const show_message = "arena show ";
 pub const inbox_message = "arena inbox";
+pub const claudes_message = "arena claudes";
 
-/// Whether `line` is what `arena plan`, `show` or `inbox` had tmux say to a running arena.
+/// Whether `line` is what `arena plan`, `show`, `inbox` or `claudes` had tmux say to a running arena.
 pub fn told(line: []const u8) bool {
     return switch (parse(line, null)) {
-        .card, .planning, .pane, .holder, .inbox => true,
+        .card, .planning, .pane, .holder, .inbox, .claudes => true,
         else => false,
     };
 }
@@ -91,6 +94,7 @@ pub fn parse(line: []const u8, open: ?[]const u8) Event {
         };
     }
     if (std.mem.eql(u8, line, "%message " ++ inbox_message)) return .inbox;
+    if (std.mem.eql(u8, line, "%message " ++ claudes_message)) return .claudes;
     if (std.mem.eql(u8, line, "%message " ++ planning_message)) return .{ .planning = null };
     if (std.mem.startsWith(u8, line, "%message " ++ planning_message ++ " ")) {
         const id = std.fmt.parseInt(u32, line["%message ".len + planning_message.len + 1 ..], 10) catch return .other;
@@ -175,6 +179,8 @@ test "a message to show says which pane or whose ticket's, and the inbox is aske
     try std.testing.expectEqual(Event.other, parse("%message arena show 290", null));
     try std.testing.expectEqual(Event.other, parse("%message arena show %x", null));
     try std.testing.expectEqual(Event.inbox, parse("%message arena inbox", null));
+    try std.testing.expectEqual(Event.claudes, parse("%message arena claudes", null));
+    try std.testing.expect(told("%message arena claudes"));
 }
 
 test "a message for Planning says which ticket, or none" {
