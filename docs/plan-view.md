@@ -1,6 +1,6 @@
 # Home is the plan
 
-This design is for #600, held to [the principles](principles.md) and to the seams (#587,
+This design is for #600, held to [the principles](~/projects/ficciones/docs/principles.md) and to the seams (#587,
 `docs/seams.md`), and read with [the orchestrator](orchestrator.md), whose words and column it
 keeps. The human approved it as drawn on 2026-11-23 (ask #28). Nothing in it is built yet. The
 build is the tickets at the end.
@@ -97,7 +97,7 @@ orchestrator would set it.
    `✗` sent back. Then `N of M` landed, then the steps that are moving or next by number, or what
    the first waiting step waits on.
 5. **Landed today:** one row, the count then the newest few by title. They are never a list here,
-   because landings wait until the human looks ([principle 8](principles.md)).
+   because landings wait until the human looks ([principle 8](~/projects/ficciones/docs/principles.md)).
 6. **Not planned:** one row of counts by repo, with the follow-ups among them counted on the right.
    It is the rest of todo, and it is not the plan.
 
@@ -147,7 +147,7 @@ Under about 60 cells the rail folds away, and the head keeps `▲ N`, `o` and `B
 
 At home, normal mode, the plan focused. `j` `k` move the pick through every row: now, next, goals,
 landed, not planned. `]` `[` still go to Your move, `l` to the orchestrator's column and `h` back.
-`space` opens, and `⏎` goes, as [principle 4](principles.md) has it.
+`space` opens, and `⏎` goes, as [principle 4](~/projects/ficciones/docs/principles.md) has it.
 
 | on a row in | `⏎` | `space` | other keys |
 | --- | --- | --- | --- |
@@ -161,7 +161,7 @@ landed, not planned. `]` `[` still go to Your move, `l` to the orchestrator's co
 | **not planned** | the board, showing only todo cards not in next | | |
 
 Unfolding a folded now row is the one place a row grows. It is a *go* (`⏎`), not a look, so
-[principle 5](principles.md) holds: looking never moves anything.
+[principle 5](~/projects/ficciones/docs/principles.md) holds: looking never moves anything.
 
 The keys change from [orchestrator.md](orchestrator.md#what-arena-shows-on-open) in one way: `b`
 still goes home from anywhere, and home now shows the plan. `B` is the board, from anywhere in
@@ -184,7 +184,7 @@ board.
   `plan_next` MCP tool, or `babylon next 589 --why "…" [--at 1]` and `babylon next 589 --drop`.
 - **The human** moves items with `J` `K` or by dragging, takes one out with `x`, edits a why with
   `e`, and adds one with `w` or `W` on the board. Each of these runs the same `babylon next …` line
-  ([principle 7](principles.md)). An item the human placed is marked `human`, and the
+  ([principle 7](~/projects/ficciones/docs/principles.md)). An item the human placed is marked `human`, and the
   orchestrator's prompt says not to reorder past it without a proposal.
 - **auto takes from the top of next.** While auto is on and has room, it starts the first item in
   next that is free (nothing blocks it and its repo's lane has room). Only when nothing in next is
@@ -248,7 +248,7 @@ move it. Board 2–15 against that:
 | #335 Board 3, columns by repo | keep | finding by repo is half of drilling down |
 | #336 Board 4, cards as tall as their text | keep | the board is where a ticket is read |
 | #338 Board 5, the picked card's box | keep | it is where edit, move and give live |
-| #339 Board 6, the key bar | keep | [principle 1](principles.md) |
+| #339 Board 6, the key bar | keep | [principle 1](~/projects/ficciones/docs/principles.md) |
 | #340 Board 7, recent with ages | **close** | landed today on the plan says it; `⏎` there opens the recent column as it is |
 | #341, #342, #343, Board 8–10 | unchanged here | already the feed's, as rescoped by #500 and the seams. Move them under #525 |
 | #344 Board 11, now and next at half width | **close** | the plan at half width is now and next |

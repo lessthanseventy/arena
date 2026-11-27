@@ -1,6 +1,6 @@
 # The meta first
 
-This design is for #1195, step 1 of epic #1193. It is held to [the principles](principles.md),
+This design is for #1195, step 1 of epic #1193. It is held to [the principles](~/projects/ficciones/docs/principles.md),
 and every rule there still holds. Where it and an older doc disagree, this page wins. It
 supersedes parts of [What arena is](what-arena-is.md) and [Doing and Planning](doing-planning.md),
 and each says which at its top. Nothing in #1193 is built until the human has read this page and

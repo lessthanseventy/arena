@@ -1,6 +1,6 @@
 # arena
 
-Every design and UI change here is held to [docs/principles.md](docs/principles.md): read it
+Every design and UI change here is held to [the principles](~/projects/ficciones/docs/principles.md): read it
 before designing a screen, a key or a click.
 
 Zig builds and tests go through `menard run test` (or `menard run check` when done), never

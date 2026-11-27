@@ -1,7 +1,7 @@
 # Redesign: a GUI in the TUI
 
 Three visual directions for Home (the plan), the board, a card's popup and the orchestrator's
-column, for #760. Held to [the principles](../principles.md). Nothing here is built yet.
+column, for #760. Held to [the principles](~/projects/ficciones/docs/principles.md). Nothing here is built yet.
 
 The human, 2026-11-24: "i want it to feel like a modern app, but retro style and in the terminal…
 we've got a whole palette and we're just using it to put a bunch of text on the screen but i want

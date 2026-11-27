@@ -1,6 +1,6 @@
 # To try
 
-This design is for #833, held to [the principles](principles.md) and read with
+This design is for #833, held to [the principles](~/projects/ficciones/docs/principles.md) and read with
 [the orchestrator](orchestrator.md), whose Your move it grows. The human approved it as drawn on
 2026-11-24 ("go, file the build tickets"). Nothing in it is built yet. The build is epic #837,
 the tickets at the end.
@@ -57,7 +57,7 @@ its status is `try`, not `done`. With no checks it goes to `done` as today.
   session left open for it is a session doing nothing.
 - **Its epic** counts it as landed in the bar (its code is on main) and is not done while it is
   to try, so a goal whose last step waits on the human reads `▲ 1 to try` beside its bar.
-- **No notice.** Landing to try is progress, not a decision ([principle 8](principles.md)): it
+- **No notice.** Landing to try is progress, not a decision ([principle 8](~/projects/ficciones/docs/principles.md)): it
   goes into Your move and the digest, and `▲ N` counts it, but nothing pops up.
 
 ## In Your move
@@ -113,7 +113,7 @@ then its checks, one row each.
 - **The last `✓`** closes the ticket: it goes to `done`, and its tile goes in the same frame, as any
   settled item does.
 - **A `✗`** sends it back at once, without waiting for the other checks. Its tile goes.
-- Each button is a click too ([principle 7](principles.md)): `babylon tried 825 1 ok` and
+- Each button is a click too ([principle 7](~/projects/ficciones/docs/principles.md)): `babylon tried 825 1 ok` and
   `babylon tried 825 1 no "it came at 09:02"`.
 
 ## Sent back from to try

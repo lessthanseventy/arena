@@ -1,6 +1,6 @@
 # The orchestrator's choices are asks in Your move
 
-This design is for #1046 and follows [the principles](principles.md). It sits beside
+This design is for #1046 and follows [the principles](~/projects/ficciones/docs/principles.md). It sits beside
 [Plan replaces the board](plan-replaces-board.md). Nothing in it is built yet. The build is the
 tickets at the end, and they wait on the human's Go.
 
@@ -18,7 +18,7 @@ recommendation they answered: "yes, file it as asks in your move".
 | The chat holds both the conversation and the controls | The chat holds the conversation: what was found and why, and which ask it raised (`ask #N on #M`). It has no buttons |
 | A separate TUI was floated | No new surface. Arena is the one place, which keeps with #896's rule: one thing, drawn in one place |
 
-This keeps [principle 8](principles.md) (only decisions interrupt, and an ask is a decision) and
+This keeps [principle 8](~/projects/ficciones/docs/principles.md) (only decisions interrupt, and an ask is a decision) and
 principle 11 (words to answer an ask go in the ask's modal).
 
 ## The questions the ticket left open

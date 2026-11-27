@@ -1,6 +1,6 @@
 # Plan replaces the board
 
-This design is for #883. It follows [the principles](principles.md), including #887's rule that
+This design is for #883. It follows [the principles](~/projects/ficciones/docs/principles.md), including #887's rule that
 nothing jumps or changes size. It builds on [Home is the plan](plan-view.md),
 [to try](to-try.md) and [goals from an idea](goals-from-an-idea.md). The human approved it as drawn
 on 2026-11-24 (ask #40, "looks good"). Nothing in it is built yet. The build is epic #896, the
@@ -37,7 +37,7 @@ drawing in `src/draw.zig`.
 | `A` auto, `g` gate, `o` orchestrator, `` ` `` fold the side, `?` keys | the same keys on Plan (all but `g` already work there) | |
 | `+` new ticket | `+` adds to the window the pick is in: in **not planned** a ticket (its `+ new` button), anywhere else a goal (#818) | `n` (the inbox) is dropped: `]` does it, and `n` is ✗ on a to-try row |
 | **hover peek** on a card (the Claude holding it, live) | the same peek on any ticket row: the pointer rests on it, or the pick rests after a key | |
-| the picked card's box of action buttons | Workbench buttons on the picked row, on its second line | clicks for every key, per [principle 7](principles.md) |
+| the picked card's box of action buttons | Workbench buttons on the picked row, on its second line | clicks for every key, per [principle 7](~/projects/ficciones/docs/principles.md) |
 | **drag** between columns (todo↔backlog, todo→done, done→todo) | dropped | the keys do the same thing (`t`, `>`, `<`). A drag across windows would have to aim at another window, and nothing on Plan lines up for that |
 | drag a card onto the `b plan` tab (to next) | dragging a not planned row onto **next** | |
 | epics along the top as slim bars | **goals**, as today | |
@@ -135,7 +135,7 @@ window keeps its slot. Its body shows a one-line summary in place of its rows:
 every window under it would move. Folding is for quieting a window, not for making room. When a
 list needs the whole height, `f` opens it as a modal over Plan
 with the list whole, with the same keys on its rows. It is a look, so nothing behind it
-moves ([principle 5](principles.md)).
+moves ([principle 5](~/projects/ficciones/docs/principles.md)).
 
 `Z` folds every window but the picked one, and `Z` again opens them all. Folds are saved in
 `$XDG_STATE_HOME/arena/folded` beside #849's repo folds, one `plan:<window>` line each. Arena
@@ -156,7 +156,7 @@ epic's modal) acts as the board's card did:
   second line (landed, not planned) gets one only while picked, inside its window's scroll. That is
   movement inside the window, which #887 allows, and the window's frame stays put.
 - **The foot bar** names the picked row's keys, with the first group from `cardActions`
-  ([principle 1](principles.md)).
+  ([principle 1](~/projects/ficciones/docs/principles.md)).
 - **The hover peek** is the board's peek. `peekOf` already takes a card, and a Plan row gives it its
   card, so the pointer resting on a row (or the pick after a key) shows the holder's live pane.
   Like any peek, it draws over everything and moves nothing.

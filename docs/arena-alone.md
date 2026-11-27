@@ -1,6 +1,6 @@
 # arena alone
 
-This design is for #963. It follows [the principles](principles.md). Nothing in it is approved or
+This design is for #963. It follows [the principles](~/projects/ficciones/docs/principles.md). Nothing in it is approved or
 built yet. The build is the tickets at the end, which get filed once the human gives the go.
 
 The human, 2026-11-25: "I think we also need to consider the use case of like not using the
@@ -66,14 +66,14 @@ Claude is the unit, where on Plan it is a ticket.
      asks, what it wants to run, the error it stopped on, or its last words.
    - The picked row gets a third line of buttons. A question box's options are `1`–`9`, answered
      by sending the keys into the pane, which already exists. Then `⏎ go` and `space open`.
-   - This is the one window allowed to grow ([principle 10](principles.md)). When it is empty, it
+   - This is the one window allowed to grow ([principle 10](~/projects/ficciones/docs/principles.md)). When it is empty, it
      is one line: `nothing needs you`.
 3. **Working.** `◐` and `◔` Claudes, the one heard from last on top. The second line says what it
    is doing, with its subagents and shells.
 4. **Quiet.** Claudes that are done and looked at, or idle, shown dim with their last words. A
    Claude leaves the list when its pane closes.
 5. **The column: the picked Claude's pane, live and read-only.** It sits where the orchestrator
-   column is on Plan. It is the peek from [principle 4](principles.md) held in a slot of its own.
+   column is on Plan. It is the peek from [principle 4](~/projects/ficciones/docs/principles.md) held in a slot of its own.
    Its head shows `session:window · title`, the state and the context. `⏎` goes there, and `space`
    opens it whole as a modal over home.
 
@@ -95,7 +95,7 @@ Claude is the unit, where on Plan it is a ticket.
 
 `◉` clears when the human goes to a Claude (`⏎`) or opens it (`space`), as `see` does today.
 Resting the pick on it, with its pane in the column, does not clear it, because looking moves
-nothing ([principle 5](principles.md)).
+nothing ([principle 5](~/projects/ficciones/docs/principles.md)).
 
 At half the screen, home shows the list or the column, swapped with `p` and `o` as on Plan (#527).
 
@@ -103,7 +103,7 @@ At half the screen, home shows the list or the column, swapped with `p` and `o` 
 
 The rail's top row reads `◆ home ▲ 2` in both modes, with the count of Your move when alone and
 babylon's counts with it. Today the row is blank without a board. If it came and went with
-babylon, every session under it would move a row ([principle 10](principles.md)).
+babylon, every session under it would move a row ([principle 10](~/projects/ficciones/docs/principles.md)).
 
 ## What disappears
 
@@ -148,12 +148,12 @@ These are what a herdr-style tool does, read from their READMEs and docs:
 | what they do | arena alone |
 | --- | --- |
 | a list of agents with a state each: idle, working, blocked, done | **have it.** The hook sets the state, so it is exact. herdr reads the screen |
-| a toast or sound when an agent out of view changes state | **have it,** for `▲` and `◉` only, through `notify-send` ([principle 8](principles.md)) |
+| a toast or sound when an agent out of view changes state | **have it,** for `▲` and `◉` only, through `notify-send` ([principle 8](~/projects/ficciones/docs/principles.md)) |
 | a state rolled up per workspace | **have it,** as the rail's session marks with counts (`▲2`) |
 | a preview of an agent's pane | **have it** in the column |
 | kill an agent | **have it:** `x` |
 | `n`: a new agent in a new window, with its first prompt | **take it,** small: `+` on home asks for a directory (the repos of the Claudes it knows, or typed), then opens a window running `claude` in that repo's session, made if missing. The rail's `+ new` makes only a bare session today |
-| `uzi ls`, herdr's socket API: agents and scripts can read the list | **take it:** `arena claudes [--json]` prints the list home shows ([principle 7](principles.md)) |
+| `uzi ls`, herdr's socket API: agents and scripts can read the list | **take it:** `arena claudes [--json]` prints the list home shows ([principle 7](~/projects/ficciones/docs/principles.md)) |
 | a git worktree per agent | **leave it.** `wt` and Claude Code's own worktrees do this, and it is not a multiplexer's job |
 | a diff view per agent | **leave it** for now. The pane shows what the Claude says it did |
 | auto-answering an agent's prompts (`--autoyes`, `uzi auto`) | **leave it.** It takes decisions away from the human |

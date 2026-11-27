@@ -1,6 +1,6 @@
 # Normal mode, the peek and the modal
 
-This is a design for #393, held to [the principles](principles.md), and the human agreed to it on
+This is a design for #393, held to [the principles](~/projects/ficciones/docs/principles.md), and the human agreed to it on
 2026-11-23. Nothing in it is built yet. The build is a stack of tickets, listed at the end.
 
 The human, 2026-11-22: "I know we're super tmux heavy but I'm thinking we need some like
@@ -329,8 +329,8 @@ be built as it is specced, adding the `space open` button.
 - **babylon:** a run's stages with their start and end times, the failing check's output and the
   review's verdict, readable by arena (in board.json, or `babylon gate N`). Today board.json has
   only `stage` and `stage_note`, and `babylon detail` has the log's last lines.
-- **babylon:** its review prompt checks a design or UI change against `docs/principles.md`.
-- **babylon, ficciones:** AGENTS.md points to arena's `docs/principles.md`.
+- **babylon:** its review prompt checks a design or UI change against `~/projects/ficciones/docs/principles.md`.
+- **babylon, ficciones:** AGENTS.md points to ficciones' `docs/principles.md`.
 - **arena #361:** `arena gate [N]` and `arena show #N` open these modals from outside, so every
   modal is a command too.
 

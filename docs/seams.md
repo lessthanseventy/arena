@@ -1,6 +1,6 @@
 # The seams
 
-This design is for #587, held to [the principles](principles.md), and read with
+This design is for #587, held to [the principles](~/projects/ficciones/docs/principles.md), and read with
 [the orchestrator](orchestrator.md), whose words (needs you, ask, look at, proposal, your move,
 notice, tell) it keeps. The human approved it as drawn on 2026-11-23, notices with go/no and an
 ask's options included (ask #27). Nothing in it is built yet. The build is the tickets at the end.

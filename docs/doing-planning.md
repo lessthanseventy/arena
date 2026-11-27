@@ -12,7 +12,7 @@
 > no goal and backlog show a count line until picked. The repo filter becomes a project picker.
 > Planning's moves stand, apart from `z`, `d` and `+` as that page gives them.
 
-This design is for #1111, step 1 of #1110. It follows [the principles](principles.md) and
+This design is for #1111, step 1 of #1110. It follows [the principles](~/projects/ficciones/docs/principles.md) and
 [No rail](no-rail.md), and it builds on #1109, which opens everything from Plan in one middle
 column. The two screens' windows and the way between them are built (#1112); the moves are not.
 

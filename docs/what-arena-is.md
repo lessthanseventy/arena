@@ -1,6 +1,6 @@
 # What arena is
 
-This page is for #1144. It is held to [the principles](principles.md). Where it and an older doc
+This page is for #1144. It is held to [the principles](~/projects/ficciones/docs/principles.md). Where it and an older doc
 disagree, this page wins. It supersedes parts of [No rail](no-rail.md) and
 [Doing and Planning](doing-planning.md), and each says which at its top.
 

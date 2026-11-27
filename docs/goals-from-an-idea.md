@@ -1,6 +1,6 @@
 # Goals from an idea
 
-This design is for #812, held to [the principles](principles.md) and read with
+This design is for #812, held to [the principles](~/projects/ficciones/docs/principles.md) and read with
 [Home is the plan](plan-view.md), whose goals section it grows. The human approved it as drawn on
 2026-11-24 ("go, file the build tickets"). Nothing in it is built yet. The
 build is epic #813, the tickets at the end.
@@ -45,13 +45,13 @@ It opens a modal over Plan's middle, in insert mode, with the cursor in the fiel
  INSERT  esc done typing   │   ⏎ plan it now  k keep it  q cancel
 ```
 
-- **Typing:** every key goes to the field ([principle 3](principles.md)); it wraps, and `⏎` ends
+- **Typing:** every key goes to the field ([principle 3](~/projects/ficciones/docs/principles.md)); it wraps, and `⏎` ends
   typing. `esc` ends typing too. The mode word turns to NORMAL, and the buttons light.
 - **Driving it:** `⏎` plan it now (the primary, filled), `k` just keep it, `i` back to typing, `q`
   cancel. Each button is a click too. Under the picked button, one dim line says what it does.
 - **The title** is the idea's first line, cut at a sentence end or 70 cells; the whole text is the
   epic's body. The planning Claude writes the outcome line later, and it becomes the title then.
-- **What runs** ([principle 7](principles.md)): `babylon idea "…"` to keep it, and
+- **What runs** ([principle 7](~/projects/ficciones/docs/principles.md)): `babylon idea "…"` to keep it, and
   `babylon idea "…" --plan` to plan it now. The modal closes on the command's answer, and the new
   idea's row on Plan is picked.
 
@@ -181,7 +181,7 @@ quiet:
 ```
 
 The same question is a Your move item (`goal landed: what next?`), because it is a decision only
-the human makes ([principle 8](principles.md)). `1`…`9` or a click picks; `+` opens the `+ goal`
+the human makes ([principle 8](~/projects/ficciones/docs/principles.md)). `1`…`9` or a click picks; `+` opens the `+ goal`
 modal.
 
 No sprint dates and no points. The bar is the pace.

@@ -1,6 +1,6 @@
 # The orchestrator is the front door
 
-This design is for #500, held to [the principles](principles.md), and builds on
+This design is for #500, held to [the principles](~/projects/ficciones/docs/principles.md), and builds on
 [the board design](board-design.md) and [normal mode](normal-mode.md). The human agreed to it
 as drawn on 2026-11-23. Nothing in it is built yet. The build is a list of tickets, given at the
 end.
@@ -112,12 +112,12 @@ From the top down, its parts are:
      lights it. **next** is the plan's next, **landing** the pipeline's tickets in queue order
      with their stage and age, **building** doing tickets with their holder's mark and age (`▲`
      one whose Claude waits on the human, `○` one no Claude holds), **today** the tickets landed
-     today. Landings are never pushed at the human here ([principle 8](principles.md)). auto's
+     today. Landings are never pushed at the human here ([principle 8](~/projects/ficciones/docs/principles.md)). auto's
      `3/6` is in the column's head, and `A` opens its settings.
    - **The panel**: under the tabs, a fixed eight rows (fewer only in a short column), the lit
      tab's list. It scrolls with the wheel, or `j`/`k` past its first and last ticket, and its
      foot says `↓ N more`. An empty list is one dim line. Nothing below the panel moves when a tab
-     is lit or a count changes ([principle 10](principles.md)).
+     is lit or a count changes ([principle 10](~/projects/ficciones/docs/principles.md)).
 3. **A rule**, then **the orchestrator's live pane**: its transcript and its prompt, as today's
    column has. Typing into it is talking to it.
 
@@ -300,7 +300,7 @@ removed.** It works from anywhere, with arena open or not:
    rules below. A plain reply raises no notice, because the human chose when to look.
 
 `babylon tell` is a command like `go` and `give`: yours to run, never a Claude's. A script, a
-phone shortcut or another hotkey can call it too ([principle 7](principles.md)).
+phone shortcut or another hotkey can call it too ([principle 7](~/projects/ficciones/docs/principles.md)).
 
 **A personal line goes to the house, not here.** The entry tells only the work orchestrator, and
 it never forwards a line between the two (#14). The house's orchestrator (tlon #512) can take its
