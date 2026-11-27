@@ -4034,9 +4034,9 @@ test "a card's foot has only the buttons its ticket's state can use" {
 
     const done = try cardFoot(&app, 2, &out, &store);
     try std.testing.expectEqual(@as(usize, 3), done.len);
-    try eq("< reopen", done[0]);
-    try eq("Y copy", done[1]);
-    try eq("q close", done[2]);
+    try eq("Y copy", done[0]);
+    try eq("q close", done[1]);
+    try eq("< reopen", done[2]);
 
     const todo = try cardFoot(&app, 3, &out, &store);
     var edit = false;

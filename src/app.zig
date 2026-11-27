@@ -387,6 +387,8 @@ pub const HomeView = struct {
     /// withdraw it.
     gate: bool = false,
     withdrawing: bool = false,
+    /// `<` on a done card's modal has asked whether to reopen it.
+    reopening: bool = false,
     /// Auto's settings shown over the board, and the row picked: auto, hold, then each repo.
     auto_pick: ?usize = null,
     /// The `+ goal` modal is over the plan; what it holds is `App.goal`.
@@ -3206,6 +3208,7 @@ pub const App = struct {
         view.sub_pick = 0;
         view.gate = gate;
         view.withdrawing = false;
+        view.reopening = false;
         app.detail.clearRetainingCapacity();
         try app.send(.ignore, "run-shell -b \"babylon " ++ cmd ++ " {d} >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ id, path, path, path });
         return true;
@@ -4855,7 +4858,7 @@ pub const App = struct {
     }
 
     /// What a modal button does when pressed.
-    pub const ModalAction = union(enum) { close, need: u8, card: CardAction, option: u8, sub: u8, words, claude, whole_log, ticket, bump, withdraw, tried_ok, tried_no, copy_check, run_check, details, open_check, diff_check, pick: u8, row_ok: u8, row_no: u8 };
+    pub const ModalAction = union(enum) { close, need: u8, card: CardAction, option: u8, sub: u8, words, claude, whole_log, ticket, bump, withdraw, tried_ok, tried_no, copy_check, run_check, details, open_check, diff_check, pick: u8, row_ok: u8, row_no: u8, reopen_no };
 
     const blank: [200]u8 = @splat(' ');
 
@@ -5113,6 +5116,12 @@ pub const App = struct {
             return out[0..n];
         }
         if (app.modalCard()) |card| {
+            if (app.home.?.reopening) {
+                const yes: ModalButton = .{ .action = .{ .card = .reopen }, .key = "y", .label = "reopen", .x = x, .y = foot };
+                out[0] = yes;
+                out[1] = .{ .action = .reopen_no, .key = "n", .label = "keep done", .x = x + yes.width() + 1, .y = foot };
+                return out[0..2];
+            }
             var head: CardHead = undefined;
             const words = app.askWords(card);
             app.modalHead(card, detailWidth(app.columnRoom()).inner, words != null, &head);
@@ -5192,7 +5201,7 @@ pub const App = struct {
             }
             var have: [12]CardAction = undefined;
             for (cardActions(card, &have)) |action| {
-                if (action == .go and shown > 0) continue;
+                if ((action == .go and shown > 0) or action == .reopen) continue;
                 const key: []const u8 = switch (action) {
                     .go => "⏎",
                     .no => "x",
@@ -5246,7 +5255,15 @@ pub const App = struct {
         if (n < out.len and x + close.width() <= right) {
             out[n] = close;
             n += 1;
+            x += close.width() + 1;
         }
+        if (app.modalCard()) |card| if (card.status == .done and n < out.len) {
+            const button: ModalButton = .{ .action = .{ .card = .reopen }, .key = "<", .label = "reopen", .x = x, .y = foot };
+            if (x + button.width() <= right) {
+                out[n] = button;
+                n += 1;
+            }
+        };
         if (app.modalCard()) |card| if (card.status == .@"try" and card.checks.len > 0) if (app.checkRows(card)) |at| {
             const room = rect.w -| 4;
             for (card.checks, 1..) |check, pos| {
@@ -5359,7 +5376,13 @@ pub const App = struct {
                 const check = pickedCheck(card, view.check_pick) orelse return;
                 _ = try app.checkOffer(card.id, check.n, check.text);
             },
-            .card => |card| try app.act(card),
+            .card => |card| if (card == .reopen and !view.reopening) {
+                view.reopening = true;
+            } else {
+                view.reopening = false;
+                try app.act(card);
+            },
+            .reopen_no => view.reopening = false,
             .option => |choice| {
                 const ask = (app.modalCard() orelse return).ask orelse return;
                 if (choice > ask.options.len) return;
@@ -5455,6 +5478,7 @@ pub const App = struct {
         const is = anyKey;
         const was_withdrawing = view.withdrawing;
         view.withdrawing = false;
+        if (view.reopening) return app.pressModal(if (is(key, &.{"y"})) .{ .card = .reopen } else .reopen_no);
         if (!view.gate and is(key, &.{" "})) if (app.modalCard()) |card| if (card.status == .done) {
             view.body_open = !view.body_open;
             view.detail_scroll = 0;
@@ -10311,4 +10335,42 @@ test "a push item in Your move opens in the middle column asking for its repo's 
     try app.homeKey("\r");
     try std.testing.expect(!view.item_open);
     try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "'babylon' 'push' 'arena'") != null);
+}
+
+test "< on a done card's modal asks before reopening, n keeps it done and y reopens; reopen is the last button" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 140;
+    app.view_w = 140;
+    app.view_h = 30;
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":7,"repo":"arena","title":"Lights","status":"done","checks":[]}]}
+    );
+    defer app.board.?.deinit();
+    const eq = std.testing.expectEqual;
+    app.home = .{ .detail = 7 };
+
+    var buttons: [16]App.ModalButton = undefined;
+    const shown = app.modalButtons(&buttons);
+    try eq(App.ModalAction{ .card = .reopen }, shown[shown.len - 1].action);
+    try std.testing.expect(!std.meta.eql(shown[0].action, App.ModalAction{ .card = .reopen }));
+
+    try app.modalKey("<");
+    try std.testing.expect(app.home.?.reopening);
+    var got: [512]u8 = undefined;
+    try eq(@as(usize, 0), try sent.readPositionalAll(std.testing.io, &got, 0));
+
+    try app.modalKey("n");
+    try std.testing.expect(!app.home.?.reopening);
+    try std.testing.expect(app.home.?.detail != null);
+    try eq(@as(usize, 0), try sent.readPositionalAll(std.testing.io, &got, 0));
+
+    try app.modalKey("<");
+    try app.modalKey("y");
+    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon update 7 --status todo") != null);
 }

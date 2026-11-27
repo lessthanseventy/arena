@@ -470,7 +470,8 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
         if (button.action != .close) primary = false;
         end = button.x + button.width() + 1;
     }
-    const hint = if (card) |it| (if (it.status != .done) " j k scroll " else if (folded) " space more " else " space less ") else " j k scroll ";
+    var ask_buf: [32]u8 = undefined;
+    const hint = if (card) |it| (if (app.home.?.reopening) (std.fmt.bufPrint(&ask_buf, " reopen #{d}? y/n ", .{it.id}) catch " reopen? y/n ") else if (it.status != .done) " j k scroll " else if (folded) " space more " else " space less ") else " j k scroll ";
     if (end + cellCount(hint) < rect.x + rect.w - 2) try bench.say(w, end, foot, hint, r.dim, r.panel, false);
 }
 
