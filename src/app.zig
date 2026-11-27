@@ -6775,7 +6775,10 @@ pub const App = struct {
         while (i < text.len) {
             // a key that closed what had the keys ends the read: forwarded, a second Escape of a
             // double Escape would sit in the pane's readline and eat its next letter
-            if (app.typing()) return if (i == 0) app.forward(text);
+            if (app.typing()) {
+                if (i == 0) try app.forward(text);
+                return;
+            }
             const len = keyLen(text[i..]);
             const key = text[i..][0..len];
             i += len;
