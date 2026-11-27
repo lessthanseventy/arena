@@ -8298,6 +8298,37 @@ test "a card's modal lists every option of its ask and its words, and ⏎ answer
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon answer 9 2") != null);
 }
 
+test "a backlog ticket's card with an open ask lists its options, and 1 answers it" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 24;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[],"backlog":[
+        \\{"id":4,"repo":"tlon","title":"d","status":"backlog","ask":{"id":9,"question":"Which?","options":["x","y","z"]}}
+        \\]}
+    );
+    defer app.board.?.deinit();
+    app.home = .{ .detail = 4 };
+
+    var buttons: [16]App.ModalButton = undefined;
+    var seen: usize = 0;
+    for (app.modalButtons(&buttons)) |b| seen += @intFromBool(b.action == .option and !std.mem.eql(u8, b.key, "⏎"));
+    try std.testing.expectEqual(@as(usize, 3), seen);
+
+    try app.modalKey("1");
+    try std.testing.expectEqual(@as(?u32, null), app.home.?.detail);
+    var got: [512]u8 = undefined;
+    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "babylon answer 9 1") != null);
+}
+
 test "in Workbench's look a click on a popup's option answers the ask and one on its ✕ closes it" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
