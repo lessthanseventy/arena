@@ -16,6 +16,7 @@ const win_landed = @import("win_landed.zig");
 const win_driving = @import("win_driving.zig");
 const win_now = @import("win_now.zig");
 const win_move = @import("win_move.zig");
+const win_foot = @import("win_foot.zig");
 const win_modal = @import("win_modal.zig");
 const win_feed = @import("win_feed.zig");
 const win_next = @import("win_next.zig");
@@ -1053,6 +1054,7 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
 
         var pen: Pen = .{};
         const top = app.winTop(s, i);
+        const foot_at: u16 = app.view_h -| 1 -| app.winFoot(s, i);
         var the_feed: feed.Feed = undefined;
         const drawn: usize = if (top > 1 and app.feedOf(&the_feed)) the_feed.count() + 2 else top;
         var y: u16 = 0;
@@ -1084,6 +1086,11 @@ fn strip(app: *App, w: *Writer, s: *const Session, yoff: i32, what: What) !?Curs
                 try col.border(&pen, w, col_w - 1, y);
             }
             if (what == .focused_border) continue;
+            if (y >= foot_at and x0 >= 0 and x1 < app.view_w) {
+                try w.print("\x1b[{d};{d}H", .{ sy + 1, ox + x0 + 2 });
+                try win_foot.paint(app, w, &pen, y - foot_at, col_w - 2);
+                continue;
+            }
 
             const in_lo: i32 = @max(lo, x0 + 1);
             const in_hi: i32 = @min(hi, x1);
@@ -4082,7 +4089,7 @@ test "a one-column Plan draws in flight with one row three rows tall" {
     try std.testing.expectEqual(@as(u16, 3), app.planSlot(.now).h);
 }
 
-test "Your move marks the item the orchestrator points at ◆ orch once, and a text suggestion is its own row that says the orchestrator is off while it is" {
+test "Your move marks the item the orchestrator points at ◆ orch once and draws no text suggestion; the drawer's foot draws them" {
     var board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[],"needs_you":[
         \\{"id":"push:1","kind":"push","ticket":7,"repo":"arena","text":"3 commits to push","actions":[{"key":"⏎","label":"push"}]},
@@ -4102,20 +4109,35 @@ test "Your move marks the item the orchestrator points at ◆ orch once, and a t
     const rect = app.planRect(.move);
     var sheet: sheets.Sheet = undefined;
     try std.testing.expect(app.planSheet(&sheet));
-    var seen: [3][]const u8 = undefined;
-    var bufs: [3][8192]u8 = undefined;
-    var outs: [3]Writer = undefined;
-    for (0..3) |i| {
+    try std.testing.expectEqual(@as(usize, 2), board.needsYou().len);
+    var seen: [2][]const u8 = undefined;
+    var bufs: [2][8192]u8 = undefined;
+    var outs: [2]Writer = undefined;
+    for (0..2) |i| {
         outs[i] = .fixed(&bufs[i]);
         try win_plan.benchPlanRow(&app, &outs[i], bench.roles(), &sheet, i, 0, rect.x, rect.w - 1, false);
         seen[i] = outs[i].buffered();
     }
     try std.testing.expect(std.mem.indexOf(u8, seen[0], "◆ orch") != null and std.mem.indexOf(u8, seen[0], "go eight") != null);
-    try std.testing.expect(std.mem.indexOf(u8, seen[1], "tell the orchestrator: ") != null and std.mem.indexOf(u8, seen[1], "orchestrator off") != null);
-    try std.testing.expect(std.mem.indexOf(u8, seen[2], "3 commits") != null);
-    var eights: usize = 0;
-    for (seen) |row| {
-        if (std.mem.indexOf(u8, row, "go eight") != null) eights += 1;
+    try std.testing.expect(std.mem.indexOf(u8, seen[1], "3 commits") != null);
+    for (seen) |row| try std.testing.expect(std.mem.indexOf(u8, row, "rebase #7") == null);
+
+    try std.testing.expectEqual(@as(usize, 2), win_foot.count(&app));
+    var foot: [2][4096]u8 = undefined;
+    var pen: Pen = .{};
+    var texts: [2][]const u8 = undefined;
+    for (0..2) |i| {
+        var out: Writer = .fixed(&foot[i]);
+        try win_foot.paint(&app, &out, &pen, i, 40);
+        texts[i] = out.buffered();
     }
-    try std.testing.expectEqual(@as(usize, 1), eights);
+    try std.testing.expect(std.mem.indexOf(u8, texts[0], "go eight") != null and std.mem.indexOf(u8, texts[0], "orch") != null);
+    try std.testing.expect(std.mem.indexOf(u8, texts[1], "rebase #7 onto main") != null);
+
+    var empty = try tickets.Board.parse(std.testing.allocator, "{\"tickets\":[],\"needs_you\":[]}");
+    defer empty.deinit();
+    const was = app.board;
+    app.board = empty;
+    try std.testing.expectEqual(@as(usize, 0), win_foot.count(&app));
+    app.board = was;
 }

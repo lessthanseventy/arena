@@ -22,6 +22,7 @@ const win_goals = @import("win_goals.zig");
 const win_into = @import("win_into.zig");
 const win_landed = @import("win_landed.zig");
 const win_move = @import("win_move.zig");
+const win_foot = @import("win_foot.zig");
 const win_plan = @import("win_plan.zig");
 const runcheck = @import("runcheck.zig");
 const win_next = @import("win_next.zig");
@@ -482,6 +483,9 @@ pub const App = struct {
     switches: u32 = 0,
     /// The orchestrator's column was folded away: the board opens without it until it is unfolded.
     side_folded: bool = false,
+    /// The suggestions of the drawer's foot already typed into the prompt, by a hash of their ids.
+    foot_taken: [8]u64 = @splat(0),
+    foot_next: usize = 0,
 
     /// The pointer is on the row under the strip, which then has the windows' names for dots.
     over_dots: bool = false,
@@ -2388,6 +2392,12 @@ pub const App = struct {
         return if (app.feedOf(&f)) @intCast(1 + f.height() + 1) else 1;
     }
 
+    /// The rows the orchestrator's window gives up at its foot to its suggestions.
+    pub fn winFoot(app: *const App, s: *const Session, index: usize) u16 {
+        if (index != 0 or !s.orchestrator() or !app.sided()) return 0;
+        return win_foot.height(app, app.winTop(s, index));
+    }
+
     /// The orchestrator's own window: its session's first.
     pub fn orchestratorWindow(app: *const App) ?*Window {
         const at = app.orchestratorSession() orelse return null;
@@ -2777,7 +2787,7 @@ pub const App = struct {
     fn settle(app: *App) !void {
         for (app.sessions.items) |s| {
             for (s.wins.items, 0..) |win, i| {
-                const rows = @max(1, app.view_h -| 1 -| app.winTop(s, i));
+                const rows = @max(1, app.view_h -| 1 -| app.winTop(s, i) -| app.winFoot(s, i));
                 const cols = @max(1, app.colW(s, win) -| 2);
                 const fits = win.w == cols and win.h == rows;
                 const asked = win.asked_w == cols and win.asked_h == rows;
@@ -4187,6 +4197,7 @@ pub const App = struct {
         }
         if (anyKey(key, &.{"\x1b"})) return if (app.drawerOpen()) app.closeDrawer() else app.closeBoard();
         if (try win_feed.press(app, key)) return;
+        if (try win_foot.press(app, key)) return;
         if (anyKey(key, &.{"o"}) and app.drawerOpen()) return app.closeDrawer();
     }
 
@@ -5623,6 +5634,7 @@ pub const App = struct {
         const view = &app.home.?;
         if (m.x >= app.term_w - app.view_w and app.sided() and !view.boxed()) {
             if (m.y >= app.view_h) return true;
+            if (m.leftPress() and try win_foot.click(app, m)) return true;
             if (m.leftPress() and try win_feed.click(app, m)) return true;
 
             if (app.sideShown() and (app.sideFocused() or m.wheel())) return false;
@@ -6650,6 +6662,7 @@ pub const App = struct {
                     continue;
                 }
                 if (app.sideFocused() and try win_feed.press(app, key)) continue;
+                if (app.sideFocused() and try win_foot.press(app, key)) continue;
                 if (app.sideFocused() and app.drawerOpen() and anyKey(key, &.{"o"})) {
                     try app.closeDrawer();
                     continue;
@@ -10222,7 +10235,7 @@ test "with the drawer and a middle column open, Plan, the column and the drawer 
     try std.testing.expectEqual(app.term_w, app.boardW());
 }
 
-test "⏎ on a text suggestion types it into the orchestrator's pane with no Enter and opens the drawer; with the orchestrator off it types nothing" {
+test "picking suggestions of the drawer's foot types each into the orchestrator's prompt unsent, the next on a line of its own; with the orchestrator off it types nothing" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
@@ -10235,13 +10248,12 @@ test "⏎ on a text suggestion types it into the orchestrator's pane with no Ent
     app.view_h = 40;
     app.board = try tickets.Board.parse(gpa,
         \\{"tickets":[],"orchestrator":{"on":true,"running":true},"needs_you":[],
-        \\"suggestions":[{"id":"suggestion:1","kind":"text","text":"rebase #7 onto main","ticket":null}],
+        \\"suggestions":[{"id":"suggestion:1","kind":"text","text":"rebase #7 onto main","ticket":null},
+        \\{"id":"suggestion:2","kind":"text","text":"retry #9","ticket":null}],
         \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
     );
     defer app.board.?.deinit();
-    const row: sheets.Row = .{ .kind = .need, .pick = 0, .item = 0 };
-
-    try win_move.open(&app, &row);
+    try win_foot.pick(&app, 0);
     var got: [512]u8 = undefined;
     try std.testing.expectEqual(@as(usize, 0), try sent.readPositionalAll(std.testing.io, &got, 0));
     try std.testing.expect(!app.drawerOpen());
@@ -10257,11 +10269,17 @@ test "⏎ on a text suggestion types it into the orchestrator's pane with no Ent
     app.sessions = .fromOwnedSlice(&list);
     app.current = 1;
 
-    try win_move.open(&app, &row);
-    const len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    try win_foot.pick(&app, 0);
+    var len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "send-keys -t %5 -l -- 'rebase #7 onto main'") != null);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "Enter") == null);
     try std.testing.expect(app.drawerOpen() and !app.normal);
+
+    try win_foot.pick(&app, 1);
+    len = try sent.readPositionalAll(std.testing.io, &got, 0);
+    const second = std.mem.indexOf(u8, got[0..len], "M-Enter").?;
+    try std.testing.expect(std.mem.indexOf(u8, got[second..len], "-l -- 'retry #9'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, got[0..len], "\nsend-keys -t %5 Enter") == null);
 }
 
 const plan_tail =

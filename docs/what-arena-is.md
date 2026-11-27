@@ -37,11 +37,13 @@ with keys written on its row:
 - a push, the digest, a restart;
 - a Claude that waits in its pane.
 
-The orchestrator's suggestions (#1141) join this list. A suggestion that points at a `needs_you`
-item marks that item's row `◆ orch` and moves it to the top. It is not drawn a second time. A
-suggestion that is a line of text becomes its own row, `◆ tell the orchestrator: …`, and `⏎`
-types the line into the drawer's prompt without sending it. Other places that show the same
-things only point to Your move:
+The orchestrator's suggestions (#1141) are not in this list but in the drawer's foot, between its
+chat and its prompt (#1176). A suggestion that points at a `needs_you` item marks that item's row
+`◆ orch` and moves it to the top of Your move, and shows in the foot as a row that opens it. A
+suggestion that is a line of text is a foot row only, at most six, one line each: `1`–`6`, `⏎`
+(the first not yet picked) or a click types the line into the drawer's prompt without sending it,
+each further one on a line of its own. Other places that show the same things only point to
+Your move:
 
 - **a desktop notice** is for a Your move item only, and a click on it opens arena with that item
   picked;

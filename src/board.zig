@@ -424,8 +424,12 @@ const File = struct {
     proposals: []Proposal = &.{},
     needs_you: []Need = &.{},
     suggestions: []Suggestion = &.{},
+    said: []Need = &.{},
     plan: ?Plan = null,
 };
+
+/// The most text suggestions the drawer's foot holds.
+pub const said_max = 6;
 
 pub const Board = struct {
     parsed: std.json.Parsed(File),
@@ -574,11 +578,19 @@ pub const Board = struct {
     }
 
     /// Lifts the `needs_you` items the suggestions point at to the top, in the suggestions' order,
-    /// marked, and puts each text suggestion after them as a row of its own, kind `suggest`. A
+    /// marked, and keeps the text suggestions apart in `said`, kind `suggest`, not in Your move. A
     /// suggestion of another kind, or pointing at an item that is gone, is dropped.
     fn suggest(arena: std.mem.Allocator, file: *File) !void {
         if (file.suggestions.len == 0) return;
-        const out = try arena.alloc(Need, file.needs_you.len + file.suggestions.len);
+        const lines = try arena.alloc(Need, @min(file.suggestions.len, said_max));
+        var said_n: usize = 0;
+        for (file.suggestions) |s| {
+            if (!std.mem.eql(u8, s.kind, "text") or said_n == lines.len) continue;
+            lines[said_n] = .{ .id = s.id, .kind = "suggest", .ticket = s.ticket, .text = try cleanLine(arena, s.text) };
+            said_n += 1;
+        }
+        file.said = lines[0..said_n];
+        const out = try arena.alloc(Need, file.needs_you.len);
         const taken = try arena.alloc(bool, file.needs_you.len);
         @memset(taken, false);
         var n: usize = 0;
@@ -593,11 +605,6 @@ pub const Board = struct {
                 n += 1;
                 break;
             }
-        }
-        for (file.suggestions) |s| {
-            if (!std.mem.eql(u8, s.kind, "text")) continue;
-            out[n] = .{ .id = s.id, .kind = "suggest", .ticket = s.ticket, .text = try cleanLine(arena, s.text) };
-            n += 1;
         }
         for (file.needs_you, taken) |need, gone| if (!gone) {
             out[n] = need;
@@ -638,6 +645,11 @@ pub const Board = struct {
     /// What is the human's move, in the order babylon gives it.
     pub fn needsYou(b: *const Board) []const Need {
         return b.parsed.value.needs_you;
+    }
+
+    /// The lines the orchestrator suggests saying to it, for the drawer's foot.
+    pub fn said(b: *const Board) []const Need {
+        return b.parsed.value.said;
     }
 
     /// The Your move item asking what goal to drive towards next, when babylon gives one.
@@ -1092,12 +1104,13 @@ test "an item suggestion lifts and marks the needs_you item it copies, a text on
     );
     defer b.deinit();
     const needs = b.needsYou();
-    try std.testing.expectEqual(@as(usize, 3), needs.len);
+    try std.testing.expectEqual(@as(usize, 2), needs.len);
     try std.testing.expectEqualStrings("b", needs[0].id);
-    try std.testing.expect(needs[0].orch and !needs[2].orch);
-    try std.testing.expectEqualStrings("suggest", needs[1].kind);
-    try std.testing.expectEqualStrings("rebase #7", needs[1].text);
-    try std.testing.expectEqualStrings("a", needs[2].id);
+    try std.testing.expect(needs[0].orch and !needs[1].orch);
+    try std.testing.expectEqualStrings("a", needs[1].id);
+    try std.testing.expectEqual(@as(usize, 1), b.said().len);
+    try std.testing.expectEqualStrings("suggest", b.said()[0].kind);
+    try std.testing.expectEqualStrings("rebase #7", b.said()[0].text);
     var old = try Board.parse(std.testing.allocator, sample);
     defer old.deinit();
     try std.testing.expectEqual(@as(usize, 0), old.needsYou().len);
