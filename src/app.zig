@@ -4179,6 +4179,8 @@ pub const App = struct {
             try win_move.open(app, &row);
         } else if (opensInPlace(&row)) {
             try app.togglePlanOpen(&row);
+        } else if (picked and row.kind == .idea and sheets.Sheet.ideaState(app.board.?.plan().?.ideas[row.item]) == .idea) {
+            _ = try app.openDetail(row.ticket orelse return);
         } else if (picked) try app.planAct(&row, "\r");
     }
 
@@ -8476,6 +8478,28 @@ test "the plan's pick lights its ticket's Your move item dim in the feed, and th
     view.pick = 0;
     try std.testing.expect(try win_feed.press(&app, "j"));
     try eq(@as(usize, 1), view.plan_pick);
+}
+
+test "a click on a picked idea opens its card, with the body babylon wrote; ⏎ still plans it" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try tryApp(sent,
+        \\{"tickets":[],"plan":{"ideas":[{"epic":829,"title":"garden","state":"idea"}]}}
+    );
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.detail.deinit(std.testing.allocator);
+    defer app.detail_asked.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    app.home = .{ .focus = .plan };
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    var at: usize = 0;
+    while (sheet.rows[at].kind != .idea) at += 1;
+    app.home.?.plan_pick = sheet.rows[at].pick.?;
+    try app.planClick(.{ .code = 0, .x = 3, .y = @intCast(2 + at), .release = false });
+    try std.testing.expectEqual(@as(?u32, 829), app.home.?.detail);
 }
 
 test "⏎ on an idea plans it, e and x edit and withdraw it, and ⏎ on the fold opens them" {
