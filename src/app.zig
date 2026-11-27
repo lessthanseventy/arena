@@ -1395,7 +1395,7 @@ pub const App = struct {
     }
 
     /// The peek's target is the ticket's card or the Claude's window.
-    pub const Look = union(enum) { ticket: u32, window: u32 };
+    pub const Look = union(enum) { ticket: u32, window: u32, commit: struct { repo: u8, row: u16 } };
 
     /// What a peek holds: the ticket and the Claude, either of which may be missing.
     pub const Peek = struct { card: ?*const tickets.Card, win: ?*const Window };
@@ -1403,6 +1403,7 @@ pub const App = struct {
     /// What the pointer rests on, as of `look_at`.
     fn lookUnder(app: *const App, x: u16, y: u16) ?Look {
         if (app.menu != null or app.prompt != null or app.overview != null) return null;
+        if (app.home) |view| if (view.repos) return win_repos.lookAt(app, x, y);
         if (app.home) |view| if (view.boxed()) return null;
         if (app.feedUnder(x, y)) |look| return look;
         if (app.planShown()) {
@@ -1505,6 +1506,7 @@ pub const App = struct {
                 const card = app.ticketCard(id) orelse return null;
                 return .{ .card = card, .win = app.claudeOf(card) };
             },
+            .commit => return null,
             .window => |id| {
                 const a = app.agentById(id) orelse return null;
                 const card = if (std.fmt.parseInt(u32, branchTicket(a.win.text(.branch)) orelse "", 10)) |n| app.ticketCard(n) else |_| null;
@@ -6232,7 +6234,10 @@ pub const App = struct {
                 }
             };
             if ((open.repos and open.detail == null) or open.claudes) if (app.columnRect()) |rect| {
-                if (rect.contains(m.x, m.y)) return true;
+                if (rect.contains(m.x, m.y)) {
+                    if (open.repos) try win_repos.click(app, m);
+                    return true;
+                }
             };
             if (open.item_open) if (app.columnRect()) |rect| {
                 var items: [16]ModalButton = undefined;
@@ -11807,9 +11812,32 @@ test "restart-pending and a repo's unpushed are chips on the head, not Your move
     shot.clearRetainingCapacity();
     try draw.frame(&app, &shot.writer, .all);
 
-    for ([_][]const u8{ "arena  main  ↑2 ↓0  ●1  ⎇1", "tlon  main  ↑1 ↓3  ●0  ⎇0  ≡2", "↑ a1b2c3d  one commit  #7", "another #9 commit", "✓ today", "M   src/x.zig", "Worktrees  ⎇1", "t42-x  ●0 ↑1" }) |want| {
+    for ([_][]const u8{ "arena", "tlon", "↑2", "↓3", "⎇1", "≡2", "a1b2c3d", "one commit", "another ", "── today ──", "── earlier ──", "src/x.zig", "worktrees", "#42", "t42-x" }) |want| {
         try std.testing.expect(has(u8, shot.written(), want) != null);
     }
+
+    const list_at = win_repos.listAt(&app).?;
+    try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = @intCast(list_at.x), .y = @intCast(list_at.y + 1), .release = false }));
+    try std.testing.expectEqual(@as(usize, 1), view.repos_pick);
+    try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = @intCast(list_at.x), .y = @intCast(list_at.y), .release = false }));
+    try std.testing.expectEqual(@as(usize, 0), view.repos_pick);
+
+    const commits = win_repos.boxAt(&app, 2).?;
+    try std.testing.expect(!view.repos_in);
+    try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = @intCast(commits.x + 4), .y = @intCast(commits.y), .release = false }));
+    try std.testing.expect(view.repos_in and view.repos_section == 2);
+    try std.testing.expect(!view.repos_diff);
+    try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = @intCast(commits.x + 4), .y = @intCast(commits.y + 2), .release = false }));
+    try std.testing.expect(view.repos_diff);
+    try std.testing.expect(has(u8, try sentText(sent, &got), "show --stat --patch a1b2c3d") != null);
+    try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = @intCast(win_repos.footColumn(&app, "\x1b").?), .y = @intCast(app.columnRect().?.y + app.columnRect().?.h - 1), .release = false }));
+    try std.testing.expect(!view.repos_diff);
+    try std.testing.expect(view.repos_in);
+    view.repos_in = false;
+    app.status_out_n = 0;
+    try std.testing.expect(try app.homeMouse(.{ .code = 0, .x = @intCast(win_repos.footColumn(&app, "f").?), .y = @intCast(app.columnRect().?.y + app.columnRect().?.h - 1), .release = false }));
+    try std.testing.expect(has(u8, try sentText(sent, &got), "git fetch -q origin main") != null);
+    view.repos_section = 0;
 
     try app.homeKey("\t");
     try std.testing.expect(view.repos_in);

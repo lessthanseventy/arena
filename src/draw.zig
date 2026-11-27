@@ -3001,6 +3001,7 @@ const PeekRows = struct {
 /// what its Claude is doing, and the last lines of its pane, with the keys at its foot.
 fn lookBox(app: *App, w: *Writer, look: App.Look) !void {
     var p: PeekRows = .{};
+    if (look == .commit) return commitPeek(app, w, look.commit.repo, look.commit.row);
     const peek = app.peekOf(look) orelse return;
     var age_buf: [8]u8 = undefined;
     if (peek.card) |card| {
@@ -3061,6 +3062,21 @@ fn lookBox(app: *App, w: *Writer, look: App.Look) !void {
         return peekBox(app, w, &p);
     };
     p.add(.head, "⏎ go   space open card   esc away", .{});
+    return peekBox(app, w, &p);
+}
+
+/// The peek of a commit in the repos view: its hash and age, its subject whole, and the ticket it names.
+fn commitPeek(app: *App, w: *Writer, repo: usize, row: usize) !void {
+    const c = win_repos.commitOf(app, repo, row) orelse return;
+    var p: PeekRows = .{};
+    var age_buf: [8]u8 = undefined;
+    const when = ago(&age_buf, app.epoch, @intCast(@max(0, c.ct)));
+    p.add(.head, "{s}{s}{s}", .{ c.sha, if (when.len > 0) " · " else "", when });
+    const lines = app_mod.titleLines(win_repos.subjectOf(c), peek_w - 4);
+    p.add(.plain, "{s}", .{lines[0]});
+    if (lines[1].len > 0) p.add(.plain, "{s}", .{lines[1]});
+    if (win_repos.ticketNamed(c)) |id| if (app.ticketCard(id)) |card| p.add(.dim, "#{d} {s}", .{ id, card.title });
+    p.add(.head, "esc away", .{});
     return peekBox(app, w, &p);
 }
 

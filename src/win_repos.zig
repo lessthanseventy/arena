@@ -21,7 +21,7 @@ const refresh_ms = 30_000;
 const sections = [_][]const u8{ "Status", "Worktrees", "Commits" };
 
 /// What git said of a checkout, from `git status --porcelain=v2 --branch`.
-const Checkout = struct { branch: []const u8 = "", ahead: u32 = 0, behind: u32 = 0, changed: u32 = 0 };
+const Checkout = struct { path: []const u8 = "", branch: []const u8 = "", ahead: u32 = 0, behind: u32 = 0, changed: u32 = 0 };
 
 /// A repo as its answer reads: its main checkout's branch and state, the worktrees besides it and
 /// its stashes.
@@ -52,7 +52,7 @@ fn part(text: []const u8, name: []const u8, n: usize) ?[]const u8 {
 fn checkoutOf(block: []const u8) Checkout {
     var c: Checkout = .{};
     var lines = std.mem.splitScalar(u8, block, '\n');
-    _ = lines.next();
+    c.path = lines.next() orelse "";
     while (lines.next()) |line| {
         if (std.mem.startsWith(u8, line, "# branch.head ")) {
             c.branch = line["# branch.head ".len..];
@@ -287,14 +287,66 @@ fn ticketOf(branch: []const u8) ?u32 {
     return std.fmt.parseInt(u32, branch[1..end], 10) catch null;
 }
 
-/// The `n`th worktree besides the main checkout.
+/// The `n`th worktree besides the main checkout, as the answer lists them.
 fn treeAt(text: []const u8, n: usize) ?Tree {
     var co = checkoutOf(part(text, "wt", n + 1) orelse return null);
     co.ahead = aheadOf(text, n);
     return .{ .co = co, .ticket = ticketOf(co.branch) };
 }
 
-const Commit = struct { sha: []const u8, rest: []const u8, ct: i64 };
+fn detached(t: Tree) bool {
+    return std.mem.eql(u8, t.co.branch, "(detached)");
+}
+
+/// How many worktrees besides the main checkout are on a branch, and how many are detached.
+const Trees = struct { branched: usize, loose: usize };
+
+fn treesOf(text: []const u8) Trees {
+    var t: Trees = .{ .branched = 0, .loose = 0 };
+    var n: usize = 0;
+    while (treeAt(text, n)) |tree| : (n += 1) {
+        if (detached(tree)) t.loose += 1 else t.branched += 1;
+    }
+    return t;
+}
+
+/// The `n`th worktree in the order shown: those on a branch, then the detached ones.
+fn treeShown(text: []const u8, n: usize) ?Tree {
+    const t = treesOf(text);
+    const want_loose = n >= t.branched;
+    var skip = if (want_loose) n - t.branched else n;
+    var k: usize = 0;
+    while (treeAt(text, k)) |tree| : (k += 1) {
+        if (detached(tree) != want_loose) continue;
+        if (skip == 0) return tree;
+        skip -= 1;
+    }
+    return null;
+}
+
+/// How many rows the worktrees take: two for each on a branch, then a heading and one each for
+/// the detached.
+fn treeRows(text: []const u8) usize {
+    const t = treesOf(text);
+    return t.branched * 2 + if (t.loose > 0) 1 + t.loose else 0;
+}
+
+/// The worktree (in the order shown) on row `d` of its rows, none on the detached heading.
+fn treeOnRow(text: []const u8, d: usize) ?usize {
+    const t = treesOf(text);
+    if (d < t.branched * 2) return d / 2;
+    if (d == t.branched * 2) return null;
+    const n = t.branched + (d - t.branched * 2 - 1);
+    return if (n < t.branched + t.loose) n else null;
+}
+
+/// The first row of worktree `n` (in the order shown), and how many rows it takes.
+fn treeSpan(text: []const u8, n: usize) struct { at: usize, len: usize } {
+    const t = treesOf(text);
+    return if (n < t.branched) .{ .at = n * 2, .len = 2 } else .{ .at = t.branched * 2 + 1 + (n - t.branched), .len = 1 };
+}
+
+pub const Commit = struct { sha: []const u8, rest: []const u8, ct: i64 };
 
 fn commitIn(line: []const u8) ?Commit {
     const a = std.mem.indexOfScalar(u8, line, ' ') orelse return null;
@@ -319,7 +371,29 @@ fn logOf(text: []const u8) Log {
     return .{ .today = today, .shown = @max(today, @min(total, 10)) };
 }
 
-fn commitAt(text: []const u8, n: usize) ?Commit {
+/// How many rows the commits take: a rule over each of today's and the earlier ones, when there are some.
+fn commitRows(log: Log) usize {
+    const earlier = log.shown - log.today;
+    return @as(usize, @intFromBool(log.today > 0)) + log.today + if (earlier > 0) 1 + earlier else 0;
+}
+
+/// The first row of commit `i`.
+fn commitSpan(log: Log, i: usize) usize {
+    const top: usize = @intFromBool(log.today > 0);
+    return if (i < log.today) top + i else top + log.today + 1 + (i - log.today);
+}
+
+/// The commit on row `d` of the commits' rows, none on a rule.
+fn commitOnRow(log: Log, d: usize) ?usize {
+    const top: usize = @intFromBool(log.today > 0);
+    if (d < top) return null;
+    if (d < top + log.today) return d - top;
+    if (d == top + log.today) return null;
+    const i = d - top - 1;
+    return if (i < log.shown) i else null;
+}
+
+pub fn commitAt(text: []const u8, n: usize) ?Commit {
     var seen: usize = 0;
     var lines = std.mem.splitScalar(u8, part(text, "log", 0) orelse "", '\n');
     while (lines.next()) |line| {
@@ -453,7 +527,7 @@ fn enter(app: *App, repo: []const u8) !void {
             try showDiff(app, repo, git catch return);
         },
         1 => {
-            const id = (treeAt(text, row) orelse return).ticket orelse return;
+            const id = (treeShown(text, row) orelse return).ticket orelse return;
             _ = try app.openDetail(id);
         },
         else => {
@@ -564,13 +638,24 @@ fn ticketIn(text: []const u8) ?[]const u8 {
     return null;
 }
 
-/// A commit as shown, `sha  subject`, with the `#N` its trailers name when its subject names none.
-fn commitShown(buf: []u8, c: Commit) []const u8 {
+/// A commit's subject, then the `#N` its trailers name when the subject names none.
+fn commitSubject(buf: []u8, c: Commit) []const u8 {
     const split = std.mem.lastIndexOf(u8, c.rest, trailer_mark) orelse c.rest.len;
     const subject = c.rest[0..split];
     const trailers = if (split < c.rest.len) c.rest[split + trailer_mark.len ..] else "";
     const extra = if (ticketIn(subject) == null) ticketIn(trailers) else null;
-    return std.fmt.bufPrint(buf, "{s}  {s}{s}{s}", .{ c.sha, subject, if (extra != null) "  " else "", extra orelse "" }) catch c.sha;
+    return std.fmt.bufPrint(buf, "{s}{s}{s}", .{ subject, if (extra != null) "  " else "", extra orelse "" }) catch subject;
+}
+
+/// A commit's own subject, whole.
+pub fn subjectOf(c: Commit) []const u8 {
+    return c.rest[0 .. std.mem.lastIndexOf(u8, c.rest, trailer_mark) orelse c.rest.len];
+}
+
+/// The ticket a commit names, in its subject or its trailers.
+pub fn ticketNamed(c: Commit) ?u32 {
+    const tag = ticketIn(c.rest) orelse return null;
+    return std.fmt.parseInt(u32, tag[1..], 10) catch null;
 }
 
 var cut_scratch: [512]u8 = undefined;
@@ -598,79 +683,6 @@ fn windowStart(sel: usize, h: usize) usize {
     return if (sel < h) 0 else sel + 1 - h;
 }
 
-/// Section `s` of the picked repo at (`x`, `y`), `h` rows tall counting its heading.
-fn paintSection(app: *App, w: *Writer, r: anytype, view: anytype, text: []const u8, s: usize, x: usize, y0: usize, room: usize, h: usize) !void {
-    if (h == 0) return;
-    const sum = parse(text);
-    const focused = view.repos_in and view.repos_section == s;
-    var head: [48]u8 = undefined;
-    const title = switch (s) {
-        0 => std.fmt.bufPrint(&head, "{s}  ●{d}", .{ sections[s], if (sum) |m| m.checkout.changed else 0 }),
-        1 => std.fmt.bufPrint(&head, "{s}  ⎇{d}", .{ sections[s], if (sum) |m| m.worktrees else 0 }),
-        else => std.fmt.bufPrint(&head, "{s}", .{sections[s]}),
-    } catch sections[s];
-    try bench.say(w, x, y0, cut(title, room), if (focused) r.accent else r.dim, r.panel, focused);
-    const body = h - 1;
-    const count = rowCount(text, s);
-    if (sum == null) return if (body > 0) bench.say(w, x, y0 + 1, "…", r.dim, r.panel, false);
-    if (count == 0 and body > 0) {
-        const none = switch (s) {
-            0 => "clean",
-            1 => "no worktrees",
-            else => "no commits",
-        };
-        return bench.say(w, x, y0 + 1, none, r.dim, r.panel, false);
-    }
-    const log = logOf(text);
-    const rows = if (s == 2) count + 1 else count;
-    const sel = switch (s) {
-        0 => view.repos_file,
-        1 => view.repos_tree,
-        else => view.repos_commit,
-    };
-    const picked_row = if (s == 2 and sel >= log.today) sel + 1 else sel;
-    const from = windowStart(if (focused) picked_row else 0, body);
-    var line: [512]u8 = undefined;
-    var d = from;
-    while (d < rows and d - from < body) : (d += 1) {
-        const y = y0 + 1 + d - from;
-        if (s == 2 and d == log.today) {
-            try bench.say(w, x, y, "✓ today", r.dim, r.panel, false);
-            continue;
-        }
-        const i = if (s == 2 and d > log.today) d - 1 else d;
-        const marked = focused and i == sel;
-        if (marked) try bench.say(w, x - 1, y, "▌", r.accent, r.panel, true);
-        var ink = r.text;
-        const shown: []const u8 = switch (s) {
-            0 => blk: {
-                const f = fileAt(text, i) orelse break :blk "";
-                break :blk std.fmt.bufPrint(&line, "{s}  {s}", .{ f.code, f.path }) catch f.path;
-            },
-            1 => blk: {
-                const t = treeAt(text, i) orelse break :blk "";
-                const card = if (t.ticket) |id| app.ticketCard(id) else null;
-                const stale = if (card) |c| c.status == .done else false;
-                const holds = if (card) |c| c.status == .doing and c.claimed_by != null else false;
-                if (stale) ink = r.dim;
-                var named: [200]u8 = undefined;
-                const name = if (t.ticket) |id|
-                    std.fmt.bufPrint(&named, "#{d} {s}", .{ id, if (card) |c| c.short orelse c.title else t.co.branch }) catch ""
-                else
-                    t.co.branch;
-                break :blk std.fmt.bufPrint(&line, "{s}  ●{d} ↑{d}{s}{s}", .{ name, t.co.changed, t.co.ahead, if (holds) "  claude" else "", if (stale) "  stale" else "" }) catch name;
-            },
-            else => blk: {
-                const c = commitAt(text, i) orelse break :blk "";
-                var sub: [400]u8 = undefined;
-                const up = isUnpushed(text, c.sha);
-                break :blk std.fmt.bufPrint(&line, "{s} {s}", .{ if (up) "↑" else " ", commitShown(&sub, c) }) catch c.sha;
-            },
-        };
-        try bench.say(w, x, y, cut(shown, room), if (marked) r.text else ink, r.panel, marked);
-    }
-}
-
 /// Whether a repo is even with its upstream, clean, on main and has no worktrees: its row is dim.
 fn isLevel(s: tickets.RepoState, sum: ?Summary) bool {
     const m = sum orelse return s.ahead == 0 and s.behind == 0;
@@ -683,95 +695,554 @@ fn cells(text: []const u8) usize {
     return n;
 }
 
+const RGB = @import("color.zig").RGB;
+
+/// A count's ink: `lit` when there is something, dim when it is zero.
+fn countInk(r: anytype, n: u32, lit: RGB) RGB {
+    return if (n == 0) r.dim else lit;
+}
+
+/// The rows a section holds, its empty line counted: a clean Status is one.
+fn bodyRows(text: []const u8, s: usize) usize {
+    const sum = parse(text) orelse return 1;
+    const rows = switch (s) {
+        0 => sum.checkout.changed,
+        1 => treeRows(text),
+        else => commitRows(logOf(text)),
+    };
+    return @max(1, rows);
+}
+
+const Box = struct { y: usize, h: usize };
+
+/// Where the three boxes of a column `body` rows tall from `top` go, a blank row between: each as
+/// tall as what it holds, Status and Worktrees up to a share of the column, Commits the rest.
+fn boxesOf(text: []const u8, top: usize, body: usize) [3]Box {
+    const avail = body -| 2;
+    const h0 = @min(bodyRows(text, 0) + 2, @max(3, avail / 4));
+    const h1 = @min(bodyRows(text, 1) + 2, @max(3, avail * 3 / 8));
+    const h2 = @min(bodyRows(text, 2) + 2, avail -| (h0 + h1));
+    return .{ .{ .y = top, .h = h0 }, .{ .y = top + h0 + 1, .h = h1 }, .{ .y = top + h0 + h1 + 2, .h = h2 } };
+}
+
+/// Where the repos view puts things, as the paint and a click on it both need.
+const Geo = struct {
+    x0: usize,
+    inner: usize,
+    left: usize,
+    right_x: usize,
+    right_w: usize,
+    top: usize,
+    body_end: usize,
+    foot: usize,
+    boxes: [3]Box,
+
+    fn of(app: *const App, text: []const u8) ?Geo {
+        const rect = app.columnRect() orelse return null;
+        const inner: usize = app_mod.detailWidth(app.columnRoom()).inner;
+        const x0: usize = rect.x + 2;
+        const foot: usize = rect.y + rect.h - 1;
+        const left: usize = @min(42, inner / 2);
+        const top: usize = rect.y + 1;
+        const body_end = foot - 1;
+        return .{
+            .x0 = x0,
+            .inner = inner,
+            .left = left,
+            .right_x = x0 + left + 2,
+            .right_w = inner -| (left + 2),
+            .top = top,
+            .body_end = body_end,
+            .foot = foot,
+            .boxes = boxesOf(text, top, body_end -| top),
+        };
+    }
+
+    /// The rows inside box `s`: its first row's y and how many there are.
+    fn inside(g: Geo, s: usize) struct { y: usize, n: usize } {
+        return .{ .y = g.boxes[s].y + 1, .n = g.boxes[s].h -| 2 };
+    }
+};
+
+/// The repo rows' columns: the name's width, the branch's.
+const name_cap = 12;
+const branch_w = 8;
+const count_w = 4;
+
+fn nameWidth(repos: []const tickets.RepoState) usize {
+    var n: usize = 4;
+    for (repos) |s| n = @max(n, @min(cells(s.repo), name_cap));
+    return n;
+}
+
+/// One repo's row of the list at (`x`, `y`), `room` cells wide on `bg`: its `▌` and glyph and name in
+/// its own colour, its branch dim on main and amber off it, and each count lit only when it is not zero.
+fn paintRepo(w: *Writer, r: anytype, x: usize, y: usize, room: usize, bg: RGB, name_w: usize, s: tickets.RepoState, sum: ?Summary, bad: bool, picked: bool) !void {
+    const hue = draw.repoHue(r, s.repo);
+    try bench.fill(w, x - 1, y, room + 1, bg);
+    try bench.say(w, x - 1, y, "▌", hue.hue, bg, true);
+    var at = x;
+    const end = x + room;
+    try bench.say(w, at, y, hue.glyph, hue.hue, bg, false);
+    at += 2;
+    var nb: [64]u8 = undefined;
+    try bench.say(w, at, y, draw.clipMark(&nb, s.repo, @min(name_w, end -| at)), hue.hue, bg, picked or !isLevel(s, sum));
+    at += name_w + 1;
+    const branch = if (sum) |m| m.checkout.branch else "main";
+    if (at + branch_w <= end) {
+        const on_main = std.mem.eql(u8, branch, "main");
+        var bb: [64]u8 = undefined;
+        try bench.say(w, at, y, draw.clipMark(&bb, branch, branch_w), if (on_main) r.dim else r.building, bg, !on_main);
+    }
+    at += branch_w + 1;
+    const counts = [_]struct { glyph: []const u8, n: u32, lit: RGB }{
+        .{ .glyph = "↑", .n = s.ahead, .lit = r.building },
+        .{ .glyph = "↓", .n = s.behind, .lit = r.checking },
+        .{ .glyph = "●", .n = if (sum) |m| m.checkout.changed else 0, .lit = r.building },
+        .{ .glyph = "⎇", .n = if (sum) |m| m.worktrees else 0, .lit = r.text },
+        .{ .glyph = "≡", .n = if (sum) |m| m.stashes else 0, .lit = r.text },
+    };
+    for (counts, 0..) |c, i| {
+        if (at + count_w > end + 1) break;
+        var cb: [16]u8 = undefined;
+        if (i == 2 and sum == null) {
+            if (bad) try bench.say(w, at, y, "●?", r.failed, bg, false);
+        } else if (i == 4 and c.n == 0) {
+            // no stash is no column of zeros
+        } else if (i < 2 or sum != null) {
+            try bench.say(w, at, y, std.fmt.bufPrint(&cb, "{s}{d}", .{ c.glyph, c.n }) catch c.glyph, countInk(r, c.n, c.lit), bg, c.n > 0);
+        }
+        at += count_w;
+    }
+}
+
+/// A changed file's row: its code in the colour of what it did, then its path.
+fn paintFile(w: *Writer, r: anytype, x: usize, y: usize, room: usize, bg: RGB, f: File) !void {
+    const code = f.code[0];
+    const hue = switch (code) {
+        'M' => r.building,
+        'A' => r.landed,
+        'D' => r.failed,
+        '?' => r.dim,
+        else => r.text,
+    };
+    try bench.say(w, x, y, f.code[0..if (code == '?') 2 else 1], hue, bg, code != '?');
+    try bench.say(w, x + 3, y, cut(f.path, room -| 3), if (code == '?') r.dim else r.text, bg, false);
+}
+
+/// A worktree's row: `line` 0 is its ticket's `#N` and short name, and its state at the right; 1
+/// is its branch under it, dim. One on no ticket names its branch, then its folder; a detached one,
+/// its folder, on a row of its own.
+fn paintTree(w: *Writer, r: anytype, x: usize, y: usize, room: usize, bg: RGB, t: Tree, card: ?*const tickets.Card, line: usize) !void {
+    const folder = std.fs.path.basename(t.co.path);
+    if (line == 1) {
+        return bench.say(w, x + 2, y, cut(if (t.ticket != null) t.co.branch else folder, room -| 2), r.dim, bg, false);
+    }
+    const stale = if (card) |c| c.status == .done else false;
+    const holds = if (card) |c| c.status == .doing and c.claimed_by != null else false;
+    var ahead: [16]u8 = undefined;
+    var dirty: [16]u8 = undefined;
+    const all = [_]struct { on: bool, text: []const u8, ink: RGB }{
+        .{ .on = holds, .text = "● claude", .ink = r.landed },
+        .{ .on = stale, .text = "stale", .ink = r.dim },
+        .{ .on = t.co.ahead > 0, .text = std.fmt.bufPrint(&ahead, "↑{d}", .{t.co.ahead}) catch "↑", .ink = r.building },
+        .{ .on = t.co.changed > 0, .text = std.fmt.bufPrint(&dirty, "●{d}", .{t.co.changed}) catch "●", .ink = r.building },
+    };
+    var state_w: usize = 0;
+    for (all) |m| {
+        if (m.on) state_w += cells(m.text) + 2;
+    }
+    state_w -|= 2;
+    const name_room = room -| (state_w + if (state_w > 0) @as(usize, 2) else 0);
+    var at = x;
+    if (t.ticket) |id| {
+        var nb: [16]u8 = undefined;
+        const tag = std.fmt.bufPrint(&nb, "#{d}", .{id}) catch "#";
+        try bench.say(w, at, y, tag, r.accent, bg, true);
+        at += cells(tag) + 1;
+        const name = if (card) |c| (c.short orelse c.title) else t.co.branch;
+        try bench.say(w, at, y, cut(name, name_room -| (at - x)), if (stale) r.dim else r.text, bg, false);
+    } else {
+        try bench.say(w, at, y, cut(if (detached(t)) folder else t.co.branch, name_room), if (detached(t)) r.dim else r.text, bg, false);
+    }
+    var sx = x + room - state_w;
+    for (all) |m| {
+        if (!m.on) continue;
+        try bench.say(w, sx, y, m.text, m.ink, bg, false);
+        sx += cells(m.text) + 2;
+    }
+}
+
+/// A commit's row: a lit `↑` when it is not pushed, its hash dim, its subject with each `#N` in
+/// the accent, the whole subject dim when it is a review fix, so the real changes stand out.
+fn paintCommit(w: *Writer, r: anytype, x: usize, y: usize, room: usize, bg: RGB, c: Commit, unpushed: bool) !void {
+    if (unpushed) try bench.say(w, x, y, "↑", r.building, bg, true);
+    try bench.say(w, x + 2, y, c.sha, r.dim, bg, false);
+    var sub: [400]u8 = undefined;
+    const subject = commitSubject(&sub, c);
+    const review = std.mem.startsWith(u8, subject, "Review fixes");
+    const ink = if (review) r.dim else r.text;
+    const shown = cut(subject, room -| (2 + cells(c.sha) + 2));
+    var at = x + 2 + cells(c.sha) + 2;
+    var i: usize = 0;
+    while (i < shown.len) {
+        const hash = std.mem.indexOfScalarPos(u8, shown, i, '#') orelse shown.len;
+        var end = hash + 1;
+        while (hash < shown.len and end < shown.len and std.ascii.isDigit(shown[end])) end += 1;
+        const tag = hash < shown.len and end > hash + 1;
+        const plain = shown[i..if (tag) hash else shown.len];
+        if (plain.len > 0) {
+            try bench.say(w, at, y, plain, ink, bg, false);
+            at += cells(plain);
+        }
+        if (!tag) break;
+        try bench.say(w, at, y, shown[hash..end], if (review) r.dim else r.accent, bg, false);
+        at += end - hash;
+        i = end;
+    }
+}
+
+/// A rule over a group of commits: `── today ──`.
+fn paintRule(w: *Writer, r: anytype, x: usize, y: usize, room: usize, bg: RGB, word: []const u8) !void {
+    var buf: [64]u8 = undefined;
+    try bench.say(w, x, y, cut(std.fmt.bufPrint(&buf, "── {s} ──", .{word}) catch word, room), r.dim, bg, false);
+}
+
+/// The row of box `s` that is picked, which sits in view.
+fn pickedRow(text: []const u8, view: anytype, s: usize) usize {
+    const sel = switch (s) {
+        0 => view.repos_file,
+        1 => view.repos_tree,
+        else => view.repos_commit,
+    };
+    return switch (s) {
+        0 => sel,
+        1 => {
+            const span = treeSpan(text, sel);
+            return span.at + span.len - 1;
+        },
+        else => commitSpan(logOf(text), sel),
+    };
+}
+
+/// The first row of box `s` that shows.
+fn firstRow(text: []const u8, view: anytype, s: usize, body: usize) usize {
+    const focused = view.repos_in and view.repos_section == s;
+    return windowStart(if (focused) pickedRow(text, view, s) else 0, body);
+}
+
+/// The item of box `s` on row `d` of its rows, none on a rule or past the end.
+fn itemOnRow(text: []const u8, s: usize, d: usize) ?usize {
+    const sum = parse(text) orelse return null;
+    return switch (s) {
+        0 => if (d < sum.checkout.changed) d else null,
+        1 => treeOnRow(text, d),
+        else => commitOnRow(logOf(text), d),
+    };
+}
+
+fn boxTitle(buf: []u8, s: usize) []const u8 {
+    return std.fmt.bufPrint(buf, "{s}", .{switch (s) {
+        0 => "status",
+        1 => "worktrees",
+        else => "commits",
+    }}) catch "";
+}
+
+/// Box `s` of the picked repo: a window with its count, its rows under it, the picked one lit
+/// when the box is focused, and the row under the pointer lit lighter.
+fn paintBox(app: *App, w: *Writer, r: anytype, view: anytype, text: []const u8, g: Geo, s: usize) !void {
+    const box = g.boxes[s];
+    if (box.h < 2) return;
+    const sum = parse(text);
+    const focused = view.repos_in and view.repos_section == s;
+    var tb: [16]u8 = undefined;
+    const count: ?usize = if (sum) |m| switch (s) {
+        0 => m.checkout.changed,
+        1 => m.worktrees,
+        else => logOf(text).shown,
+    } else null;
+    try bench.window(w, r, g.right_x, box.y, g.right_w, box.h, boxTitle(&tb, s), count, focused);
+    const body = g.inside(s);
+    if (body.n == 0) return;
+    const tx = g.right_x + 2;
+    const room = g.right_w -| 4;
+    if (sum == null) return bench.say(w, tx, body.y, "…", r.dim, r.panel, false);
+    const rows = bodyRows(text, s);
+    const empty = switch (s) {
+        0 => sum.?.checkout.changed == 0,
+        1 => sum.?.worktrees == 0,
+        else => logOf(text).shown == 0,
+    };
+    if (empty) {
+        return bench.say(w, tx, body.y, switch (s) {
+            0 => "✓ clean",
+            1 => "no worktrees",
+            else => "no commits",
+        }, r.dim, r.panel, false);
+    }
+    const from = firstRow(text, view, s, body.n);
+    const sel = switch (s) {
+        0 => view.repos_file,
+        1 => view.repos_tree,
+        else => view.repos_commit,
+    };
+    var d = from;
+    while (d < rows and d - from < body.n) : (d += 1) {
+        const y = body.y + d - from;
+        const item = itemOnRow(text, s, d);
+        const marked = focused and item != null and item.? == sel;
+        const over = app.pointer.y == y and app.pointer.x >= g.right_x + 1 and app.pointer.x < g.right_x + g.right_w - 1 and item != null;
+        const bg = if (marked) r.raised else if (over) r.tile else r.panel;
+        if (marked or over) try bench.fill(w, g.right_x + 1, y, g.right_w - 2, bg);
+        if (marked) try bench.say(w, g.right_x + 1, y, "▌", r.accent, bg, true);
+        switch (s) {
+            0 => try paintFile(w, r, tx, y, room, bg, fileAt(text, d) orelse continue),
+            1 => if (item) |i| {
+                const t = treeShown(text, i) orelse continue;
+                const card = if (t.ticket) |id| app.ticketCard(id) else null;
+                const span = treeSpan(text, i);
+                try paintTree(w, r, tx, y, room, bg, t, card, d - span.at);
+            } else {
+                var hb: [32]u8 = undefined;
+                try bench.say(w, tx, y, std.fmt.bufPrint(&hb, "detached · {d}", .{treesOf(text).loose}) catch "detached", r.dim, bg, false);
+            },
+            else => if (item) |i| {
+                const c = commitAt(text, i) orelse continue;
+                try paintCommit(w, r, tx, y, room, bg, c, isUnpushed(text, c.sha));
+            } else {
+                const log = logOf(text);
+                try paintRule(w, r, tx, y, room, bg, if (log.today > 0 and d == 0) "today" else "earlier");
+            },
+        }
+    }
+}
+
+/// A key of the foot: what it presses when clicked, if it is a button.
+const FootKey = struct { key: []const u8, label: []const u8, press: ?[]const u8 };
+
+/// The foot's keys for the mode the view is in.
+fn footKeys(view: anytype, buf: []u8, n_ahead: usize, out: *[8]FootKey) []const FootKey {
+    if (view.repos_confirm) {
+        out[0] = .{ .key = "", .label = std.fmt.bufPrint(buf, "push {d} repos?", .{n_ahead}) catch "push?", .press = null };
+        out[1] = .{ .key = "y", .label = "push", .press = "y" };
+        out[2] = .{ .key = "n", .label = "cancel", .press = "n" };
+        return out[0..3];
+    }
+    if (view.repos_diff) {
+        out[0] = .{ .key = "j k", .label = "scroll", .press = null };
+        out[1] = .{ .key = "esc", .label = "back", .press = "\x1b" };
+        return out[0..2];
+    }
+    if (view.repos_in) {
+        out[0] = .{ .key = "j k", .label = "move", .press = null };
+        out[1] = .{ .key = "tab", .label = "section", .press = "\t" };
+        out[2] = .{ .key = "⏎", .label = "open", .press = "\r" };
+        out[3] = .{ .key = "h", .label = "repos", .press = "h" };
+        out[4] = .{ .key = "P", .label = "push", .press = "P" };
+        out[5] = .{ .key = "esc", .label = "back", .press = "\x1b" };
+        return out[0..6];
+    }
+    out[0] = .{ .key = "j k", .label = "pick", .press = null };
+    out[1] = .{ .key = "tab", .label = "sections", .press = "\t" };
+    out[2] = .{ .key = "P", .label = "push", .press = "P" };
+    out[3] = .{ .key = "A", .label = "push all", .press = "A" };
+    out[4] = .{ .key = "f", .label = "fetch", .press = "f" };
+    out[5] = .{ .key = "esc", .label = "close", .press = "\x1b" };
+    return out[0..6];
+}
+
+/// The cells key `k` of the foot takes: a space, its key, a space, its label, a space.
+fn footWidth(k: FootKey) usize {
+    return (if (k.key.len > 0) cells(k.key) + 1 else 0) + cells(k.label) + 2;
+}
+
+/// The key of the foot at column `x`, from `x0`.
+fn footAt(view: anytype, n_ahead: usize, x0: usize, x: usize) ?[]const u8 {
+    var buf: [48]u8 = undefined;
+    var keys: [8]FootKey = undefined;
+    var at = x0;
+    for (footKeys(view, &buf, n_ahead, &keys)) |k| {
+        const width = footWidth(k);
+        if (x >= at and x < at + width) return k.press;
+        at += width + 1;
+    }
+    return null;
+}
+
+fn paintFoot(app: *const App, w: *Writer, r: anytype, view: anytype, g: Geo, n_ahead: usize) !void {
+    var buf: [48]u8 = undefined;
+    var keys: [8]FootKey = undefined;
+    var at = g.x0;
+    for (footKeys(view, &buf, n_ahead, &keys)) |k| {
+        const width = footWidth(k);
+        if (at + width > g.x0 + g.inner) break;
+        const over = k.press != null and app.pointer.y == g.foot and app.pointer.x >= at and app.pointer.x < at + width;
+        const bg = if (over) r.tile else r.panel;
+        try bench.fill(w, at, g.foot, width, bg);
+        var x = at + 1;
+        if (k.key.len > 0) {
+            try bench.say(w, x, g.foot, k.key, r.accent, bg, true);
+            x += cells(k.key) + 1;
+        }
+        try bench.say(w, x, g.foot, k.label, if (k.press != null) r.text else r.dim, bg, false);
+        at += width + 1;
+    }
+}
+
 pub fn paint(app: *App, w: *Writer) !void {
     const r = app.roles orelse bench.roles();
     const rect = app.columnRect() orelse return;
     const view = app.home.?;
     var rows: Repos = undefined;
     const repos = list(app, &rows);
-    const inner = app_mod.detailWidth(app.columnRoom()).inner;
-    const x0 = rect.x + 2;
-    const foot = rect.y + rect.h - 1;
-    app.grab.window(.{ .x = x0, .y = rect.y + 1, .w = inner, .h = rect.h -| 2 });
+    const pick = @min(view.repos_pick, repos.len -| 1);
+    const text = if (pick < repos.len) gitText(app, repos[pick].repo) else "";
+    const g = Geo.of(app, text) orelse return;
+    app.grab.window(.{ .x = @intCast(g.x0), .y = rect.y + 1, .w = @intCast(g.inner), .h = rect.h -| 2 });
     try bench.window(w, r, rect.x, rect.y, rect.w - 1, rect.h + 1, "repos", null, true);
 
-    const left: u16 = @intCast(@min(@as(usize, 38), inner / 2));
-    const right_x = x0 + left + 2;
-    const right_w: usize = inner -| (left + 2);
-    const body_end = foot - 1;
-    var y = rect.y + 1;
-    while (y < body_end) : (y += 1) try bench.say(w, x0 + left, y, "│", r.dim, r.panel, false);
+    var y = g.top;
+    while (y < g.body_end) : (y += 1) try bench.say(w, g.x0 + g.left, y, "│", r.dim, r.panel, false);
 
-    var line: [512]u8 = undefined;
-    y = rect.y + 1;
+    const name_w = nameWidth(repos);
+    y = g.top;
     for (repos, 0..) |s, i| {
-        if (y >= body_end) break;
-        const sum = parse(gitText(app, s.repo));
+        if (y >= g.body_end) break;
         const picked = i == view.repos_pick;
-        var prefix_buf: [128]u8 = undefined;
-        const prefix = std.fmt.bufPrint(&prefix_buf, "{s}  {s}  ↑{d} ↓{d}  ", .{ s.repo, if (sum) |m| m.checkout.branch else "main", s.ahead, s.behind }) catch s.repo;
-        var stash: [16]u8 = undefined;
-        const text = if (sum) |m|
-            std.fmt.bufPrint(&line, "{s}●{d}  ⎇{d}{s}", .{ prefix, m.checkout.changed, m.worktrees, if (m.stashes > 0) std.fmt.bufPrint(&stash, "  ≡{d}", .{m.stashes}) catch "" else "" }) catch s.repo
-        else if (gitBad(app, s.repo))
-            std.fmt.bufPrint(&line, "{s}  main  ↑{d} ↓{d}  ●?", .{ s.repo, s.ahead, s.behind }) catch s.repo
-        else
-            std.fmt.bufPrint(&line, "{s}  main  ↑{d} ↓{d}", .{ s.repo, s.ahead, s.behind }) catch s.repo;
-        const level = isLevel(s, sum);
-        if (picked) try bench.say(w, rect.x + 1, y, "▌", r.accent, r.panel, true);
-        try bench.say(w, x0, y, cut(text, left), if (level and !picked) r.dim else r.text, r.panel, picked);
-        if (sum) |m| {
-            const dirty_x = x0 + cells(prefix);
-            if (m.checkout.changed > 0 and cells(prefix) + 2 <= left) {
-                var chip: [16]u8 = undefined;
-                try bench.say(w, dirty_x, y, std.fmt.bufPrint(&chip, "●{d}", .{m.checkout.changed}) catch "●", r.building, r.panel, picked);
-            }
-            if (!std.mem.eql(u8, m.checkout.branch, "main")) {
-                const bx = x0 + cells(s.repo) + 2;
-                if (cells(s.repo) + 2 + cells(m.checkout.branch) <= left) try bench.say(w, bx, y, m.checkout.branch, r.building, r.panel, picked);
-            }
-        }
+        const over = app.pointer.y == y and app.pointer.x >= g.x0 and app.pointer.x < g.x0 + g.left;
+        const bg = if (picked) r.raised else if (over) r.tile else r.panel;
+        try paintRepo(w, r, g.x0, y, g.left, bg, name_w, s, parse(gitText(app, s.repo)), gitBad(app, s.repo), picked);
         y += 1;
     }
 
-    y = rect.y + 1;
     if (view.repos_diff) {
-        if (app.detail.items.len == 0) try bench.say(w, right_x, y, "…", r.dim, r.panel, false);
+        y = g.top;
+        if (app.detail.items.len == 0) try bench.say(w, g.right_x, y, "…", r.dim, r.panel, false);
         var n: usize = 0;
         var lines = std.mem.splitScalar(u8, app.detail.items, '\n');
-        while (lines.next()) |text| : (n += 1) {
+        while (lines.next()) |line| : (n += 1) {
             if (n < view.detail_scroll) continue;
-            if (y >= body_end) break;
-            try bench.say(w, right_x, y, cut(text, right_w), r.text, r.panel, false);
+            if (y >= g.body_end) break;
+            try bench.say(w, g.right_x, y, cut(line, g.right_w), r.text, r.panel, false);
             y += 1;
         }
-    } else if (view.repos_pick < repos.len) {
-        const text = gitText(app, repos[view.repos_pick].repo);
-        const body: usize = body_end -| y;
-        const small = body / 4;
-        const hs = [3]usize{ small, small, body - 2 * small };
-        var at: usize = y;
-        for (hs, 0..) |h, s| {
-            try paintSection(app, w, r, view, text, s, right_x, at, right_w, h);
-            at += h;
-        }
+    } else if (pick < repos.len) {
+        for (0..3) |s| try paintBox(app, w, r, view, text, g, s);
     }
 
     if (app.repos_said_len > 0) {
-        try bench.say(w, x0, body_end, cut(app.repos_said[0..app.repos_said_len], inner), if (app.repos_bad) r.failed else r.dim, r.panel, false);
+        try bench.say(w, g.x0, g.body_end, cut(app.repos_said[0..app.repos_said_len], g.inner), if (app.repos_bad) r.failed else r.dim, r.panel, false);
     }
-    var hint: [96]u8 = undefined;
     var n_ahead: usize = 0;
     for (repos) |s| n_ahead += @intFromBool(s.ahead > 0);
-    const keys = if (view.repos_confirm)
-        std.fmt.bufPrint(&hint, " push {d} repos? y/n ", .{n_ahead}) catch ""
-    else if (view.repos_diff)
-        " j k scroll   esc back "
-    else if (view.repos_in)
-        " j k move   tab section   ⏎ open   h repos   P push   esc back "
-    else
-        " j k pick   tab sections   P push   A push all   f fetch   esc close ";
-    try bench.say(w, x0, foot, cut(keys, inner), r.dim, r.panel, false);
+    try paintFoot(app, w, r, view, g, n_ahead);
+}
+
+/// A click on the repos view: a repo's row picks it, a box focuses, a row of one picks it and
+/// the picked one opens, and a key of the foot is pressed.
+pub fn click(app: *App, m: @import("keys.zig").Mouse) !void {
+    const view = &app.home.?;
+    var rows: Repos = undefined;
+    const repos = list(app, &rows);
+    const pick = @min(view.repos_pick, repos.len -| 1);
+    const text = if (pick < repos.len) gitText(app, repos[pick].repo) else "";
+    const g = Geo.of(app, text) orelse return;
+    var n_ahead: usize = 0;
+    for (repos) |s| n_ahead += @intFromBool(s.ahead > 0);
+    if (m.y == g.foot) {
+        if (footAt(view.*, n_ahead, g.x0, m.x)) |press| try key(app, press);
+        return;
+    }
+    if (view.repos_confirm or view.repos_diff) return;
+    if (m.x >= g.x0 and m.x < g.x0 + g.left and m.y >= g.top and m.y < g.top + repos.len and m.y < g.body_end) {
+        const was = view.repos_pick;
+        view.repos_pick = m.y - g.top;
+        view.repos_in = false;
+        if (view.repos_pick != was) pickRows(view, 0, 0, 0);
+        return;
+    }
+    if (pick >= repos.len) return;
+    for (0..3) |s| {
+        const box = g.boxes[s];
+        if (m.x < g.right_x or m.x >= g.right_x + g.right_w or m.y < box.y or m.y >= box.y + box.h) continue;
+        const was_focused = view.repos_in and view.repos_section == s;
+        view.repos_in = true;
+        view.repos_section = @intCast(s);
+        const body = g.inside(s);
+        if (m.y < body.y or m.y >= body.y + body.n) return;
+        const d = firstRow(text, view.*, s, body.n) + (m.y - body.y);
+        const item = itemOnRow(text, s, d) orelse return;
+        const row = rowOf(view, s);
+        const was_row = row.*;
+        row.* = item;
+        if (was_focused and was_row == item) try enter(app, repos[pick].repo);
+        return;
+    }
+}
+
+/// What the pointer at (`x`, `y`) rests on in the repos view: a worktree's ticket or a commit.
+pub fn lookAt(app: *const App, x: u16, y: u16) ?App.Look {
+    const view = app.home orelse return null;
+    if (!view.repos or view.detail != null or view.repos_diff) return null;
+    var rows: Repos = undefined;
+    const repos = list(app, &rows);
+    const pick = @min(view.repos_pick, repos.len -| 1);
+    if (pick >= repos.len) return null;
+    const text = gitText(app, repos[pick].repo);
+    const g = Geo.of(app, text) orelse return null;
+    for (1..3) |s| {
+        const box = g.boxes[s];
+        if (x < g.right_x + 1 or x + 1 >= g.right_x + g.right_w or y < box.y or y >= box.y + box.h) continue;
+        const body = g.inside(s);
+        if (y < body.y or y >= body.y + body.n) return null;
+        const d = firstRow(text, view, s, body.n) + (y - body.y);
+        const item = itemOnRow(text, s, d) orelse return null;
+        if (s == 1) {
+            const id = (treeShown(text, item) orelse return null).ticket orelse return null;
+            return if (app.ticketCard(id) != null) .{ .ticket = id } else null;
+        }
+        return .{ .commit = .{ .repo = @intCast(pick), .row = @intCast(item) } };
+    }
+    return null;
+}
+
+/// The box `s` of the picked repo's answer is at, for a test to aim at.
+pub fn boxAt(app: *const App, s: usize) ?struct { x: usize, y: usize, w: usize, h: usize } {
+    var rows: Repos = undefined;
+    const repos = list(app, &rows);
+    const view = app.home orelse return null;
+    const text = if (view.repos_pick < repos.len) gitText(app, repos[view.repos_pick].repo) else "";
+    const g = Geo.of(app, text) orelse return null;
+    return .{ .x = g.right_x, .y = g.boxes[s].y, .w = g.right_w, .h = g.boxes[s].h };
+}
+
+/// The column of the foot's button that presses `press`, and the repo rows' column and first row.
+pub fn footColumn(app: *const App, press: []const u8) ?usize {
+    const view = app.home orelse return null;
+    const g = Geo.of(app, "") orelse return null;
+    var buf: [48]u8 = undefined;
+    var keys: [8]FootKey = undefined;
+    var at = g.x0;
+    for (footKeys(view, &buf, 0, &keys)) |k| {
+        if (k.press) |p| if (std.mem.eql(u8, p, press)) return at + 1;
+        at += footWidth(k) + 1;
+    }
+    return null;
+}
+
+/// The cell of the repo list's first row.
+pub fn listAt(app: *const App) ?struct { x: usize, y: usize } {
+    const g = Geo.of(app, "") orelse return null;
+    return .{ .x = g.x0, .y = g.top };
+}
+
+/// The commit a peek of `repo`'s row `row` is of.
+pub fn commitOf(app: *const App, repo: usize, row: usize) ?Commit {
+    var rows: Repos = undefined;
+    const repos = list(app, &rows);
+    if (repo >= repos.len) return null;
+    return commitAt(gitText(app, repos[repo].repo), row);
 }
 
 const fixture = "--wt\n/p/arena\n# branch.head main\n# branch.ab +2 -1\n" ++
@@ -800,4 +1271,85 @@ test "an answer reads as a summary, its staged files first, and its log as today
     try std.testing.expectEqual(Log{ .today = 1, .shown = 2 }, logOf(fixture));
     try std.testing.expect(isUnpushed(fixture, "aaa1111") and !isUnpushed(fixture, "bbb2222"));
     try std.testing.expect(parse("") == null);
+}
+
+fn paintOf(buf: []u8, comptime paint_fn: anytype, args: anytype) ![]const u8 {
+    var w: Writer = .fixed(buf);
+    try @call(.auto, paint_fn, .{&w} ++ args);
+    return w.buffered();
+}
+
+test "a repo's row has its colour, a dim main, and lit counts only where they are not zero" {
+    const r = bench.roles();
+    var buf: [4096]u8 = undefined;
+    const sum = parse("--wt\n/p/arena\n# branch.head main\n# branch.ab +0 -0\n1 .M N... 100644 100644 100644 a b x\n--stash\n0\n").?;
+    const f = try paintOf(&buf, paintRepo, .{ r, 4, 2, 38, r.panel, 6, tickets.RepoState{ .repo = "arena", .ahead = 78 }, @as(?Summary, sum), false, false });
+    try bench.expectCell(f, 3, 2, '▌', r.repo[0], r.panel);
+    try bench.expectCell(f, 6, 2, 'a', r.repo[0], r.panel);
+    try bench.expectCell(f, 13, 2, 'm', r.dim, r.panel);
+    try bench.expectCell(f, 22, 2, '↑', r.building, r.panel);
+    try bench.expectCell(f, 26, 2, '↓', r.dim, r.panel);
+    try bench.expectCell(f, 27, 2, '0', r.dim, r.panel);
+    try bench.expectCell(f, 30, 2, '●', r.building, r.panel);
+    try bench.expectCell(f, 34, 2, '⎇', r.dim, r.panel);
+
+    const off = parse("--wt\n/p/arena\n# branch.head topic\n").?;
+    const g = try paintOf(&buf, paintRepo, .{ r, 4, 2, 38, r.panel, 6, tickets.RepoState{ .repo = "arena" }, @as(?Summary, off), false, false });
+    try bench.expectCell(g, 13, 2, 't', r.building, r.panel);
+}
+
+test "a clean Status takes one row, and a section is as tall as what it holds" {
+    try std.testing.expectEqual(@as(usize, 1), bodyRows("--wt\n/p/a\n# branch.head main\n", 0));
+    try std.testing.expectEqual(@as(usize, 3), bodyRows(fixture, 0));
+    const clean = "--wt\n/p/a\n# branch.head main\n--log\n";
+    const boxes = boxesOf(clean, 5, 40);
+    try std.testing.expectEqual(@as(usize, 3), boxes[0].h);
+    try std.testing.expectEqual(boxes[0].y + boxes[0].h + 1, boxes[1].y);
+    try std.testing.expect(boxes[2].y + boxes[2].h <= 5 + 40);
+}
+
+test "a worktree on t42-x draws #42 in the accent with its ticket's short name, and what holds it in green" {
+    const r = bench.roles();
+    var buf: [4096]u8 = undefined;
+    const card: tickets.Card = .{ .id = 42, .title = "A long title", .short = "tidy up", .status = .doing, .claimed_by = "%1" };
+    const t = treeAt(fixture, 0).?;
+    const f = try paintOf(&buf, paintTree, .{ r, 4, 2, 40, r.panel, t, @as(?*const tickets.Card, &card), @as(usize, 0) });
+    try bench.expectCell(f, 4, 2, '#', r.accent, r.panel);
+    try bench.expectCell(f, 8, 2, 't', r.text, r.panel);
+    try bench.expectCell(f, 32, 2, '●', r.landed, r.panel);
+    try bench.expectCell(f, 34, 2, 'c', r.landed, r.panel);
+    try bench.expectCell(f, 42, 2, '↑', r.building, r.panel);
+    const under = try paintOf(&buf, paintTree, .{ r, 4, 3, 40, r.panel, t, @as(?*const tickets.Card, &card), @as(usize, 1) });
+    try bench.expectCell(under, 6, 3, 't', r.dim, r.panel);
+}
+
+test "a review fix draws dim, a real change in the text ink with its #N in the accent" {
+    const r = bench.roles();
+    var buf: [4096]u8 = undefined;
+    const real = commitAt("--log\naaa1111 2000 Add the view for #12 ‖ \n", 0).?;
+    const f = try paintOf(&buf, paintCommit, .{ r, 4, 2, 40, r.panel, real, true });
+    try bench.expectCell(f, 4, 2, '↑', r.building, r.panel);
+    try bench.expectCell(f, 6, 2, 'a', r.dim, r.panel);
+    try bench.expectCell(f, 15, 2, 'A', r.text, r.panel);
+    try bench.expectCell(f, 15 + 17, 2, '#', r.accent, r.panel);
+    const fix = commitAt("--log\nbbb2222 2000 Review fixes for #12 ‖ \n", 0).?;
+    const g = try paintOf(&buf, paintCommit, .{ r, 4, 2, 40, r.panel, fix, false });
+    try bench.expectCell(g, 15, 2, 'R', r.dim, r.panel);
+    try bench.expectCell(g, 15 + 17, 2, '#', r.dim, r.panel);
+}
+
+test "detached worktrees go last, and the rows of worktrees and commits map back to their items" {
+    const text = "--wt\n/p/a\n# branch.head main\n--wt\n/p/a/.worktrees/x\n# branch.head (detached)\n--wt\n/p/a/.worktrees/t5-y\n# branch.head t5-y\n--ahead\n0\n--ahead\n0\n--ahead\n0\n--today\n1000\n--log\naaa1111 2000 a ‖ \nbbb2222 900 b ‖ \n";
+    try std.testing.expectEqualStrings("t5-y", treeShown(text, 0).?.co.branch);
+    try std.testing.expectEqualStrings("(detached)", treeShown(text, 1).?.co.branch);
+    try std.testing.expectEqual(@as(usize, 4), treeRows(text));
+    try std.testing.expectEqual(@as(?usize, 0), treeOnRow(text, 1));
+    try std.testing.expectEqual(@as(?usize, null), treeOnRow(text, 2));
+    try std.testing.expectEqual(@as(?usize, 1), treeOnRow(text, 3));
+    const log = logOf(text);
+    try std.testing.expectEqual(@as(usize, 4), commitRows(log));
+    try std.testing.expectEqual(@as(?usize, null), commitOnRow(log, 0));
+    try std.testing.expectEqual(@as(?usize, 0), commitOnRow(log, 1));
+    try std.testing.expectEqual(@as(?usize, null), commitOnRow(log, 2));
+    try std.testing.expectEqual(@as(?usize, 1), commitOnRow(log, 3));
 }

@@ -264,7 +264,7 @@ pub fn roles() Roles {
     return Roles.parse(palette).?;
 }
 
-fn expectCell(frame: []const u8, x: usize, y: usize, cp: u21, fg: RGB, bg: RGB) !void {
+pub fn expectCell(frame: []const u8, x: usize, y: usize, cp: u21, fg: RGB, bg: RGB) !void {
     const got = try probe(frame, x, y);
     try std.testing.expectEqual(cp, got.cp);
     try std.testing.expectEqual(fg, got.fg);
