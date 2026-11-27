@@ -420,8 +420,12 @@ pub const Plan = struct {
     not_planned: NotPlanned = .{},
 };
 
+/// A made project: a named set of repos.
+const Project = struct { name: []const u8, repos: []const []const u8 = &.{} };
+
 const File = struct {
     tickets: []Card,
+    projects: []Project = &.{},
     backlog: []Card = &.{},
     auto: ?Auto = null,
     hold: bool = false,
@@ -748,6 +752,14 @@ pub const Board = struct {
     /// The plan's next, in order.
     pub fn next(b: *const Board) []const Next {
         return if (b.parsed.value.plan) |given| given.next else &.{};
+    }
+
+    /// The name of the project `repo` is in, when it is in one.
+    pub fn projectOf(b: *const Board, repo: []const u8) ?[]const u8 {
+        for (b.parsed.value.projects) |project| for (project.repos) |r| {
+            if (std.mem.eql(u8, r, repo)) return project.name;
+        };
+        return null;
     }
 
     /// What babylon says of its orchestrator, when its file does.

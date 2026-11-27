@@ -335,9 +335,20 @@ pub const Session = struct {
         return std.mem.eql(u8, s.name, "babylon-gate");
     }
 
-    /// The orchestrator's session (`babylon orchestrator` starts it): kept off the lists with the gate.
+    /// An orchestrator's session, the machine-wide `orchestrator` (`babylon orchestrator` starts
+    /// it) or a project's `orchestrator-<project>`: kept off the lists with the gate.
     pub fn orchestrator(s: *const Session) bool {
-        return std.mem.eql(u8, s.name, "orchestrator");
+        return std.mem.eql(u8, s.name, "orchestrator") or std.mem.startsWith(u8, s.name, "orchestrator-");
+    }
+
+    /// The session of `project`'s own orchestrator: its name lowercased, other characters as `-`.
+    fn orchestratorOf(s: *const Session, project: []const u8) bool {
+        const prefix = "orchestrator-";
+        if (!std.mem.startsWith(u8, s.name, prefix) or s.name.len - prefix.len != project.len) return false;
+        for (s.name[prefix.len..], project) |c, p| {
+            if (c != if (std.ascii.isAlphanumeric(p)) std.ascii.toLower(p) else '-') return false;
+        }
+        return true;
     }
 
     pub fn unlisted(s: *const Session) bool {
@@ -4045,6 +4056,7 @@ pub const App = struct {
         view.plan_pick = std.math.clamp(view.plan_pick, first, last);
         if (is(key, &.{ "j", "\x1b[B", "\x1bOB" })) view.plan_pick = @min(view.plan_pick + 1, last);
         if (is(key, &.{ "k", "\x1b[A", "\x1bOA" })) view.plan_pick = @max(view.plan_pick -| 1, first);
+        if (is(key, &.{ "j", "\x1b[B", "\x1bOB", "k", "\x1b[A", "\x1bOA" })) try app.toSide();
         if (is(key, &.{"?"})) view.help = true;
         if (view.whole == null and is(key, &.{ "\t", "\x1b[Z" })) return app.showScreen(if (view.screen == .doing) .planning else .doing);
         if (view.whole != null and is(key, &.{ "\x1b", "q" })) return app.closeWhole();
@@ -6350,10 +6362,20 @@ pub const App = struct {
         return null;
     }
 
-    /// Where the orchestrator's session is, when it is running.
+    /// Where the orchestrator's session is, when it is running: the focused card's project's own,
+    /// else the machine-wide one.
     pub fn orchestratorSession(app: *const App) ?usize {
-        for (app.listedSessions()..app.sessions.items.len) |i| if (app.sessions.items[i].orchestrator()) return i;
+        const from = app.listedSessions();
+        if (app.pickedProject()) |project| {
+            for (from..app.sessions.items.len) |i| if (app.sessions.items[i].orchestratorOf(project)) return i;
+        }
+        for (from..app.sessions.items.len) |i| if (std.mem.eql(u8, app.sessions.items[i].name, "orchestrator")) return i;
         return null;
+    }
+
+    fn pickedProject(app: *const App) ?[]const u8 {
+        const repo = (app.pickedCard() orelse return null).repo orelse return null;
+        return if (app.board) |*b| b.projectOf(repo) else null;
     }
 
     fn dropWindow(app: *App, s: *Session, id: u32, drop: Drop) !void {
@@ -8361,6 +8383,16 @@ test "babylon's own session, sorted last, is off the list and lists no agents" {
     try std.testing.expectEqual(@as(usize, 1), app.listedSessions());
     try std.testing.expectEqual(@as(?usize, 1), app.gateSession());
     try std.testing.expectEqual(@as(?usize, 2), app.orchestratorSession());
+
+    var tlon: Session = .{ .id = 4, .name = @constCast("orchestrator-tlon") };
+    var four = [_]*Session{ &work, &babylon, &orch, &tlon };
+    app.sessions = .fromOwnedSlice(&four);
+    try std.testing.expectEqual(@as(usize, 1), app.listedSessions());
+    try std.testing.expectEqual(@as(?usize, 2), app.orchestratorSession());
+    try std.testing.expect(tlon.orchestratorOf("Tlon"));
+    try std.testing.expect(!tlon.orchestratorOf("tl"));
+    var dashed: Session = .{ .id = 5, .name = @constCast("orchestrator-my-proj") };
+    try std.testing.expect(dashed.orchestratorOf("My Proj"));
 }
 
 test "a session shows the review state that most wants looking at" {
@@ -9920,6 +9952,36 @@ test "Plan's windows never fold: z, Z and a click on a title leave every window 
     fresh.loadFolds("tlon\nplan:now\nplan:nowhere\nplan:landed\n");
     try std.testing.expect(fresh.folded("tlon") and !fresh.folded("plan:now"));
     try eq(@as(usize, 1), fresh.fold_n);
+}
+
+test "the orchestrator is the picked card's project's own when it runs, else the machine-wide one" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.term_w = 200;
+    app.view_w = 60;
+    app.view_h = 30;
+    app.roles = @import("parts.zig").roles();
+    app.board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"repo":"tlon-app","title":"a","status":"doing"},
+        \\{"id":2,"repo":"arena","title":"b","status":"doing"}],
+        \\"projects":[{"name":"Tlon","repos":["tlon-app"]},{"name":"Ficciones","repos":["arena"]}],
+        \\"plan":{"now":[
+        \\{"ticket":1,"repo":"tlon-app","title":"a","state":"building"},
+        \\{"ticket":2,"repo":"arena","title":"b","state":"building"}],
+        \\"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer app.board.?.deinit();
+    app.home = .{ .focus = .plan };
+    var orch: Session = .{ .id = 1, .name = @constCast("orchestrator") };
+    var tlon: Session = .{ .id = 2, .name = @constCast("orchestrator-tlon") };
+    var both = [_]*Session{ &orch, &tlon };
+    app.sessions = .fromOwnedSlice(&both);
+    const eq = std.testing.expectEqual;
+    try eq(@as(u32, 1), app.pickedCard().?.id);
+    try eq(@as(?usize, 1), app.orchestratorSession());
+    app.home.?.plan_pick = 1;
+    try eq(@as(u32, 2), app.pickedCard().?.id);
+    try eq(@as(?usize, 0), app.orchestratorSession());
 }
 
 test "the picked Plan ticket row opens in place with the card's own actions as its buttons, and moving the pick moves the block; an old open: line is read past" {
