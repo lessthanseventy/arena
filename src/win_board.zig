@@ -231,7 +231,8 @@ pub fn detail(app: *const App, row: sheets.Row, ww: usize, lines: *sheets.Lines)
             const stage = if (sentBack(app, item)) |b| blk: {
                 var back_age: [16]u8 = undefined;
                 const when = sheets.ago(&back_age, b.at, app.epoch);
-                break :blk lines.print("sent back{s}{s}{s}{s}", .{ if (when.len > 0) " " else "", when, if (b.cause.len > 0) " · " else "", b.cause });
+                const ago_word = if (when.len == 0 or std.mem.eql(u8, when, "now")) "" else " ago";
+                break :blk lines.print("sent back{s}{s}{s}{s}{s}", .{ if (when.len > 0) " " else "", when, ago_word, if (b.cause.len > 0) " · " else "", b.cause });
             } else lines.print("{s}{s}{s}", .{ item.stage orelse item.state, if (since.len > 0) " · " else "", since });
             var said: [64]u8 = undefined;
             const wait = if (item.stalled) |why| lines.print("stalled · {s}", .{why}) else if (item.waiting_on) |on| lines.print("{s}", .{on.say(&said)}) else "";
