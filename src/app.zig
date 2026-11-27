@@ -68,7 +68,7 @@ const swipe_events = 3;
 const double_click_ms = 400;
 
 /// tmux has no order of sessions to change, so arena keeps each one's place in an option on it.
-const session_format = "#{{session_id}} #{{?@arena_order,#{{@arena_order}},-}} #{{session_name}}";
+const session_format = "#{{session_id}} #{{?@arena_order,#{{@arena_order}},-}} #{{?@arena_column,1,0}} #{{session_name}}";
 /// A pane's @arena_claude, set by Claude Code's hooks, comes as its `Mark`'s number.
 const claude_state = "#{{?#{{==:#{{@arena_claude}},background}},1,#{{?#{{==:#{{@arena_claude}},working}},2," ++
     "#{{?#{{==:#{{@arena_claude}},done}},3,#{{?#{{==:#{{@arena_claude}},waiting}},4," ++
@@ -328,7 +328,8 @@ pub const Session = struct {
     placed: bool = false,
     /// Columns take the whole view, with no neighbour peeking.
     full: bool = false,
-    /// Made by `columnRun` for the middle column's command: off the lists like the gate.
+    /// Made by `columnRun` for the middle column's command: off the lists like the gate. Marked
+    /// `@arena_column` in tmux, so it stays off them after arena restarts.
     column: bool = false,
 
     /// babylon's own session, where its pipeline runs gates: kept last, off the lists and the
@@ -2650,18 +2651,22 @@ pub const App = struct {
             const space = std.mem.indexOfScalar(u8, line, ' ') orelse continue;
             const id = std.fmt.parseInt(u32, line[1..space], 10) catch continue;
             const rest = line[space + 1 ..];
-            const name = std.mem.indexOfScalar(u8, rest, ' ') orelse continue;
+            const order_end = std.mem.indexOfScalar(u8, rest, ' ') orelse continue;
+            const after = rest[order_end + 1 ..];
+            const flag_end = std.mem.indexOfScalar(u8, after, ' ') orelse continue;
+            const name = order_end + 1 + flag_end + 1;
             // A place is read once: after that arena's own is the newer, and a list asked for
             // before a move would put the old one back.
             const s = for (old.items, 0..) |known, i| {
                 if (known.id == id) break old.swapRemove(i);
             } else blk: {
                 const made = try app.gpa.create(Session);
-                made.* = .{ .id = id, .order = std.fmt.parseInt(u32, rest[0..name], 10) catch std.math.maxInt(u32) };
+                made.* = .{ .id = id, .order = std.fmt.parseInt(u32, rest[0..order_end], 10) catch std.math.maxInt(u32) };
                 break :blk made;
             };
             app.gpa.free(s.name);
-            s.name = try app.gpa.dupe(u8, rest[name + 1 ..]);
+            s.name = try app.gpa.dupe(u8, rest[name..]);
+            if (std.mem.eql(u8, after[0..flag_end], "1")) s.column = true;
             if (app.column_want) |want| if (want.session == id) {
                 s.column = true;
             };
@@ -3636,6 +3641,7 @@ pub const App = struct {
         const taken = want.*;
         app.column_want = null;
         if (app.paneWindow(taken.pane)) |at| at.session.column = true;
+        app.send(.ignore, "set-option -t '${d}' @arena_column 1", .{taken.session}) catch {};
         try app.openClaude(taken.pane);
         app.column_own = if (taken.keep) null else taken.session;
     }
@@ -7820,15 +7826,15 @@ test "the session to go back to is forgotten once it, or the orchestrator's, is 
     const eq = std.testing.expectEqual;
 
     app.home = .{ .back = 1, .focus = .orchestrator };
-    try app.onSessions("$1 0 work\n$2 1 orchestrator\n");
+    try app.onSessions("$1 0 0 work\n$2 1 0 orchestrator\n");
     try eq(@as(?u32, 1), app.home.?.back);
     try eq(.orchestrator, app.home.?.focus);
 
-    try app.onSessions("$2 1 orchestrator\n");
+    try app.onSessions("$2 1 0 orchestrator\n");
     try eq(@as(?u32, null), app.home.?.back);
 
     app.home.?.back = 1;
-    try app.onSessions("$1 0 work\n");
+    try app.onSessions("$1 0 0 work\n");
     try eq(@as(?u32, null), app.home.?.back);
     try eq(.orchestrator, app.home.?.focus);
 }
@@ -7837,14 +7843,23 @@ test "the session made for the column stays out of the switcher's list, wanted o
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     defer app.deinit();
     const eq = std.testing.expectEqual;
-    try app.onSessions("$1 0 work\n");
+    try app.onSessions("$1 0 0 work\n");
     app.columnStarted(true, "%7 $5\n");
-    try app.onSessions("$1 0 work\n$5 1 3\n");
+    try app.onSessions("$1 0 0 work\n$5 1 0 3\n");
     try eq(@as(usize, 1), app.listedSessions());
     try eq(@as(usize, 2), app.sessions.items.len);
     app.column_want = null;
-    try app.onSessions("$1 0 work\n$5 1 3\n");
+    try app.onSessions("$1 0 0 work\n$5 1 0 3\n");
     try eq(@as(usize, 1), app.listedSessions());
+}
+
+test "a session marked @arena_column that this arena did not make, as after a restart, stays out of the list" {
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    defer app.deinit();
+    try app.onSessions("$1 0 0 work\n$5 1 1 3 with spaces\n");
+    try std.testing.expectEqual(@as(usize, 1), app.listedSessions());
+    try std.testing.expectEqual(@as(usize, 2), app.sessions.items.len);
+    try std.testing.expectEqualStrings("3 with spaces", app.sessions.items[1].name);
 }
 
 test "home: the board with the orchestrator's column focused, its own keys while no window is in it" {
