@@ -56,8 +56,8 @@ fn inDrivenGoal(given: *const tickets.Plan, id: u32) bool {
 }
 
 /// A ticket babylon sent back (stage `failed`): whether its Claude is at work on it, why it came
-/// back, and when.
-pub const Back = struct { fixing: bool, idle: bool, cause: []const u8, at: ?[]const u8 };
+/// back, when, and what it waits on before anyone has to act: its `waiting_on`, else an open blocker.
+pub const Back = struct { fixing: bool, idle: bool, cause: []const u8, at: ?[]const u8, waits: ?tickets.WaitingOn = null };
 
 pub fn sentBack(app: *const App, item: tickets.NowItem) ?Back {
     if (!std.mem.eql(u8, item.stage orelse "", "failed")) return null;
@@ -69,6 +69,8 @@ pub fn sentBack(app: *const App, item: tickets.NowItem) ?Back {
         .idle = win != null and mark != .waiting and mark != .working and mark != .background,
         .cause = if (card) |c| text_mod.sentBackCause(c.stage_note) else "",
         .at = if (card) |c| c.stage_at orelse item.since else item.since,
+        .waits = item.waiting_on orelse if (card) |c| c.waiting_on orelse
+            if (c.blocked_by.len > 0) tickets.WaitingOn{ .ticket = c.blocked_by[0] } else null else null,
     };
 }
 
@@ -109,7 +111,7 @@ fn facts(app: *const App, r: theme.Roles, row: sheets.Row, s: *Scratch) ?Facts {
                 .lead = lead,
                 .repo = item.repo,
                 .name = item.name(),
-                .wait = if (back) |b| b.cause else if (item.waiting_on) |on| on.say(&s.wait) else "",
+                .wait = if (back) |b| if (b.waits) |on| on.say(&s.wait) else b.cause else if (item.waiting_on) |on| on.say(&s.wait) else "",
                 .wait_lead = r.dim,
                 .age = sheets.ago(&s.age, if (back) |b| b.at else item.since, app.epoch),
             };
@@ -302,11 +304,15 @@ test "a sent-back ticket reads ↺ fixing while its Claude works, and ↺ sent b
         \\{"tickets":[
         \\{"id":1,"repo":"arena","title":"a","status":"doing","stage":"failed","stage_note":"the review asked for changes.\nfix it","stage_at":"2026-11-27T10:00:00Z"},
         \\{"id":2,"repo":"arena","title":"b","status":"doing","stage":"failed","stage_note":"the gate is red (exit 1); its whole output is in /x","stage_at":"2026-11-27T10:00:00Z"},
-        \\{"id":3,"repo":"arena","title":"c","status":"todo","stage":"failed","stage_note":"it does not rebase onto main cleanly; conflicts in: a","stage_at":"2026-11-27T10:00:00Z"}],
+        \\{"id":3,"repo":"arena","title":"c","status":"todo","stage":"failed","stage_note":"it does not rebase onto main cleanly; conflicts in: a","stage_at":"2026-11-27T10:00:00Z"},
+        \\{"id":4,"repo":"arena","title":"d","status":"doing","stage":"failed","stage_note":"the gate is red (exit 1)","blocked_by":[1370]},
+        \\{"id":5,"repo":"arena","title":"e","status":"doing","stage":"failed","stage_note":"the gate is red (exit 1)"}],
         \\"plan":{"now":[
         \\{"ticket":1,"repo":"arena","title":"a","state":"building","stage":"failed","pane":"%11","since":"2026-11-27T09:00:00Z"},
         \\{"ticket":2,"repo":"arena","title":"b","state":"building","stage":"failed","pane":"%12","since":"2026-11-27T09:00:00Z"},
-        \\{"ticket":3,"repo":"arena","title":"c","state":"building","stage":"failed","since":"2026-11-27T09:00:00Z"}],
+        \\{"ticket":3,"repo":"arena","title":"c","state":"building","stage":"failed","since":"2026-11-27T09:00:00Z"},
+        \\{"ticket":4,"repo":"arena","title":"d","state":"building","stage":"failed"},
+        \\{"ticket":5,"repo":"arena","title":"e","state":"building","stage":"failed","waiting_on":{"for":"the flaky test's fix"}}],
         \\"next":[],"goals":[],"landed_today":{"count":0,"newest":[]}}}
     );
     defer board.deinit();
@@ -341,6 +347,8 @@ test "a sent-back ticket reads ↺ fixing while its Claude works, and ↺ sent b
     const nobody = facts(&app, r, .{ .kind = .now, .item = 2, .ticket = 3 }, &sc).?;
     try eq("↺ sent back", nobody.state);
     try eq("rebase conflict", nobody.wait);
+    try eq("◷ waiting on #1370", facts(&app, r, .{ .kind = .now, .item = 3, .ticket = 4 }, &sc).?.wait);
+    try eq("◷ waiting for the flaky test's fix", facts(&app, r, .{ .kind = .now, .item = 4, .ticket = 5 }, &sc).?.wait);
     const given = app.board.?.plan().?;
     try std.testing.expect(!sentBack(&app, given.now[0]).?.idle);
     try std.testing.expect(sentBack(&app, given.now[1]).?.idle);

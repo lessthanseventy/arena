@@ -3199,7 +3199,7 @@ pub const App = struct {
             });
         };
         if (b.plan()) |given| for (given.now) |row| {
-            const idle_back = if (win_board.sentBack(app, row)) |back| back.idle else false;
+            const idle_back = if (win_board.sentBack(app, row)) |back| back.idle and back.waits == null else false;
             if (row.stalled == null and !idle_back) continue;
             try texts.writer.writeAll(if (row.stalled != null) "stuck: its Claude has stopped" else "sent back: its Claude is idle");
             try ends.append(app.gpa, texts.written().len);
@@ -11153,6 +11153,49 @@ test "a stalled ticket is a stuck item in Needs you with ⏎ open pane, and it g
     app.board = try tickets.Board.parse(gpa, head ++ tail);
     try app.syncWaiting();
     try std.testing.expectEqual(@as(usize, 0), app.board.?.needsYou().len);
+}
+
+test "a sent-back ticket with an idle Claude is in Needs you, unless it waits on another ticket" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    const gpa = std.testing.allocator;
+    var app: App = .{ .gpa = gpa, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(gpa);
+    const pane = try Pane.create(&app, 12, 80, 24);
+    defer pane.destroy(gpa);
+    var win: Window = .{ .id = 2, .name = @constCast("i"), .claude = .none };
+    defer win.panes.deinit(gpa);
+    try win.panes.append(gpa, pane);
+    var slots = [_]*Window{&win};
+    var s: Session = .{ .id = 1, .name = @constCast("s"), .wins = .fromOwnedSlice(&slots) };
+    var list = [_]*Session{&s};
+    app.sessions = .fromOwnedSlice(&list);
+    const head =
+        \\{"tickets":[{"id":1356,"repo":"arena","title":"b","status":"doing","stage":"failed","stage_note":"the gate is red (exit 1)"
+    ;
+    const mid =
+        \\}],"plan":{"now":[{"ticket":1356,"repo":"arena","title":"b","state":"building","stage":"failed","pane":"%12"
+    ;
+    const tail =
+        \\}],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]}}}
+    ;
+    const plain = head ++ mid ++ tail;
+    const waiting = head ++ mid ++ ",\"waiting_on\":{\"ticket\":1370}" ++ tail;
+    const blocked = head ++ ",\"blocked_by\":[1370]" ++ mid ++ tail;
+    inline for (.{ waiting, blocked }) |json| {
+        app.board = try tickets.Board.parse(gpa, json);
+        try app.syncWaiting();
+        try std.testing.expectEqual(@as(usize, 0), app.board.?.needsYou().len);
+        app.board.?.deinit();
+    }
+    app.board = try tickets.Board.parse(gpa, plain);
+    defer app.board.?.deinit();
+    try app.syncWaiting();
+    const needs = app.board.?.needsYou();
+    try std.testing.expectEqual(@as(usize, 1), needs.len);
+    try std.testing.expectEqualStrings("sent back: its Claude is idle", needs[0].text);
 }
 
 test "a picked project narrows new tickets to its home repo" {
