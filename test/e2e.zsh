@@ -1520,7 +1520,6 @@ planless='"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newes
 addplan() { local j=$(cat); print -r -- "${j%\}},$planless}" >$tmp/run/babylon/board.json }
 print -r -- '{"tickets":[],"needs_you":[{"id":"ask:6","kind":"ask","ticket":307,"repo":"tlon","text":"#307 tlon  asks: Which?","doc":null,"actions":[{"key":"1","label":"One","argv":["babylon","answer","6","1"]}]}]}' | addplan
 key ']'
-await orch_lit
 see '#307 tlon  asks: Which\?'
 key o
 zselect -t 100
@@ -1532,6 +1531,7 @@ check "a decision that names a doc keeps its place and wears a doc mark, with o 
 print -r -- '{"tickets":[],"needs_you":[{"id":"ask:6","kind":"look","ticket":307,"repo":"tlon","text":"#307 tlon  look at: docs/none-jkdufltb.md","doc":"docs/none-jkdufltb.md","actions":[{"key":"y","label":"looks good","argv":["babylon","call","answer_ask","{\"id\":6}"]},{"key":"c","label":"change","argv":null,"needs":"words"}]}]}' | addplan
 check "a look at is an item with its doc named and o to open it" see 'o open   y looks good'
 key ']'
+see '▌ #307 tlon  look at'
 key o
 check "o opens its doc in the middle column, with no window of its own" await eval '! doc_window'
 check "which says so when the file is not in the ticket's repo" see 'no such file:'
