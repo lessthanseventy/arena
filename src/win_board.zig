@@ -120,7 +120,8 @@ fn cutWord(buf: []u8, text: []const u8, room: usize) []const u8 {
     const at = std.mem.lastIndexOfScalar(u8, body, ' ') orelse return hard;
     if (at < 4) return hard;
     const kept = std.mem.trimEnd(u8, body[0..at], " ");
-    return std.fmt.bufPrint(buf[kept.len..], "…", .{}) catch hard;
+    const mark = std.fmt.bufPrint(buf[kept.len..], "…", .{}) catch return hard;
+    return buf[0 .. kept.len + mark.len];
 }
 
 fn nameRoom(ww: usize) usize {

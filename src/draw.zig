@@ -3654,7 +3654,8 @@ test "a building row has no second line for its Claude, and opened it says on a 
     try planView(&app, &out, app.home.?);
     const drawn = out.buffered();
     const at = std.mem.indexOf(u8, drawn, "babylon-work:2") orelse return error.TestUnexpectedResult;
-    try std.testing.expect(std.mem.lastIndexOf(u8, drawn[0..at], "Claude") != null);
+    const label = std.mem.lastIndexOf(u8, drawn[0..at], "Claude") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(at - label < 160);
     try std.testing.expect(std.mem.indexOf(u8, drawn[at + 1 ..], "babylon-work:2") == null);
 }
 
@@ -4146,6 +4147,7 @@ test "every title cut to fit ends in …" {
         const wrapped = std.mem.indexOf(u8, next_line, "long, with more words") != null;
         const cut_at = if (wrapped) next_line else text;
         try std.testing.expect(std.mem.indexOf(u8, cut_at, "…") != null or std.mem.indexOf(u8, next_line, "edge of any window") != null);
+        try std.testing.expect(std.mem.indexOf(u8, text, c.whole[0..6]) != null);
     }
 }
 
