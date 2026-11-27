@@ -5859,7 +5859,10 @@ pub const App = struct {
             }
             if (open.claude != null) if (app.columnRect()) |rect| {
                 if (m.y == rect.y and m.x + 4 >= rect.x + rect.w and m.x + 2 <= rect.x + rect.w) app.closeClaude();
-                if (rect.contains(m.x, m.y)) return true;
+                if (rect.contains(m.x, m.y)) {
+                    if (m.y > rect.y and m.y + 1 < rect.y + rect.h and m.x > rect.x and m.x + 1 < rect.x + rect.w) try app.paneColumnKey("i");
+                    return true;
+                }
             };
             if (open.item_open) if (app.columnRect()) |rect| {
                 var items: [16]ModalButton = undefined;
@@ -10464,6 +10467,13 @@ test "⏎ on a Claude with no ticket in in flight's foot shows its window, space
     try std.testing.expect(app.normal and !app.typing());
     app.settleMode();
     try std.testing.expect(app.normal);
+
+    const rect = app.columnRect().?;
+    try app.onMouse(.{ .code = 0, .x = rect.x + rect.w / 2, .y = rect.y, .release = false });
+    try std.testing.expect(app.normal and app.home.?.claude != null);
+    try app.onMouse(.{ .code = 0, .x = rect.x + rect.w / 2, .y = rect.y + 2, .release = false });
+    try std.testing.expect(!app.normal and app.typing());
+    try app.toggleMode();
 
     try app.paneColumnKey("\x1b");
     try eq(@as(?u32, null), app.home.?.claude);

@@ -1037,6 +1037,8 @@ key Escape
 plan_up='◆ (in flight|no goal)'
 plan_home() { normal; key b; see "$plan_up" }
 plan_at() { $bin -L $in plan $1; see "$plan_up" }
+# column and row from one picture, taken again while it shows nothing (mid-frame): from two, a click goes out with no row
+spot() { local at l p i; for i in {1..30}; do at=$(settled | grep -n -m1 -- "$1") && break; zselect -t 100; done; [[ -n $at ]] || return 1; l=${at#*:} p=${l%%"$1"*}; print $(( ${#p} + 2 )) ${at%%:*} }
 plan_home
 touch $tmp/refuse-start
 plan_at 7
@@ -1058,6 +1060,11 @@ check "d turns the column to its ticket's changes" await shows 'NORMAL  d pane  
 key d
 key i
 check "i types into it" await shows 'INSERT  ctrl\+space normal'
+key C-Space
+await shows 'NORMAL  i type   d changes   esc back'
+shut=(${=$(spot ' × ')})
+click $(( shut[1] - 12 )) $(( shut[2] + 3 ))
+check "a click inside the Claude's pane in the middle column types into it, as i does" await shows 'INSERT  ctrl\+space normal'
 key C-Space
 await shows 'NORMAL  i type   d changes   esc back'
 key Escape
@@ -1142,8 +1149,6 @@ in_session() { [[ $(inner list-clients -F '#{session_name}') == $1 ]] }
 orch_lit() { [[ $(outer capture-pane -ep -t o) =~ $'((\e\\[[0-9;]*m)+) ○ orchestrator ' && $match[1] =~ '[[;]7[;m]' ]] }
 shown_cursor() { [[ $(outer display -p -t o '#{cursor_flag}') == $1 ]] }
 said() { inner capture-pane -p -t $1 | grep -qx $2 }
-# column and row from one picture, taken again while it shows nothing (mid-frame): from two, a click goes out with no row
-spot() { local at l p i; for i in {1..30}; do at=$(settled | grep -n -m1 -- "$1") && break; zselect -t 100; done; [[ -n $at ]] || return 1; l=${at#*:} p=${l%%"$1"*}; print $(( ${#p} + 2 )) ${at%%:*} }
 print -r -- '' >$tmp/.config/ficciones/theme/palette.sh
 outer resize-window -t o -x 121 -y 24
 inner new-session -d -s orchestrator -n orch sh
