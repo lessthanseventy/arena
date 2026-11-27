@@ -5,6 +5,12 @@
 > suggestions. Windows do not fold (#1108): no `▾` on a window's title, and `z` folds only a
 > goal's tickets on Planning, so it is not in the key line. The rest stands: both screens'
 > windows, their keys and every move on Planning.
+>
+> Partly superseded by [The meta first](meta-first.md) too. Doing's windows are replaced: in
+> flight, next and landed become one board, Your move is titled Needs you, and driving towards is
+> Heading for or Projects. On Planning, goals are headings that open with the pick, so `z` goes, and
+> no goal and backlog show a count line until picked. The repo filter becomes a project picker.
+> Planning's moves stand, apart from `z`, `d` and `+` as that page gives them.
 
 This design is for #1111, step 1 of #1110. It follows [the principles](principles.md) and
 [No rail](no-rail.md), and it builds on #1109, which opens everything from Plan in one middle

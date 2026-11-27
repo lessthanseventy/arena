@@ -4,6 +4,13 @@ This page is for #1144. It is held to [the principles](principles.md). Where it 
 disagree, this page wins. It supersedes parts of [No rail](no-rail.md) and
 [Doing and Planning](doing-planning.md), and each says which at its top.
 
+> Partly superseded by [The meta first](meta-first.md). Doing is Needs you, Heading for (or
+> Projects) and one board, so in flight, other Claudes, next and landed leave it: the Claudes are
+> one key away (`c`). Your move is titled Needs you. A Claude's pane in the middle column gains a
+> path, its ticket's line and a side panel, and takes the room left of the drawer. Auto's modal
+> becomes the settings card (`,`). The four surfaces, the one way anything opens, and how checks
+> are answered all stand.
+
 The human, 2026-11-26: "I started out wanting one thing and we drove somewhere else and got lost I
 think. What should this all look like? What even is this?"
 
