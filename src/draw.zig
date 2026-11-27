@@ -308,7 +308,8 @@ fn keysLine(app: *const App, w: *Writer, pen: *Pen, text: []const u8) !void {
     const start = (app.view_w -| cellCount(text)) / 2;
     try w.print("\x1b[{d};{d}H", .{ app.view_h + 1, ox + start + 1 });
     try pen.set(w, ink(app, "dim", 8), null);
-    try w.writeAll(clip(text, app.view_w));
+    var cb: [256]u8 = undefined;
+    try w.writeAll(clipMark(&cb, text, app.view_w));
 }
 
 const type_hint = "Ctrl+Space / i to type";
@@ -341,7 +342,8 @@ fn tabs(app: *const App, w: *Writer, pen: *Pen, s: *const Session) !bool {
         try pen.set(w, if (here) chip(app) else ink(app, "dim", 8), null);
         try w.print("{d} ", .{i + 1});
         try pen.set(w, if (here) chip(app) else .{}, null);
-        try w.writeAll(clip(win.name, app_mod.tab_name));
+        var cb: [64]u8 = undefined;
+        try w.writeAll(clipMark(&cb, win.name, app_mod.tab_name));
         try w.writeAll(" ");
         try pen.set(w, if (here) chip(app) else ink(app, "amber", 4), null);
         try put(w, if (mark != .none) glyph(app, mark) else alertGlyph(win.alert));
@@ -615,17 +617,18 @@ fn menuBox(app: *const App, w: *Writer, open: menu.Menu) !void {
     const session = app.cur();
     const win = if (session) |s| s.focused() else null;
     var buf: [96]u8 = undefined;
+    var cb: [96]u8 = undefined;
 
     try b.edge("╭", "╮");
     try b.blank();
     if (open.items.ptr == &menu.confirm) {
-        const name = clip(if (win) |found| found.name else "window", 20);
+        const name = clipMark(&cb, if (win) |found| found.name else "window", 20);
         try b.line(heading(app), std.fmt.bufPrint(&buf, "  Close {s}?", .{name}) catch "  Close?", dim, "");
     } else if (open.items.ptr == &menu.confirm_session) {
-        const name = clip(if (app.sessionById(app.doomed)) |s| s.name else "", 12);
+        const name = clipMark(&cb, if (app.sessionById(app.doomed)) |s| s.name else "", 12);
         try b.line(heading(app), std.fmt.bufPrint(&buf, "  Close session {s}?", .{name}) catch "  Close?", dim, "");
     } else {
-        const name = clip(if (session) |s| s.name else "", 16);
+        const name = clipMark(&cb, if (session) |s| s.name else "", 16);
         try b.line(heading(app), "  ◆ arena", dim, std.fmt.bufPrint(&buf, "{s}  ", .{name}) catch "");
     }
     try b.blank();
@@ -647,6 +650,7 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
     var b: Box = .{ .app = app, .w = w, .x = at.x, .y = at.y, .width = if (prompt.what == .jump) app.switcherW() else menu.width };
     const dim = ink(app, "dim", 8);
     var buf: [96]u8 = undefined;
+    var cb: [96]u8 = undefined;
     const session = app.cur();
     const was: []const u8 = switch (prompt.what) {
         .window => if (session) |s| (if (s.focused()) |win| win.name else "") else "",
@@ -667,7 +671,7 @@ fn promptBox(app: *const App, w: *Writer, prompt: *const menu.Prompt) !Cursor {
             .words, .why, .find, .tried => "",
         },
         dim,
-        std.fmt.bufPrint(&buf, "{s}  ", .{clip(was, 12)}) catch "",
+        std.fmt.bufPrint(&buf, "{s}  ", .{clipMark(&cb, was, 12)}) catch "",
     );
     try b.blank();
     const shown = lastCells(prompt.text(), b.width - 10);
@@ -707,12 +711,13 @@ fn switcherRow(b: *Box, row: App.Row, picked: bool) !void {
     var repo: ?[]const u8 = null;
     var label: []const u8 = "";
     var right: []const u8 = "";
+    var cb: [96]u8 = undefined;
     switch (row) {
         .claude => |a| {
             mark = agentGlyph(app, a.win);
             repo = app.sessionRepo(a.session);
             label = app.claudeLabel(&label_buf, a);
-            right = std.fmt.bufPrint(&right_buf, "{s}:{d} {s:>4}", .{ clip(app.sessions.items[a.session].name, 12), a.win.index, ago(&age, app.epoch, a.win.since) }) catch "";
+            right = std.fmt.bufPrint(&right_buf, "{s}:{d} {s:>4}", .{ clipMark(&cb, app.sessions.items[a.session].name, 12), a.win.index, ago(&age, app.epoch, a.win.since) }) catch "";
         },
         .session => |si| {
             const s = app.sessions.items[si];
@@ -1229,7 +1234,8 @@ fn thumb(app: *App, w: *Writer, s: *const Session, win: *const Window, number: u
     const edge = if (picked) ink(app, "amber", 4) else ink(app, "amberdim", 8);
     const mark = app.mark(s, win);
     var buf: [64]u8 = undefined;
-    const title = std.fmt.bufPrint(&buf, " {d} {s} ", .{ number + 1, clip(win.name, tw - 10) }) catch "";
+    var cb: [64]u8 = undefined;
+    const title = std.fmt.bufPrint(&buf, " {d} {s} ", .{ number + 1, clipMark(&cb, win.name, tw - 10) }) catch "";
 
     var off: usize = win.h -| (th - 2);
     if (win.activePane()) |pane| {
@@ -1306,8 +1312,9 @@ fn popupBox(app: *App, w: *Writer, pop: App.Popup) !void {
         title.writeAll(" ") catch {};
         if (app_mod.branchTicket(it.text(.branch))) |n| title.print("#{s} ", .{n}) catch {};
     };
-    if (win) |it| title.print("{s}", .{clip(it.label(), 40)}) catch {};
-    if (session) |s| title.print(" · {s}", .{clip(s.name, 24)}) catch {};
+    var cb: [128]u8 = undefined;
+    if (win) |it| title.print("{s}", .{clipMark(&cb, it.label(), 40)}) catch {};
+    if (session) |s| title.print(" · {s}", .{clipMark(&cb, s.name, 24)}) catch {};
     if (win) |it| if (it.agent() and it.claude != .none) {
         var ago_buf: [8]u8 = undefined;
         title.print(" · {s} {s}", .{ @tagName(it.claude), ago(&ago_buf, app.epoch, it.since) }) catch {};
@@ -1319,7 +1326,7 @@ fn popupBox(app: *App, w: *Writer, pop: App.Popup) !void {
     if (win) |it| {
         if (it.ctx > 0) meta.print("ctx {d}%", .{@min(it.ctx, 999)}) catch {};
         const branch = it.text(.branch);
-        if (branch.len > 0) meta.print("{s}{s}", .{ if (meta.end > 0) " · " else "", clip(branch, 60) }) catch {};
+        if (branch.len > 0) meta.print("{s}{s}", .{ if (meta.end > 0) " · " else "", clipMark(&cb, branch, 60) }) catch {};
         if (it.subs() > 0) meta.print("{s}{d} subagents", .{ if (meta.end > 0) " · " else "", it.subs() }) catch {};
     }
 
@@ -1420,7 +1427,8 @@ fn overview(app: *App, w: *Writer, spot: App.Spot) !void {
         try w.print("\x1b[{d};{d}H", .{ row + 1, ox + 1 });
         const lit = if (drop) |to| to.session == si and to.win == null else si == spot.session;
         try pen.set(w, if (lit) chip(app) else if (s.id == app.current) heading(app) else .{}, null);
-        try w.print(" {s} ", .{clip(s.name, 24)});
+        var cb: [96]u8 = undefined;
+        try w.print(" {s} ", .{clipMark(&cb, s.name, 24)});
         try pen.set(w, ink(app, "amber", 4), null);
         try w.writeAll(" ");
         try put(w, sessionGlyph(app, s));
@@ -1802,7 +1810,8 @@ fn claudeBox(app: *App, w: *Writer, view: app_mod.HomeView) !void {
     var title: Writer = .fixed(&tbuf);
     title.writeAll("\u{25c6} ") catch {};
     if (app_mod.branchTicket(win.text(.branch))) |n| title.print("#{s} \u{b7} ", .{n}) catch {};
-    title.print("{s}", .{clip(win.label(), 40)}) catch {};
+    var cb: [128]u8 = undefined;
+    title.print("{s}", .{clipMark(&cb, win.label(), 40)}) catch {};
     if (win.claude != .none) {
         var ago_buf: [8]u8 = undefined;
         title.print(" \u{b7} {s} {s}", .{ @tagName(win.claude), ago(&ago_buf, app.epoch, win.since) }) catch {};
@@ -1891,10 +1900,10 @@ fn goalBox(app: *const App, w: *Writer) !void {
             const primary = i == 0 and !modal.typing;
             try bench.headButton(w, r, button.x, rect.y + 8, std.fmt.bufPrint(&goal_buf, " {s} ", .{button.label}) catch "", if (modal.typing) r.dim else r.accent, primary);
         }
-        try bench.say(w, buttons[0].x, rect.y + 9, clip(note, inner -| 1), r.dim, r.panel, false);
-        if (said.len > 0) try bench.say(w, x0, rect.y + 10, clip(said, inner), r.failed, r.panel, true);
+        try sayCut(w, buttons[0].x, rect.y + 9, note, inner -| 1, r.dim, r.panel, false);
+        if (said.len > 0) try sayCut(w, x0, rect.y + 10, said, inner, r.failed, r.panel, true);
         try bench.say(w, x0, rect.y + 11, mode, if (modal.typing) r.you else r.accent, r.panel, true);
-        try bench.say(w, x0 + 8, rect.y + 11, clip(keys_text, inner -| 8), r.dim, r.panel, false);
+        try sayCut(w, x0 + 8, rect.y + 11, keys_text, inner -| 8, r.dim, r.panel, false);
         return;
     }
     const edge = ink(app, "amber", 4);
@@ -2208,15 +2217,17 @@ fn reportInk(app: *const App) vt.Style {
 fn reportSaid(app: *App, w: *Writer, text: []const u8) !void {
     const ox = app.term_w - app.view_w;
     var pen: Pen = .{};
+    var cb: [256]u8 = undefined;
     try pen.set(w, reportInk(app), null);
     var f: feed.Feed = undefined;
     if (app.feedOf(&f)) if (app.feedPick(&f)) |on| if (app.feedFocused() and on.line + 3 < app.view_h) {
         const room = app.view_w -| 4;
-        try w.print("\x1b[{d};{d}H{s}", .{ on.line + 3, ox + 3, clip(text, room) });
-        for (cellCount(clip(text, room))..room) |_| try w.writeAll(" ");
+        const shown = clipMark(&cb, text, room);
+        try w.print("\x1b[{d};{d}H{s}", .{ on.line + 3, ox + 3, shown });
+        for (cellCount(shown)..room) |_| try w.writeAll(" ");
         return;
     };
-    try w.print("\x1b[{d};{d}H{s}", .{ app.view_h, ox + 1, clip(text, app.view_w) });
+    try w.print("\x1b[{d};{d}H{s}", .{ app.view_h, ox + 1, clipMark(&cb, text, app.view_w) });
 }
 
 /// The cells the mouse has picked, drawn inverted over what the frame drew.

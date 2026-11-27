@@ -748,6 +748,7 @@ pub const Sheet = struct {
         var age: [16]u8 = undefined;
         const how = ago(&age, item.since, epoch);
         var th: [16]u8 = undefined;
+        var rb: [16]u8 = undefined;
         const state = if (queued and item.place != null) s.print("queued {s}", .{place(item.place.?, &th)}) else item.stage orelse item.state;
         var said: [96]u8 = undefined;
         const right = if (item.stalled) |why|
@@ -755,7 +756,7 @@ pub const Sheet = struct {
         else if (item.waiting_on) |wait|
             s.print("{s}", .{wait.say(&said)})
         else if (how.len > 0) s.print("{s} · {s}", .{ state, how }) else s.print("{s}", .{state});
-        const left = s.print(" {s} #{d} {s: <8} {s}", .{ mark, item.ticket, text_mod.clip(item.repo orelse "", 8), item.name() });
+        const left = s.print(" {s} #{d} {s: <8} {s}", .{ mark, item.ticket, text_mod.cut(&rb, item.repo orelse "", 8), item.name() });
         const both = s.spread(width, left, right);
         s.add(.{
             .kind = .now,
@@ -780,7 +781,8 @@ pub const Sheet = struct {
                 continue;
             }
             const right = s.waits(item.waits_on);
-            const left = s.print(" {d} #{d} {s: <8} {s}", .{ place_n, item.ticket, text_mod.clip(item.repo orelse "", 8), item.name() });
+            var rb: [16]u8 = undefined;
+            const left = s.print(" {d} #{d} {s: <8} {s}", .{ place_n, item.ticket, text_mod.cut(&rb, item.repo orelse "", 8), item.name() });
             const both = s.spread(width, left, right);
             s.add(.{ .kind = .next, .pick = 0, .ticket = item.ticket, .text = both.text, .tail_at = both.tail_at });
             if (item.why.len > 0 and !s.narrow) s.add(.{ .kind = .why, .style = .dim, .text = s.clipped(width, s.print("      {s}", .{item.why})) });
@@ -822,7 +824,8 @@ pub const Sheet = struct {
                 s.print("  {d} of {d}  {s}{s}▲ {d} to try", .{ goal.landed, goal.total, goalExtra(goal, &extra), if (goalExtra(goal, &extra).len > 0) "  " else "", trying })
             else
                 s.print("  {d} of {d}  {s}", .{ goal.landed, goal.total, goalExtra(goal, &extra) });
-            const name = text_mod.clip(goal.name(), name_w);
+            var nb: [128]u8 = undefined;
+            const name = text_mod.cut(&nb, goal.name(), name_w);
             const head = s.print(" {s}{s}  #{d}  ", .{ name, spaces(name_w -| text_mod.cells(name)), goal.epic });
             const room = width -| text_mod.cells(head) -| text_mod.cells(after);
             const start = s.used;

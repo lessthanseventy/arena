@@ -17,7 +17,6 @@ const fitted = draw.fitted;
 const App = app_mod.App;
 const Writer = std.Io.Writer;
 const Pen = draw.Pen;
-const clip = draw.clip;
 
 var cut_scratch: [512]u8 = undefined;
 
@@ -65,20 +64,23 @@ pub fn draftBox(app: *const App, w: *Writer) !void {
     }
     try draftLine(app, w, rect, 1, app.draftTitle(epic), .plain);
     var count: [200]u8 = undefined;
+    var cb: [300]u8 = undefined;
     const body = if (app.draftIdea(epic)) |idea| idea.body else "";
     const quote = if (body.len == 0)
         std.fmt.bufPrint(&count, "{d} steps", .{steps.len}) catch ""
     else
-        std.fmt.bufPrint(&count, "from your idea: \"{s}\"", .{clip(body, 150)}) catch "";
+        std.fmt.bufPrint(&count, "from your idea: \"{s}\"", .{draw.clipMark(&cb, body, 150)}) catch "";
     try draftLine(app, w, rect, 2, quote, .dim);
     const asks = app.draftAsks(epic);
     const shown = @min(steps.len, rect.h -| 6 -| asks.len);
     for (asks, 0..) |ask, i| {
         var line: [300]u8 = undefined;
+        var qb: [200]u8 = undefined;
+        var ab: [200]u8 = undefined;
         const text = if (ask.answer) |answer|
-            std.fmt.bufPrint(&line, "asked you: \"{s}\" you: \"{s}\"", .{ clip(ask.question, 100), clip(answer, 60) }) catch ""
+            std.fmt.bufPrint(&line, "asked you: \"{s}\" you: \"{s}\"", .{ draw.clipMark(&qb, ask.question, 100), draw.clipMark(&ab, answer, 60) }) catch ""
         else
-            std.fmt.bufPrint(&line, "asked you: \"{s}\" (open)", .{clip(ask.question, 100)}) catch "";
+            std.fmt.bufPrint(&line, "asked you: \"{s}\" (open)", .{draw.clipMark(&qb, ask.question, 100)}) catch "";
         try draftLine(app, w, rect, @intCast(4 + shown + i), text, .dim);
     }
     for (steps[0..shown], 0..) |step, i| {
@@ -89,7 +91,8 @@ pub fn draftBox(app: *const App, w: *Writer) !void {
         const short = if (std.mem.startsWith(u8, model, "claude-")) model["claude-".len..] else model;
         const word = short[0 .. std.mem.indexOfScalar(u8, short, '-') orelse short.len];
         var lead: [64]u8 = undefined;
-        const front = std.fmt.bufPrint(&lead, "{d} #{d} {s: <10} {s: <7} ", .{ i + 1, step.id, clip(step.repo orelse "", 10), word }) catch "";
+        var rb: [64]u8 = undefined;
+        const front = std.fmt.bufPrint(&lead, "{d} #{d} {s: <10} {s: <7} ", .{ i + 1, step.id, draw.clipMark(&rb, step.repo orelse "", 10), word }) catch "";
         const room = (rect.w -| 5) -| cellCount(front) -| cellCount(wait) -| 2;
         const named = cut(step.title, room);
         const text = std.fmt.bufPrint(&row, "{s}{s}  {s}", .{ front, named, wait }) catch "";
