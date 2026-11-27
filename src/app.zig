@@ -341,14 +341,19 @@ pub const Session = struct {
         return std.mem.eql(u8, s.name, "orchestrator") or std.mem.startsWith(u8, s.name, "orchestrator-");
     }
 
-    /// The session of `project`'s own orchestrator: its name lowercased, other characters as `-`.
+    /// The session of `project`'s own orchestrator: its name lowercased, each run of other
+    /// characters as one `-`, as babylon's `Orchestrator.name/1` makes it.
     fn orchestratorOf(s: *const Session, project: []const u8) bool {
         const prefix = "orchestrator-";
-        if (!std.mem.startsWith(u8, s.name, prefix) or s.name.len - prefix.len != project.len) return false;
-        for (s.name[prefix.len..], project) |c, p| {
-            if (c != if (std.ascii.isAlphanumeric(p)) std.ascii.toLower(p) else '-') return false;
+        if (!std.mem.startsWith(u8, s.name, prefix)) return false;
+        const name = s.name[prefix.len..];
+        var at: usize = 0;
+        for (project, 0..) |p, i| {
+            const want = if (std.ascii.isAlphanumeric(p)) std.ascii.toLower(p) else if (i > 0 and !std.ascii.isAlphanumeric(project[i - 1])) continue else '-';
+            if (at == name.len or name[at] != want) return false;
+            at += 1;
         }
-        return true;
+        return at == name.len;
     }
 
     pub fn unlisted(s: *const Session) bool {
@@ -8393,6 +8398,8 @@ test "babylon's own session, sorted last, is off the list and lists no agents" {
     try std.testing.expect(!tlon.orchestratorOf("tl"));
     var dashed: Session = .{ .id = 5, .name = @constCast("orchestrator-my-proj") };
     try std.testing.expect(dashed.orchestratorOf("My Proj"));
+    try std.testing.expect(dashed.orchestratorOf("My & Proj"));
+    try std.testing.expect(!dashed.orchestratorOf("My Proj!"));
 }
 
 test "a session shows the review state that most wants looking at" {
