@@ -10232,6 +10232,9 @@ test "a click on not planned's + new button opens the new ticket window, and a w
     try std.testing.expect(app.newHead() == null);
     app.home = null;
     try std.testing.expect(app.newHead() == null);
+    app.term_w = 60;
+    app.view_w = 60;
+    try std.testing.expect(app.newHead() == null);
 }
 
 test "on Plan r narrows every window to one repo and back, / dims what misses the find and the pick skips it, h and l go to the window beside, and arena plan N picks N, opening its window" {
