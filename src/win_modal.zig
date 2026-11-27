@@ -174,7 +174,7 @@ pub fn detailBox(app: *App, w: *Writer, id: u32, scroll: usize) !void {
     const text = if (app.detail.items.len > 0) app.detail.items else "…";
     var row: usize = 0;
     var note_buf: [4096]u8 = undefined;
-    const stage_note = if (card != null and !hidden) text_mod.landed(&note_buf, card.?.stage_note) else "";
+    const stage_note = if (card != null and !hidden) text_mod.landed(&note_buf, card.?.stage_note, card.?.landing) else "";
     var hash_buf: [96]u8 = undefined;
     const commit = if (card != null and !hidden) commitLine(&hash_buf, card.?) else "";
     const parts = [4]struct { text: []const u8, style: vt.Style }{
@@ -462,7 +462,7 @@ fn benchDetail(app: *App, w: *Writer, r: theme.Roles, id: u32, rect: App.ModalRe
     const text = if (hidden) "" else if (folded) "\n" ++ "details \u{25b8}" else if (app.detail.items.len > 0) app.detail.items else "…";
     var row: usize = 0;
     var note_buf: [4096]u8 = undefined;
-    const stage_note = if (card != null and !hidden) text_mod.landed(&note_buf, card.?.stage_note) else "";
+    const stage_note = if (card != null and !hidden) text_mod.landed(&note_buf, card.?.stage_note, card.?.landing) else "";
     var hash_buf: [96]u8 = undefined;
     const commit = if (card != null and !hidden and !folded) commitLine(&hash_buf, card.?) else "";
     const parts = [4]struct { text: []const u8, fg: color.RGB }{
@@ -675,7 +675,7 @@ fn modalFrame(app: *const App, w: *Writer, rect: App.ModalRect, head: []const u8
 /// A done card's full commit hash as a line, empty for any other card or a note without one.
 fn commitLine(buf: []u8, card: *const tickets.Card) []const u8 {
     if (card.status != .done) return "";
-    const hash = text_mod.fullHash(card.stage_note) orelse return "";
+    const hash = text_mod.fullHash(card.stage_note, card.landing) orelse return "";
     return std.fmt.bufPrint(buf, "commit {s}", .{hash}) catch "";
 }
 

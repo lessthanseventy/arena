@@ -1,6 +1,7 @@
 //! babylon's board, from the file it keeps: the tickets every Claude on the machine shares.
 const std = @import("std");
 const builtin = @import("builtin");
+const text_mod = @import("text.zig");
 
 /// How many times the cards have been walked; in tests only, where a frame's budget of walks is held.
 pub var passes: if (builtin.is_test) usize else void = if (builtin.is_test) 0 else {};
@@ -99,6 +100,8 @@ pub const Card = struct {
     session_note: []const u8 = "",
     /// Why babylon sent it back, or what its pipeline last said of it.
     stage_note: []const u8 = "",
+    /// What babylon says of how a done ticket landed, null for one landed before it did.
+    landing: ?text_mod.Landing = null,
     /// The orchestrator's open proposal about it, the oldest when there are several; set as the
     /// board is parsed, never read from a card's own fields.
     proposal: ?Proposal = null,
@@ -495,6 +498,16 @@ pub const Board = struct {
             if (card.short) |short| card.short = try cleanLine(arena, short);
             card.session_note = try cleanLine(arena, card.session_note);
             card.stage_note = try cleanLine(arena, card.stage_note);
+            if (card.landing) |*l| {
+                l.sha = try cleanLine(arena, l.sha);
+                if (l.install) |words| l.install = try cleanLine(arena, words);
+                const fixes = try arena.alloc([]const u8, l.fixes.len);
+                for (l.fixes, fixes) |fix, *slot| slot.* = try cleanLine(arena, fix);
+                l.fixes = fixes;
+                const ups = try arena.alloc(text_mod.Landing.FollowUp, l.follow_ups.len);
+                for (l.follow_ups, ups) |up, *slot| slot.* = .{ .id = up.id, .title = try cleanLine(arena, up.title) };
+                l.follow_ups = ups;
+            }
             if (card.waiting_on) |*wait| if (wait.@"for") |words| {
                 wait.@"for" = try cleanLine(arena, words);
             };

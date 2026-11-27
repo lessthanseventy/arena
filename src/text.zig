@@ -164,8 +164,9 @@ test "a cut ends at a word with an ellipsis, and a lone long word is cut in it" 
 /// What a heading line in `landed`'s text starts with, taken off when it is drawn.
 pub const heading_mark = '\x01';
 
-/// The whole commit hash of a landing note, null for a note not in `landed`'s shape.
-pub fn fullHash(note: []const u8) ?[]const u8 {
+/// The whole commit hash of a landing, null for a note not in `landed`'s shape.
+pub fn fullHash(note: []const u8, landing: ?Landing) ?[]const u8 {
+    if (landing) |l| return if (l.sha.len > 0) l.sha else null;
     const lead = "landed on main as ";
     if (!std.mem.startsWith(u8, note, lead)) return null;
     const body = note[lead.len..];
@@ -174,17 +175,38 @@ pub fn fullHash(note: []const u8) ?[]const u8 {
 }
 
 test "a landing note's full hash stops at its first join" {
-    try std.testing.expectEqualStrings("abc", fullHash("landed on main as abc; follow-ups filed: #5 a").?);
-    try std.testing.expectEqualStrings("abc", fullHash("landed on main as abc, with the review's fixes: x").?);
-    try std.testing.expectEqualStrings("abc", fullHash("landed on main as abc \u{b7} installing").?);
-    try std.testing.expect(fullHash("gate ok") == null);
+    try std.testing.expectEqualStrings("abc", fullHash("landed on main as abc; follow-ups filed: #5 a", null).?);
+    try std.testing.expectEqualStrings("abc", fullHash("landed on main as abc, with the review's fixes: x", null).?);
+    try std.testing.expectEqualStrings("abc", fullHash("landed on main as abc \u{b7} installing", null).?);
+    try std.testing.expect(fullHash("gate ok", null) == null);
 }
 
-/// A landing note as lines to draw, in `buf`: a blank row, the heading `Landed`, `on main`, the
-/// short hash and what happened since, then the review's fixes and the follow-ups as bullets.
-/// Babylon writes the note as one string, so it is split on its joins; a note not in that shape
-/// comes back as it was.
-pub fn landed(buf: []u8, note: []const u8) []const u8 {
+/// What babylon says of a landing, as board.json's `landing` field.
+pub const Landing = struct {
+    sha: []const u8,
+    fixes: []const []const u8 = &.{},
+    follow_ups: []const FollowUp = &.{},
+    install: ?[]const u8 = null,
+
+    pub const FollowUp = struct { id: ?u32 = null, title: []const u8 };
+};
+
+/// A landing as lines to draw, in `buf`: a blank row, the heading `Landed`, `on main`, the short
+/// hash and the install state, then the review's fixes and the follow-ups as bullets. Read from
+/// `landing` when babylon sent it; else the note, which babylon wrote as one string and which is
+/// split on its joins, and a note not in that shape comes back as it was.
+pub fn landed(buf: []u8, note: []const u8, landing: ?Landing) []const u8 {
+    var w: std.Io.Writer = .fixed(buf);
+    if (landing) |l| {
+        landedHead(&w, l.sha, l.install orelse "") catch return w.buffered();
+        if (l.fixes.len > 0) w.writeAll("\nReview fixes") catch return w.buffered();
+        for (l.fixes) |fix| w.print("\n  - {s}", .{fix}) catch return w.buffered();
+        if (l.follow_ups.len > 0) w.writeAll("\nFollow-ups") catch return w.buffered();
+        for (l.follow_ups) |up| {
+            (if (up.id) |id| w.print("\n  - #{d} {s}", .{ id, up.title }) else w.print("\n  - {s}", .{up.title})) catch return w.buffered();
+        }
+        return w.buffered();
+    }
     const lead = "landed on main as ";
     if (!std.mem.startsWith(u8, note, lead)) return note;
     var body = note[lead.len..];
@@ -199,14 +221,11 @@ pub fn landed(buf: []u8, note: []const u8) []const u8 {
         body = body[0..at];
     }
     const hash_end = std.mem.indexOfAny(u8, body, ", ") orelse body.len;
-    const hash = body[0..hash_end];
     var fixes = body[hash_end..];
     const fixes_lead = ", with the review's fixes: ";
     fixes = if (std.mem.startsWith(u8, fixes, fixes_lead)) fixes[fixes_lead.len..] else "";
 
-    var w: std.Io.Writer = .fixed(buf);
-    w.print("\n{c}Landed\non main \u{b7} {s}", .{ heading_mark, hash[0..@min(hash.len, 7)] }) catch return w.buffered();
-    if (state.len > 0) w.print(" \u{b7} {s}", .{state}) catch return w.buffered();
+    landedHead(&w, body[0..hash_end], state) catch return w.buffered();
     inline for (.{ .{ "Review fixes", fixes }, .{ "Follow-ups", follow } }) |part| if (part[1].len > 0) {
         w.print("\n{s}", .{part[0]}) catch return w.buffered();
         var items = std.mem.splitSequence(u8, part[1], "; ");
@@ -215,17 +234,37 @@ pub fn landed(buf: []u8, note: []const u8) []const u8 {
     return w.buffered();
 }
 
+fn landedHead(w: *std.Io.Writer, hash: []const u8, state: []const u8) !void {
+    try w.print("\n{c}Landed\non main \u{b7} {s}", .{ heading_mark, hash[0..@min(hash.len, 7)] });
+    if (state.len > 0) try w.print(" \u{b7} {s}", .{state});
+}
+
 test "a landing note is split into its hash, fixes and follow-ups, each its own row" {
     var buf: [512]u8 = undefined;
     const note = "landed on main as 70119238def8b48a6c7ce684a4abfbe1e4a75a5e, with the review's fixes: one.; two. \u{b7} installing";
-    try std.testing.expectEqualStrings("\n\x01Landed\non main \u{b7} 7011923 \u{b7} installing\nReview fixes\n  - one.\n  - two.", landed(&buf, note));
+    try std.testing.expectEqualStrings("\n\x01Landed\non main \u{b7} 7011923 \u{b7} installing\nReview fixes\n  - one.\n  - two.", landed(&buf, note, null));
     try std.testing.expectEqualStrings(
         "\n\x01Landed\non main \u{b7} abcdef0\nFollow-ups\n  - #5 a\n  - #6 b",
-        landed(&buf, "landed on main as abcdef0123, with the review's fixes: ; follow-ups filed: #5 a; #6 b"),
+        landed(&buf, "landed on main as abcdef0123, with the review's fixes: ; follow-ups filed: #5 a; #6 b", null),
     );
-    try std.testing.expectEqualStrings("gate ok", landed(&buf, "gate ok"));
+    try std.testing.expectEqualStrings("gate ok", landed(&buf, "gate ok", null));
     try std.testing.expectEqualStrings(
         "\n\x01Landed\non main \u{b7} abcdef0\nReview fixes\n  - a \u{b7} b",
-        landed(&buf, "landed on main as abcdef0123, with the review's fixes: a \u{b7} b"),
+        landed(&buf, "landed on main as abcdef0123, with the review's fixes: a \u{b7} b", null),
     );
+}
+
+test "a landing from the board is drawn from its fields, a fix with a join staying one fix" {
+    var buf: [512]u8 = undefined;
+    const l: Landing = .{
+        .sha = "abcdef0123",
+        .fixes = &.{ "one; still one", "two" },
+        .follow_ups = &.{ .{ .id = 5, .title = "a" }, .{ .title = "no id" } },
+        .install = "install failed",
+    };
+    try std.testing.expectEqualStrings(
+        "\n\x01Landed\non main \u{b7} abcdef0 \u{b7} install failed\nReview fixes\n  - one; still one\n  - two\nFollow-ups\n  - #5 a\n  - no id",
+        landed(&buf, "ignored", l),
+    );
+    try std.testing.expectEqualStrings("\n\x01Landed\non main \u{b7} abcdef0", landed(&buf, "", .{ .sha = "abcdef0123" }));
 }

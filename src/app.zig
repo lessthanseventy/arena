@@ -3367,10 +3367,10 @@ pub const App = struct {
         while (lines.next()) |_| n += 1;
         if (app.modalCard()) |card| if (card.stage_note.len > 0) {
             var note_buf: [4096]u8 = undefined;
-            var note = DetailLines.init(text_mod.landed(&note_buf, card.stage_note), inner);
+            var note = DetailLines.init(text_mod.landed(&note_buf, card.stage_note, card.landing), inner);
             while (note.next()) |_| n += 1;
             if (body[0] != '\n') n += 1;
-            if (card.status == .done and !body_folded and text_mod.fullHash(card.stage_note) != null) n += 1;
+            if (card.status == .done and !body_folded and text_mod.fullHash(card.stage_note, card.landing) != null) n += 1;
         };
         return n;
     }
