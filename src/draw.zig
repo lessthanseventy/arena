@@ -1558,8 +1558,6 @@ fn planHead(app: *const App, bufs: *PlanHeadBufs) PlanHead {
         "↻ restarting");
     const unpushed_text: []const u8 = if (b.unpushed() > 0)
         std.fmt.bufPrint(&bufs.unpushed, "↑ {d} unpushed", .{b.unpushed()}) catch "↑"
-    else if (b.behind() > 0)
-        std.fmt.bufPrint(&bufs.unpushed, "↓ {d} behind", .{b.behind()}) catch "↓"
     else
         "";
     for (tries) |try_| {
@@ -3815,7 +3813,7 @@ test "on the e2e's 24-row screen every Plan window keeps its title and a body ro
 test "a Your move item ends its row in its first action's key, ticket or none, picked or not, and an open one does not and wears ▸" {
     var board = try tickets.Board.parse(std.testing.allocator,
         \\{"tickets":[],"needs_you":[
-        \\{"id":"push:arena:abc:0","kind":"human","ticket":null,"repo":"arena","text":"▲ arena: 3 unpushed",
+        \\{"id":"push:arena:abc:0","kind":"push","ticket":null,"repo":"arena","text":"▲ arena: 3 unpushed",
         \\ "actions":[{"key":"⏎","label":"push","argv":["babylon","push","arena"]},{"key":"l","label":"look"}]},
         \\{"id":"push:1","kind":"push","ticket":7,"repo":"arena","text":"3 commits to push","since":"2026-11-21T10:00:00Z",
         \\ "actions":[{"key":"⏎","label":"push","argv":["babylon","push","arena"]},{"key":"l","label":"look"}]}],
@@ -3857,7 +3855,7 @@ test "with a Your move item's card open, every Your move row is drawn beside it,
         \\ "steps":[{"n":1,"text":"it folds back","result":null,"actions":[{"key":"y","label":"✓"},{"key":"n","label":"✗"}]},
         \\  {"n":2,"text":"the pick stays","result":null,"actions":[{"key":"y","label":"✓"},{"key":"n","label":"✗"}]}],
         \\ "actions":[{"key":"x","label":"close untried","argv":["babylon","tried","1105","skip"]}]},
-        \\{"id":"push:arena:abc:0","kind":"human","ticket":null,"repo":"arena","text":"▲ arena: 2 unpushed",
+        \\{"id":"push:arena:abc:0","kind":"push","ticket":null,"repo":"arena","text":"▲ arena: 2 unpushed",
         \\ "actions":[{"key":"⏎","label":"push","argv":["babylon","push","arena"]}]}],
         \\"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
     );

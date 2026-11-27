@@ -257,9 +257,11 @@ pub const Need = struct {
     actions: []Action = &.{},
     /// The orchestrator points at it (an `item` suggestion).
     orch: bool = false,
+    /// Babylon says it is only status: arena draws it on the head, not in Your move.
+    status: bool = false,
 };
 
-/// A repo's main against its origin, as babylon's push item of it says.
+/// A repo's main against its origin.
 pub const RepoState = struct { repo: []const u8, ahead: u32 = 0, behind: u32 = 0 };
 
 /// One line of the orchestrator's: `text` for a line to say to it, `item` for a `needs_you` item it
@@ -443,8 +445,8 @@ pub const Board = struct {
     /// Found once at parse, since a frame asks for them on every line it draws.
     names: []const []const u8 = &.{},
     lane_names: []const []const u8 = &.{},
-    /// What babylon's `needs_you` says that is status, not the human's move: its restart waiting
-    /// on the gates running, and each repo's unpushed commits. Taken out of `needs_you` at parse.
+    /// The `needs_you` items babylon marks `status`: its restart waiting on the gates running, and
+    /// a repo's unpushed commits. Taken out of `needs_you` at parse.
     restart: ?[]const u8 = null,
     repo_states: []const RepoState = &.{},
 
@@ -496,10 +498,13 @@ pub const Board = struct {
         var kept: usize = 0;
         const all = parsed.value.needs_you;
         for (all) |need| {
-            if (std.mem.eql(u8, need.id, "restart-pending")) {
+            if (!need.status) {
+                all[kept] = need;
+                kept += 1;
+            } else if (std.mem.eql(u8, need.kind, "push")) {
+                try states.append(arena, .{ .repo = need.repo, .ahead = countBefore(need.text, " unpushed") });
+            } else if (std.mem.eql(u8, need.id, "restart-pending")) {
                 restart = need.text;
-            } else if (std.mem.eql(u8, need.kind, "push") and need.ticket == null) {
-                try states.append(arena, .{ .repo = need.repo, .ahead = countBefore(need.text, " unpushed"), .behind = countBefore(need.text, " behind") });
             } else {
                 all[kept] = need;
                 kept += 1;
@@ -565,14 +570,7 @@ pub const Board = struct {
         return sum;
     }
 
-    /// The commits origin is ahead of main by, summed over the repos.
-    pub fn behind(b: *const Board) u32 {
-        var sum: u32 = 0;
-        for (b.repo_states) |s| sum += s.behind;
-        return sum;
-    }
-
-    /// What `repo`'s main is against its origin; level when babylon says nothing of it.
+    /// What babylon says of `repo`'s main against its origin; level when it says nothing.
     pub fn repoState(b: *const Board, repo: []const u8) RepoState {
         for (b.repo_states) |s| if (std.mem.eql(u8, s.repo, repo)) return s;
         return .{ .repo = repo };

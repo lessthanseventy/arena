@@ -13,26 +13,78 @@ const anyKey = app_mod.anyKey;
 const Repos = [app_mod.max_repos]tickets.RepoState;
 
 /// The repos the view lists, in order of name: those with a card on the board, then any babylon
-/// says a push of that has none.
+/// says a push of that has none. Each is as git counted it, else as babylon says.
 pub fn list(app: *const App, out: *Repos) []tickets.RepoState {
     const b = &(app.board orelse return out[0..0]);
     var names: [app_mod.max_repos][]const u8 = undefined;
     const n = b.repos(&names);
-    var count: usize = 0;
+    var n_rows: usize = 0;
     for (names[0..n]) |name| {
-        out[count] = b.repoState(name);
-        count += 1;
+        out[n_rows] = b.repoState(name);
+        n_rows += 1;
     }
     for (b.repo_states) |s| {
-        if (count == out.len) break;
-        const known = for (out[0..count]) |had| {
+        if (n_rows == out.len) break;
+        const known = for (out[0..n_rows]) |had| {
             if (std.mem.eql(u8, had.repo, s.repo)) break true;
         } else false;
         if (known) continue;
-        out[count] = s;
-        count += 1;
+        out[n_rows] = s;
+        n_rows += 1;
     }
-    return out[0..count];
+    for (out[0..n_rows]) |*s| for (app.repo_counts[0..app.repo_counts_n]) |c| {
+        if (!std.mem.eql(u8, c.name[0..c.len], s.repo)) continue;
+        s.ahead = c.ahead;
+        s.behind = c.behind;
+    };
+    return out[0..n_rows];
+}
+
+fn countPath(app: *const App, repo: []const u8, buf: []u8) ?[]const u8 {
+    const dir = app.board_dir orelse return null;
+    return std.fmt.bufPrint(buf, "{s}/repos-{s}.counts", .{ dir, repo }) catch null;
+}
+
+/// Asks git for `repo`'s main against its origin, after a fetch with `fetched`, into the repo's
+/// own file: no other job writes it.
+fn askCount(app: *App, repo: []const u8, comptime fetched: bool) !void {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path = countPath(app, repo, &buf) orelse return;
+    const fetch = if (fetched) "fetch -q origin main 2>/dev/null; " else "";
+    try app.send(.ignore, "run-shell -b \"cd \\\"\\$HOME/projects/{s}\\\" && {s}git rev-list --left-right --count main...origin/main >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ repo, fetch, path, path, path });
+}
+
+fn countAll(app: *App, comptime fetched: bool) !void {
+    var rows: Repos = undefined;
+    for (list(app, &rows)) |s| try askCount(app, s.repo, fetched);
+}
+
+fn takeCounts(app: *App) void {
+    var rows: Repos = undefined;
+    for (list(app, &rows)) |s| {
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const path = countPath(app, s.repo, &buf) orelse continue;
+        const text = std.Io.Dir.cwd().readFileAlloc(app.io, path, app.gpa, .limited(256)) catch continue;
+        defer app.gpa.free(text);
+        std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
+        var parts = std.mem.tokenizeAny(u8, text, " \t\n");
+        const ahead = std.fmt.parseInt(u32, parts.next() orelse continue, 10) catch continue;
+        const behind = std.fmt.parseInt(u32, parts.next() orelse continue, 10) catch continue;
+        if (s.repo.len > 48) continue;
+        const slot = for (app.repo_counts[0..app.repo_counts_n], 0..) |c, i| {
+            if (std.mem.eql(u8, c.name[0..c.len], s.repo)) break i;
+        } else blk: {
+            if (app.repo_counts_n == app.repo_counts.len) continue;
+            app.repo_counts_n += 1;
+            break :blk app.repo_counts_n - 1;
+        };
+        const c = &app.repo_counts[slot];
+        @memcpy(c.name[0..s.repo.len], s.repo);
+        c.len = @intCast(s.repo.len);
+        c.ahead = ahead;
+        c.behind = behind;
+        app.dirty = true;
+    }
 }
 
 pub fn open(app: *App) !void {
@@ -44,6 +96,7 @@ pub fn open(app: *App) !void {
     view.repos_confirm = false;
     view.detail_scroll = 0;
     app.dirty = true;
+    try countAll(app, false);
     try ask(app);
 }
 
@@ -54,7 +107,7 @@ fn ask(app: *App) !void {
     var rows: Repos = undefined;
     const repos = list(app, &rows);
     if (view.repos_pick >= repos.len or repos[view.repos_pick].ahead == 0) return;
-    try runGit(app, repos[view.repos_pick].repo, "log --oneline origin/main..main");
+    try runGit(app, repos[view.repos_pick].repo, "log --format='%h %s ‖ %(trailers:valueonly,separator=%x20)' origin/main..main");
 }
 
 fn runGit(app: *App, repo: []const u8, comptime git: []const u8) !void {
@@ -103,6 +156,7 @@ fn push(app: *App, state: tickets.RepoState) !void {
 /// The answers of the pushes run, which babylon's own or git's words said into files beside the
 /// board: `ok`, or why not.
 pub fn polled(app: *App) void {
+    if (app.home) |view| if (view.repos) takeCounts(app);
     var i = app.repos_pushing.items.len;
     while (i > 0) {
         i -= 1;
@@ -200,9 +254,9 @@ pub fn key(app: *App, pressed: []const u8) !void {
         return;
     }
     if (anyKey(pressed, &.{"f"})) {
-        for (repos) |s| try runGit(app, s.repo, "fetch -q origin main");
+        try countAll(app, true);
         say(app, false, "fetching {d} repos", .{repos.len});
-        return ask(app);
+        return;
     }
 }
 
@@ -213,6 +267,31 @@ fn diff(app: *App, repo: []const u8, sha: []const u8) !void {
     if (app.detail_asked.items.len == 16) _ = app.detail_asked.orderedRemove(0);
     try app.detail_asked.append(app.gpa, 0);
     try app.send(.ignore, "run-shell -b \"git -C \\\"\\$HOME/projects/{s}\\\" show --stat --patch {s} >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ repo, sha, path, path, path });
+}
+
+const trailer_mark = " ‖ ";
+
+/// The first `#N` in `text`.
+fn ticketIn(text: []const u8) ?[]const u8 {
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, text, from, "#")) |at| : (from = at + 1) {
+        var end = at + 1;
+        while (end < text.len and std.ascii.isDigit(text[end])) end += 1;
+        if (end > at + 1) return text[at..end];
+    }
+    return null;
+}
+
+/// A commit's line as shown, `sha  subject`, with the `#N` its trailers name when its subject
+/// names none.
+fn commitShown(buf: []u8, line: []const u8) []const u8 {
+    const split = std.mem.lastIndexOf(u8, line, trailer_mark) orelse line.len;
+    const head = line[0..split];
+    const trailers = if (split < line.len) line[split + trailer_mark.len ..] else "";
+    const sp = std.mem.indexOfScalar(u8, head, ' ') orelse return head;
+    const subject = head[sp + 1 ..];
+    const extra = if (ticketIn(subject) == null) ticketIn(trailers) else null;
+    return std.fmt.bufPrint(buf, "{s}  {s}{s}{s}", .{ head[0..sp], subject, if (extra != null) "  " else "", extra orelse "" }) catch head;
 }
 
 var cut_scratch: [512]u8 = undefined;
@@ -240,7 +319,7 @@ pub fn paint(app: *App, w: *Writer) !void {
     var y = rect.y + 1;
     while (y < body_end) : (y += 1) try bench.say(w, x0 + left, y, "│", r.dim, r.panel, false);
 
-    var line: [128]u8 = undefined;
+    var line: [512]u8 = undefined;
     y = rect.y + 1;
     for (repos, 0..) |s, i| {
         if (y >= body_end) break;
@@ -268,7 +347,7 @@ pub fn paint(app: *App, w: *Writer) !void {
             if (y >= body_end) break;
             const marked = !view.repos_diff and view.repos_commit == n;
             if (marked) try bench.say(w, right_x - 1, y, "▌", r.accent, r.panel, true);
-            const shown = if (view.repos_diff) text else (if (std.mem.indexOfScalar(u8, text, ' ')) |sp| std.fmt.bufPrint(&line, "{s}  {s}", .{ text[0..sp], text[sp + 1 ..] }) catch text else text);
+            const shown = if (view.repos_diff) text else commitShown(&line, text);
             try bench.say(w, right_x, y, cut(shown, right_w), r.text, r.panel, marked);
             y += 1;
         }
