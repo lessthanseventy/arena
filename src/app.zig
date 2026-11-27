@@ -6773,8 +6773,9 @@ pub const App = struct {
     fn menuKeys(app: *App, text: []const u8) !void {
         var i: usize = 0;
         while (i < text.len) {
-            // a key that closed what had the keys leaves the rest of the read to the pane
-            if (app.typing()) return app.forward(text[i..]);
+            // a key that closed what had the keys ends the read: forwarded, a second Escape of a
+            // double Escape would sit in the pane's readline and eat its next letter
+            if (app.typing()) return if (i == 0) app.forward(text);
             const len = keyLen(text[i..]);
             const key = text[i..][0..len];
             i += len;
@@ -7957,6 +7958,34 @@ test "a key after the one that opened the menu, in the same read, is the menu's"
     try app.menuKeys("mj");
     try std.testing.expect(!app.normal);
     try std.testing.expectEqual(@as(usize, 1), app.menu.?.selected);
+}
+
+test "a double Escape that closes the board forwards nothing to the pane under it" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(std.testing.allocator);
+    app.term_w = 80;
+    app.view_w = 80;
+    app.view_h = 24;
+    const pane = try Pane.create(&app, 12, 80, 24);
+    defer pane.destroy(std.testing.allocator);
+    var win: Window = .{ .id = 7, .name = @constCast("w") };
+    defer win.panes.deinit(std.testing.allocator);
+    try win.panes.append(std.testing.allocator, pane);
+    var s: Session = .{ .id = 1, .name = @constCast("s") };
+    var wins = [_]*Window{&win};
+    s.wins = .fromOwnedSlice(&wins);
+    var sessions = [_]*Session{&s};
+    app.sessions = .fromOwnedSlice(&sessions);
+    app.current = 1;
+    app.home = .{};
+    try app.menuKeys("\x1b\x1b");
+    try std.testing.expect(app.home == null);
+    var got: [64]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), try sent.readPositionalAll(std.testing.io, &got, 0));
 }
 
 test "the jump prompt finds a ticket by its number or its title as well as a window" {
