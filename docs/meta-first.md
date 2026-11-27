@@ -366,7 +366,12 @@ landed, and so it holds the four options the human was shown:
 
 **State words**, each with its glyph so none is said by colour alone (principle 12): `✓ landed`,
 `– closed` (dim; a ticket closed with nothing landed, sorted after the open steps),
-`◒ landing`, `◒ reviewing`, `◒ verifying`, `» queued 1st`, `◐ building`, `◇ stuck`, `· up next`.
+`◒ landing`, `◒ reviewing`, `◒ verifying`, `» queued 1st`, `◐ building`, `◇ stuck`, `↺ fixing`,
+`↺ sent back`, `· up next`. A ticket babylon sent back reads `↺ fixing` (building colour) while its
+Claude works on it, and `↺ sent back` (warn colour) when its Claude is idle, waiting or gone, never
+`failed`. Its wait word is the cause, from the first line of the stage note (`review asked`,
+`gate red`, `rebase conflict`, `install failed`); its age counts from the send-back, and the opened
+row's stage line reads `sent back 12m ago · review asked`.
 
 **Wait words** come from babylon's `held` on each next row (#1206, #1191): `ready`, `after #N`
 (N holds the repo's cap, or a path the ticket names), `waits #N` (blocked by N), `cap full`,

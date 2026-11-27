@@ -136,7 +136,7 @@ pub const Pane = struct {
     /// What the pane's program had set when last asked, by `mode_sets`.
     modes: [mode_sets.len]bool = @splat(false),
 
-    fn create(app: *App, id: u32, cols: u16, rows: u16) !*Pane {
+    pub fn create(app: *App, id: u32, cols: u16, rows: u16) !*Pane {
         const pane = try app.gpa.create(Pane);
         errdefer app.gpa.destroy(pane);
         pane.* = .{
@@ -148,7 +148,7 @@ pub const Pane = struct {
         return pane;
     }
 
-    fn destroy(pane: *Pane, gpa: Allocator) void {
+    pub fn destroy(pane: *Pane, gpa: Allocator) void {
         pane.pass.deinit(gpa);
         pane.render.deinit(gpa);
         pane.stream.deinit();
@@ -3177,8 +3177,9 @@ pub const App = struct {
             });
         };
         if (b.plan()) |given| for (given.now) |row| {
-            if (row.stalled == null) continue;
-            try texts.writer.writeAll("stuck: its Claude has stopped");
+            const idle_back = if (win_board.sentBack(app, row)) |back| back.idle else false;
+            if (row.stalled == null and !idle_back) continue;
+            try texts.writer.writeAll(if (row.stalled != null) "stuck: its Claude has stopped" else "sent back: its Claude is idle");
             try ends.append(app.gpa, texts.written().len);
             try items.append(app.gpa, .{
                 .id = try std.fmt.allocPrint(app.gpa, "stuck:{d}", .{row.ticket}),

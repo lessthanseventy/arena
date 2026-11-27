@@ -268,3 +268,24 @@ test "a landing from the board is drawn from its fields, a fix with a join stayi
     );
     try std.testing.expectEqualStrings("\n\x01Landed\non main \u{b7} abcdef0", landed(&buf, "", .{ .sha = "abcdef0123" }));
 }
+
+/// The few words that say why babylon sent a ticket back, from the first line of its stage note;
+/// empty when the note is not one babylon writes.
+pub fn sentBackCause(note: []const u8) []const u8 {
+    const first = std.mem.sliceTo(note, '\n');
+    const has = std.mem.startsWith;
+    if (has(u8, first, "the review asked")) return "review asked";
+    if (has(u8, first, "the gate") or has(u8, first, "it was still running")) return "gate red";
+    if (has(u8, first, "it does not rebase") or has(u8, first, "it does not stack")) return "rebase conflict";
+    if (std.mem.endsWith(u8, first, "install failed")) return "install failed";
+    return "";
+}
+
+test "a send-back's first line says its cause in a few words" {
+    const eq = std.testing.expectEqualStrings;
+    try eq("review asked", sentBackCause("the review asked for changes.\nfix a"));
+    try eq("gate red", sentBackCause("the gate is red (exit 1); its whole output is in /x"));
+    try eq("rebase conflict", sentBackCause("it does not rebase onto main cleanly; conflicts in: a"));
+    try eq("install failed", sentBackCause("landed on main as abc · install failed"));
+    try eq("", sentBackCause("something else"));
+}

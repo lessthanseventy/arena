@@ -55,6 +55,23 @@ fn inDrivenGoal(given: *const tickets.Plan, id: u32) bool {
     return false;
 }
 
+/// A ticket babylon sent back (stage `failed`): whether its Claude is at work on it, why it came
+/// back, and when.
+pub const Back = struct { fixing: bool, idle: bool, cause: []const u8, at: ?[]const u8 };
+
+pub fn sentBack(app: *const App, item: tickets.NowItem) ?Back {
+    if (!std.mem.eql(u8, item.stage orelse "", "failed")) return null;
+    const card = app.cardById(item.ticket);
+    const win = if (item.holder()) |held| app.paneWindow(held) else null;
+    const mark: app_mod.Mark = if (win) |at| at.session.wins.items[at.index].claude else .waiting;
+    return .{
+        .fixing = mark == .working or mark == .background,
+        .idle = win != null and mark != .waiting and mark != .working and mark != .background,
+        .cause = if (card) |c| text_mod.sentBackCause(c.stage_note) else "",
+        .at = if (card) |c| c.stage_at orelse item.since else item.since,
+    };
+}
+
 fn facts(app: *const App, r: theme.Roles, row: sheets.Row, s: *Scratch) ?Facts {
     const given = app.board.?.plan().?;
     switch (row.kind) {
@@ -75,7 +92,10 @@ fn facts(app: *const App, r: theme.Roles, row: sheets.Row, s: *Scratch) ?Facts {
             const item = given.now[row.item];
             const stage = item.stage orelse item.state;
             const eql = std.mem.eql;
-            const state: []const u8, const lead: color.RGB = if (item.stalled != null)
+            const back = sentBack(app, item);
+            const state: []const u8, const lead: color.RGB = if (back) |b|
+                (if (b.fixing) .{ "↺ fixing", r.building } else .{ "↺ sent back", r.failed })
+            else if (item.stalled != null)
                 .{ "◇ stuck", r.failed }
             else if (eql(u8, stage, "queued"))
                 .{ if (item.place) |n| std.fmt.bufPrint(&s.state, "» queued {s}", .{sheets.place(n, &s.place)}) catch "» queued" else "» queued", r.queued }
@@ -89,9 +109,9 @@ fn facts(app: *const App, r: theme.Roles, row: sheets.Row, s: *Scratch) ?Facts {
                 .lead = lead,
                 .repo = item.repo,
                 .name = item.name(),
-                .wait = if (item.waiting_on) |on| on.say(&s.wait) else "",
+                .wait = if (back) |b| b.cause else if (item.waiting_on) |on| on.say(&s.wait) else "",
                 .wait_lead = r.dim,
-                .age = sheets.ago(&s.age, item.since, app.epoch),
+                .age = sheets.ago(&s.age, if (back) |b| b.at else item.since, app.epoch),
             };
         },
         .next => {
@@ -208,7 +228,11 @@ pub fn detail(app: *const App, row: sheets.Row, ww: usize, lines: *sheets.Lines)
             const item = given.now[row.item];
             var age: [16]u8 = undefined;
             const since = sheets.ago(&age, item.since, app.epoch);
-            const stage = lines.print("{s}{s}{s}", .{ item.stage orelse item.state, if (since.len > 0) " · " else "", since });
+            const stage = if (sentBack(app, item)) |b| blk: {
+                var back_age: [16]u8 = undefined;
+                const when = sheets.ago(&back_age, b.at, app.epoch);
+                break :blk lines.print("sent back{s}{s}{s}{s}", .{ if (when.len > 0) " " else "", when, if (b.cause.len > 0) " · " else "", b.cause });
+            } else lines.print("{s}{s}{s}", .{ item.stage orelse item.state, if (since.len > 0) " · " else "", since });
             var said: [64]u8 = undefined;
             const wait = if (item.stalled) |why| lines.print("stalled · {s}", .{why}) else if (item.waiting_on) |on| lines.print("{s}", .{on.say(&said)}) else "";
             win_detail.fill(app, lines, .{ .ticket = item.ticket, .title = item.name(), .wait = wait, .stage = stage, .claude = claudeLine(app, lines, item) }, ww, indent);
@@ -270,4 +294,54 @@ test "the board's rows say their state, a ◆ for the driven goal's step, and on
     try eq("ready", facts(&app, r, .{ .kind = .next, .item = 1, .ticket = 6 }, &s).?.wait);
     try std.testing.expect(inDrivenGoal(given, 4));
     try std.testing.expect(!inDrivenGoal(given, 3));
+}
+
+test "a sent-back ticket reads ↺ fixing while its Claude works, and ↺ sent back with its cause when none does" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":1,"repo":"arena","title":"a","status":"doing","stage":"failed","stage_note":"the review asked for changes.\nfix it","stage_at":"2026-11-27T10:00:00Z"},
+        \\{"id":2,"repo":"arena","title":"b","status":"doing","stage":"failed","stage_note":"the gate is red (exit 1); its whole output is in /x","stage_at":"2026-11-27T10:00:00Z"},
+        \\{"id":3,"repo":"arena","title":"c","status":"todo","stage":"failed","stage_note":"it does not rebase onto main cleanly; conflicts in: a","stage_at":"2026-11-27T10:00:00Z"}],
+        \\"plan":{"now":[
+        \\{"ticket":1,"repo":"arena","title":"a","state":"building","stage":"failed","pane":"%11","since":"2026-11-27T09:00:00Z"},
+        \\{"ticket":2,"repo":"arena","title":"b","state":"building","stage":"failed","pane":"%12","since":"2026-11-27T09:00:00Z"},
+        \\{"ticket":3,"repo":"arena","title":"c","state":"building","stage":"failed","since":"2026-11-27T09:00:00Z"}],
+        \\"next":[],"goals":[],"landed_today":{"count":0,"newest":[]}}}
+    );
+    defer board.deinit();
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.board = board;
+    const busy = try app_mod.Pane.create(&app, 11, 80, 24);
+    defer busy.destroy(std.testing.allocator);
+    const quiet = try app_mod.Pane.create(&app, 12, 80, 24);
+    defer quiet.destroy(std.testing.allocator);
+    var working: app_mod.Window = .{ .id = 1, .name = @constCast("w"), .claude = .working };
+    defer working.panes.deinit(std.testing.allocator);
+    try working.panes.append(std.testing.allocator, busy);
+    var idle: app_mod.Window = .{ .id = 2, .name = @constCast("i"), .claude = .none };
+    defer idle.panes.deinit(std.testing.allocator);
+    try idle.panes.append(std.testing.allocator, quiet);
+    var s: app_mod.Session = .{ .id = 1, .name = @constCast("s") };
+    var wins = [_]*app_mod.Window{ &working, &idle };
+    s.wins = .fromOwnedSlice(&wins);
+    var sessions = [_]*app_mod.Session{&s};
+    app.sessions = .fromOwnedSlice(&sessions);
+    const r = bench.roles();
+    var sc: Scratch = .{};
+    const eq = std.testing.expectEqualStrings;
+    const fixing = facts(&app, r, .{ .kind = .now, .item = 0, .ticket = 1 }, &sc).?;
+    try eq("↺ fixing", fixing.state);
+    try eq("review asked", fixing.wait);
+    try std.testing.expectEqual(r.building, fixing.lead);
+    const waiting = facts(&app, r, .{ .kind = .now, .item = 1, .ticket = 2 }, &sc).?;
+    try eq("↺ sent back", waiting.state);
+    try eq("gate red", waiting.wait);
+    try std.testing.expectEqual(r.failed, waiting.lead);
+    const nobody = facts(&app, r, .{ .kind = .now, .item = 2, .ticket = 3 }, &sc).?;
+    try eq("↺ sent back", nobody.state);
+    try eq("rebase conflict", nobody.wait);
+    const given = app.board.?.plan().?;
+    try std.testing.expect(!sentBack(&app, given.now[0]).?.idle);
+    try std.testing.expect(sentBack(&app, given.now[1]).?.idle);
+    try std.testing.expect(!sentBack(&app, given.now[2]).?.idle);
 }
