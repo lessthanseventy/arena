@@ -967,6 +967,21 @@ test "a stage note's escapes and control characters are gone once the board is p
     try std.testing.expectEqualStrings("sent back why", b.cards()[0].stage_note);
 }
 
+test "a landing is parsed from the board, its words cleaned, an unfiled follow-up without an id" {
+    var b = try Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1,"title":"Board","status":"done","landing":{"sha":"abc","fixes":["one; \u001b[31mstill one"],"follow_ups":[{"id":5,"title":"a"},{"id":null,"title":"b\u0007"}],"install":null}},{"id":2,"title":"Old","status":"done","landing":null}]}
+    );
+    defer b.deinit();
+    const l = b.cards()[0].landing.?;
+    try std.testing.expectEqualStrings("abc", l.sha);
+    try std.testing.expectEqualStrings("one; still one", l.fixes[0]);
+    try std.testing.expectEqual(@as(?u32, 5), l.follow_ups[0].id);
+    try std.testing.expectEqual(@as(?u32, null), l.follow_ups[1].id);
+    try std.testing.expectEqualStrings("b", l.follow_ups[1].title);
+    try std.testing.expect(l.install == null);
+    try std.testing.expect(b.cards()[1].landing == null);
+}
+
 test "a title's escapes and control characters are gone once the board is parsed" {
     var b = try Board.parse(std.testing.allocator,
         \\{"tickets":[{"id":1,"title":"\u001b[31mBo\u0007ard\n2","status":"done"}],"backlog":[{"id":7,"title":"\u001b]0;t\u0007later","status":"backlog"}]}
