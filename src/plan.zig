@@ -860,7 +860,7 @@ pub const Sheet = struct {
     }
 
     /// Planning's goals, the one driven first, then babylon's order: a row to each, then a row
-    /// to each of its tickets that has not landed, unless the goal is folded.
+    /// to each of its tickets that has not landed, the closed ones last, unless the goal is folded.
     fn goalTicketRows(s: *Sheet, given: *const tickets.Plan, see: See) void {
         for ([_]bool{ true, false }) |driven| for (given.goals, 0..) |goal, i| {
             if ((given.driving == goal.epic) != driven) continue;
