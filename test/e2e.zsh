@@ -1067,6 +1067,8 @@ click $(( shut[1] - 12 )) $(( shut[2] + 3 ))
 check "a click inside the Claude's pane in the middle column types into it, as i does" await shows 'INSERT  ctrl\+space normal'
 key -l zxqclick
 check "and what is typed after it shows in the Claude's prompt" await shows 'zxqclick'
+key C-u
+await eval '! shows zxqclick'
 key C-Space
 await shows 'NORMAL  i type   d changes   esc back'
 key Escape
