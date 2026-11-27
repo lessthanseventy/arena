@@ -1691,7 +1691,11 @@ fn planWhy(app: *App, w: *Writer) !void {
 /// in view, the pick a bar at the left edge. What lies over the board lies over it.
 fn planView(app: *App, w: *Writer, view: app_mod.HomeView) !void {
     var sheet: sheets.Sheet = undefined;
-    if (!app.planSheet(&sheet)) return planWhy(app, w);
+    if (!app.planSheet(&sheet)) {
+        try planWhy(app, w);
+        if (view.claude != null) try claudeBox(app, w, view);
+        return;
+    }
     const ox: u16 = 0;
     const width = app.boardW();
     const dim = ink(app, "dim", 8);

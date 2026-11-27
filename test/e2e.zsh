@@ -721,28 +721,45 @@ claude alpha:three prompt
 await dots '○●◐'
 claude alpha:three waiting '{"message": "Claude needs your permission to use Bash"}'
 await dots '○●▲'
+strip_at=$(inner list-clients -F '#{session_name}:#{window_name}')
 key M-n
-check "Alt+n goes to the Claude that most wants looking at" await at alpha:three
+check "Alt+n opens the Claude that most wants looking at in the middle column" await shows '◆ three'
+check "and visits no window of the strip" at $strip_at
 key M-n
-check "and stays where it is with no other waiting or done" at alpha:three
+check "and stays where it is with no other waiting or done" shows '◆ three'
+key Escape
+key q
+key Enter
 claude alpha:one waiting '{"message": "Claude is waiting for your input"}'
 inner set -p -t alpha:one @arena_claude_since $(($(date +%s) - 100))
-await dots '▲○●'
+await dots '▲●▲'
 key M-n
-check "with another, Alt+n goes on to it, the longer waiting first" await at alpha:one
+check "with another, Alt+n opens the longer waiting first" await shows '◆ one · waiting'
 key M-n
-check "and round to the first" await at alpha:three
+check "then goes on to the next" await shows '◆ three · waiting'
+key M-n
+check "and round to the first" await shows '◆ one · waiting'
 key M-N
-check "Alt+N goes back" await at alpha:one
-claude alpha:one end
-await dots '●○▲'
+check "Alt+N goes back" await shows '◆ three · waiting'
 key M-n
-check "from a window not listed, Alt+n goes to the first" await at alpha:three
+await shows '◆ one · waiting'
+claude alpha:one end
+await hides '◆ one · waiting'
+key M-n
+check "from a Claude not listed, Alt+n goes to the first" await shows '◆ three · waiting'
+key Escape
+key q
+key Enter
+await dots '○●▲'
 
 fi
 if section popup; then
 claude alpha:three waiting '{"message": "Claude needs your permission to use Bash"}'
-at alpha:three || { zselect -t 500; key M-n; await at alpha:three }
+inner switch-client -t alpha:three
+await at alpha:three
+zselect -t 300
+key M-3
+zselect -t 300
 # the popup: a Claude's pane in another session, read-only, over the strip
 inner send-keys -t alpha:three 'echo three-pane-line' Enter
 shows '^NORMAL' || key C-Space
@@ -797,7 +814,11 @@ zselect -t 300
 fi
 if section question; then
 claude alpha:three waiting '{"message": "Claude needs your permission to use Bash"}'
-at alpha:three || { zselect -t 500; key M-n; await at alpha:three }
+inner switch-client -t alpha:three
+await at alpha:three
+zselect -t 300
+key M-3
+zselect -t 300
 normal
 key -l j
 await at beta:solo
@@ -955,11 +976,15 @@ key ' '
 outer resize-window -t o -x 121 -y 24
 two=$(inner list-panes -s -t alpha -F '#{pane_id}' | sed -n 2p)
 $bin -L $in show $two
-check "arena show and a pane puts its window in front, Plan put away" await dots '○●○'
+check "arena show and a pane opens it in the middle column" await shows '◆ (renamed|two)'
+key Escape
 $bin -L $in plan 7
 see 'no goal'
 $bin -L $in show $two
-check "and a show with Plan open puts it away for the pane" await dots '○●○'
+check "and a show with Plan open opens it in the column too" await shows '◆ (renamed|two)'
+key Escape
+key Escape
+gone 'no goal'
 shows '^NORMAL' || key C-Space
 see '^NORMAL'
 key -l '#'
@@ -1299,7 +1324,7 @@ inner select-window -t alpha:one
 inner split-window -h -t alpha:one sh
 await eval '[[ $(inner list-panes -t alpha:one | wc -l) == 2 ]]'
 zselect -t 50
-shows '^╭─ 1 one' || { key M-h; see '^╭─ 1 one' }
+shows '^╭─ 1 one' || { key M-1; see '^╭─ 1 one' }
 await eval '(( $(settled | sed -n 2p | grep -o "│sh-" | wc -l) >= 2 ))'
 divide=$(barof 5 $(( $(colof 1 '╭─ 1 one') + 1 )))
 park
@@ -1542,6 +1567,7 @@ zselect -t 500
 key Escape
 normal
 key b
+shows '╭─ 1 one' || key M-1
 see '╭─ 1 one'
 key b
 see '◆ needs you'
@@ -1760,7 +1786,9 @@ inner new-session -d -s gamma -n g1 sh
 for n in 2 3 4 5 6 7; inner new-window -t gamma -n g$n sh
 claude gamma:g6 prompt
 $bin -L $in show $(inner display -p -t gamma:g6 '#{pane_id}')
-await shows ' 6 g6 '
+await shows '◆ g6'
+key Escape
+key Escape
 
 g6=$(inner display -p -t gamma:g6 '#{pane_id}')
 plan_up='in flight [0-9]'

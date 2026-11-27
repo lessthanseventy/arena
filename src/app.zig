@@ -1059,16 +1059,9 @@ pub const App = struct {
     /// stops trying, when it last sent a key, and how many Downs it has sent to reach the list.
     const Pick = struct { pane: u32, name: [320]u8 = undefined, len: usize, until: i64, sent_at: i64 = 0, downs: u8 = 0 };
 
-    fn goAgent(app: *App, a: Agent) !void {
-        app.dirty = true;
-        const s = app.sessions.items[a.session];
-        const index = std.mem.indexOfScalar(*Window, s.wins.items, a.win) orelse return;
-        try app.jumpTo(s, index);
-    }
-
-    /// Goes to a subagent's Claude and asks it to show the subagent.
+    /// Opens a subagent's Claude in the column and asks it to show the subagent.
     fn goSub(app: *App, sub: Sub) !void {
-        try app.goAgent(sub.agent);
+        try app.openClaude(sub.agent.win.agent_pane);
         const name = sub.agent.win.sub(sub.index);
         var pick: Pick = .{ .pane = sub.agent.win.agent_pane, .len = @min(name.len, 320), .until = app.now + pick_ms };
         @memcpy(pick.name[0..pick.len], name[0..pick.len]);
@@ -1083,10 +1076,18 @@ pub const App = struct {
         return false;
     }
 
+    /// Whether arena has `pane`'s screen: it is watched, or it is the Claude in the column, whose
+    /// screen is captured while tmux streams nothing.
+    fn seen(app: *const App, pane: *const Pane) bool {
+        if (app.watched(pane)) return true;
+        const view = app.home orelse return false;
+        return view.claude == pane.id and pane.seed == .done;
+    }
+
     /// Whether a subagent's Claude shows it now, as far as arena has its screen.
     pub fn subShown(app: *const App, sub: Sub) bool {
         const pane = @constCast(app).paneById(sub.agent.win.agent_pane) orelse return false;
-        if (!app.watched(pane)) return false;
+        if (!app.seen(pane)) return false;
         const at = listedSub(pane, sub.agent.win.sub(sub.index)) orelse return false;
         return at.shown;
     }
@@ -1105,7 +1106,7 @@ pub const App = struct {
         }
         const wait = pick.sent_at + pick_key_ms - app.now;
         if (wait > 0) return wait;
-        if (!app.watched(pane.?)) return pick_key_ms;
+        if (!app.seen(pane.?)) return pick_key_ms;
         const at = listedSub(pane.?, pick.name[0..pick.len]) orelse return pick_key_ms;
         if (at.below) |rows| if (!at.shown) {
             var keys_buf: [3 * 32 + 1]u8 = undefined;
@@ -1125,19 +1126,19 @@ pub const App = struct {
     }
 
     /// Steps `by` through the Claudes waiting or done, the one that most wants looking at first:
-    /// from the one in view to the next or the one before, round; from any other window, to the
+    /// from the one in the column to the next or the one before, round; from any other, to the
     /// first or the last.
     fn stepAgent(app: *App, by: i32) !void {
         var found: [64]Agent = undefined;
         const n = app.needy(&found);
         if (n == 0) return;
-        const s = app.cur();
+        const open = app.claudeColumn();
         const here = for (found[0..n], 0..) |a, i| {
-            if (s != null and app.sessions.items[a.session] == s.? and s.?.focused() == a.win) break i;
+            if (open != null and open.?.win == a.win) break i;
         } else null;
         const len: i32 = @intCast(n);
         const to: i32 = if (here) |i| @mod(@as(i32, @intCast(i)) + by, len) else if (by > 0) 0 else len - 1;
-        try app.goAgent(found[@intCast(to)]);
+        try app.openClaude(found[@intCast(to)].win.agent_pane);
     }
 
     /// The Claudes waiting or done, as many as `out` holds, the one that most wants looking at first.
@@ -1314,7 +1315,7 @@ pub const App = struct {
             const entry = pop.entry;
             app.closePopup();
             app.normal = false;
-            if (app.agentById(entry)) |a| try app.goAgent(a);
+            if (app.agentById(entry)) |a| try app.openClaude(a.win.agent_pane);
         } else if (anyKey(key, &.{ "j", "\x1b[B", "\x1bOB" })) {
             pane.term.scrollViewport(.{ .delta = 1 });
         } else if (anyKey(key, &.{ "k", "\x1b[A", "\x1bOA" })) {
@@ -2578,7 +2579,7 @@ pub const App = struct {
             .session_changed => |id| app.onSessionChanged(id),
             .card => |id| try app.showPlan(id),
             .planning => |id| try app.showPlanning(id),
-            .pane => |id| try app.showPane(id),
+            .pane => |id| try app.openClaude(id),
             .holder => |id| try app.showHolder(id),
             .inbox => try app.showInbox(),
             .claudes => try win_now.open(app),
@@ -3648,15 +3649,6 @@ pub const App = struct {
         return null;
     }
 
-    /// Pane `id` put in front, its session and window as needed, closing the board; nothing
-    /// when tmux has no such pane.
-    pub fn showPane(app: *App, id: u32) !void {
-        const at = app.paneWindow(id) orelse return;
-        try app.closeBoard();
-        try app.send(.ignore, "select-pane -t %{d}", .{id});
-        try app.jumpTo(at.session, at.index);
-    }
-
     const ColumnWant = struct { pane: u32, session: u32, keep: bool, lists: u8 = 0 };
 
     /// `tail`, a command, run in a detached session of its own sized to the middle column, whose
@@ -3807,11 +3799,11 @@ pub const App = struct {
         return claude_live_ms;
     }
 
-    /// The pane of the Claude holding ticket `id` put in front; nothing when none does.
+    /// The pane of the Claude holding ticket `id` opened in the column; nothing when none does.
     pub fn showHolder(app: *App, id: u32) !void {
         const b = if (app.board) |*b| b else return;
         for (b.cards()) |*card| if (card.id == id) {
-            if (card.holder()) |pane| try app.showPane(pane);
+            if (card.holder()) |pane| try app.openClaude(pane);
             return;
         };
     }
@@ -5891,7 +5883,6 @@ pub const App = struct {
             .sub => |i| {
                 const win = app.claudeOf(app.modalCard() orelse return) orelse return;
                 const a = app.agentById(win.id) orelse return;
-                try app.closeBoard();
                 try app.goSub(.{ .agent = a, .index = i });
             },
             .claude => {
@@ -6358,9 +6349,10 @@ pub const App = struct {
 
     /// Goes where a row of the switcher is.
     fn goRow(app: *App, row: Row) !void {
+        if (row == .claude) return app.openClaude(row.claude.win.agent_pane);
         if (app.home != null) try app.closeBoard();
         switch (row) {
-            .claude => |a| try app.goAgent(a),
+            .claude => unreachable,
             .session => |si| try app.sessionTo(si),
             .new => try app.send(.ignore, "new-session", .{}),
             .hit => |hit| try app.jumpHit(hit),
@@ -7430,6 +7422,8 @@ pub const App = struct {
             }
             if (app.sideFocused() and (letter == 'h' or letter == 'l')) return app.focusBy(if (letter == 'h') -1 else 1);
         }
+        if (app.home != null and app.menu == null and app.prompt == null and app.overview == null and (letter == 'n' or letter == 'N'))
+            return app.stepAgent(if (letter == 'n') 1 else -1);
         if (app.overlay()) {
             app.menu = null;
             app.prompt = null;
@@ -10688,7 +10682,10 @@ test "⏎ on a subagent row in a card's modal shows that subagent, as a click on
     try app.modalKey("\t");
     try app.modalKey("\t");
     try app.modalKey("\r");
-    try std.testing.expect(app.home == null);
+    try std.testing.expectEqual(@as(?u32, 12), app.home.?.claude);
+    var log: [256]u8 = undefined;
+    const n = try sent.readPositionalAll(std.testing.io, &log, 0);
+    try std.testing.expect(std.mem.indexOf(u8, log[0..n], "select-window") == null);
     try std.testing.expectEqual(@as(u32, 12), app.pick.?.pane);
     try std.testing.expectEqualStrings("check deps", app.pick.?.name[0..app.pick.?.len]);
 }
