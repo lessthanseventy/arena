@@ -1334,7 +1334,7 @@ fn aloneHome(sc: *Scene) void {
     var y = l.top + 1;
 
     const move_h = 3 + your_move.len * 2 + 3;
-    var ry = sc.panel(x0, y, W, move_h, "your move", your_move.len, true);
+    var ry = sc.panel(x0, y, W, move_h, "needs you", your_move.len, true);
     for (your_move, 0..) |cl, i| ry += claudeRow(sc, x0 + 1, ry, W - 2, cl, i == 1) + @intFromBool(i == 1);
     y += move_h + 2;
 
@@ -1451,7 +1451,7 @@ fn nextWindow(sc: *Scene, x: usize, y: usize, w: usize, h: usize, focused: bool)
     }
 }
 
-/// Doing: what needs the human and what is moving. Your move, the goal being driven, then one board:
+/// Doing: what needs the human and what is moving. Needs you, the goal being driven, then one board:
 /// landed today, the now line, what is in flight, and next.
 fn doing(sc: *Scene) void {
     const s = sc.skin;
@@ -1463,7 +1463,7 @@ fn doing(sc: *Scene) void {
     var y: usize = 2;
 
     const move_h = @max(needs.len, 1) + 3;
-    var ny = sc.panel(1, y, w, move_h, "your move", needs.len, true);
+    var ny = sc.panel(1, y, w, move_h, "needs you", needs.len, true);
     for (needs, 0..) |need, i| {
         if (i == 5) break;
         ticketRow(sc, 2, ny, w - 2, need.ticket orelse 0, "asks you", s.you, i == 0);
@@ -1473,7 +1473,7 @@ fn doing(sc: *Scene) void {
 
     const goal = plan.goals[0];
     c.fill(1, y, w, 1, s.tile);
-    _ = c.print(3, y, sc.fmt("◆ towards #{d} {s}", .{ goal.epic, goal.title }), .{ .fg = s.text, .bg = s.tile, .bold = true }, w / 2);
+    _ = c.print(3, y, sc.fmt("◆ heading for  #{d} {s}", .{ goal.epic, goal.title }), .{ .fg = s.text, .bg = s.tile, .bold = true }, w / 2);
     const pct = goal.landed * 100 / goal.total;
     sc.bar(w - 40, y, 20, goal.landed, goal.total, s.accent);
     _ = c.print(w - 18, y, sc.fmt("{d}/{d}  {d}%", .{ goal.landed, goal.total, pct }), .{ .fg = s.text, .bg = s.tile }, 14);

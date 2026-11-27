@@ -89,9 +89,22 @@ fn stateWords(buf: []u8, step: tickets.Step) struct { text: []const u8, attentio
     return .{ .text = std.fmt.bufPrint(buf, "{s} {s}", .{ sheets.Sheet.stepMark(step.state), word }) catch "", .attention = attention };
 }
 
-/// Enter on a goal or one of its tickets: its card, in the middle column.
+/// Enter on a goal or one of its tickets: its card, in the middle column. On Heading for it opens
+/// Planning on the goal.
 pub fn act(app: *App, row: *const sheets.Row) !void {
+    if (row.kind == .focal) return openPlanningOn(app, row.ticket orelse return);
     _ = try app.openDetail(row.ticket orelse return);
+}
+
+/// Planning shown with the pick on goal `epic`'s row, on the first goal when it has none.
+fn openPlanningOn(app: *App, epic: u32) void {
+    openPlanning(app);
+    var sheet: sheets.Sheet = undefined;
+    if (!app.planSheet(&sheet)) return;
+    for (sheet.rows) |row| if (row.kind == .goal and row.ticket == epic) {
+        app.home.?.plan_pick = row.pick orelse return;
+        return;
+    };
 }
 
 /// Planning shown with the pick on goals' first row, where `d` drives one and `+` makes one.

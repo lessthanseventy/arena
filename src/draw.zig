@@ -2088,7 +2088,7 @@ pub fn benchState(app: *const App, card: *const tickets.Card, r: theme.Roles, bu
 
 const plan_keys = [_][2][]const u8{
     .{ "tab", "the other screen: Doing, or Planning" },
-    .{ "j k, arrows", "pick a row: on Doing your move, then the board, landed above its now line; on Planning goals, no goal, next, backlog" },
+    .{ "j k, arrows", "pick a row: on Doing needs you, then the board, landed above its now line; on Planning goals, no goal, next, backlog" },
     .{ "⏎, click it", "go: building or stuck, its Claude; up next, start it; landed or in the pipeline, its card; plan an idea, unfold a row, the board on it" },
     .{ "space", "open the row in place; on an open row, its whole ticket" },
     .{ "f", "the picked window whole, over the plan; q closes it" },
@@ -2099,7 +2099,7 @@ const plan_keys = [_][2][]const u8{
     .{ "z", "on Planning: fold a goal's tickets away, or list them" },
     .{ "x e", "on a kept idea: withdraw it, edit it" },
     .{ "B, b", "the board, and back to the plan" },
-    .{ "] [", "your move, first or last" },
+    .{ "] [", "needs you, first or last" },
     .{ "l, h", "the orchestrator's column, and back" },
     .{ "c g o A u", "the Claudes list, the gate, the orchestrator, babylon's auto mode, the repos and what they have to push" },
     .{ "`", "fold the orchestrator's column, or unfold" },
@@ -4018,7 +4018,7 @@ test "in Planning's goals window the goals' ids start at one x and their tickets
     try std.testing.expect(!std.meta.eql(r.well, g.bgs[second][count - 1]));
 }
 
-test "driving towards is one line: the goal, then its bar and count, with nothing under it but the board" {
+test "heading for is one line: the goal, then its bar and count, with nothing under it but the board" {
     const eq = std.testing.expectEqual;
     var board = try tickets.Board.parse(std.testing.allocator, grid_board);
     defer board.deinit();
@@ -4029,7 +4029,7 @@ test "driving towards is one line: the goal, then its bar and count, with nothin
     const driving = shot.app.planSlot(.driving);
     try eq(@as(u16, 1), driving.h);
     try eq(driving.y + 1 + sheets.gap, shot.app.planSlot(.board).y);
-    const title = g.find(driving.y, driving.x, driving.x + driving.w, "towards #410 menard goal").?;
+    const title = g.find(driving.y, driving.x, driving.x + driving.w, "heading for  #410 menard goal").?;
     const count = g.find(driving.y, driving.x, driving.x + driving.w, "5/12  41%").?;
     try std.testing.expect(title < count);
     try std.testing.expect(!std.meta.eql(r.well, g.bgs[driving.y][count - 1]));

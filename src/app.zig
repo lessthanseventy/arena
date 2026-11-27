@@ -3150,8 +3150,8 @@ pub const App = struct {
         app.dirty = true;
     }
 
-    /// Your move's items for the Claudes waiting in their panes, put after babylon's: babylon does
-    /// not know of them. Each leaves with the window's state.
+    /// Needs you's items for the Claudes waiting in their panes and for a ticket babylon calls
+    /// stalled, put after babylon's: babylon does not know of the first. Each leaves with the state.
     fn syncWaiting(app: *App) !void {
         const b = if (app.board) |*b| b else return;
         var items: std.ArrayList(tickets.Need) = .empty;
@@ -3174,6 +3174,20 @@ pub const App = struct {
                 .ticket = ticket,
                 .repo = if (ticket) |t| if (app.ticketCard(t)) |card| card.repo orelse "" else "" else "",
                 .text = "",
+            });
+        };
+        if (b.plan()) |given| for (given.now) |row| {
+            if (row.stalled == null) continue;
+            try texts.writer.writeAll("stuck: its Claude has stopped");
+            try ends.append(app.gpa, texts.written().len);
+            try items.append(app.gpa, .{
+                .id = try std.fmt.allocPrint(app.gpa, "stuck:{d}", .{row.ticket}),
+                .kind = "stuck",
+                .ticket = row.ticket,
+                .repo = row.repo orelse "",
+                .text = "",
+                .since = row.since,
+                .actions = @constCast(&[_]tickets.Action{.{ .key = "⏎", .label = "open pane" }}),
             });
         };
         defer for (items.items) |item| app.gpa.free(item.id);
@@ -10947,6 +10961,36 @@ test "a Claude waiting in its pane is a Your move item after babylon's, ⏎ show
     bare.claude = .done;
     try app.syncWaiting();
     try std.testing.expectEqual(@as(usize, 1), app.board.?.needsYou().len);
+}
+
+test "a stalled ticket is a stuck item in Needs you, ⏎ on it goes to its pane, and it goes when the ticket is not stalled" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    const gpa = std.testing.allocator;
+    var app: App = .{ .gpa = gpa, .io = std.testing.io, .tmux_in = sent };
+    defer app.pending.deinit(gpa);
+    const head =
+        \\{"tickets":[],"plan":{"now":[{"ticket":510,"repo":"tlon","title":"Money","state":"building","pane":"%575"
+    ;
+    const tail =
+        \\}],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    ;
+    app.board = try tickets.Board.parse(gpa, head ++ ",\"stalled\":\"idle 9m\"" ++ tail);
+    defer app.board.?.deinit();
+    try app.syncWaiting();
+    const needs = app.board.?.needsYou();
+    try std.testing.expectEqual(@as(usize, 1), needs.len);
+    try std.testing.expectEqualStrings("stuck", needs[0].kind);
+    try std.testing.expectEqual(@as(?u32, 510), needs[0].ticket);
+    try std.testing.expectEqualStrings("stuck: its Claude has stopped", needs[0].text);
+    try std.testing.expectEqualStrings("open pane", needs[0].actions[0].label);
+
+    app.board.?.deinit();
+    app.board = try tickets.Board.parse(gpa, head ++ tail);
+    try app.syncWaiting();
+    try std.testing.expectEqual(@as(usize, 0), app.board.?.needsYou().len);
 }
 
 test "arena plan N opens the shut repo chip that holds N" {

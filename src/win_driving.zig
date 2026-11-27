@@ -13,7 +13,7 @@ const goalChips = draw.goalChips;
 /// Cells of driving towards' bar, before its `N/M  P%`.
 const bar_cells = 14;
 
-/// Driving towards, one row `ww` cells wide from `x0` and no body: `◆ towards #N title`, the
+/// Heading for, one row `ww` cells wide from `x0` and no body: `◆ heading for  #N title`, the
 /// goal's repos, its bar and `N/M  P%` at the right edge. Its pick is the row itself.
 pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, at: usize, y: u16, x0: usize, ww: usize, lit: bool) !void {
     const b = &app.board.?;
@@ -28,7 +28,7 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
         .focal => {
             const goal = given.goals[row.item];
             var head: [24]u8 = undefined;
-            const towards = std.fmt.bufPrint(&head, "towards #{d} ", .{goal.epic}) catch "";
+            const towards = std.fmt.bufPrint(&head, "heading for  #{d} ", .{goal.epic}) catch "";
             var label: [32]u8 = undefined;
             const count = std.fmt.bufPrint(&label, "{d}/{d}  {d}%", .{ goal.landed, goal.total, if (goal.total == 0) 0 else goal.landed * 100 / goal.total }) catch "";
             const room = bar_cells + 1 + cellCount(count);
@@ -37,10 +37,14 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             try draw.goalBar(w, r, bar_x, y, room, goal, goalHue(b, r, goal), face, r.text, "", r.dim);
             try bench.say(w, x0 + 3, y, towards, r.dim, face, false);
             const title_x = x0 + 3 + cellCount(towards);
-            try draw.sayCut(w, title_x, y, goal.name(), (bar_x -| shares -| 1) -| title_x, r.text, face, true);
+            try draw.sayCut(w, title_x, y, goal.name(), (bar_x -| shares -| 1) -| title_x, r.accent, face, true);
         },
         .drove => try draw.sayCut(w, x0 + 3, y, row.text, ww -| 4, r.text, face, true),
-        else => try draw.sayCut(w, x0 + 3, y, row.text, ww -| 4, r.dim, face, false),
+        else => {
+            const lead = "heading for  ";
+            try bench.say(w, x0 + 3, y, lead, r.dim, face, false);
+            try draw.sayCut(w, x0 + 3 + cellCount(lead), y, row.text, ww -| (4 + cellCount(lead)), r.dim, face, false);
+        },
     }
 }
 

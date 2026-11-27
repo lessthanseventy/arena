@@ -38,8 +38,8 @@ pub const Window = enum {
 
     pub fn title(win: Window) []const u8 {
         return switch (win) {
-            .move => "your move",
-            .driving => "driving towards",
+            .move => "needs you",
+            .driving => "heading for",
             .no_goal => "no goal",
             else => @tagName(win),
         };
@@ -674,7 +674,7 @@ pub const Sheet = struct {
         } else if (focalGoal(given)) |at| {
             s.add(.{ .kind = .focal, .item = at, .pick = 0, .ticket = given.goals[at].epic });
         }
-        s.end("towards no goal · pick one on planning");
+        s.end("nothing · pick a goal on planning");
         s.begin(.board);
         s.boardRows(given, width, epoch);
     }

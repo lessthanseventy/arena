@@ -5,6 +5,7 @@ const app_mod = @import("app.zig");
 const tickets = @import("board.zig");
 const draw = @import("draw.zig");
 const win_goals = @import("win_goals.zig");
+const win_board = @import("win_board.zig");
 const App = app_mod.App;
 const anyKey = app_mod.anyKey;
 const cellCount = draw.cellCount;
@@ -112,6 +113,15 @@ pub fn act(app: *App, item: feed.Item, key: []const u8) !bool {
         if (!std.mem.eql(u8, named, "⏎")) return false;
         const win = std.fmt.parseInt(u32, need.id["pane:".len..], 10) catch return true;
         for (app.sessions.items) |s| for (s.wins.items) |w| if (w.id == win) try app.openClaude(w.agent_pane);
+        return true;
+    }
+    if (std.mem.eql(u8, need.kind, "stuck")) {
+        if (!std.mem.eql(u8, named, "⏎")) return false;
+        const given = b.plan() orelse return true;
+        for (given.now, 0..) |row, i| if (row.ticket == need.ticket) {
+            try win_board.act(app, &.{ .kind = .now, .ticket = row.ticket, .item = i });
+            break;
+        };
         return true;
     }
     if (std.mem.eql(u8, need.kind, "draft") and anyKey(key, &.{" "})) {

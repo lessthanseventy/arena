@@ -1349,6 +1349,13 @@ check "the board holds the ticket being built" see 'First buil'
 check "and the pipeline's, with its stage" see 'Second lan'
 check "and today's landing, a row to a ticket, above the now line" see '✓ landed +#703'
 check "next's row under the building ones, with what it waits for" see '· up next +#7 +Lights +tlon +ready'
+check "Doing's first window is titled needs you" see '◆ needs you'
+check "heading for says no goal is driven, and what to do" see 'heading for +nothing · pick a goal on planning'
+cp $tmp/run/babylon/board.json $tmp/board.plain
+sed 's/"title":"First building","state":"building"/&,"stalled":"idle 9m"/' $tmp/board.plain >$tmp/run/babylon/board.json
+check "a stalled ticket is a stuck item in needs you" await shows '▲ #701 arena +stuck: its Claude has stopped'
+cp $tmp/board.plain $tmp/run/babylon/board.json
+check "and it leaves when the ticket stops being stalled" gone 'stuck: its Claude'
 title_row() { settled | grep -n "$1" | head -1 | cut -d: -f1 }
 next_row=$(title_row '◆ board')
 key z
