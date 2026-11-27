@@ -572,6 +572,9 @@ pub const App = struct {
     projects_dir: ?[]const u8 = null,
     /// The tickets whose detail babylon was asked to write and arena has yet to take in.
     detail_asked: std.ArrayList(u32) = .empty,
+    /// The id of the repos view's latest git request, each with its own detail file: only that
+    /// one's answer is read, so a slower earlier answer cannot show.
+    repos_req: u32 = 0,
     /// The pushes run from the repos view and not yet answered, as `repos:<repo>:<commits>`, and
     /// what the view says of the last.
     repos_pushing: std.ArrayList([]u8) = .empty,
@@ -11053,6 +11056,40 @@ test "restart-pending and a repo's unpushed are chips on the head, not Your move
 
     try app.homeKey("\x1b");
     try std.testing.expect(!view.repos);
+}
+
+test "a push that answers ok has its repo counted again, and the row reads what git says" {
+    const dir = "arena-test-recount-1287";
+    const cwd = std.Io.Dir.cwd();
+    try cwd.createDirPath(std.testing.io, dir);
+    defer cwd.deleteTree(std.testing.io, dir) catch {};
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try tryApp(sent, "{\"tickets\":[],\"needs_you\":[" ++
+        "{\"id\":\"push:arena:abc:0\",\"kind\":\"push\",\"ticket\":null,\"repo\":\"arena\",\"status\":true,\"text\":\"▲ arena: 7 unpushed\",\"actions\":[]}]," ++ plan_tail);
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    defer {
+        for (app.repos_pushing.items) |id| std.testing.allocator.free(id);
+        app.repos_pushing.deinit(std.testing.allocator);
+    }
+    app.board_dir = dir;
+    app.home.?.repos = true;
+    app.repo_counts_n = 1;
+    app.repo_counts[0] = .{ .len = 5, .ahead = 7, .behind = 0 };
+    @memcpy(app.repo_counts[0].name[0..5], "arena");
+    try app.repos_pushing.append(std.testing.allocator, try std.testing.allocator.dupe(u8, "repos:arena:7"));
+    try cwd.writeFile(std.testing.io, .{ .sub_path = dir ++ "/refused-repos:arena:7", .data = "ok\n" });
+
+    win_repos.polled(&app);
+    var got: [4096]u8 = undefined;
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "rev-list --left-right --count main...origin/main") != null);
+    try cwd.writeFile(std.testing.io, .{ .sub_path = dir ++ "/repos-arena.counts", .data = "0\t0\n" });
+    win_repos.polled(&app);
+    var rows: [max_repos]tickets.RepoState = undefined;
+    try std.testing.expectEqual(@as(u32, 0), win_repos.list(&app, &rows)[0].ahead);
 }
 
 test "< on a done card's modal asks before reopening, n keeps it done and y reopens; reopen is the last button" {

@@ -143,7 +143,7 @@ const BoardFile = struct {
     /// whichever way its box closed, one written after it closed too.
     fn checkDetail(file: *BoardFile, app: *App) void {
         _ = file;
-        const open: ?u32 = if (app.home) |view| (if (view.item_open or view.repos or view.claude_diff) 0 else view.detail) else null;
+        const open: ?u32 = if (app.home) |view| (if (view.repos) app.repos_req else if (view.item_open or view.claude_diff) 0 else view.detail) else null;
         var i: usize = 0;
         while (i < app.detail_asked.items.len) {
             const id = app.detail_asked.items[i];
@@ -298,6 +298,32 @@ fn verbArgOk(verb: []const u8, next: ?[]const u8) bool {
     const arg = next orelse return false;
     if (std.mem.eql(u8, verb, "plan") or std.mem.eql(u8, verb, "board")) return ticketId(arg) != null;
     return showTarget(arg);
+}
+
+test "the repos view reads only its latest git request, whichever answer arrives last" {
+    const io = std.testing.io;
+    const dir = "arena-test-detail-1287";
+    const cwd = std.Io.Dir.cwd();
+    try cwd.createDirPath(io, dir);
+    defer cwd.deleteTree(io, dir) catch {};
+    const sent = try cwd.createFile(io, dir ++ "/tmux", .{ .read = true });
+    defer sent.close(io);
+    var app: App = .{ .gpa = std.testing.allocator, .io = io, .tmux_in = sent, .board_dir = dir };
+    defer app.detail.deinit(std.testing.allocator);
+    defer app.detail_asked.deinit(std.testing.allocator);
+    app.home = .{ .repos = true };
+    app.repos_req = 0x8000_0002;
+    try app.detail_asked.appendSlice(std.testing.allocator, &.{ 0x8000_0001, 0x8000_0002 });
+    var file: BoardFile = undefined;
+
+    try cwd.writeFile(io, .{ .sub_path = dir ++ "/detail-2147483650.txt", .data = "second repo's commits\n" });
+    file.checkDetail(&app);
+    try std.testing.expectEqualStrings("second repo's commits\n", app.detail.items);
+
+    try cwd.writeFile(io, .{ .sub_path = dir ++ "/detail-2147483649.txt", .data = "first repo's commits\n" });
+    file.checkDetail(&app);
+    try std.testing.expectEqualStrings("second repo's commits\n", app.detail.items);
+    try std.testing.expectEqual(@as(usize, 0), app.detail_asked.items.len);
 }
 
 test showTarget {

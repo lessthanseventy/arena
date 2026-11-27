@@ -104,19 +104,26 @@ pub fn open(app: *App) !void {
 fn ask(app: *App) !void {
     const view = &app.home.?;
     app.detail.clearRetainingCapacity();
+    nextRequest(app);
     var rows: Repos = undefined;
     const repos = list(app, &rows);
     if (view.repos_pick >= repos.len or repos[view.repos_pick].ahead == 0) return;
     try runGit(app, repos[view.repos_pick].repo, "log --format='%h %s ‖ %(trailers:valueonly,separator=%x20)' origin/main..main");
 }
 
-fn runGit(app: *App, repo: []const u8, comptime git: []const u8) !void {
+/// Makes the answers of every request so far stale; the ids start above any ticket's.
+fn nextRequest(app: *App) void {
+    app.repos_req = 0x8000_0000 | ((app.repos_req +% 1) & 0x7fff_ffff);
+}
+
+/// Runs `git` in `repo`, its answer into a file of its own.
+fn runGit(app: *App, repo: []const u8, git: []const u8) !void {
+    nextRequest(app);
     var buf: [std.fs.max_path_bytes]u8 = undefined;
-    const path = app.detailPath(0, &buf) orelse return;
-    std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
+    const path = app.detailPath(app.repos_req, &buf) orelse return;
     if (app.detail_asked.items.len == 16) _ = app.detail_asked.orderedRemove(0);
-    try app.detail_asked.append(app.gpa, 0);
-    try app.send(.ignore, "run-shell -b \"git -C \\\"\\$HOME/projects/{s}\\\" " ++ git ++ " >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ repo, path, path, path });
+    try app.detail_asked.append(app.gpa, app.repos_req);
+    try app.send(.ignore, "run-shell -b \"git -C \\\"\\$HOME/projects/{s}\\\" {s} >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ repo, git, path, path, path });
 }
 
 fn commitCount(app: *const App) usize {
@@ -172,6 +179,7 @@ pub fn polled(app: *App) void {
         const line = std.mem.trim(u8, text[0 .. std.mem.indexOfScalar(u8, text, '\n') orelse text.len], " ");
         if (std.mem.eql(u8, line, "ok")) {
             say(app, false, "pushed {s}: {s} commits", .{ repo, n });
+            askCount(app, repo, false) catch {};
         } else {
             say(app, true, "{s}: {s}", .{ repo, if (line.len > 0) line else "push failed" });
         }
@@ -261,12 +269,10 @@ pub fn key(app: *App, pressed: []const u8) !void {
 }
 
 fn diff(app: *App, repo: []const u8, sha: []const u8) !void {
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
-    const path = app.detailPath(0, &buf) orelse return;
-    std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
-    if (app.detail_asked.items.len == 16) _ = app.detail_asked.orderedRemove(0);
-    try app.detail_asked.append(app.gpa, 0);
-    try app.send(.ignore, "run-shell -b \"git -C \\\"\\$HOME/projects/{s}\\\" show --stat --patch {s} >'{s}.part' 2>&1; mv '{s}.part' '{s}'\"", .{ repo, sha, path, path, path });
+    if (sha.len > 40) return;
+    var cmd: [64]u8 = undefined;
+    const show = std.fmt.bufPrint(&cmd, "show --stat --patch {s}", .{sha}) catch return;
+    try runGit(app, repo, show);
 }
 
 const trailer_mark = " ‖ ";
