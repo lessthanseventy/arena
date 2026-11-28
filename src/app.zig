@@ -3139,6 +3139,30 @@ pub const App = struct {
         }
     }
 
+    /// The id of the Your move item the plan's pick is on, copied into `buf`.
+    fn pickedNeedId(app: *const App, buf: []u8) ?[]const u8 {
+        const view = app.home orelse return null;
+        var sheet: sheets.Sheet = undefined;
+        if (!app.planSheet(&sheet)) return null;
+        const row = sheet.picked(view.plan_pick) orelse return null;
+        if (row.kind != .need) return null;
+        const id = app.board.?.needsYou()[row.item].id;
+        if (id.len > buf.len) return null;
+        @memcpy(buf[0..id.len], id);
+        return buf[0..id.len];
+    }
+
+    /// The plan's pick put on the row of Your move item `id`, when it is still there.
+    fn pickNeed(app: *App, id: []const u8) void {
+        var sheet: sheets.Sheet = undefined;
+        if (!app.planSheet(&sheet)) return;
+        for (sheet.rows[0..sheet.n]) |row| {
+            if (row.kind != .need or !std.mem.eql(u8, app.board.?.needsYou()[row.item].id, id)) continue;
+            app.home.?.plan_pick = row.pick orelse return;
+            return;
+        }
+    }
+
     /// The board file's text as read now: the board it holds takes the place of the one before;
     /// there is none when there is no file or it does not parse.
     pub fn setBoard(app: *App, text: ?[]const u8) !void {
@@ -3147,6 +3171,8 @@ pub const App = struct {
             scopeNameIn(ob, view.plan_repo)
         else
             null else null else null;
+        var id_buf: [128]u8 = undefined;
+        const picked_need = app.pickedNeedId(&id_buf);
         app.board_error = null;
         app.board = if (text) |t| tickets.Board.parse(app.gpa, t) catch |err| no: {
             app.board_error = err;
@@ -3163,6 +3189,7 @@ pub const App = struct {
             app.home = .{ .back = view.back };
         };
         try app.syncWaiting();
+        if (picked_need) |id| app.pickNeed(id);
         try app.frameSync();
         app.settleAuto();
         // the feed's height may change, and the orchestrator's window with it
@@ -11330,6 +11357,113 @@ test "a click on a Your move row opens that row's item, with nothing open, a car
     try std.testing.expect(try app.homeMouse(try movePoint(&app, 1)));
     try eq(@as(?u32, 1202), view.detail);
     try eq(@as(?usize, null), app.itemNeed());
+}
+
+test "with a draft, an ask, two tries and arena's own stuck row, each Your move row opens its own item, by click, space and ⏎" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try tryApp(sent,
+        \\{"tickets":[{"id":1428,"repo":"arena","title":"stalled","status":"doing","claimed_by":"%9"},
+        \\{"id":1407,"repo":"arena","title":"to try a","status":"try","stage":"landed","checks":[]},
+        \\{"id":1400,"repo":"arena","title":"to try b","status":"try","stage":"landed","checks":[]}],
+        \\"backlog":[{"id":1427,"repo":"babylon","kind":"epic","title":"Stacks","status":"backlog"},
+        \\{"id":1429,"repo":"babylon","title":"a step","status":"backlog","epic_id":1427},
+        \\{"id":1437,"repo":"babylon","title":"Auto paces building","status":"backlog"}],
+        \\"needs_you":[
+        \\{"id":"ask:88","kind":"draft","ticket":1427,"repo":"","text":"#1427 Stacks\n1 step in 1 repo: babylon 1","doc":null,
+        \\ "actions":[{"key":"y","label":"go","argv":["babylon","adopt","1427"]},{"key":"r","label":"reply","argv":["babylon","answer","88","--words"],"needs":"words"}]},
+        \\{"id":"ask:89","kind":"ask","ticket":1437,"repo":"babylon","text":"#1437 babylon  asks: Which?","doc":null,
+        \\ "actions":[{"key":"1","label":"One","argv":["babylon","answer","89","1"]},{"key":"c","label":"in words","argv":["babylon","answer","89","--words"],"needs":"words"}]},
+        \\{"id":"try:1407","kind":"try","ticket":1407,"repo":"arena","text":"#1407 arena  to try","actions":[]},
+        \\{"id":"try:1400","kind":"try","ticket":1400,"repo":"arena","text":"#1400 arena  to try","actions":[]}],
+        \\"plan":{"now":[{"ticket":1428,"repo":"arena","title":"stalled","state":"building","pane":"%9","stalled":"idle 9m"}],
+        \\"next":[],"goals":[],"ideas":[{"epic":1427,"title":"Stacks","state":"draft","steps":1}],
+        \\"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    );
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.detail_asked.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    app.roles = @import("parts.zig").roles();
+    app.home.?.focus = .plan;
+    app.normal = false;
+    try app.syncWaiting();
+    const view = &app.home.?;
+    const eq = std.testing.expectEqual;
+    try eq(@as(usize, 5), app.board.?.needsYou().len);
+    try std.testing.expectEqualStrings("stuck", app.board.?.needsYou()[4].kind);
+
+    // by click: the draft, then the ask, each in the other's place
+    try std.testing.expect(try app.homeMouse(try movePoint(&app, 0)));
+    try eq(@as(?u32, 1427), view.draft);
+    try std.testing.expect(try app.homeMouse(try movePoint(&app, 1)));
+    try std.testing.expect(try app.homeMouse(try movePoint(&app, 1)));
+    try eq(@as(?u32, null), view.draft);
+    try eq(@as(?u32, 1437), view.detail);
+    try std.testing.expect(try app.homeMouse(try movePoint(&app, 0)));
+    try eq(@as(?u32, 1427), view.draft);
+    try eq(@as(?u32, null), view.detail);
+    try app.homeKey("\x1b");
+
+    // by key: space and ⏎ on each row, the pick moved by j
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    const first = sheet.pickRange(.move).?.first;
+    for ([_][]const u8{ " ", "\r" }) |key| {
+        view.plan_pick = first;
+        try app.homeKey(key);
+        try eq(@as(?u32, 1427), view.draft);
+        try app.homeKey("\x1b");
+        try app.homeKey("j");
+        try app.homeKey(key);
+        try eq(@as(?u32, null), view.draft);
+        try eq(@as(?u32, 1437), view.detail);
+        try app.homeKey("\x1b");
+        try eq(@as(?u32, null), view.detail);
+    }
+}
+
+test "the plan's pick stays on its Your move item when one above it leaves, so the row lit is the open draft's, and on its place when its own leaves" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    const head =
+        \\{"tickets":[],"backlog":[{"id":1427,"repo":"babylon","kind":"epic","title":"Stacks","status":"backlog"},
+        \\{"id":1429,"repo":"babylon","title":"a step","status":"backlog","epic_id":1427}],"needs_you":[
+    ;
+    const gone = "{\"id\":\"try:1452\",\"kind\":\"try\",\"ticket\":1452,\"repo\":\"arena\",\"text\":\"#1452 arena  to try\",\"actions\":[]},";
+    const draft = "{\"id\":\"ask:88\",\"kind\":\"draft\",\"ticket\":1427,\"repo\":\"\",\"text\":\"#1427 Stacks\",\"actions\":[{\"key\":\"y\",\"label\":\"go\",\"argv\":[\"babylon\",\"adopt\",\"1427\"]}]},";
+    const ask = "{\"id\":\"ask:89\",\"kind\":\"ask\",\"ticket\":1437,\"repo\":\"babylon\",\"text\":\"#1437 babylon  asks: Which?\",\"actions\":[{\"key\":\"1\",\"label\":\"One\",\"argv\":[\"babylon\",\"answer\",\"89\",\"1\"]}]}";
+    const tail =
+        \\],"plan":{"now":[],"next":[],"goals":[],"ideas":[{"epic":1427,"title":"Stacks","state":"draft","steps":1}],
+        \\"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}
+    ;
+    var app = try tryApp(sent, head ++ gone ++ draft ++ ask ++ tail);
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    app.roles = @import("parts.zig").roles();
+    app.home.?.focus = .plan;
+    app.normal = false;
+    const view = &app.home.?;
+    var sheet: sheets.Sheet = undefined;
+    try std.testing.expect(app.planSheet(&sheet));
+    view.plan_pick = sheet.pickRange(.move).?.first + 1;
+    try app.homeKey(" ");
+    try std.testing.expectEqual(@as(?u32, 1427), view.draft);
+
+    try app.setBoard(head ++ draft ++ ask ++ tail);
+    try std.testing.expect(app.planSheet(&sheet));
+    const row = sheet.picked(view.plan_pick).?;
+    try std.testing.expect(row.kind == .need);
+    try std.testing.expectEqualStrings("ask:88", app.board.?.needsYou()[row.item].id);
+    try std.testing.expectEqual(@as(?u32, 1427), view.draft);
+
+    try app.homeKey("\x1b");
+    try app.setBoard(head ++ ask ++ tail);
+    try std.testing.expect(app.planSheet(&sheet));
+    try std.testing.expectEqualStrings("ask:89", app.board.?.needsYou()[sheet.picked(view.plan_pick).?.item].id);
 }
 
 test "⏎ on a Claude with no ticket in the Claudes list shows its window, space opens its popup, and its peek is its window" {
