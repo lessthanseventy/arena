@@ -1276,11 +1276,13 @@ pub fn click(app: *App, m: @import("keys.zig").Mouse) !void {
         const box = g.boxes[s];
         if (m.x < g.right_x or m.x >= g.right_x + g.right_w or m.y < box.y or m.y >= box.y + box.h) continue;
         const was_focused = view.repos_in and view.repos_section == s;
+        const body = g.inside(s);
+        // the row under the pointer is the row as drawn, before this click focuses the box
+        const from = firstRow(text, view.*, s, body.n);
         view.repos_in = true;
         view.repos_section = @intCast(s);
-        const body = g.inside(s);
         if (m.y < body.y or m.y >= body.y + body.n) return;
-        const d = firstRow(text, view.*, s, body.n) + (m.y - body.y);
+        const d = from + (m.y - body.y);
         const item = itemOnRow(text, s, d) orelse return;
         const row = rowOf(view, s);
         const was_row = row.*;
