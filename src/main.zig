@@ -779,6 +779,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
             app.report_until = 0;
             app.clearReportSaid();
         }
+        app.landFlights();
         if (app.want_list and !app.listing) try app.requestList();
         if (app.listed and open_wanted != .as_is) {
             switch (open_wanted) {
@@ -821,6 +822,7 @@ fn attached(init: std.process.Init, argv: []const []const u8, tty: std.Io.File, 
             frame.clearRetainingCapacity();
             try draw.frame(&app, &frame.writer, what);
             try tty.writeStreamingAll(io, frame.written());
+            if (whole) app.flightsDrawn();
         }
         if (app.listed and app.out.items.len > 0) app.dirty = true;
 

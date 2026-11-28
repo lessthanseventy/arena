@@ -3563,7 +3563,7 @@ test "a Your move row too long for its width ends at a whole word with …" {
     var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
     app.roles = @import("parts.zig").roles();
     var f: feed.Feed = undefined;
-    feed.buildPicked(&f, &b, &.{}, &.{}, 20, 80, 1795262400, 2);
+    feed.buildPicked(&f, &b, &.{}, &.{}, &.{}, 20, 80, 1795262400, 2);
     var buf: [2048]u8 = undefined;
     var out: Writer = .fixed(&buf);
     var pen: Pen = .{};
@@ -3580,7 +3580,7 @@ test "a to-try tile is drawn: its chip, its age in the you colour at a week, the
     app.roles = @import("parts.zig").roles();
     const r = app.roles.?;
     var f: feed.Feed = undefined;
-    feed.buildPicked(&f, &b, &.{}, &.{}, 56, 80, 1795262400, 2);
+    feed.buildPicked(&f, &b, &.{}, &.{}, &.{}, 56, 80, 1795262400, 2);
     var buf: [2048]u8 = undefined;
     var want: [64]u8 = undefined;
     const Rows = struct {

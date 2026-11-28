@@ -22,7 +22,7 @@ chmod +x $tmp/bin/claude
 print -r -- $'#!/bin/sh\nprintf "%s|" "$@" >>'$tmp$'/notified\necho >>'$tmp$'/notified' >$tmp/bin/notify-send
 chmod +x $tmp/bin/notify-send
 # stands in for babylon's command line: it says what the board answered
-print -r -- $'#!/bin/sh\necho "$@" >>'$tmp$'/babylon\n[ "$1" = answer ] && [ -e '$tmp$'/refuse ] && { echo "babylon: no session to answer" >&2; exit 1; }\n[ "$1" = give ] && [ -e '$tmp$'/refuse ] && { echo "babylon: the Claude in $3 is mid-turn" >&2; exit 1; }\n[ "$1" = start ] && [ -e '$tmp$'/refuse-start ] && { echo "babylon: ticket #$2 is claimed by pane %1010" >&2; exit 1; }\n[ "$1" = next ] && [ -e '$tmp$'/refuse-next ] && { echo "babylon: ticket #$2 is claimed by pane %1010" >&2; exit 1; }\n[ "$1" = detail ] && printf \'#%s Lights\\n\\nthe whole of it\\n\' "$2"\n[ "$1" = gate ] && printf \'run submitted 2026-11-24T05:00:00Z\\n  rebase: ok (2026-11-24T05:00:01Z to 2026-11-24T05:00:05Z)\\n  gate: failed (2026-11-24T05:00:05Z to 2026-11-24T05:02:03Z)\\n    expected 1, found 0\\n\'\n[ "$1" = auto ] && [ -e '$tmp$'/chatty ] && { echo "babylon: auto chatter"; echo "babylon: auto chatter on stderr" >&2; }\nexit 0' >$tmp/bin/babylon
+print -r -- $'#!/bin/sh\necho "$@" >>'$tmp$'/babylon\n[ "$1" = answer ] && [ -e '$tmp$'/refuse ] && { echo "babylon: no session to answer" >&2; exit 1; }\n[ "$1" = give ] && [ -e '$tmp$'/refuse ] && { echo "babylon: the Claude in $3 is mid-turn" >&2; exit 1; }\n[ "$1" = start ] && [ -e '$tmp$'/refuse-start ] && { echo "babylon: ticket #$2 is claimed by pane %1010" >&2; exit 1; }\n[ "$1" = next ] && [ -e '$tmp$'/refuse-next ] && { echo "babylon: ticket #$2 is claimed by pane %1010" >&2; exit 1; }\n[ "$1" = land ] && [ -e '$tmp$'/slow ] && sleep 2\n[ "$1" = detail ] && printf \'#%s Lights\\n\\nthe whole of it\\n\' "$2"\n[ "$1" = gate ] && printf \'run submitted 2026-11-24T05:00:00Z\\n  rebase: ok (2026-11-24T05:00:01Z to 2026-11-24T05:00:05Z)\\n  gate: failed (2026-11-24T05:00:05Z to 2026-11-24T05:02:03Z)\\n    expected 1, found 0\\n\'\n[ "$1" = auto ] && [ -e '$tmp$'/chatty ] && { echo "babylon: auto chatter"; echo "babylon: auto chatter on stderr" >&2; }\nexit 0' >$tmp/bin/babylon
 chmod +x $tmp/bin/babylon
 # stands in for meatcheck: it records what it was asked and prints the comments it was given
 print -r -- $'#!/bin/sh\necho "$@" >>'$tmp$'/meatcheck\n[ -e '$tmp$'/comments ] && cat '$tmp$'/comments\nexit 0' >$tmp/bin/meatcheck
@@ -175,7 +175,7 @@ fresh() {
   inner kill-server 2>/dev/null
   [[ -n $sizer ]] && exec {sizer}>&-
   rm -rf $tmp/run $tmp/raw $tmp/err $tmp/babylon $tmp/notified $tmp/refuse $tmp/refuse-start \
-    $tmp/refuse-next $tmp/chatty $tmp/comments $tmp/meatcheck $tmp/git $tmp/asked $tmp/asked-pane $tmp/sizer $tmp/.config
+    $tmp/refuse-next $tmp/slow $tmp/chatty $tmp/comments $tmp/meatcheck $tmp/git $tmp/asked $tmp/asked-pane $tmp/sizer $tmp/.config
   start_world
 }
 section() {
@@ -1843,8 +1843,15 @@ plan_at 930
 : >$tmp/babylon
 key ' '
 check "a held ticket's card, opened from in flight, offers y land and s send back in its foot" await shows 'y land.*s send back'
+: >$tmp/slow
+key y
 key y
 check "and y runs babylon land on it" await last 'land 930'
+check "whose button says landing… until babylon answers" see 'y landing…'
+gone 'landing…'
+landed_once() { [[ $(grep -c '^land 930$' $tmp/babylon) == 1 ]] }
+check "and a second y before the answer ran no second land" landed_once
+rm $tmp/slow
 key Escape
 mkdir -p $tmp/.config/ficciones/theme
 for name in AMBER VIOLET AMBERDIM EMBERDIM INK DIM GREY SURFACE0 SURFACE2 SURFACE3 SURFACE4 BG CYAN MOSS PINK RED; do print -r -- "PALETTE_$name=#808080"; done >$tmp/.config/ficciones/theme/palette.sh

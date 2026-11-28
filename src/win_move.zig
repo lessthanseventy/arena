@@ -52,7 +52,13 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
         }
     }
     var end = right;
-    if (need.actions.len > 0 and !opened) {
+    if (app.flying(need.id, need.ticket)) |flight| {
+        const at_x = right -| (cellCount(flight.said()) + 2);
+        if (at_x > x + 8) {
+            try bench.say(w, at_x, y, flight.said(), r.checking, bg, true);
+            end = at_x;
+        }
+    } else if (need.actions.len > 0 and !opened) {
         var hint_buf: [96]u8 = undefined;
         const hint = if (isDrive(need)) "⏎ planning" else std.fmt.bufPrint(&hint_buf, "{s} {s}", .{ need.actions[0].key, need.actions[0].label }) catch "";
         const at_x = right -| (cellCount(hint) + 2);

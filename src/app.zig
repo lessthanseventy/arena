@@ -652,6 +652,11 @@ pub const App = struct {
 
     /// babylon's refusals of what the feed ran for its items, said in their place.
     refusals: std.ArrayList(feed.Refusal) = .empty,
+    /// The actions babylon has not answered yet.
+    flights: [8]feed.Flight = undefined,
+    flights_n: usize = 0,
+    /// Whether the input being handled is the mouse's.
+    by_mouse: bool = false,
     /// The check whose commands `r` showed, for ⏎ to run.
     check_ask: ?CheckAsk = null,
     /// The checks run in a window of their own, the newest of a check last.
@@ -1719,7 +1724,7 @@ pub const App = struct {
         var asks: [box_max]Asked = undefined;
         var boxes: [box_max]feed.Box = undefined;
         const n = app.questionBoxes(&asks, &boxes);
-        feed.buildPicked(f, b, app.refusals.items, boxes[0..n], app.view_w -| 4, app.view_h -| 2, app.epoch, pick);
+        feed.buildPicked(f, b, app.refusals.items, app.flights[0..app.flights_n], boxes[0..n], app.view_w -| 4, app.view_h -| 2, app.epoch, pick);
         return true;
     }
 
@@ -2191,6 +2196,89 @@ pub const App = struct {
         return true;
     }
 
+    /// How long an action babylon has not answered holds its place.
+    pub const flight_ms = 10_000;
+
+    /// The action babylon has not answered yet of Your move item `id` or of ticket `ticket`.
+    pub fn flying(app: *const App, id: []const u8, ticket: ?u32) ?*const feed.Flight {
+        for (app.flights[0..app.flights_n]) |*f| if (f.of(id, ticket)) return f;
+        return null;
+    }
+
+    /// What the button `label` of item `id` or of ticket `ticket` says: its action's word while
+    /// babylon has not answered it.
+    pub fn buttonLabel(app: *const App, id: []const u8, ticket: ?u32, label: []const u8) []const u8 {
+        const flight = app.flying(id, ticket) orelse return label;
+        return if (std.mem.eql(u8, flight.label(), label)) flight.said() else label;
+    }
+
+    /// Action `label` of item `id`, of ticket `ticket`, was pressed: whether it is to run. One
+    /// pressed while babylon has not answered another of the item is dropped.
+    pub fn takeOff(app: *App, id: []const u8, ticket: ?u32, label: []const u8) bool {
+        if (app.flying(id, ticket)) |held| {
+            app.logLine("dropped {s} on {s}: {s} is unanswered", .{ label, id, held.label() });
+            return false;
+        }
+        if (app.flights_n == app.flights.len) return true;
+        var flight = feed.Flight.init(id, ticket, label) orelse return true;
+        flight.pressed = std.Io.Timestamp.now(app.io, .awake).toMilliseconds();
+        flight.until = app.now + flight_ms;
+        flight.by_mouse = app.by_mouse;
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        if (app.donePath(id, &buf)) |path| std.Io.Dir.cwd().deleteFile(app.io, path) catch {};
+        app.flights[app.flights_n] = flight;
+        app.flights_n += 1;
+        app.dirty = true;
+        return true;
+    }
+
+    /// Ends the actions babylon has answered, and those it has not for `flight_ms`.
+    pub fn landFlights(app: *App) void {
+        var i = app.flights_n;
+        while (i > 0) {
+            i -= 1;
+            const flight = &app.flights[i];
+            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            const answered = if (app.donePath(flight.key(), &buf)) |path| answered: {
+                std.Io.Dir.cwd().deleteFile(app.io, path) catch break :answered false;
+                break :answered true;
+            } else false;
+            if (!answered and app.now < flight.until) continue;
+            if (!answered) app.logLine("{s} on {s}: no answer in {d} ms", .{ flight.label(), flight.key(), flight_ms });
+            app.flights_n -= 1;
+            app.flights[i] = app.flights[app.flights_n];
+            app.dirty = true;
+        }
+    }
+
+    /// A frame was written: logs how long after its press each new unanswered action was drawn.
+    pub fn flightsDrawn(app: *App) void {
+        for (app.flights[0..app.flights_n]) |*flight| {
+            if (flight.drawn) continue;
+            flight.drawn = true;
+            const took = std.Io.Timestamp.now(app.io, .awake).toMilliseconds() - flight.pressed;
+            app.logLine("{s} on {s}: \"{s}\" drawn {d} ms after the {s}", .{ flight.label(), flight.key(), flight.said(), took, if (flight.by_mouse) "click" else "key" });
+        }
+    }
+
+    /// Where the command of an unanswered action of `id` says it has ended.
+    fn donePath(app: *const App, id: []const u8, buf: []u8) ?[]const u8 {
+        const dir = app.board_dir orelse return null;
+        return std.fmt.bufPrint(buf, "{s}/done-{s}", .{ dir, id }) catch null;
+    }
+
+    /// A line added to arena's log, beside its reports.
+    fn logLine(app: *App, comptime fmt: []const u8, args: anytype) void {
+        const dir = std.fs.path.dirname(app.reports_dir orelse return) orelse return;
+        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const path = std.fmt.bufPrint(&path_buf, "{s}/log", .{dir}) catch return;
+        var line_buf: [512]u8 = undefined;
+        const line = std.fmt.bufPrint(&line_buf, "{d} " ++ fmt ++ "\n", .{app.epoch} ++ args) catch return;
+        const file = std.Io.Dir.cwd().createFile(app.io, path, .{ .truncate = false }) catch return;
+        defer file.close(app.io);
+        file.writePositionalAll(app.io, line, file.length(app.io) catch return) catch {};
+    }
+
     /// `argv`, run for Your move item `id` through tmux: babylon's refusal is written beside its
     /// board, for the feed to say in place of the item's buttons.
     pub fn runNeed(app: *App, id: []const u8, argv: []const []const u8) !bool {
@@ -2200,6 +2288,11 @@ pub const App = struct {
     /// `runNeed`, and with `report` also a word on success, `ok`, for arena to read: the board's
     /// start closes it only then.
     pub fn runWith(app: *App, id: []const u8, argv: []const []const u8, report: bool) !bool {
+        return app.runMarked(id, argv, report, if (app.flying(id, null) != null) id else null);
+    }
+
+    /// `runWith`, the command saying it has ended for the unanswered action `flight`.
+    fn runMarked(app: *App, id: []const u8, argv: []const []const u8, report: bool, flight: ?[]const u8) !bool {
         // a refusal under a next row stays only until the next key of either
         if (std.mem.startsWith(u8, id, "next:")) {
             var i: usize = app.refusals.items.len;
@@ -2233,6 +2326,11 @@ pub const App = struct {
         }
         try cmd.writer.writeAll(if (std.mem.eql(u8, id, "report")) " || printf 'no %s\\n' \"$out\" >" else " || printf '%s\\n' \"$out\" >");
         try shellQuote(&cmd.writer, path);
+        var done_buf: [std.fs.max_path_bytes]u8 = undefined;
+        if (flight) |key| if (app.donePath(key, &done_buf)) |done| {
+            try cmd.writer.writeAll("; : >");
+            try shellQuote(&cmd.writer, done);
+        };
         // tmux reads the line as a format, in double quotes: # is ##, and \, " and $ escaped
         var line: Writer.Allocating = .init(app.gpa);
         defer line.deinit();
@@ -3544,8 +3642,9 @@ pub const App = struct {
         const right = rect.x + rect.w -| 2;
         var n: usize = 0;
         var x = rect.x + 2;
-        for (app.board.?.needsYou()[at].actions, 0..) |action, i| {
-            const button: ModalButton = .{ .action = .{ .need = @intCast(i) }, .key = action.key, .label = action.label, .x = x, .y = foot };
+        const need = app.board.?.needsYou()[at];
+        for (need.actions, 0..) |action, i| {
+            const button: ModalButton = .{ .action = .{ .need = @intCast(i) }, .key = action.key, .label = app.buttonLabel(need.id, need.ticket, action.label), .x = x, .y = foot };
             if (x + button.width() > right or n == out.len) break;
             out[n] = button;
             n += 1;
@@ -5260,8 +5359,8 @@ pub const App = struct {
         var have: [12]CardAction = undefined;
         if (std.mem.indexOfScalar(CardAction, cardActions(card, &have), action) == null) return;
         switch (action) {
-            .go => if (card.proposal) |proposal| try app.settleProposal("go", proposal.id) else try app.goCard(card),
-            .no => if (card.proposal) |proposal| try app.settleProposal("no", proposal.id),
+            .go => if (card.proposal) |proposal| try app.settleProposal("go", proposal.id, card.id) else try app.goCard(card),
+            .no => if (card.proposal) |proposal| try app.settleProposal("no", proposal.id, card.id),
             .give => {
                 view.giving = 0;
                 view.giving_ticket = card.id;
@@ -5282,8 +5381,8 @@ pub const App = struct {
             .new_ticket => try app.newTicketIn(card.id),
             .handoff => try app.askHandoff(card),
             .gate => try app.openGate(card.id),
-            .land => try app.settleProposal("land", card.id),
-            .send_back => try app.settleProposal("back", card.id),
+            .land => try app.settleProposal("land", card.id, card.id),
+            .send_back => try app.settleProposal("back", card.id, card.id),
             .reopen, .to_todo => try app.send(.ignore, captured("babylon update {d} --status todo"), .{card.id}),
             .open => unreachable,
         }
@@ -5295,7 +5394,10 @@ pub const App = struct {
         const pane = card.holder() orelse {
             if (!givable(card)) return;
             var id_buf: [12]u8 = undefined;
-            _ = try app.runWith("start", &.{ "babylon", "start", std.fmt.bufPrint(&id_buf, "{d}", .{card.id}) catch return }, true);
+            var key_buf: [24]u8 = undefined;
+            const key = std.fmt.bufPrint(&key_buf, "card:{d}", .{card.id}) catch unreachable;
+            if (!app.takeOff(key, card.id, "start")) return;
+            _ = try app.runMarked("start", &.{ "babylon", "start", std.fmt.bufPrint(&id_buf, "{d}", .{card.id}) catch return }, true, key);
             return;
         };
         try app.openClaude(pane);
@@ -5836,7 +5938,7 @@ pub const App = struct {
                     .send_back => "s",
                     else => continue,
                 };
-                const label = if (action == .close and card.status == .backlog) (if (card.isEpic()) "close idea…" else "close ticket…") else action.label();
+                const label = if (action == .close and card.status == .backlog) (if (card.isEpic()) "close idea…" else "close ticket…") else app.buttonLabel("", card.id, action.label());
                 const button: ModalButton = .{ .action = .{ .card = action }, .key = key, .label = label, .x = x, .y = foot };
                 if (x + button.width() > right or n == out.len) break;
                 out[n] = button;
@@ -5864,7 +5966,7 @@ pub const App = struct {
                     if (std.mem.eql(u8, had.key, action.key)) break true;
                 } else false;
                 if (taken) continue;
-                const button: ModalButton = .{ .action = .{ .need = @intCast(i) }, .key = action.key, .label = action.label, .x = x, .y = foot };
+                const button: ModalButton = .{ .action = .{ .need = @intCast(i) }, .key = action.key, .label = app.buttonLabel(app.board.?.needsYou()[at].id, card.id, action.label), .x = x, .y = foot };
                 if (x + button.width() > right or n == out.len) break;
                 out[n] = button;
                 n += 1;
@@ -6198,10 +6300,17 @@ pub const App = struct {
     }
 
     /// `babylon WORD ID` (go or no on a proposal, land or back on a held ticket), which only a
-    /// human's own command line may run; its refusal is said.
-    fn settleProposal(app: *App, comptime word: []const u8, id: u32) !void {
+    /// human's own command line may run; its refusal is said. It is of ticket `ticket`'s card, and
+    /// dropped while babylon has not answered another of that card.
+    fn settleProposal(app: *App, comptime word: []const u8, id: u32, ticket: u32) !void {
+        var key_buf: [24]u8 = undefined;
+        const key = std.fmt.bufPrint(&key_buf, "card:{d}", .{ticket}) catch unreachable;
+        const label = comptime if (std.mem.eql(u8, word, "back")) "send back" else word;
+        if (!app.takeOff(key, ticket, label)) return;
+        var done_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const done = app.donePath(key, &done_buf) orelse "/dev/null";
         try app.send(.ignore, "run-shell -b \"out=\\$(babylon " ++ word ++ " {d} 2>&1) || " ++
-            "{{ command -v notify-send >/dev/null && notify-send -a arena -- \\\"\\$out\\\"; }}\"", .{id});
+            "{{ command -v notify-send >/dev/null && notify-send -a arena -- \\\"\\$out\\\"; }}; : >'{s}'\"", .{ id, done });
     }
 
     /// A key while the Claudes the picked card can be given to are shown: j and k pick one, and
@@ -7674,6 +7783,7 @@ pub const App = struct {
         while (rest.len > 0 and !app.quit) {
             const part = keys.next(rest);
             rest = part.rest;
+            app.by_mouse = part.event != null and part.event.? == .mouse;
             app.trailText(part.text);
             // the terminal's answers to arena's own questions are no key of the human's
             if (part.event == null or part.event.? != .osc) {
@@ -9881,6 +9991,69 @@ test "a sent-back item's ⏎ start runs babylon start, from the feed and from it
     try std.testing.expect(std.mem.indexOf(u8, got[before..len], "'babylon' 'start' '12'") != null);
 }
 
+test "an action pressed twice runs once: its place says it until babylon answers or ten seconds pass" {
+    const io = std.testing.io;
+    const dir = "arena-test-flight";
+    const cwd = std.Io.Dir.cwd();
+    try cwd.createDirPath(io, dir);
+    defer cwd.deleteTree(io, dir) catch {};
+    const sent = try cwd.createFile(io, dir ++ "/tmux", .{ .read = true });
+    defer sent.close(io);
+    var app = try sendbackApp(sent, false);
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    app.board_dir = dir;
+    const start = "'babylon' 'start' '12'";
+    var got: [4096]u8 = undefined;
+
+    try std.testing.expect(try win_feed.press(&app, "\r"));
+    try std.testing.expect(try win_feed.press(&app, "\r"));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, try sentText(sent, &got), start));
+    try std.testing.expect(std.mem.indexOf(u8, try sentText(sent, &got), "; : >'" ++ dir ++ "/done-sendback:12'") != null);
+    var f: feed.Feed = undefined;
+    try std.testing.expect(app.feedOf(&f));
+    try std.testing.expectEqual(feed.Kind.flying, f.line(2).kind);
+    try std.testing.expectEqualStrings("starting…", f.line(2).text);
+    try std.testing.expectEqualStrings("starting…", app.buttonLabel("sendback:12", 12, "start"));
+    try std.testing.expectEqualStrings("give", app.buttonLabel("sendback:12", 12, "give"));
+
+    app.landFlights();
+    try std.testing.expectEqual(@as(usize, 1), app.flights_n);
+    try cwd.writeFile(io, .{ .sub_path = dir ++ "/done-sendback:12", .data = "" });
+    app.landFlights();
+    try std.testing.expectEqual(@as(usize, 0), app.flights_n);
+    try std.testing.expect(try win_feed.press(&app, "\r"));
+    try std.testing.expectEqual(@as(usize, 2), std.mem.count(u8, try sentText(sent, &got), start));
+
+    try std.testing.expect(try win_feed.press(&app, "\r"));
+    app.now += App.flight_ms;
+    app.landFlights();
+    try std.testing.expect(try win_feed.press(&app, "\r"));
+    try std.testing.expectEqual(@as(usize, 3), std.mem.count(u8, try sentText(sent, &got), start));
+}
+
+test "a held card's land pressed twice runs babylon land once, and its Your move row is in flight with it" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
+    defer sent.close(std.testing.io);
+    var app = try tryApp(sent,
+        \\{"tickets":[{"id":5,"repo":"arena","title":"Held","status":"review","stage":"held"}],
+        \\"needs_you":[{"id":"held:5","kind":"held","ticket":5,"repo":"arena","text":"#5 arena  held","actions":[]}]}
+    );
+    defer app.pending.deinit(std.testing.allocator);
+    defer app.board.?.deinit();
+    app.home.?.detail = 5;
+    try app.act(.land);
+    try app.act(.land);
+    try app.act(.send_back);
+    var got: [4096]u8 = undefined;
+    const text = try sentText(sent, &got);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, text, "babylon land 5"));
+    try std.testing.expectEqual(@as(usize, 0), std.mem.count(u8, text, "babylon back 5"));
+    try std.testing.expectEqualStrings("landing…", app.flying("held:5", 5).?.said());
+}
+
 test "a sent-back item's G give opens the picker of running Claudes, from the feed and from its row" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -9942,7 +10115,9 @@ test "an item of any kind runs its action's argv: ⏎ on a digest with no ticket
     var len = try sent.readPositionalAll(std.testing.io, &got, 0);
     try std.testing.expect(std.mem.indexOf(u8, got[0..len], "'babylon' 'digest' 'ok'") != null);
 
-    // a click on its seen button runs it too
+    // a click on its seen button runs it too, once the key's has been answered
+    app.now += App.flight_ms;
+    app.landFlights();
     const before = len;
     var f: feed.Feed = undefined;
     try std.testing.expect(app.feedOf(&f));

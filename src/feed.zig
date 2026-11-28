@@ -6,7 +6,7 @@ const text_mod = @import("text.zig");
 const Card = tickets.Card;
 const runcheck = @import("runcheck.zig");
 
-pub const Kind = enum { move_head, quiet, item, buttons, refused, more, try_head, try_title, try_machine, try_step, try_buttons };
+pub const Kind = enum { move_head, quiet, item, buttons, refused, flying, more, try_head, try_title, try_machine, try_step, try_buttons };
 
 /// The age past which a to-try tile's age is in the "you" colour.
 pub const stale_days = 7;
@@ -18,6 +18,66 @@ const min_pane = 6;
 /// its buttons.
 /// What babylon refused, or arena says of a check it runs: a row a line, at most `note_rows`.
 pub const Refusal = struct { id: []const u8, text: []const u8 };
+
+/// An action of a Your move item or of its ticket's card that babylon has not answered yet: its
+/// place says `said` and takes no press until it has, or until `until`.
+pub const Flight = struct {
+    key_buf: [96]u8 = undefined,
+    key_len: usize = 0,
+    ticket: ?u32 = null,
+    label_buf: [32]u8 = undefined,
+    label_len: usize = 0,
+    said_buf: [48]u8 = undefined,
+    said_len: usize = 0,
+    until: i64 = 0,
+    pressed: i64 = 0,
+    drawn: bool = false,
+    by_mouse: bool = false,
+
+    pub fn init(id: []const u8, ticket: ?u32, action: []const u8) ?Flight {
+        var f: Flight = .{ .ticket = ticket };
+        if (id.len > f.key_buf.len or action.len > f.label_buf.len) return null;
+        @memcpy(f.key_buf[0..id.len], id);
+        f.key_len = id.len;
+        @memcpy(f.label_buf[0..action.len], action);
+        f.label_len = action.len;
+        f.said_len = (std.fmt.bufPrint(&f.said_buf, "{s}…", .{doing(action)}) catch return null).len;
+        return f;
+    }
+
+    pub fn key(f: *const Flight) []const u8 {
+        return f.key_buf[0..f.key_len];
+    }
+
+    pub fn label(f: *const Flight) []const u8 {
+        return f.label_buf[0..f.label_len];
+    }
+
+    pub fn said(f: *const Flight) []const u8 {
+        return f.said_buf[0..f.said_len];
+    }
+
+    /// Whether it is of the item `id`, or of the ticket the item is about.
+    pub fn of(f: *const Flight, id: []const u8, ticket: ?u32) bool {
+        if (std.mem.eql(u8, f.key(), id)) return true;
+        return if (f.ticket) |mine| mine == ticket else false;
+    }
+
+    fn doing(action: []const u8) []const u8 {
+        const words = [_][2][]const u8{
+            .{ "land", "landing" },   .{ "start", "starting" }, .{ "go", "going" },
+            .{ "push", "pushing" },   .{ "close", "closing" },  .{ "send back", "sending back" },
+            .{ "adopt", "adopting" }, .{ "no", "saying no" },
+        };
+        for (words) |word| if (std.mem.eql(u8, word[0], action)) return word[1];
+        return action;
+    }
+};
+
+fn flightOf(flying: []const Flight, need: tickets.Need) ?*const Flight {
+    for (flying) |*f| if (f.of(need.id, need.ticket)) return f;
+    return null;
+}
 
 pub const note_rows = 9;
 
@@ -158,12 +218,12 @@ pub const Feed = struct {
 /// move keeps its head and first item and takes what a pane of `min_pane` rows leaves; the rest of
 /// it is cut to whole items. An item babylon refused says why in place of its buttons.
 pub fn build(f: *Feed, board: *const tickets.Board, refused: []const Refusal, width: usize, rows: usize, epoch: i64) void {
-    buildPicked(f, board, refused, &.{}, width, rows, epoch, std.math.maxInt(usize));
+    buildPicked(f, board, refused, &.{}, &.{}, width, rows, epoch, std.math.maxInt(usize));
 }
 
 /// `build` with the pick known: the item `pick` of Your move, which a to-try tile shows its
 /// buttons under.
-pub fn buildPicked(f: *Feed, board: *const tickets.Board, refused: []const Refusal, boxes: []const Box, width: usize, rows: usize, epoch: i64, pick: usize) void {
+pub fn buildPicked(f: *Feed, board: *const tickets.Board, refused: []const Refusal, flying: []const Flight, boxes: []const Box, width: usize, rows: usize, epoch: i64, pick: usize) void {
     f.* = .{};
     const needs = board.needsYou();
     if (needs.len == 0) f.move.add(.quiet, false, "nothing needs you", .{});
@@ -205,6 +265,10 @@ pub fn buildPicked(f: *Feed, board: *const tickets.Board, refused: []const Refus
         const draft = std.mem.eql(u8, need.kind, "draft");
         f.move.add(.item, failed, "{s}{s}{s}", .{ if (draft) "draft · " else "", need.text, if (marked) " ¶" else "" });
         f.move.lines[f.move.n - 1].need = need_at;
+        if (flightOf(flying, need)) |flight| {
+            f.move.add(.flying, failed, "{s}", .{flight.said()});
+            continue;
+        }
         if (refusalOf(refused, need.id)) |why| {
             f.move.add(.refused, failed, "{s}", .{why});
             continue;
@@ -690,7 +754,7 @@ test "only the picked check shows its buttons, and no tile has a close untried b
     build(&f, &b, &.{}, 56, 80, now);
     try std.testing.expectEqual(@as(usize, 0), kindsOf(&f, .try_buttons));
 
-    buildPicked(&f, &b, &.{}, &.{}, 56, 80, now, 2);
+    buildPicked(&f, &b, &.{}, &.{}, &.{}, 56, 80, now, 2);
     try std.testing.expectEqual(@as(usize, 1), kindsOf(&f, .try_buttons));
     var row: usize = 0;
     while (f.line(row).kind != .try_buttons) row += 1;
@@ -706,12 +770,12 @@ test "a stopped session whose pane shows Claude Code's question box lists its op
     );
     defer b.deinit();
     var f: Feed = undefined;
-    buildPicked(&f, &b, &.{}, &.{.{ .ticket = 915, .options = &.{ "Narrow", "Wide" } }}, 56, 80, now, 0);
+    buildPicked(&f, &b, &.{}, &.{}, &.{.{ .ticket = 915, .options = &.{ "Narrow", "Wide" } }}, 56, 80, now, 0);
     try std.testing.expectEqualStrings("stopped #915 29m", f.line(1).text);
     try std.testing.expectEqualStrings("1 Narrow   2 Wide", f.line(2).text);
     try std.testing.expectEqualStrings("1", chipKeyAt(f.line(2).text, 4, true).?);
     try std.testing.expectEqualStrings("2", chipKeyAt(f.line(2).text, 20, true).?);
-    buildPicked(&f, &b, &.{}, &.{}, 56, 80, now, 0);
+    buildPicked(&f, &b, &.{}, &.{}, &.{}, 56, 80, now, 0);
     try std.testing.expectEqual(@as(usize, 0), kindsOf(&f, .buttons));
 }
 

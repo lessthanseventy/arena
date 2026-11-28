@@ -168,10 +168,15 @@ pub fn act(app: *App, item: feed.Item, key: []const u8) !bool {
     if (need.doc != null and found == null and anyKey(key, &.{ "o", "\r" })) return app.openDoc(need);
     const action = found orelse return app.answerBox(need, key);
     if (action.needs) |needs| if (std.mem.eql(u8, needs, "words")) return app.openWords(need.id);
-    if (action.argv) |argv| return app.runNeed(need.id, argv);
+    if (action.argv) |argv| {
+        // only babylon answers: a popup or a pager it opens holds nothing
+        if (argv.len > 0 and std.mem.eql(u8, argv[0], "babylon") and !app.takeOff(need.id, need.ticket, action.label)) return true;
+        return app.runNeed(need.id, argv);
+    }
     const ticket = need.ticket orelse return true;
     const needs = action.needs orelse return true;
     if (std.mem.eql(u8, needs, "surface")) {
+        if (!app.takeOff(need.id, need.ticket, action.label)) return true;
         var id_buf: [12]u8 = undefined;
         return app.runNeed(need.id, &.{ "babylon", "start", std.fmt.bufPrint(&id_buf, "{d}", .{ticket}) catch return true });
     }
@@ -321,10 +326,10 @@ fn benchFeedRow(app: *const App, w: *Writer, pen: *draw.Pen, r: theme.Roles, f: 
     const on = app.feedLitItem(f);
     const strong = app.feedLit() == .focused;
     var head = row;
-    if (line.kind == .buttons or line.kind == .refused) {
+    if (line.kind == .buttons or line.kind == .refused or line.kind == .flying) {
         while (head > 0 and f.line(head).kind != .item) head -= 1;
     }
-    const tiled = line.kind == .item or line.kind == .buttons or line.kind == .refused;
+    const tiled = line.kind == .item or line.kind == .buttons or line.kind == .refused or line.kind == .flying;
     const lit = if (on) |o| tiled and o.line == head else false;
     var o: RowOut = .{ .w = w, .pen = pen, .room = inner, .bg = if (!tiled) r.panel else if (lit) r.raised else r.tile };
     try o.say(r.text, false, " ");
@@ -356,6 +361,10 @@ fn benchFeedRow(app: *const App, w: *Writer, pen: *draw.Pen, r: theme.Roles, f: 
         .refused => {
             try o.say(if (strong) r.accent else r.dim, true, if (lit) "▌ " else "  ");
             try o.say(r.failed, false, line.text);
+        },
+        .flying => {
+            try o.say(if (strong) r.accent else r.dim, true, if (lit) "▌ " else "  ");
+            try o.say(r.checking, false, line.text);
         },
         .move_head => {
             const cut = std.mem.lastIndexOfScalar(u8, line.text, ' ') orelse 0;
@@ -434,7 +443,7 @@ fn benchTryRow(app: *const App, w: *Writer, pen: *draw.Pen, r: theme.Roles, f: *
 pub fn feedRow(app: *const App, w: *Writer, pen: *draw.Pen, f: *const feed.Feed, row: usize, inner: u16) !void {
     const dim = draw.ink(app, "dim", 8);
     if (row < f.count()) if (app.roles) |r| switch (f.line(row).kind) {
-        .item, .buttons, .refused, .move_head => return benchFeedRow(app, w, pen, r, f, row, inner),
+        .item, .buttons, .refused, .flying, .move_head => return benchFeedRow(app, w, pen, r, f, row, inner),
         .try_head, .try_title, .try_machine, .try_step, .try_buttons => return benchTryRow(app, w, pen, r, f, row, inner),
         else => {},
     };
@@ -450,7 +459,7 @@ pub fn feedRow(app: *const App, w: *Writer, pen: *draw.Pen, f: *const feed.Feed,
     const bar = if (line.failed) draw.ink(app, "emberdim", 1) else draw.ink(app, "amber", 4);
     const lead: []const u8 = switch (line.kind) {
         .item => "▌ ",
-        .buttons, .refused => "▌     ",
+        .buttons, .refused, .flying => "▌     ",
         .try_step => "  ",
         .try_buttons => "      ",
         else => "",
@@ -464,7 +473,7 @@ pub fn feedRow(app: *const App, w: *Writer, pen: *draw.Pen, f: *const feed.Feed,
     bold.flags.bold = true;
     const style: vt.Style = switch (line.kind) {
         .move_head => bold,
-        .quiet, .more, .buttons, .try_head, .try_machine => dim,
+        .quiet, .more, .buttons, .flying, .try_head, .try_machine => dim,
         .refused => draw.ink(app, "emberdim", 1),
         .try_buttons => if (line.failed) draw.ink(app, "emberdim", 1) else dim,
         .item, .try_title, .try_step => .{},
