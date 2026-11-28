@@ -38,6 +38,7 @@ timeout = "20m"
 # cp then mv: a rename is one change, so a running arena never execs a half-written file. The
 # same bytes are left alone, so an install that changed nothing restarts no arena.
 run = '''
+set -e
 zig build
 bin="${XDG_DATA_HOME:-$HOME/.local/share}/arena/bin/arena"
 cmp -s zig-out/bin/arena "$bin" && exit 0
