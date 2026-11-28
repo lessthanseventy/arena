@@ -33,9 +33,19 @@ description = "the plugin's manifest and hooks"
 run = "claude plugin validate ."
 
 [tasks.install]
-description = "after a landing: arena built"
+description = "after a landing: arena built, and put outside the checkout where the arena on PATH runs it"
 timeout = "20m"
-run = "zig build"
+# cp then mv: a rename is one change, so a running arena never execs a half-written file. The
+# same bytes are left alone, so an install that changed nothing restarts no arena.
+run = '''
+zig build
+bin="${XDG_DATA_HOME:-$HOME/.local/share}/arena/bin/arena"
+cmp -s zig-out/bin/arena "$bin" && exit 0
+mkdir -p "$(dirname "$bin")"
+cp zig-out/bin/arena "$bin.new"
+mv -f "$bin.new" "$bin"
+echo "arena: installed $bin" >&2
+'''
 
 [tasks.check]
 description = "the unit tests, then end to end, then the hooks and the plugin"

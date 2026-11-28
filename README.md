@@ -126,7 +126,9 @@ mise install
 mise run build
 ```
 
-The binary is `zig-out/bin/arena`. Put it on your path however you like.
+The binary is `zig-out/bin/arena`. Put it on your path however you like. `mise run install` builds
+it and copies it to `~/.local/share/arena/bin/arena` (under `XDG_DATA_HOME` when set), replaced by
+rename, so a running arena sees one change and runs the new one.
 
 The marks on windows running Claude Code come from its hooks, which the checkout is a plugin of:
 `claude --plugin-dir /path/to/arena`, or the path in `CLAUDE_CODE_PLUGIN_DIRS` (a `:` list) for
