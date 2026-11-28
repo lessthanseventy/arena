@@ -216,7 +216,7 @@ pub fn benchPlanRow(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.
         .need => try win_move.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .focal, .drove => {},
         .project => try win_driving.paintProject(app, w, r, sheet, at, y, x0, ww, lit),
-        .now, .now_line, .landed => try win_board.paint(app, w, r, sheet, at, y, x0, ww, lit),
+        .now, .now_line, .landed, .stack => try win_board.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .next => if (row.win == .board) try win_board.paint(app, w, r, sheet, at, y, x0, ww, lit) else try win_next.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .goal, .goal_ticket => try win_goals.paint(app, w, r, sheet, at, y, x0, ww, lit),
         .idea, .backlog => try win_backlog.paint(app, w, r, sheet, at, y, x0, ww, lit),

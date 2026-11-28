@@ -19,7 +19,7 @@ const ideas_shown = 3;
 /// The bit of `unfolded` that holds the ideas open.
 pub const ideas_fold: u3 = 0;
 
-pub const Kind = enum { head, blank, need, now, now_line, next, why, more, goals_more, goal, goal_ticket, landed, unplanned, chips, todo, backlog, focal, project, drove, idea, ideas_more, note, buttons, detail };
+pub const Kind = enum { head, blank, need, now, now_line, next, why, more, goals_more, goal, goal_ticket, stack, landed, unplanned, chips, todo, backlog, focal, project, drove, idea, ideas_more, note, buttons, detail };
 pub const Style = enum { normal, dim, heading, attention };
 
 /// The plan is two screens: Doing, what needs the human and what is moving, and Planning, where
@@ -323,6 +323,8 @@ pub const Row = struct {
     win: Window = .board,
     /// A row `narrow` left in place but that does not hold what is found: drawn dim, never picked.
     dim: bool = false,
+    /// The epic of the stack a board row is a step of, drawn under that stack's row.
+    under: ?u32 = null,
 };
 
 /// The goal Home puts in the focal window: the one the human picked to drive towards; with no
@@ -387,6 +389,8 @@ pub const See = struct {
     project: ?usize = null,
     repos_shut: []const []const u8 = &.{},
     goals_shut: []const u32 = &.{},
+    /// The stacks whose steps Doing folds under their row.
+    stacks_shut: []const u32 = &.{},
 };
 
 pub const max_chips = 16;
@@ -713,6 +717,55 @@ pub const Sheet = struct {
         s.end("nothing · pick a goal on planning");
         s.begin(.board);
         s.boardRows(given, width, epoch);
+        s.stackRows(given, b, see);
+    }
+
+    /// The board's rows of each stack folded into one `.stack` row, at the place of its first, with
+    /// its steps in the goal's order under it unless the stack is shut. A landed step folds only
+    /// when its whole stack has landed.
+    fn stackRows(s: *Sheet, given: *const tickets.Plan, b: *const tickets.Board, see: See) void {
+        var old: [max_rows]Row = undefined;
+        const count = s.n - s.from;
+        @memcpy(old[0..count], s.rows[s.from..s.n]);
+        for (old[0..count]) |row| s.picks -= @intFromBool(row.pick != null);
+        s.n = s.from;
+        var done: [16]usize = undefined;
+        var done_n: usize = 0;
+        for (old[0..count]) |row| {
+            const at = stackAt(given, b, row) orelse {
+                s.add(row);
+                continue;
+            };
+            if (std.mem.indexOfScalar(usize, done[0..done_n], at) != null) continue;
+            if (done_n == done.len) {
+                s.add(row);
+                continue;
+            }
+            done[done_n] = at;
+            done_n += 1;
+            const goal = given.goals[at];
+            const shut = std.mem.indexOfScalar(u32, see.stacks_shut, goal.epic) != null;
+            s.add(.{ .kind = .stack, .pick = 0, .ticket = goal.epic, .item = at, .part = @intFromBool(shut) });
+            if (shut) continue;
+            for (goal.steps) |step| for (old[0..count]) |mine| {
+                if (mine.ticket != step.ticket or stackAt(given, b, mine) != at) continue;
+                var under = mine;
+                under.under = goal.epic;
+                s.add(under);
+            };
+        }
+    }
+
+    /// The place in the plan's goals of the stack board row `row` is a step of.
+    fn stackAt(given: *const tickets.Plan, b: *const tickets.Board, row: Row) ?usize {
+        if (row.kind != .now and row.kind != .next and row.kind != .landed) return null;
+        const id = row.ticket orelse return null;
+        const card = for (b.cards()) |*card| {
+            if (card.id == id) break card;
+        } else return null;
+        const at = tickets.stackOf(given, card) orelse return null;
+        if (row.kind == .landed and tickets.stackCount(given, given.goals[at]).open > 0) return null;
+        return at;
     }
 
     /// The board, top to bottom: landed today with the latest last, the `now` line, the pipeline,
@@ -1473,4 +1526,40 @@ test "a goal's closed step is listed after its open ones" {
     const want = [_]u32{ 8, 2, 3, 1 };
     try std.testing.expectEqual(want.len, win.len);
     for (want, s.rows[win.start..][0..want.len]) |id, row| try std.testing.expectEqual(@as(?u32, id), row.ticket);
+}
+
+test "Doing folds a stack's open steps into one row with its steps under it, and a folded one lists none" {
+    var b = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":11,"title":"a","status":"doing","epic_id":10},
+        \\{"id":12,"title":"b","status":"doing","epic_id":10},
+        \\{"id":13,"title":"fix","status":"todo","epic_id":10,"labels":["stack-fix"]},
+        \\{"id":20,"title":"lone","status":"doing"}],
+        \\"plan":{"now":[
+        \\{"ticket":20,"title":"lone","state":"building"},
+        \\{"ticket":11,"title":"a","state":"landing","stage":"queued"},
+        \\{"ticket":12,"title":"b","state":"building"}],
+        \\"next":[{"ticket":13,"title":"fix"}],
+        \\"goals":[{"epic":10,"title":"s","total":3,"landed":0,"stack":"one_session","steps":[{"ticket":11,"state":"building"},{"ticket":12,"state":"building"},{"ticket":13,"state":"waiting"}]}],
+        \\"landed_today":{"count":0,"newest":[]}}}
+    );
+    defer b.deinit();
+    var s: Sheet = undefined;
+    s.build(b.plan().?, &b, 100, 0, 0, false, true, .{ .screen = .doing });
+    const win = s.span(.board);
+    const want = [_]struct { Kind, u32, ?u32 }{ .{ .now_line, 0, null }, .{ .stack, 10, null }, .{ .now, 11, 10 }, .{ .now, 12, 10 }, .{ .next, 13, 10 }, .{ .now, 20, null } };
+    try std.testing.expectEqual(want.len, win.len);
+    for (want, s.rows[win.start..][0..want.len]) |expect, row| {
+        try std.testing.expectEqual(expect[0], row.kind);
+        if (expect[0] != .now_line) try std.testing.expectEqual(@as(?u32, expect[1]), row.ticket);
+        try std.testing.expectEqual(expect[2], row.under);
+    }
+    const picks = s.pickRange(.board).?;
+    try std.testing.expectEqual(@as(usize, 5), picks.n);
+    for (0..picks.n) |i| try std.testing.expect(s.picked(picks.first + i) != null);
+
+    const shut = [_]u32{10};
+    s.build(b.plan().?, &b, 100, 0, 0, false, true, .{ .screen = .doing, .stacks_shut = &shut });
+    try std.testing.expectEqual(@as(usize, 3), s.span(.board).len);
+    try std.testing.expectEqual(@as(u8, 1), s.rows[s.span(.board).start + 1].part);
 }

@@ -724,6 +724,11 @@ pub const App = struct {
     /// The goals whose tickets Planning folds away, for the session.
     goals_shut: [16]u32 = @splat(0),
     goals_shut_n: usize = 0,
+    /// The stacks whose steps Doing folds under their row, for the session.
+    stacks_shut: [16]u32 = @splat(0),
+    stacks_shut_n: usize = 0,
+    /// The pick of the plan row the pointer is over, to light it and what answers it.
+    plan_hover: ?usize = null,
     folds_path: ?[]const u8 = null,
     /// Bytes for the terminal arena runs in, written inside the next frame.
     out: std.ArrayList(u8) = .empty,
@@ -1462,6 +1467,7 @@ pub const App = struct {
                 app.dirty = true;
             }
         };
+        app.hoverPlan(m.x, m.y);
         const over = app.lookUnder(m.x, m.y);
         if (std.meta.eql(over, app.look_rest)) return;
         app.look_rest = over;
@@ -1470,6 +1476,20 @@ pub const App = struct {
             app.look = null;
             app.dirty = true;
         }
+    }
+
+    /// The pick of the plan row under (`x`, `y`) is what hover lights; a redraw when it changes.
+    fn hoverPlan(app: *App, x: u16, y: u16) void {
+        var over: ?usize = null;
+        if (app.planShown() and app.menu == null and app.prompt == null and app.overview == null and !app.home.?.boxed()) {
+            var sheet: sheets.Sheet = undefined;
+            if (app.planSheet(&sheet)) if (app.planRowAt(&sheet, x, y)) |at| {
+                over = sheet.rows[at].pick;
+            };
+        }
+        if (over == app.plan_hover) return;
+        app.plan_hover = over;
+        app.dirty = true;
     }
 
     /// Puts the peek away, and keeps what it was of from coming back until the pointer or the
@@ -4044,7 +4064,7 @@ pub const App = struct {
     pub fn planSee(app: *const App, out: *[max_repos][]const u8) sheets.See {
         for (0..app.fold_n) |i| out[i] = app.folds[i][0..app.fold_lens[i]];
         const screen: sheets.Screen = if (app.home) |view| view.screen else .doing;
-        return .{ .screen = screen, .project = app.planProject(), .repos_shut = out[0..app.fold_n], .goals_shut = app.goals_shut[0..app.goals_shut_n] };
+        return .{ .screen = screen, .project = app.planProject(), .repos_shut = out[0..app.fold_n], .goals_shut = app.goals_shut[0..app.goals_shut_n], .stacks_shut = app.stacks_shut[0..app.stacks_shut_n] };
     }
 
     /// No goal's chips where they are drawn and clicked, on the screen.
@@ -4384,6 +4404,7 @@ pub const App = struct {
             if (row.kind == .goal) return win_driving.drive(app, row.ticket.?);
         };
         if (is(key, &.{"z"})) if (sheet.picked(view.plan_pick)) |row| {
+            if (row.kind == .stack) return win_board.fold(app, row.ticket.?);
             if (row.kind == .goal or row.kind == .goal_ticket) return win_goals.fold(app, if (row.kind == .goal) row.ticket.? else app.board.?.plan().?.goals[row.item].epic);
         };
         if (is(key, &.{ "J", "K", "x", "e" })) {
@@ -4470,6 +4491,7 @@ pub const App = struct {
                 view.plan_pick = 0;
             },
             .now, .landed => try win_board.act(app, row),
+            .stack => _ = try app.openDetail(row.ticket orelse return),
             .next => try win_next.act(app, row),
             .chips, .todo, .unplanned => try win_unplanned.act(app, row),
             .goals_more => app.openWhole(.goals),
@@ -4526,6 +4548,7 @@ pub const App = struct {
         const picked = view.plan_pick == pick;
         view.plan_pick = pick;
         if (row.kind == .goal and m.x >= app.planRect(row.win).x + 3 and m.x < app.planRect(row.win).x + 5) return win_goals.fold(app, row.ticket.?);
+        if (row.kind == .stack and m.x == app.planRect(row.win).x + 2) return win_board.fold(app, row.ticket.?);
         if (row.kind == .chips) return win_unplanned.chipClick(app, m);
         const kept_idea = row.kind == .idea and sheets.Sheet.ideaState(app.board.?.plan().?.ideas[row.item]) == .idea;
         if (row.kind == .backlog or kept_idea) {

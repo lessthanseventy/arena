@@ -1216,8 +1216,17 @@ key u
 check "u bumps it through babylon" await last 'bump 21'
 key q
 key q
-print -r -- '{"tickets":[{"id":13,"repo":"babylon","title":"Gatekeeping","kind":"ticket","status":"todo","priority":"med","blocked_by":[]}],"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":1,"follow_ups":0,"by_repo":{"babylon":1}}}}' >$tmp/run/babylon/board.json
+print -r -- '{"tickets":[{"id":50,"repo":"arena","title":"A stack","kind":"epic","status":"doing","priority":"med","blocked_by":[]},{"id":51,"repo":"arena","title":"First step","kind":"ticket","status":"doing","priority":"med","blocked_by":[],"epic_id":50},{"id":52,"repo":"arena","title":"Second step","kind":"ticket","status":"review","priority":"med","blocked_by":[],"epic_id":50,"stage":"queued"},{"id":53,"repo":"arena","title":"Fixing step","kind":"ticket","status":"todo","priority":"med","blocked_by":[52],"epic_id":50,"labels":["stack-fix"]}],"plan":{"now":[{"ticket":51,"repo":"arena","title":"First step","state":"building","since":"2026-11-24T10:00:00Z"},{"ticket":52,"repo":"arena","title":"Second step","state":"landing","stage":"queued","place":1,"since":"2026-11-24T10:00:00Z"}],"next":[{"ticket":53,"repo":"arena","title":"Fixing step","waits_on":[{"ticket":52}]}],"goals":[{"epic":50,"title":"A stack","total":3,"landed":0,"stack":"one_session","steps":[{"ticket":51,"state":"building"},{"ticket":52,"state":"landing"},{"ticket":53,"state":"waiting"}]}],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":0,"follow_ups":0,"by_repo":{}}}}' >$tmp/run/babylon/board.json
 plan_home
+check "Doing shows a stack as one row, its state word counting its steps" see 'building 1/3'
+check "its steps under it, a fix step marked" see '#53 .*fix'
+plan_at 51
+key k
+key z
+check "z on the stack row folds its steps away" gone '#51'
+key z
+check "and z again lists them" see '#51'
+print -r -- '{"tickets":[{"id":13,"repo":"babylon","title":"Gatekeeping","kind":"ticket","status":"todo","priority":"med","blocked_by":[]}],"plan":{"now":[],"next":[],"goals":[],"landed_today":{"count":0,"newest":[]},"not_planned":{"count":1,"follow_ups":0,"by_repo":{"babylon":1}}}}' >$tmp/run/babylon/board.json
 key Tab
 see 'Gatekeeping'
 plan_at 13

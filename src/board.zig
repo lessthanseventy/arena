@@ -91,6 +91,7 @@ pub const Card = struct {
     /// The open tickets it waits on.
     blocked_by: []const u32 = &.{},
     epic_id: ?u32 = null,
+    labels: []const []const u8 = &.{},
     /// Where it is on its way to main: queued, verifying, reviewing, landing, landed or failed.
     stage: ?[]const u8 = null,
     /// The question about it waiting on an answer, if there is one.
@@ -401,12 +402,70 @@ pub const Goal = struct {
     landed: u32 = 0,
     total: u32 = 0,
     steps: []Step = &.{},
+    /// `one_session` or `per_step` when the goal is a stack, null when it is not.
+    stack: ?[]const u8 = null,
 
     /// What a row shows: its short name, else its title.
     pub fn name(goal: Goal) []const u8 {
         return goal.short orelse goal.title;
     }
 };
+
+/// The label babylon puts on a step it filed on top of a stack after a failed ride.
+pub const stack_fix_label = "stack-fix";
+
+/// Whether `card` is a fix step of its stack.
+pub fn isFixStep(card: *const Card) bool {
+    for (card.labels) |label| if (std.mem.eql(u8, label, stack_fix_label)) return true;
+    return false;
+}
+
+/// How far a stack has got: its steps still open, of those how many are being built and how many
+/// are submitted, and those landed.
+pub const StackCount = struct { open: usize = 0, building: usize = 0, submitted: usize = 0, landed: usize = 0 };
+
+/// The place in `given.goals` of the stack `card` is a step of: its epic, when that epic is a stack.
+pub fn stackOf(given: *const Plan, card: *const Card) ?usize {
+    const epic = card.epic_id orelse return null;
+    for (given.goals, 0..) |goal, i| if (goal.epic == epic and goal.stack != null) return i;
+    return null;
+}
+
+/// The counts of the stack `goal`, one per step in its order; a fix step is one more open step.
+pub fn stackCount(given: *const Plan, goal: Goal) StackCount {
+    var count: StackCount = .{};
+    for (goal.steps) |step| {
+        const now = for (given.now) |item| {
+            if (item.ticket == step.ticket) break item;
+        } else null;
+        if (now) |item| {
+            const built = std.mem.eql(u8, item.state, "building");
+            count.open += 1;
+            count.building += @intFromBool(built);
+            count.submitted += @intFromBool(!built);
+        } else if (std.mem.eql(u8, step.state, "landed") or std.mem.eql(u8, step.state, "to_try")) {
+            count.landed += 1;
+        } else for (given.next) |item| {
+            if (item.ticket == step.ticket) {
+                count.open += 1;
+                break;
+            }
+        }
+    }
+    return count;
+}
+
+/// What a stack row says of its state: `building k/n` while a step is still being built,
+/// `landing k/n` once none is and k of its n open steps are submitted, `landed n/n` once all have.
+pub fn stackWord(buf: []u8, count: StackCount) []const u8 {
+    const word, const k, const n = if (count.open == 0 and count.landed > 0)
+        .{ "landed", count.landed, count.landed }
+    else if (count.building == 0 and count.submitted > 0)
+        .{ "landing", count.submitted, count.open }
+    else
+        .{ "building", count.submitted, count.open };
+    return std.fmt.bufPrint(buf, "{s} {d}/{d}", .{ word, k, n }) catch word;
+}
 
 /// A question the planning Claude put to the human, and their answer once given.
 pub const IdeaAsk = struct {
@@ -1362,4 +1421,35 @@ test "an item suggestion lifts and marks the needs_you item it copies, a text on
     var old = try Board.parse(std.testing.allocator, sample);
     defer old.deinit();
     try std.testing.expectEqual(@as(usize, 0), old.needsYou().len);
+}
+
+test "a stack's word counts its open steps: building, landing, landed, and a fix step one more" {
+    var board = try Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":11,"title":"a","status":"doing","epic_id":10},
+        \\{"id":12,"title":"b","status":"doing","epic_id":10},
+        \\{"id":13,"title":"fix","status":"todo","epic_id":10,"labels":["stack-fix"]},
+        \\{"id":20,"title":"lone","status":"doing","epic_id":30}],
+        \\"plan":{"now":[
+        \\{"ticket":11,"title":"a","state":"landing","stage":"queued"},
+        \\{"ticket":12,"title":"b","state":"building"}],
+        \\"next":[{"ticket":13,"title":"fix"}],
+        \\"goals":[
+        \\{"epic":10,"title":"s","total":3,"landed":0,"stack":"one_session","steps":[{"ticket":11,"state":"building"},{"ticket":12,"state":"building"},{"ticket":13,"state":"waiting"}]},
+        \\{"epic":30,"title":"plain","total":1,"landed":0,"steps":[{"ticket":20,"state":"building"}]}],
+        \\"landed_today":{"count":0,"newest":[]}}}
+    );
+    defer board.deinit();
+    const given = board.plan().?;
+    var buf: [32]u8 = undefined;
+    const eq = std.testing.expectEqualStrings;
+    try eq("building 1/3", stackWord(&buf, stackCount(given, given.goals[0])));
+    try std.testing.expectEqual(@as(?usize, 0), stackOf(given, &board.cards()[0]));
+    try std.testing.expectEqual(@as(?usize, null), stackOf(given, &board.cards()[3]));
+    try std.testing.expect(isFixStep(&board.cards()[2]));
+    try std.testing.expect(!isFixStep(&board.cards()[0]));
+
+    try eq("landing 2/3", stackWord(&buf, .{ .open = 3, .building = 0, .submitted = 2 }));
+    try eq("landed 3/3", stackWord(&buf, .{ .landed = 3 }));
+    try eq("building 0/3", stackWord(&buf, .{ .open = 3 }));
 }

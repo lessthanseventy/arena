@@ -24,6 +24,11 @@ const state_w = 13;
 pub const id_x = state_x + state_w + 1;
 const name_x = id_x + 7;
 const repo_w = 10;
+/// How far a stack's steps are indented under its row.
+const step_indent = 2;
+/// What marks a stack wherever it is drawn.
+pub const stack_mark = "▣";
+const fix_chip = "fix";
 const wait_w = 14;
 
 const Scratch = struct {
@@ -150,18 +155,68 @@ fn nameRoom(ww: usize) usize {
     return @max(8, @min(40, ww * 2 / 9));
 }
 
-pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, at: usize, y: u16, x0: usize, ww: usize, lit: bool) !void {
+/// Toggles the stack of `epic`'s steps folded under its row or listed, for the session.
+pub fn fold(app: *App, epic: u32) void {
+    if (std.mem.indexOfScalar(u32, app.stacks_shut[0..app.stacks_shut_n], epic)) |at| {
+        app.stacks_shut[at] = app.stacks_shut[app.stacks_shut_n - 1];
+        app.stacks_shut_n -= 1;
+    } else if (app.stacks_shut_n < app.stacks_shut.len) {
+        app.stacks_shut[app.stacks_shut_n] = epic;
+        app.stacks_shut_n += 1;
+    }
+    app.dirty = true;
+}
+
+/// Whether the pointer's row lights `row`: itself, a stack's steps when it is the stack's row, and
+/// the stack's row when it is one of its steps.
+fn hoverLit(app: *const App, sheet: *const sheets.Sheet, row: sheets.Row) bool {
+    const over = sheet.picked(app.plan_hover orelse return false) orelse return false;
+    if (row.pick != null and row.pick == over.pick) return true;
+    if (over.kind == .stack) return row.under != null and row.under == over.ticket;
+    return row.kind == .stack and over.under != null and over.under == row.ticket;
+}
+
+/// A stack's row: its fold glyph, `building k/n`, the stack mark and `#E` with its name, its repo
+/// and how many of its steps are in each state.
+fn paintStack(app: *App, w: *Writer, r: theme.Roles, row: sheets.Row, y: u16, x0: usize, ww: usize, bg: color.RGB) !void {
+    const given = app.board.?.plan().?;
+    const goal = given.goals[row.item];
+    const count = tickets.stackCount(given, goal);
+    var word_buf: [32]u8 = undefined;
+    const word = tickets.stackWord(&word_buf, count);
+    const landed = count.open == 0 and count.landed > 0;
+    try bench.say(w, x0 + 1, y, if (row.part == 1) "▸" else "▾", r.dim, bg, false);
+    try bench.say(w, x0 + state_x, y, word, if (landed) r.landed else if (count.building == 0 and count.submitted > 0) r.checking else r.building, bg, false);
+    var idb: [16]u8 = undefined;
+    const id = std.fmt.bufPrint(&idb, "#{d}", .{goal.epic}) catch "";
+    try bench.say(w, x0 + id_x, y, id, r.accent, bg, true);
+    try bench.say(w, x0 + name_x - 2, y, stack_mark, r.accent, bg, false);
+    const room = nameRoom(ww);
+    var cut_buf: [256]u8 = undefined;
+    try bench.say(w, x0 + name_x, y, cutWord(&cut_buf, goal.name(), room), r.text, bg, false);
+    const first = if (goal.steps.len > 0) app.cardById(goal.steps[0].ticket) else null;
+    const repo = if (first) |c| c.repo else null;
+    const repo_x = x0 + name_x + room + 1;
+    var rb: [32]u8 = undefined;
+    if (repo_x + repo_w <= x0 + ww -| 1) try bench.say(w, repo_x, y, text_mod.cut(&rb, repo orelse "", repo_w - 1), repoHue(r, repo).hue, bg, false);
+}
+
+pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, at: usize, y: u16, x0_cell: usize, ww_cell: usize, lit: bool) !void {
     const row = sheet.rows[at];
     const picked = lit and app.planRowLit(row);
     const mark = if (app.columnFocused()) r.dim else r.accent;
-    const bg = if (picked) r.raised else r.panel;
-    try bench.fill(w, x0, y, ww, bg);
+    const bg = if (picked) r.raised else if (lit and hoverLit(app, sheet, row)) r.panel.mix(r.raised, 0.6) else r.panel;
+    try bench.fill(w, x0_cell, y, ww_cell, bg);
+    if (picked) try bench.say(w, x0_cell, y, "▌", mark, bg, true);
+    if (row.kind == .stack) return paintStack(app, w, r, row, y, x0_cell, ww_cell, bg);
+    const under: usize = if (row.under != null) step_indent else 0;
+    const x0 = x0_cell + under;
+    const ww = ww_cell - under;
     if (row.kind == .now_line) {
         try draw.repeat(w, x0 + 1, y, "─", ww -| 2, r.dim, bg);
         try bench.say(w, x0 + ww / 2 -| 2, y, " now ", r.dim, bg, false);
         return;
     }
-    if (picked) try bench.say(w, x0, y, "▌", mark, bg, true);
     var scratch: Scratch = .{};
     const f = facts(app, r, row, &scratch) orelse return;
     try bench.say(w, x0 + state_x, y, f.state, f.lead, bg, false);
@@ -171,7 +226,9 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
     try bench.say(w, x0 + id_x, y, id, hue.hue, bg, true);
     const room = nameRoom(ww);
     var cut_buf: [256]u8 = undefined;
-    try bench.say(w, x0 + name_x, y, cutWord(&cut_buf, f.name, room), if (row.dim) r.dim else r.text, bg, false);
+    const fix = if (app.cardById(f.id)) |card| tickets.isFixStep(card) else false;
+    try bench.say(w, x0 + name_x, y, cutWord(&cut_buf, f.name, if (fix) room - fix_chip.len - 1 else room), if (row.dim) r.dim else r.text, bg, false);
+    if (fix) try bench.say(w, x0 + name_x + room - fix_chip.len, y, fix_chip, r.queued, bg, false);
     const end = x0 + ww -| 1;
     const repo_x = x0 + name_x + room + 1;
     var rb: [32]u8 = undefined;
@@ -195,6 +252,12 @@ pub fn tally(app: *const App, w: *Writer, r: theme.Roles, sheet: *const sheets.S
         .landed => landed += 1,
         .now => moving += 1,
         .next => next += 1,
+        .stack => if (row.part == 1) {
+            const count = tickets.stackCount(app.board.?.plan().?, app.board.?.plan().?.goals[row.item]);
+            moving += count.building + count.submitted;
+            next += count.open - count.building - count.submitted;
+            landed += count.landed;
+        },
         else => {},
     };
     const whole = app.planScope().len == 0 and app.findText().len == 0;
@@ -353,4 +416,41 @@ test "a sent-back ticket reads ↺ fixing while its Claude works, and ↺ sent b
     try std.testing.expect(!sentBack(&app, given.now[0]).?.idle);
     try std.testing.expect(sentBack(&app, given.now[1]).?.idle);
     try std.testing.expect(!sentBack(&app, given.now[2]).?.idle);
+}
+
+test "hovering a stack's row lights its steps, and hovering a step lights its stack's row" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[
+        \\{"id":11,"title":"a","status":"doing","epic_id":10},
+        \\{"id":13,"title":"fix","status":"todo","epic_id":10,"labels":["stack-fix"]},
+        \\{"id":20,"title":"lone","status":"doing"}],
+        \\"plan":{"now":[
+        \\{"ticket":11,"title":"a","state":"building"},{"ticket":20,"title":"lone","state":"building"}],
+        \\"next":[{"ticket":13,"title":"fix"}],
+        \\"goals":[{"epic":10,"title":"s","total":2,"landed":0,"stack":"per_step","steps":[{"ticket":11,"state":"building"},{"ticket":13,"state":"waiting"}]}],
+        \\"landed_today":{"count":0,"newest":[]}}}
+    );
+    defer board.deinit();
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.board = board;
+    var sheet: sheets.Sheet = undefined;
+    sheet.build(board.plan().?, &board, 100, 0, 0, false, true, .{ .screen = .doing });
+    const mine = sheet.span(.board);
+    const rows = sheet.rows[mine.start..][0..mine.len];
+    // now_line, stack, #11, #13, #20
+    app.plan_hover = rows[1].pick;
+    try std.testing.expect(hoverLit(&app, &sheet, rows[1]));
+    try std.testing.expect(hoverLit(&app, &sheet, rows[2]));
+    try std.testing.expect(hoverLit(&app, &sheet, rows[3]));
+    try std.testing.expect(!hoverLit(&app, &sheet, rows[4]));
+    app.plan_hover = rows[3].pick;
+    try std.testing.expect(hoverLit(&app, &sheet, rows[1]));
+    try std.testing.expect(hoverLit(&app, &sheet, rows[3]));
+    try std.testing.expect(!hoverLit(&app, &sheet, rows[2]));
+    app.plan_hover = rows[4].pick;
+    try std.testing.expect(!hoverLit(&app, &sheet, rows[1]));
+    fold(&app, 10);
+    try std.testing.expectEqual(@as(usize, 1), app.stacks_shut_n);
+    fold(&app, 10);
+    try std.testing.expectEqual(@as(usize, 0), app.stacks_shut_n);
 }

@@ -1516,8 +1516,11 @@ fn doing(sc: *Scene) void {
         _ = c.print(w / 2 - 2, by, " now ", .{ .fg = s.dim, .bg = s.panel }, 5);
         by += 1;
     }
+    var shown: [8]usize = undefined;
+    var shown_n: usize = 0;
     for (plan.now) |item| {
         if (by + 1 >= end) break;
+        if (stackHead(sc, plan, item.ticket, &shown, &shown_n, &by, end)) continue;
         const stalled = item.stalled != null;
         const state = item.stage orelse item.state;
         ticketRow(sc, 2, by, w - 2, item.ticket, sc.fmt("{s} {s} {s}", .{ stateGlyph(state), if (stalled) "stuck" else state, sc.ago(item.since) }), if (stalled) s.failed else s.stateInk(state), false);
@@ -1525,10 +1528,37 @@ fn doing(sc: *Scene) void {
     }
     for (plan.next) |item| {
         if (by + 1 >= end) break;
+        if (stackHead(sc, plan, item.ticket, &shown, &shown_n, &by, end)) continue;
         const waits = item.waits_on.len > 0 and item.waits_on[0].ticket != null;
         ticketRow(sc, 2, by, w - 2, item.ticket, if (waits) sc.fmt("· up next  after #{d}", .{item.waits_on[0].ticket.?}) else "· up next  ready", if (waits) s.dim else s.landed, false);
         by += 1;
     }
+}
+
+/// A step of a stack drawn as the stack's one row with its steps under it, once; true when `id` is
+/// a step of a stack, drawn here or before.
+fn stackHead(sc: *Scene, plan: *const tickets.Plan, id: u32, shown: *[8]usize, shown_n: *usize, by: *usize, end: usize) bool {
+    const s = sc.skin;
+    const card = sc.card(id) orelse return false;
+    const at = tickets.stackOf(plan, card) orelse return false;
+    if (std.mem.indexOfScalar(usize, shown[0..shown_n.*], at) != null or shown_n.* == shown.len) return true;
+    shown[shown_n.*] = at;
+    shown_n.* += 1;
+    const goal = plan.goals[at];
+    var word: [32]u8 = undefined;
+    ticketRow(sc, 2, by.*, sc.c.w - 4, goal.epic, sc.fmt("▣ {s}", .{tickets.stackWord(&word, tickets.stackCount(plan, goal))}), s.building, false);
+    by.* += 1;
+    for (goal.steps) |step| {
+        if (by.* + 1 >= end) break;
+        const row = sc.card(step.ticket) orelse continue;
+        var state: []const u8 = "· up next";
+        for (plan.now) |item| if (item.ticket == step.ticket) {
+            state = item.stage orelse item.state;
+        };
+        ticketRow(sc, 4, by.*, sc.c.w - 6, step.ticket, sc.fmt("{s}{s}", .{ if (tickets.isFixStep(row)) "fix  " else "", state }), s.stateInk(state), false);
+        by.* += 1;
+    }
+    return true;
 }
 
 /// Planning: where tickets are arranged. Goals with their tickets and no goal on the left, next and
