@@ -1128,8 +1128,14 @@ pub fn askFiles(app: *App, repo: usize, row: usize) !void {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const path = filesPath(app, name, c.sha, &buf) orelse return;
     if (app.commit_files.items.len == files_kept) {
-        if (app.commit_files.items[0].text) |text| app.gpa.free(text);
-        _ = app.commit_files.orderedRemove(0);
+        const old = app.commit_files.orderedRemove(0);
+        if (old.text) |text| {
+            app.gpa.free(text);
+        } else {
+            // Never answered, so takeFiles will not come for its file.
+            var old_buf: [std.fs.max_path_bytes]u8 = undefined;
+            if (filesPath(app, old.repo[0..old.repo_len], old.sha[0..old.sha_len], &old_buf)) |old_path| std.Io.Dir.cwd().deleteFile(app.io, old_path) catch {};
+        }
     }
     var e: CommitFiles = .{ .repo = undefined, .repo_len = @intCast(name.len), .sha = undefined, .sha_len = @intCast(c.sha.len) };
     @memcpy(e.repo[0..name.len], name);

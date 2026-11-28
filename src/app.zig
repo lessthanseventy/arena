@@ -11973,6 +11973,21 @@ test "restart-pending and a repo's unpushed are chips on the head, not Your move
     try std.Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = files, .data = " src/x.zig | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)\n" });
     win_repos.polled(&app);
     try std.testing.expect(has(u8, win_repos.filesOf(&app, 0, 0).?, "src/x.zig") != null);
+
+    var waiting: CommitFiles = .{ .repo = undefined, .repo_len = 5, .sha = undefined, .sha_len = 7 };
+    @memcpy(waiting.repo[0..5], "arena");
+    @memcpy(waiting.sha[0..7], "0ddba11");
+    try app.commit_files.insert(std.testing.allocator, 0, waiting);
+    while (app.commit_files.items.len < 32) {
+        waiting.sha[6] +%= 1;
+        try app.commit_files.append(std.testing.allocator, waiting);
+    }
+    var late_buf: [256]u8 = undefined;
+    const late = try std.fmt.bufPrint(&late_buf, "{s}/files-arena-0ddba11", .{app.board_dir.?});
+    try std.Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = late, .data = "late" });
+    try win_repos.askFiles(&app, 0, 1);
+    try std.testing.expectEqual(@as(usize, 32), app.commit_files.items.len);
+    try std.testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(std.testing.io, late, .{}));
     view.repos_section = 0;
 
     try app.homeKey("\t");
