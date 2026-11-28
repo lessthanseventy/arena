@@ -2095,6 +2095,7 @@ pub fn benchState(app: *const App, card: *const tickets.Card, r: theme.Roles, bu
         return .{ .label = label, .lead = r.dim, .words = r.text, .filled = false };
     }
     if (card.ask != null and !eql(u8, stage, "queued")) return .{ .label = "▲ asks you", .lead = r.you, .words = r.on_accent, .filled = true };
+    if (app.board) |*b| if (b.paused(card.id)) return .{ .label = "⏸ paused", .lead = r.queued, .words = r.text, .filled = false };
     if (eql(u8, stage, "failed")) return .{ .label = "\u{f0e2} sent back", .lead = r.failed, .words = r.on_accent, .filled = true };
     if (stage.len > 0 and !(eql(u8, stage, "queued") and card.ask != null)) {
         const mark: []const u8, const lead = if (eql(u8, stage, "queued")) .{ "\u{f017}", r.queued } else if (eql(u8, stage, "verifying")) .{ "\u{f00c}", r.checking } else if (eql(u8, stage, "reviewing")) .{ "\u{f06e}", r.checking } else if (eql(u8, stage, "landed")) .{ "\u{f135}", r.landed } else .{ "\u{f017}", r.dim };
@@ -2104,6 +2105,7 @@ pub fn benchState(app: *const App, card: *const tickets.Card, r: theme.Roles, bu
     }
     if (card.clash) |words| return .{ .label = std.fmt.bufPrint(buf, "◷ {s}", .{words}) catch "◷ clash", .lead = r.dim, .words = r.dim, .filled = false };
     if (card.blocked_by.len > 0) return .{ .label = std.fmt.bufPrint(buf, "\u{f0c1} waits #{d}", .{card.blocked_by[0]}) catch "waits", .lead = r.dim, .words = r.dim, .filled = false };
+    if (card.waiting_on) |on| return .{ .label = on.say(buf), .lead = r.dim, .words = r.dim, .filled = false };
     if (card.status == .doing) return if (card.holder() != null)
         .{ .label = "\u{f013} building", .lead = r.building, .words = r.text, .filled = false }
     else
@@ -2130,6 +2132,7 @@ const plan_keys = [_][2][]const u8{
     .{ "`", "fold the orchestrator's column, or unfold" },
     .{ "esc, q", "close home" },
     .{ "◐ ◒ » ◇ ↺ –", "building, in the pipeline, queued, stalled, sent back (fixing while its Claude works), closed" },
+    .{ "◷ ⏸", "waiting on a ticket or on words, paused by babylon's pause" },
 };
 
 /// The plan's keys, boxed over its middle until the next key.

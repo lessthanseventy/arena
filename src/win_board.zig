@@ -100,10 +100,14 @@ fn facts(app: *const App, r: theme.Roles, row: sheets.Row, s: *Scratch) ?Facts {
             const stage = item.stage orelse item.state;
             const eql = std.mem.eql;
             const back = sentBack(app, item);
-            const state: []const u8, const lead: color.RGB = if (back) |b|
+            const state: []const u8, const lead: color.RGB = if (item.paused)
+                .{ "⏸ paused", r.queued }
+            else if (back) |b|
                 (if (b.fixing) .{ "↺ fixing", r.building } else .{ "↺ sent back", r.failed })
             else if (item.stalled != null)
                 .{ "◇ stuck", r.failed }
+            else if (item.waiting_on) |on|
+                .{ if (on.ticket) |id| std.fmt.bufPrint(&s.state, "◷ waits #{d}", .{id}) catch "◷ waits" else "◷ waits", r.queued }
             else if (eql(u8, stage, "queued"))
                 .{ if (item.place) |n| std.fmt.bufPrint(&s.state, "» queued {s}", .{sheets.place(n, &s.place)}) catch "» queued" else "» queued", r.queued }
             else if (eql(u8, item.state, "landing"))
@@ -116,7 +120,7 @@ fn facts(app: *const App, r: theme.Roles, row: sheets.Row, s: *Scratch) ?Facts {
                 .lead = lead,
                 .repo = item.repo,
                 .name = item.name(),
-                .wait = if (back) |b| if (b.waits) |on| on.say(&s.wait) else b.cause else if (item.waiting_on) |on| on.say(&s.wait) else "",
+                .wait = if (item.paused) "" else if (back) |b| (if (b.waits) |on| on.say(&s.wait) else b.cause) else if (item.waiting_on) |on| (if (on.ticket == null) on.say(&s.wait) else "") else "",
                 .wait_lead = r.dim,
                 .age = sheets.ago(&s.age, if (back) |b| b.at else item.since, app.epoch),
             };
@@ -293,7 +297,7 @@ pub fn detail(app: *const App, row: sheets.Row, ww: usize, lines: *sheets.Lines)
             const item = given.now[row.item];
             var age: [16]u8 = undefined;
             const since = sheets.ago(&age, item.since, app.epoch);
-            const stage = if (sentBack(app, item)) |b| blk: {
+            const stage = if (item.paused) "paused" else if (sentBack(app, item)) |b| blk: {
                 var back_age: [16]u8 = undefined;
                 const when = sheets.ago(&back_age, b.at, app.epoch);
                 const ago_word = if (when.len == 0 or std.mem.eql(u8, when, "now")) "" else " ago";
@@ -416,6 +420,34 @@ test "a sent-back ticket reads ↺ fixing while its Claude works, and ↺ sent b
     try std.testing.expect(!sentBack(&app, given.now[0]).?.idle);
     try std.testing.expect(sentBack(&app, given.now[1]).?.idle);
     try std.testing.expect(!sentBack(&app, given.now[2]).?.idle);
+}
+
+test "a row waiting on a ticket reads ◷ waits #N, and one babylon's pause holds reads ⏸ paused, sent back or not" {
+    var board = try tickets.Board.parse(std.testing.allocator,
+        \\{"tickets":[{"id":1200,"repo":"arena","title":"a","status":"doing","waiting_on":{"ticket":1336}},
+        \\{"id":1352,"repo":"arena","title":"b","status":"doing","stage":"failed","stage_note":"the gate is red (exit 1)"}],
+        \\"plan":{"now":[
+        \\{"ticket":1200,"repo":"arena","title":"a","state":"building","since":"2026-11-27T09:00:00Z"},
+        \\{"ticket":1352,"repo":"arena","title":"b","state":"building","stage":"failed"},
+        \\{"ticket":1336,"repo":"arena","title":"c","state":"building","stalled":"idle 13m"},
+        \\{"ticket":9,"repo":"arena","title":"d","state":"building","waiting_on":{"for":"the reboot"}}],
+        \\"next":[],"goals":[],"landed_today":{"count":0,"newest":[]}},
+        \\"pause":{"on":true,"tickets":[1336,1352]}}
+    );
+    defer board.deinit();
+    var app: App = .{ .gpa = std.testing.allocator, .io = undefined, .tmux_in = undefined };
+    app.board = board;
+    const r = bench.roles();
+    var sc: Scratch = .{};
+    const eq = std.testing.expectEqualStrings;
+    const waits = facts(&app, r, .{ .kind = .now, .item = 0, .ticket = 1200 }, &sc).?;
+    try eq("◷ waits #1336", waits.state);
+    try eq("", waits.wait);
+    try eq("⏸ paused", facts(&app, r, .{ .kind = .now, .item = 1, .ticket = 1352 }, &sc).?.state);
+    try eq("⏸ paused", facts(&app, r, .{ .kind = .now, .item = 2, .ticket = 1336 }, &sc).?.state);
+    const words = facts(&app, r, .{ .kind = .now, .item = 3, .ticket = 9 }, &sc).?;
+    try eq("◷ waits", words.state);
+    try eq("◷ waiting for the reboot", words.wait);
 }
 
 test "hovering a stack's row lights its steps, and hovering a step lights its stack's row" {

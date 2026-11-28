@@ -197,12 +197,18 @@ pub const Auto = struct {
     repo_caps: std.json.ArrayHashMap(u32) = .{},
 };
 
-/// babylon's pause before a reboot: `left` is what it still waits on, and `safe` is true once
+/// babylon's pause before a reboot: `tickets` are the ones whose sessions it told to stop, `left`
+/// is what it still waits on, and `safe` is true once
 /// nothing is.
 pub const Pause = struct {
     on: bool = false,
     safe: bool = false,
     left: []const []const u8 = &.{},
+    tickets: []const u32 = &.{},
+
+    pub fn holds(p: Pause, id: u32) bool {
+        return p.on and std.mem.indexOfScalar(u32, p.tickets, id) != null;
+    }
 };
 
 /// What holds a ticket of next back, as babylon's auto says: `why` is the reason's name, `by` the
@@ -369,6 +375,8 @@ pub const NowItem = struct {
     /// Why nothing is moving it (`idle 9m`, `no Claude`), when nothing is.
     stalled: ?[]const u8 = null,
     waiting_on: ?WaitingOn = null,
+    /// Set here, not by babylon: its pause told this ticket's session to stop.
+    paused: bool = false,
 
     /// What a row shows: its short name, else its title.
     pub fn name(item: NowItem) []const u8 {
@@ -672,6 +680,15 @@ pub const Board = struct {
                 kept += 1;
             }
         }
+        const told = parsed.value.pause;
+        const live = all[0..kept];
+        kept = 0;
+        for (live) |need| {
+            const held = if (need.ticket) |id| told.holds(id) else false;
+            if (held and std.mem.eql(u8, need.kind, "stopped")) continue;
+            all[kept] = need;
+            kept += 1;
+        }
         parsed.value.needs_you = all[0..kept];
         const left = try arena.alloc([]const u8, parsed.value.pause.left.len);
         for (parsed.value.pause.left, left) |words, *slot| slot.* = try cleanLine(arena, words);
@@ -686,6 +703,12 @@ pub const Board = struct {
                 if (item.waiting_on) |*wait| if (wait.@"for") |words| {
                     wait.@"for" = try cleanLine(arena, words);
                 };
+                // babylon's row carries only the wait its session recorded: the card's has an open blocker too
+                if (item.waiting_on == null and std.mem.eql(u8, item.state, "building")) for (parsed.value.tickets) |card| {
+                    if (card.id == item.ticket) item.waiting_on = card.waiting_on;
+                };
+                item.paused = told.holds(item.ticket);
+                if (item.waiting_on != null or item.paused) item.stalled = null;
             }
             for (given.next) |*item| {
                 if (item.repo) |repo| item.repo = try cleanLine(arena, repo);
@@ -913,6 +936,11 @@ pub const Board = struct {
     /// babylon's pause, off when its file says none.
     pub fn pause(b: *const Board) Pause {
         return b.parsed.value.pause;
+    }
+
+    /// Whether ticket `id` is one babylon's pause told to stop: it reads `paused`, whatever its Claude does.
+    pub fn paused(b: *const Board, id: u32) bool {
+        return b.parsed.value.pause.holds(id);
     }
 
     /// The plan's next, in order.
@@ -1377,6 +1405,29 @@ test "babylon's own board parses with its plan, a planning ticket of no repo in 
     try std.testing.expectEqual(@as(u32, 1136), given.now[0].ticket);
     try std.testing.expectEqual(@as(?[]const u8, null), given.now[0].repo);
     try std.testing.expect(given.next.len > 0 and given.goals.len > 0);
+}
+
+test "a now row reads its card's wait, and one babylon's pause holds is paused: neither is stalled" {
+    const json =
+        \\{"tickets":[{"id":1200,"title":"A","status":"doing","waiting_on":{"ticket":1336}},
+        \\{"id":1336,"title":"B","status":"doing"},{"id":7,"title":"C","status":"review","waiting_on":{"ticket":1336}}],
+        \\"plan":{"now":[{"ticket":1200,"state":"building","stalled":"idle 1h"},
+        \\{"ticket":1336,"state":"building","stalled":"idle 13m"},{"ticket":7,"state":"landing"}]},
+        \\"pause":{"on":
+    ;
+    var b = try Board.parse(std.testing.allocator, json ++ "true,\"tickets\":[1336]}}");
+    defer b.deinit();
+    const now = b.plan().?.now;
+    try std.testing.expectEqual(@as(?u32, 1336), now[0].waiting_on.?.ticket);
+    try std.testing.expectEqual(@as(?[]const u8, null), now[0].stalled);
+    try std.testing.expect(now[1].paused and !now[0].paused);
+    try std.testing.expectEqual(@as(?[]const u8, null), now[1].stalled);
+    try std.testing.expectEqual(@as(?WaitingOn, null), now[2].waiting_on);
+    try std.testing.expect(b.paused(1336) and !b.paused(1200));
+    var off = try Board.parse(std.testing.allocator, json ++ "false,\"tickets\":[1336]}}");
+    defer off.deinit();
+    try std.testing.expect(!off.plan().?.now[1].paused);
+    try std.testing.expectEqualStrings("idle 13m", off.plan().?.now[1].stalled.?);
 }
 
 test "babylon's pause is read with what it waits on, and its status row is left out of needs_you" {

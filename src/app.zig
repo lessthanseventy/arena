@@ -3363,8 +3363,14 @@ pub const App = struct {
             });
         };
         if (b.plan()) |given| for (given.now) |row| {
-            const idle_back = if (win_board.sentBack(app, row)) |back| back.idle and back.waits == null else false;
+            const idle_back = if (win_board.sentBack(app, row)) |back| back.idle and back.waits == null and !row.paused else false;
             if (row.stalled == null and !idle_back) continue;
+            const said = for (b.needsYou()) |need| {
+                if (need.ticket == row.ticket and std.mem.eql(u8, need.kind, "stopped")) break true;
+            } else for (items.items) |item| {
+                if (item.ticket == row.ticket) break true;
+            } else false;
+            if (said) continue;
             try texts.writer.writeAll(if (row.stalled != null) "stuck: its Claude has stopped" else "sent back: its Claude is idle");
             try ends.append(app.gpa, texts.written().len);
             try items.append(app.gpa, .{
@@ -11855,7 +11861,27 @@ test "a stalled ticket is a stuck item in Needs you with ⏎ open pane, and it g
     try std.testing.expectEqual(@as(usize, 0), app.board.?.needsYou().len);
 }
 
-test "a sent-back ticket with an idle Claude is in Needs you, unless it waits on another ticket" {
+test "a stalled ticket babylon lists as stopped is one Needs you item, and none while babylon's pause holds it" {
+    const gpa = std.testing.allocator;
+    var app: App = .{ .gpa = gpa, .io = undefined, .tmux_in = undefined };
+    const head =
+        \\{"tickets":[{"id":1336,"repo":"arena","title":"a","status":"doing"}],
+        \\"needs_you":[{"id":"stopped:1336","kind":"stopped","ticket":1336,"repo":"arena","text":"#1336 arena  stopped 13m in %2719: saved","actions":[]}],
+        \\"plan":{"now":[{"ticket":1336,"repo":"arena","title":"a","state":"building","pane":"%2719","stalled":"idle 13m"}],
+        \\"next":[],"goals":[],"landed_today":{"count":0,"newest":[]}}
+    ;
+    app.board = try tickets.Board.parse(gpa, head ++ "}");
+    try app.syncWaiting();
+    try std.testing.expectEqual(@as(usize, 1), app.board.?.needsYou().len);
+    try std.testing.expectEqualStrings("stopped", app.board.?.needsYou()[0].kind);
+    app.board.?.deinit();
+    app.board = try tickets.Board.parse(gpa, head ++ ",\"pause\":{\"on\":true,\"tickets\":[1336]}}");
+    defer app.board.?.deinit();
+    try app.syncWaiting();
+    try std.testing.expectEqual(@as(usize, 0), app.board.?.needsYou().len);
+}
+
+test "a sent-back ticket with an idle Claude is in Needs you, unless it waits on another ticket or is paused" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const sent = try tmp.dir.createFile(std.testing.io, "tmux", .{ .read = true });
@@ -11884,7 +11910,8 @@ test "a sent-back ticket with an idle Claude is in Needs you, unless it waits on
     const plain = head ++ mid ++ tail;
     const waiting = head ++ mid ++ ",\"waiting_on\":{\"ticket\":1370}" ++ tail;
     const blocked = head ++ ",\"blocked_by\":[1370]" ++ mid ++ tail;
-    inline for (.{ waiting, blocked }) |json| {
+    const paused = plain[0 .. plain.len - 1] ++ ",\"pause\":{\"on\":true,\"tickets\":[1356]}}";
+    inline for (.{ waiting, blocked, paused }) |json| {
         app.board = try tickets.Board.parse(gpa, json);
         try app.syncWaiting();
         try std.testing.expectEqual(@as(usize, 0), app.board.?.needsYou().len);

@@ -125,7 +125,7 @@ fn paintTicket(app: *App, w: *Writer, r: theme.Roles, item: tickets.NowItem, x0:
     var place_buf: [64]u8 = undefined;
     const place = if (held) |at| std.fmt.bufPrint(&place_buf, "{s}:{d}", .{ at.session.name, at.session.wins.items[at.index].index }) catch "" else "";
     var right_buf: [160]u8 = undefined;
-    const stage = item.stage orelse item.state;
+    const stage = if (item.paused) "⏸ paused" else if (item.waiting_on != null) "◷ waits" else item.stage orelse item.state;
     const right = std.fmt.bufPrint(&right_buf, "{s}{s}  {s}  {s}", .{ if (item.stalled != null) "◇ stuck · " else "", stage, place, since }) catch "";
     const right_x = x0 + ww -| cellCount(right);
     const title_x = x0 + 3 + cellCount(id);

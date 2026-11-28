@@ -49,21 +49,27 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
     }
 }
 
-/// What is moving in `project`: `3 building · 1 landing`, `1 stuck`, or `idle`.
+/// What is moving in `project`: `3 building · 1 landing`, `1 stuck`, `2 paused`, or `idle`.
 fn movingWords(buf: []u8, b: *const tickets.Board, given: *const tickets.Plan, project: usize) []const u8 {
     var building: usize = 0;
     var landing: usize = 0;
     var stuck: usize = 0;
+    var paused: usize = 0;
+    var waits: usize = 0;
     for (given.now) |item| {
         if (!b.inProject(project, item.repo orelse "")) continue;
-        if (item.stalled != null) {
+        if (item.paused) {
+            paused += 1;
+        } else if (item.waiting_on != null) {
+            waits += 1;
+        } else if (item.stalled != null) {
             stuck += 1;
         } else if (std.mem.eql(u8, item.state, "building")) {
             building += 1;
         } else landing += 1;
     }
     var out: Writer = .fixed(buf);
-    for ([_]struct { n: usize, word: []const u8 }{ .{ .n = building, .word = "building" }, .{ .n = landing, .word = "landing" }, .{ .n = stuck, .word = "stuck" } }) |part| {
+    for ([_]struct { n: usize, word: []const u8 }{ .{ .n = building, .word = "building" }, .{ .n = landing, .word = "landing" }, .{ .n = stuck, .word = "stuck" }, .{ .n = waits, .word = "waiting" }, .{ .n = paused, .word = "paused" } }) |part| {
         if (part.n == 0) continue;
         out.print("{s}{d} {s}", .{ if (out.end > 0) " · " else "", part.n, part.word }) catch {};
     }

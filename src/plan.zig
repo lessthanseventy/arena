@@ -845,14 +845,16 @@ pub const Sheet = struct {
 
     fn nowRow(s: *Sheet, item: tickets.NowItem, at: usize, width: usize, epoch: i64) void {
         const queued = std.mem.eql(u8, item.stage orelse "", "queued");
-        const mark: []const u8 = if (item.stalled != null) "◇" else if (item.waiting_on != null) "◷" else if (building(item)) "◐" else if (queued) "»" else "◒";
+        const mark: []const u8 = if (item.paused) "⏸" else if (item.stalled != null) "◇" else if (item.waiting_on != null) "◷" else if (building(item)) "◐" else if (queued) "»" else "◒";
         var age: [16]u8 = undefined;
         const how = ago(&age, item.since, epoch);
         var th: [16]u8 = undefined;
         var rb: [16]u8 = undefined;
         const state = if (queued and item.place != null) s.print("queued {s}", .{place(item.place.?, &th)}) else item.stage orelse item.state;
         var said: [96]u8 = undefined;
-        const right = if (item.stalled) |why|
+        const right = if (item.paused)
+            s.print("paused", .{})
+        else if (item.stalled) |why|
             s.print("stalled · {s}", .{why})
         else if (item.waiting_on) |wait|
             s.print("{s}", .{wait.say(&said)})
