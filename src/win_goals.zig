@@ -46,8 +46,8 @@ pub fn paint(app: *App, w: *Writer, r: theme.Roles, sheet: *const sheets.Sheet, 
             const word_w = if (driving) cellCount(word) + 2 else 0;
             const title_room = ww -| (x - x0) -| bar -| word_w -| 1;
             try sayCut(w, x, y, goal.name(), title_room, if (row.dim) r.dim else r.accent, bg, true);
-            if (driving) try bench.say(w, x0 + ww - bar - word_w, y, word, hue, bg, false);
-            try draw.goalBar(w, r, x0 + ww - bar, y, bar - 2, goal, hue, bg, r.dim, "", r.you);
+            if (driving) try bench.say(w, x0 + ww -| (bar + word_w), y, word, hue, bg, false);
+            try draw.goalBar(w, r, x0 + ww -| bar, y, bar - 2, goal, hue, bg, r.dim, "", r.you);
         },
         .goal_ticket => {
             const card = app.cardById(row.ticket orelse return) orelse return;

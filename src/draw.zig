@@ -1751,7 +1751,7 @@ fn planView(app: *App, w: *Writer, view: app_mod.HomeView) !void {
             try pen.set(w, .{}, null);
             try w.writeAll("   ");
         }
-    } else for (head.left_w..width) |_| try w.writeAll(" ");
+    } else for (0..width -| head.left_w) |_| try w.writeAll(" ");
     if (app.workbench()) {
         try repoTabs(app, w, view);
         _ = try findLine(app, w);
@@ -4588,4 +4588,56 @@ test "a done card's modal has a blank row between its sections, its fixes and fo
     try std.testing.expect(std.mem.indexOf(u8, rows[find(&rows, "second fix").?], "- second fix") != null);
     try std.testing.expect(std.mem.indexOf(u8, rows[find(&rows, "#1300").?], "- #1300 a follow up") != null);
     try std.testing.expect(std.mem.indexOf(u8, rows[find(&rows, "#1301").?], "- #1301 another") != null);
+}
+
+const odd_board =
+    \\{"tickets":[
+    \\{"id":701,"repo":"arena","status":"doing","title":"A title long enough that no window of the plan can hold it on one row, however wide the terminal"},
+    \\{"id":702,"repo":"babylon","status":"review","title":"B"},
+    \\{"id":703,"repo":"menard","status":"todo","title":"C"},
+    \\{"id":704,"repo":"arena","status":"backlog","title":"D"},
+    \\{"id":410,"repo":"arena","kind":"epic","status":"doing","title":"A goal whose name is as long as a title and goes on past any bar it sits beside"}],
+    \\"needs_you":[{"id":"ask:1","kind":"ask","ticket":702,"repo":"babylon","text":"#702 babylon asks: a question long enough to wrap at any width it is shown in?","actions":[]}],
+    \\"plan":{"driving":410,"now":[
+    \\{"ticket":701,"repo":"arena","title":"A title long enough that no window of the plan can hold it on one row, however wide the terminal","state":"building","since":"2026-11-23T07:04:00Z"},
+    \\{"ticket":702,"repo":"babylon","title":"B","state":"landing","stage":"verifying","since":"2026-11-22T04:04:00Z"}],
+    \\"next":[],
+    \\"goals":[
+    \\{"epic":410,"title":"A goal whose name is as long as a title and goes on past any bar it sits beside","total":2,"landed":5,"steps":[{"ticket":701,"state":"building"},{"ticket":703,"state":"todo"}]},
+    \\{"epic":9,"title":"no steps","total":0,"landed":0,"steps":[]}],
+    \\"landed_today":{"count":123456,"newest":[]},"not_planned":{"count":7,"follow_ups":2,"by_repo":{"arena":4,"menard":3}}}}
+;
+
+test "the plan draws at every size, with every row picked and every window whole, on boards with long names, a goal of no steps and nothing next" {
+    const buf = try std.testing.allocator.alloc(u8, 1 << 20);
+    defer std.testing.allocator.free(buf);
+    for ([_][]const u8{ odd_board, project_board }) |text| {
+        var board = try tickets.Board.parse(std.testing.allocator, text);
+        defer board.deinit();
+        for ([_]sheets.Screen{ .planning, .doing }) |screen| for ([_]u16{ 1, 2, 3, 4, 5, 8, 12, 24, 38 }) |h| {
+            var width: u16 = 1;
+            while (width <= 130) : (width += 1) {
+                var app = homeApp(&board);
+                app.term_w = width;
+                app.view_w = width;
+                app.view_h = h;
+                app.epoch = tickets.epochOf("2026-11-23T07:10:00Z").?;
+                app.roles = bench.roles();
+                app.side_folded = true;
+                app.home = .{ .alone = false, .focus = .plan, .screen = screen };
+                var sheet: sheets.Sheet = undefined;
+                try std.testing.expect(app.planSheet(&sheet));
+                const wins = std.enums.values(sheets.Window);
+                for (0..sheet.picks + 1 + wins.len) |i| {
+                    app.home.?.plan_pick = if (i <= sheet.picks) i else 0;
+                    app.home.?.whole = if (i <= sheet.picks) null else wins[i - sheet.picks - 1];
+
+                    var out: Writer = .fixed(buf);
+                    try planView(&app, &out, app.home.?);
+                    app.grab.deinit(std.testing.allocator);
+                    app.grab = .{};
+                }
+            }
+        };
+    }
 }
