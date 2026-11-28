@@ -256,7 +256,7 @@ pub fn tally(app: *const App, w: *Writer, r: theme.Roles, sheet: *const sheets.S
             const count = tickets.stackCount(app.board.?.plan().?, app.board.?.plan().?.goals[row.item]);
             moving += count.building + count.submitted;
             next += count.open - count.building - count.submitted;
-            landed += count.landed;
+            if (count.open == 0) landed += count.landed;
         },
         else => {},
     };
