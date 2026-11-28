@@ -38,6 +38,16 @@ var saved_tty: ?posix.termios = null;
 
 pub const panic = std.debug.FullPanic(panicRestoring);
 
+/// Where a stack trace looks for debug info kept apart from a binary: not debuginfod's cache,
+/// whose empty file for a library it found nothing for makes std's trace panic in mmap.
+pub fn std_options_elf_debug_info_search_paths(exe_path: []const u8) std.debug.ElfFile.DebugInfoSearchPaths {
+    return .{
+        .debuginfod_client = null,
+        .global_debug = &.{"/usr/lib/debug"},
+        .exe_dir = std.fs.path.dirname(exe_path) orelse ".",
+    };
+}
+
 fn panicRestoring(msg: []const u8, first_trace_addr: ?usize) noreturn {
     if (saved_tty) |saved| {
         saved_tty = null;

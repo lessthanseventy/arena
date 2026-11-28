@@ -1978,13 +1978,19 @@ check "with nothing said on its error stream" test ! -s $tmp/update-err
 fi
 if section crash; then
 # a crash gives the terminal back as a quit does: no mouse reports typed into the shell
+# debuginfod marks a library it found no debug info for with an empty file, here libc's
+libc_id=$(readelf -n ${$(ldd $bin)[(r)/*libc.so*]} | awk '/Build ID/ {print $3}')
+mkdir -p $tmp/.cache/debuginfod_client/$libc_id
+: > $tmp/.cache/debuginfod_client/$libc_id/debuginfo
 outer new-session -d -s p -x 100 -y 24 \
-  "env -u TMUX HOME=$tmp XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 ARENA_TEST_PANIC=1 $bin -L $in alpha 2>$tmp/panic-err; echo EXIT \$?; cat"
+  "env -u TMUX HOME=$tmp XDG_CACHE_HOME=$tmp/.cache XDG_RUNTIME_DIR=$tmp/run ARENA_REDUCED_MOTION=1 ARENA_TEST_PANIC=1 $bin -L $in alpha 2>$tmp/panic-err; echo EXIT \$?; cat"
 panicked() { [[ $(outer capture-pane -p -t p) == *'EXIT 134'* ]] }
 check "a panic aborts arena" await panicked
 modes() { [[ $(outer display -p -t p '#{mouse_any_flag}#{mouse_all_flag}#{mouse_sgr_flag}#{alternate_on}#{cursor_flag}') == 00001 ]] }
 check "and leaves mouse reporting off, the alternate screen left and the cursor shown" await modes
 check "and says why" grep -q ARENA_TEST_PANIC $tmp/panic-err
+check "and where, down to main" grep -q 'main.zig:[0-9]*:[0-9]*: .* in main' $tmp/panic-err
+check "the trace itself does not panic" eval "! grep -q 'recursive panic' $tmp/panic-err"
 
 fi
 if section inflight; then
